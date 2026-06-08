@@ -1,5 +1,5 @@
 #define MyAppName "金价监控"
-#define MyAppVersion "1.1.2"
+#define MyAppVersion "1.2.0"
 #define MyAppPublisher "GoldMonitor"
 #define MyAppExeName "GoldMonitor.exe"
 
@@ -41,4 +41,4 @@ Name: "{group}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"; AppUserModelID: "GoldMonitor.App"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "启动 {#MyAppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "启动 {#MyAppName}"; Flags: nowait

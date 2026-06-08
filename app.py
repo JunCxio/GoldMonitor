@@ -32,7 +32,7 @@ app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.2.0"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 GOLD_URL = "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcven"
@@ -65,14 +65,31 @@ UPDATE_DIR = os.path.join(APPDATA_DIR, "updates")
 UPDATE_INSTALLER_NAME = "GoldMonitorSetup.exe"
 NEWS_CACHE_PATH = os.path.join(APPDATA_DIR, "news.json")
 RISK_ANALYSIS_HISTORY_PATH = os.path.join(APPDATA_DIR, "risk_analysis_history.json")
+PRICE_HISTORY_PATH = os.path.join(APPDATA_DIR, "price_history.json")
+APP_LOG_PATH = os.path.join(APPDATA_DIR, "GoldMonitor.log")
 NEWS_REFRESH_INTERVAL = 15 * 60
 NEWS_LIMIT = 20
 RISK_ANALYSIS_HISTORY_LIMIT = 20
+PRICE_HISTORY_ARCHIVE_LIMIT = 20000
+PRICE_HISTORY_EXPORT_LIMIT = 5000
+PRICE_HISTORY_SAVE_INTERVAL_SECONDS = 60
+SOURCE_HEALTH_LIMIT = 20
 RISK_ASSISTANT_TIMEOUT = 20
 RISK_ASSISTANT_MAX_TOKENS = 1200
 RISK_ASSISTANT_TEMPERATURE = 0.2
 RISK_ASSISTANT_NEWS_LIMIT = 5
 RISK_ASSISTANT_TREND_PERIODS = (5, 15, 30, 60)
+DEFAULT_EMAIL_SUBJECT_TEMPLATE = "[金价预警·{level}] {title}"
+DEFAULT_EMAIL_BODY_TEMPLATE = """{message}
+
+预警级别: {level}
+时间: {time}
+当前金价: {price_rmb} RMB/克 / {price_usd} USD/oz
+汇率: {rate}
+
+---
+金价监控 GoldMonitor
+此邮件由程序自动发送，请勿回复。"""
 GDELT_NEWS_URL = (
     "https://api.gdeltproject.org/api/v2/doc/doc"
     "?query=(gold%20OR%20xauusd%20OR%20%22gold%20price%22%20OR%20%22central%20bank%20gold%22)"
@@ -90,6 +107,22 @@ NEWS_RSS_SOURCES = [
         "url": "https://www.bls.gov/bls_latest.rss",
     },
 ]
+
+
+def _configure_logging():
+    try:
+        os.makedirs(APPDATA_DIR, exist_ok=True)
+        file_handler = logging.FileHandler(APP_LOG_PATH, encoding="utf-8")
+        file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        logging.basicConfig(
+            level=logging.INFO,
+            handlers=[file_handler],
+        )
+    except Exception:
+        logging.basicConfig(level=logging.INFO)
+
+
+_configure_logging()
 NEWS_KEYWORDS = (
     "gold", "xau", "xauusd", "bullion", "precious metal", "fed", "fomc",
     "interest rate", "inflation", "cpi", "jobs", "nonfarm", "payroll",
@@ -102,11 +135,15 @@ DEFAULT_SETTINGS = {
     "floating_price_position_saved": False,
     "floating_price_x": None,
     "floating_price_y": None,
+    "floating_price_opacity": 94,
+    "floating_price_display_mode": "rmb_usd",
+    "floating_price_snap_edge": True,
     "close_behavior": "ask",
     "close_remembered": False,
     "alert_sound_enabled": True,
     "alert_dialog_enabled": True,
     "update_manifest_url": DEFAULT_UPDATE_MANIFEST_URL,
+    "update_auto_check_interval_hours": 6,
     # 邮件通知
     "smtp_server": "",
     "smtp_port": "465",
@@ -117,9 +154,15 @@ DEFAULT_SETTINGS = {
     "email_warning_enabled": True,
     "email_critical_enabled": True,
     "email_volatility_enabled": True,
+    "alert_cooldown_minutes": 30,
+    "alert_quiet_start": "",
+    "alert_quiet_end": "",
+    "email_subject_template": DEFAULT_EMAIL_SUBJECT_TEMPLATE,
+    "email_body_template": DEFAULT_EMAIL_BODY_TEMPLATE,
     # 风险分析助手
     "risk_assistant_enabled": True,
     "risk_assistant_provider": "deepseek",
+    "risk_assistant_depth": "standard",
     "deepseek_base_url": "https://api.deepseek.com",
     "deepseek_model": "deepseek-v4-pro",
     "deepseek_api_key": "",
@@ -133,6 +176,8 @@ DEFAULT_SETTINGS = {
 VALID_SMTP_ENCRYPTIONS = {"ssl", "tls"}
 VALID_CLOSE_BEHAVIORS = {"ask", "minimize_to_tray", "exit"}
 VALID_RISK_ASSISTANT_PROVIDERS = {"deepseek", "openai_compatible"}
+VALID_RISK_ASSISTANT_DEPTHS = {"quick", "standard", "deep"}
+VALID_FLOATING_DISPLAY_MODES = {"rmb_usd", "rmb_only", "usd_only"}
 DEEPSEEK_FALLBACK_MODELS = ("deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner")
 RISK_STRUCTURED_SECTION_LABELS = (
     ("risk_level", "风险等级"),
@@ -146,7 +191,7 @@ THRESHOLD_MODES = ("usd", "rmb")
 THRESHOLD_TYPES = ("upper_warning", "upper_critical", "lower_warning", "lower_critical")
 
 # ---------- 全局状态 ----------
-lock = threading.Lock()
+lock = threading.RLock()
 settings_lock = threading.RLock()
 risk_history_lock = threading.RLock()
 price_usd = None
@@ -163,7 +208,9 @@ gold_price_time = None
 gold_price_cached = False
 gold_price_error = ""
 price_history = []  # [{usd, rmb, rate, time, timestamp}]
+price_archive = []
 klines_5min = []    # [{open, high, low, close, time, timestamp}]
+last_price_history_save_at = 0.0
 last_fetch_ok = False
 last_fetch_error = ""
 last_fetch_time = None
@@ -190,6 +237,7 @@ last_volatility_check = None
 
 # 警报去重: 记录每个阈值是否已经触发过 (避免每10秒重复报警)
 alerted_flags = {}  # key: "upper_critical_rmb" -> True/False
+alert_cooldown_state = {}
 
 alert_log = []
 news_items = []
@@ -201,6 +249,7 @@ last_settings_error = None
 server_port = DEFAULT_PORT
 risk_analysis_lock = threading.Lock()
 risk_analysis_last_started = 0.0
+source_health = {}
 
 
 # ---------- 设置与系统集成 ----------
@@ -224,6 +273,29 @@ def _normalize_settings(raw):
             return None
         return number if -100000 <= number <= 100000 else None
 
+    def bounded_int(value, default, minimum, maximum):
+        try:
+            number = int(float(value))
+        except (TypeError, ValueError):
+            number = default
+        return max(minimum, min(maximum, number))
+
+    def normalize_hhmm(value):
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        parts = text.split(":")
+        if len(parts) != 2:
+            return ""
+        try:
+            hour = int(parts[0])
+            minute = int(parts[1])
+        except ValueError:
+            return ""
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return f"{hour:02d}:{minute:02d}"
+        return ""
+
     data["startup_enabled"] = bool(data.get("startup_enabled"))
     data["startup_to_tray"] = bool(data.get("startup_to_tray"))
     data["floating_price_enabled"] = bool(data.get("floating_price_enabled", True))
@@ -237,10 +309,15 @@ def _normalize_settings(raw):
     elif not data["floating_price_position_saved"]:
         data["floating_price_x"] = None
         data["floating_price_y"] = None
+    data["floating_price_opacity"] = bounded_int(data.get("floating_price_opacity", 94), 94, 50, 100)
+    if data.get("floating_price_display_mode") not in VALID_FLOATING_DISPLAY_MODES:
+        data["floating_price_display_mode"] = "rmb_usd"
+    data["floating_price_snap_edge"] = bool(data.get("floating_price_snap_edge", True))
     data["close_remembered"] = bool(data.get("close_remembered"))
     data["alert_sound_enabled"] = bool(data.get("alert_sound_enabled"))
     data["alert_dialog_enabled"] = bool(data.get("alert_dialog_enabled"))
     data["update_manifest_url"] = str(data.get("update_manifest_url") or DEFAULT_UPDATE_MANIFEST_URL).strip()
+    data["update_auto_check_interval_hours"] = bounded_int(data.get("update_auto_check_interval_hours", 6), 6, 1, 168)
     if data.get("close_behavior") not in VALID_CLOSE_BEHAVIORS:
         data["close_behavior"] = DEFAULT_SETTINGS["close_behavior"]
         data["close_remembered"] = False
@@ -255,10 +332,17 @@ def _normalize_settings(raw):
     data["email_warning_enabled"] = bool(data.get("email_warning_enabled", True))
     data["email_critical_enabled"] = bool(data.get("email_critical_enabled", True))
     data["email_volatility_enabled"] = bool(data.get("email_volatility_enabled", True))
+    data["alert_cooldown_minutes"] = bounded_int(data.get("alert_cooldown_minutes", 30), 30, 0, 240)
+    data["alert_quiet_start"] = normalize_hhmm(data.get("alert_quiet_start"))
+    data["alert_quiet_end"] = normalize_hhmm(data.get("alert_quiet_end"))
+    data["email_subject_template"] = str(data.get("email_subject_template") or DEFAULT_EMAIL_SUBJECT_TEMPLATE)
+    data["email_body_template"] = str(data.get("email_body_template") or DEFAULT_EMAIL_BODY_TEMPLATE)
     # 风险分析助手
     data["risk_assistant_enabled"] = bool(data.get("risk_assistant_enabled", True))
     if data.get("risk_assistant_provider") not in VALID_RISK_ASSISTANT_PROVIDERS:
         data["risk_assistant_provider"] = "deepseek"
+    if data.get("risk_assistant_depth") not in VALID_RISK_ASSISTANT_DEPTHS:
+        data["risk_assistant_depth"] = "standard"
     data["deepseek_base_url"] = str(data.get("deepseek_base_url") or DEFAULT_SETTINGS["deepseek_base_url"]).strip().rstrip("/")
     if not data["deepseek_base_url"]:
         data["deepseek_base_url"] = DEFAULT_SETTINGS["deepseek_base_url"]
@@ -343,6 +427,14 @@ def public_settings_snapshot(settings=None):
     compatible_key = snapshot.pop("openai_compatible_api_key", "")
     snapshot["openai_compatible_api_key_configured"] = bool(compatible_key)
     snapshot["openai_compatible_api_key_masked"] = mask_secret(compatible_key)
+    return snapshot
+
+
+def diagnostic_settings_snapshot(settings=None):
+    snapshot = public_settings_snapshot(settings)
+    smtp_password = snapshot.pop("smtp_password", "")
+    snapshot["smtp_password_configured"] = bool(smtp_password)
+    snapshot["smtp_password_masked"] = mask_secret(smtp_password)
     return snapshot
 
 
@@ -514,7 +606,11 @@ def fetch_update_manifest(manifest_url):
 
 def get_update_status():
     manifest_url = get_settings_snapshot().get("update_manifest_url", "")
-    status = {"current_version": APP_VERSION, "manifest_url": manifest_url}
+    status = {
+        "current_version": APP_VERSION,
+        "manifest_url": manifest_url,
+        "checked_at": datetime.now().isoformat(timespec="seconds"),
+    }
     if not manifest_url:
         status.update({
             "state": "not_configured",
@@ -535,19 +631,27 @@ def get_update_status():
     return status
 
 
-def download_update_installer(update_info):
+def download_update_installer(update_info, progress_callback=None):
     os.makedirs(UPDATE_DIR, exist_ok=True)
     installer_path = os.path.join(UPDATE_DIR, UPDATE_INSTALLER_NAME)
     response = requests.get(update_info["url"], stream=True, timeout=60, proxies=REQ_PROXY)
     response.raise_for_status()
+    try:
+        total_bytes = int(response.headers.get("content-length") or 0)
+    except (TypeError, ValueError):
+        total_bytes = 0
 
     digest = hashlib.sha256()
     tmp_path = installer_path + ".tmp"
+    received_bytes = 0
     with open(tmp_path, "wb") as f:
         for chunk in response.iter_content(chunk_size=1024 * 128):
             if chunk:
                 f.write(chunk)
                 digest.update(chunk)
+                received_bytes += len(chunk)
+                if progress_callback:
+                    progress_callback(received_bytes, total_bytes)
 
     expected = update_info.get("sha256")
     actual = digest.hexdigest()
@@ -579,6 +683,89 @@ def launch_update_installer(installer_path):
         os._exit(0)
 
     threading.Thread(target=_exit_later, daemon=True).start()
+
+
+def read_log_tail(max_lines=120):
+    if not os.path.exists(APP_LOG_PATH):
+        return []
+    try:
+        with open(APP_LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        return [line.rstrip("\n") for line in lines[-max_lines:]]
+    except OSError:
+        return []
+
+
+def build_config_backup():
+    return {
+        "app": "GoldMonitor",
+        "version": APP_VERSION,
+        "exported_at": datetime.now().isoformat(timespec="seconds"),
+        "settings": get_settings_snapshot(),
+        "thresholds": {
+            **{key: thresholds.get(key) for key in thresholds},
+            "volatility_config": dict(volatility_config),
+        },
+    }
+
+
+def restore_config_backup(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("备份文件格式无效")
+    settings_payload = payload.get("settings")
+    thresholds_payload = payload.get("thresholds")
+    if not isinstance(settings_payload, dict) and not isinstance(thresholds_payload, dict):
+        raise ValueError("备份中没有可导入的配置")
+    imported = []
+    if isinstance(settings_payload, dict):
+        updated, startup_error = apply_settings(settings_payload)
+        if startup_error:
+            logging.warning("导入配置时自启动设置失败: %s", startup_error)
+        imported.append("settings")
+        socketio.emit("settings_updated", public_settings_snapshot(updated))
+    if isinstance(thresholds_payload, dict):
+        normalized = save_thresholds(thresholds_payload)
+        apply_persisted_threshold_state(normalized)
+        imported.append("thresholds")
+        socketio.emit("thresholds_updated", thresholds)
+        socketio.emit("volatility_updated", volatility_config)
+    return {"ok": True, "imported": imported}
+
+
+def reset_to_default_settings():
+    global alert_cooldown_state
+    saved_settings, startup_error = apply_settings(dict(DEFAULT_SETTINGS))
+    normalized_thresholds = save_thresholds({})
+    apply_persisted_threshold_state(normalized_thresholds)
+    alert_cooldown_state = {}
+    socketio.emit("settings_updated", public_settings_snapshot(saved_settings))
+    socketio.emit("thresholds_updated", thresholds)
+    socketio.emit("volatility_updated", volatility_config)
+    return {"ok": True, "startup_error": startup_error or ""}
+
+
+def build_diagnostics_report():
+    report = {
+        "app": APP_NAME,
+        "version": APP_VERSION,
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "paths": {
+            "appdata": APPDATA_DIR,
+            "settings": SETTINGS_PATH,
+            "thresholds": THRESHOLDS_PATH,
+            "market_cache": MARKET_CACHE_PATH,
+            "price_history": PRICE_HISTORY_PATH,
+            "log": APP_LOG_PATH,
+        },
+        "settings": diagnostic_settings_snapshot(),
+        "fetch_status": get_fetch_status(),
+        "source_health": get_source_health_state(),
+        "price_history": build_price_history_state(limit=120),
+        "risk_history_count": len(get_risk_analysis_history_state().get("items", [])),
+        "recent_alerts": list(alert_log[-20:]),
+        "logs": read_log_tail(),
+    }
+    return json.dumps(report, ensure_ascii=False, indent=2)
 
 
 def show_alert_dialog(title, message):
@@ -634,6 +821,89 @@ def select_related_news(title, items=None, limit=3):
 _alert_level_map = {"warning": "关注", "critical": "警告", "volatility": "波动"}
 
 
+class _SafeFormatDict(dict):
+    def __missing__(self, key):
+        return "{" + key + "}"
+
+
+def _format_template(template, values, fallback):
+    text = str(template or fallback)
+    try:
+        return text.format_map(_SafeFormatDict(values))
+    except Exception:
+        return str(fallback).format_map(_SafeFormatDict(values))
+
+
+def _time_to_minutes(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        hour_text, minute_text = text.split(":", 1)
+        hour = int(hour_text)
+        minute = int(minute_text)
+    except (ValueError, TypeError):
+        return None
+    if 0 <= hour <= 23 and 0 <= minute <= 59:
+        return hour * 60 + minute
+    return None
+
+
+def is_alert_quiet_time(settings=None, now=None):
+    settings = settings or get_settings_snapshot()
+    start = _time_to_minutes(settings.get("alert_quiet_start"))
+    end = _time_to_minutes(settings.get("alert_quiet_end"))
+    if start is None or end is None or start == end:
+        return False
+    now = now or datetime.now()
+    current = now.hour * 60 + now.minute
+    if start < end:
+        return start <= current < end
+    return current >= start or current < end
+
+
+def _alert_cooldown_key(entry):
+    return ":".join([
+        str(entry.get("type") or "warning"),
+        str(entry.get("mode") or "all"),
+    ])
+
+
+def evaluate_alert_delivery(entry, settings=None, now=None):
+    if entry.get("force_notify"):
+        return {"deliver": True, "reason": ""}
+    settings = settings or get_settings_snapshot()
+    now = now or datetime.now()
+    if is_alert_quiet_time(settings, now):
+        return {"deliver": False, "reason": "quiet_time"}
+    cooldown_minutes = int(settings.get("alert_cooldown_minutes", 0) or 0)
+    if cooldown_minutes <= 0:
+        return {"deliver": True, "reason": ""}
+    key = _alert_cooldown_key(entry)
+    last_time = alert_cooldown_state.get(key)
+    if last_time and (now - last_time).total_seconds() < cooldown_minutes * 60:
+        remaining = int(cooldown_minutes * 60 - (now - last_time).total_seconds())
+        return {"deliver": False, "reason": "cooldown", "remaining_seconds": max(1, remaining)}
+    alert_cooldown_state[key] = now
+    return {"deliver": True, "reason": ""}
+
+
+def build_alert_template_values(alert_type, title, message):
+    with lock:
+        values = {
+            "title": title,
+            "message": message,
+            "level": _alert_level_map.get(alert_type, alert_type),
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "price_usd": f"{price_usd:,.2f}" if price_usd is not None else "--",
+            "price_rmb": f"{price_rmb:,.2f}" if price_rmb is not None else "--",
+            "rate": f"{usdcny_rate:.4f}" if usdcny_rate is not None else "--",
+            "gold_source": gold_price_source or "--",
+            "rate_source": usdcny_rate_source or "--",
+        }
+    return values
+
+
 class EmailNotifier:
     """SMTP 邮件通知器"""
 
@@ -655,19 +925,22 @@ class EmailNotifier:
         except ValueError:
             return f"SMTP 端口格式无效: {port_str}"
 
-        level_label = _alert_level_map.get(alert_type, alert_type)
-        body = f"""{message}
-
-预警级别: {level_label}
-时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-
----
-金价监控 GoldMonitor
-此邮件由程序自动发送，请勿回复。"""
+        values = build_alert_template_values(alert_type, title, message)
+        level_label = values["level"]
+        subject = _format_template(
+            settings.get("email_subject_template"),
+            values,
+            DEFAULT_EMAIL_SUBJECT_TEMPLATE,
+        )
+        body = _format_template(
+            settings.get("email_body_template"),
+            values,
+            DEFAULT_EMAIL_BODY_TEMPLATE,
+        )
 
         try:
             msg = MIMEText(body, "plain", "utf-8")
-            msg["Subject"] = f"[金价预警·{level_label}] {title}"
+            msg["Subject"] = subject
             msg["From"] = sender
             msg["To"] = recipient
             msg["Date"] = formatdate(localtime=True)
@@ -716,15 +989,26 @@ def dispatch_alert(entry, title):
 
 
 def emit_alert(entry, title):
+    settings = get_settings_snapshot()
+    delivery = evaluate_alert_delivery(entry, settings)
+    if not delivery.get("deliver"):
+        reason = delivery.get("reason", "")
+        entry["notification_muted"] = True
+        entry["notification_reason"] = reason
+        if reason == "quiet_time":
+            entry["notification_message"] = "当前处于静默时段，仅记录提醒。"
+        elif reason == "cooldown":
+            entry["notification_message"] = "提醒冷却中，仅记录本次触发。"
     entry["related_news"] = select_related_news(title)
     alert_log.append(entry)
     while len(alert_log) > 50:
         alert_log.pop(0)
     socketio.emit("alert", entry)
-    send_desktop_notification(title, entry["message"])
-    play_system_alert_sound(entry.get("type", "warning"))
-    show_alert_dialog(title, f"{entry['message']}\n\n时间: {entry['time']}")
-    dispatch_alert(entry, title)
+    if delivery.get("deliver"):
+        send_desktop_notification(title, entry["message"])
+        play_system_alert_sound(entry.get("type", "warning"))
+        show_alert_dialog(title, f"{entry['message']}\n\n时间: {entry['time']}")
+        dispatch_alert(entry, title)
 
 
 def initialize_market_cache():
@@ -804,6 +1088,58 @@ def get_fetch_status():
         return _current_fetch_status_locked()
 
 
+def record_source_health(name, category, ok, error="", started_at=None, cached=False):
+    if not name:
+        return
+    elapsed_ms = None
+    if started_at is not None:
+        elapsed_ms = int(max(0, (time.monotonic() - started_at) * 1000))
+    with lock:
+        current = source_health.get(name, {
+            "name": name,
+            "category": category,
+            "ok_count": 0,
+            "fail_count": 0,
+        })
+        current.update({
+            "name": name,
+            "category": category,
+            "ok": bool(ok),
+            "cached": bool(cached),
+            "error": str(error or ""),
+            "last_checked": datetime.now().isoformat(timespec="seconds"),
+            "elapsed_ms": elapsed_ms,
+        })
+        if ok:
+            current["ok_count"] = int(current.get("ok_count", 0)) + 1
+        else:
+            current["fail_count"] = int(current.get("fail_count", 0)) + 1
+        source_health[name] = current
+        if len(source_health) > SOURCE_HEALTH_LIMIT:
+            oldest = sorted(source_health.values(), key=lambda item: item.get("last_checked", ""))[0]
+            source_health.pop(oldest.get("name"), None)
+    socketio.emit("source_health_updated", get_source_health_state())
+
+
+def get_source_health_state():
+    with lock:
+        items = sorted(
+            [dict(item) for item in source_health.values()],
+            key=lambda item: (item.get("category", ""), item.get("name", "")),
+        )
+    summary = {
+        "total": len(items),
+        "ok": sum(1 for item in items if item.get("ok")),
+        "failed": sum(1 for item in items if item.get("ok") is False),
+        "cached": sum(1 for item in items if item.get("cached")),
+    }
+    return {
+        "items": items,
+        "summary": summary,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
 def fetch_gold_data(url):
     """从 Stooq CSV 解析完整 OHLC 数据"""
     data, _error = fetch_gold_data_result(url)
@@ -812,17 +1148,23 @@ def fetch_gold_data(url):
 
 def fetch_gold_data_result(url, source_label="数据源"):
     """从 Stooq CSV 解析完整 OHLC 数据，并返回用户可读的失败原因。"""
+    started_at = time.monotonic()
     try:
         resp = requests.get(url, timeout=REQUEST_TIMEOUT, proxies=REQ_PROXY)
         resp.raise_for_status()
         reader = csv.reader(io.StringIO(resp.text))
         rows = list(reader)
         if len(rows) < 1:
-            return None, f"{source_label}返回为空"
+            error = f"{source_label}返回为空"
+            record_source_health(source_label, "gold" if "金价" in source_label else "forex", False, error, started_at)
+            return None, error
         # 格式: Symbol,Date,Time,Open,High,Low,Close,,Name
         r = rows[0]
         if len(r) < 7:
-            return None, f"{source_label}返回格式异常"
+            error = f"{source_label}返回格式异常"
+            record_source_health(source_label, "gold" if "金价" in source_label else "forex", False, error, started_at)
+            return None, error
+        record_source_health(source_label, "gold" if "金价" in source_label else "forex", True, "", started_at)
         return {
             "date": r[1],
             "time": r[2],
@@ -832,16 +1174,18 @@ def fetch_gold_data_result(url, source_label="数据源"):
             "close": float(r[6]),
         }, ""
     except requests.Timeout:
-        return None, f"{source_label}请求超时"
+        error = f"{source_label}请求超时"
     except requests.ConnectionError:
-        return None, f"{source_label}网络连接失败"
+        error = f"{source_label}网络连接失败"
     except requests.HTTPError as exc:
         code = exc.response.status_code if exc.response is not None else "未知"
-        return None, f"{source_label}HTTP错误 {code}"
+        error = f"{source_label}HTTP错误 {code}"
     except requests.RequestException as exc:
-        return None, f"{source_label}请求失败: {exc}"
+        error = f"{source_label}请求失败: {exc}"
     except (ValueError, IndexError):
-        return None, f"{source_label}返回格式异常"
+        error = f"{source_label}返回格式异常"
+    record_source_health(source_label, "gold" if "金价" in source_label else "forex", False, error, started_at)
+    return None, error
 
 
 def fetch_csv_price(url):
@@ -1065,6 +1409,7 @@ def parse_sina_forex(text):
 
 
 def fetch_sina_forex_result():
+    started_at = time.monotonic()
     try:
         resp = requests.get(
             SINA_FOREX_URL,
@@ -1076,16 +1421,20 @@ def fetch_sina_forex_result():
             },
         )
         resp.raise_for_status()
-        return parse_sina_forex(resp.text)
+        rate, error = parse_sina_forex(resp.text)
+        record_source_health("新浪汇率", "forex", rate is not None, error, started_at)
+        return rate, error
     except requests.Timeout:
-        return None, "新浪汇率请求超时"
+        error = "新浪汇率请求超时"
     except requests.ConnectionError:
-        return None, "新浪汇率网络连接失败"
+        error = "新浪汇率网络连接失败"
     except requests.HTTPError as exc:
         code = exc.response.status_code if exc.response is not None else "未知"
-        return None, f"新浪汇率HTTP错误 {code}"
+        error = f"新浪汇率HTTP错误 {code}"
     except requests.RequestException as exc:
-        return None, f"新浪汇率请求失败: {exc}"
+        error = f"新浪汇率请求失败: {exc}"
+    record_source_health("新浪汇率", "forex", False, error, started_at)
+    return None, error
 
 
 def parse_frankfurter_forex(payload):
@@ -1097,6 +1446,7 @@ def parse_frankfurter_forex(payload):
 
 
 def fetch_frankfurter_forex_result():
+    started_at = time.monotonic()
     try:
         resp = requests.get(
             FRANKFURTER_FOREX_URL,
@@ -1105,18 +1455,22 @@ def fetch_frankfurter_forex_result():
             headers={"User-Agent": HTTP_USER_AGENT},
         )
         resp.raise_for_status()
-        return parse_frankfurter_forex(resp.json())
+        rate, error = parse_frankfurter_forex(resp.json())
+        record_source_health("Frankfurter", "forex", rate is not None, error, started_at)
+        return rate, error
     except requests.Timeout:
-        return None, "Frankfurter 请求超时"
+        error = "Frankfurter 请求超时"
     except requests.ConnectionError:
-        return None, "Frankfurter 网络连接失败"
+        error = "Frankfurter 网络连接失败"
     except requests.HTTPError as exc:
         code = exc.response.status_code if exc.response is not None else "未知"
-        return None, f"Frankfurter HTTP错误 {code}"
+        error = f"Frankfurter HTTP错误 {code}"
     except requests.RequestException as exc:
-        return None, f"Frankfurter 请求失败: {exc}"
+        error = f"Frankfurter 请求失败: {exc}"
     except (ValueError, json.JSONDecodeError):
-        return None, "Frankfurter 返回格式异常"
+        error = "Frankfurter 返回格式异常"
+    record_source_health("Frankfurter", "forex", False, error, started_at)
+    return None, error
 
 
 def fetch_usdcny_rate_result():
@@ -1157,6 +1511,7 @@ def fetch_usdcny_rate_result():
 
     cached = load_valid_usdcny_cache()
     if cached:
+        record_source_health("缓存汇率", "forex", True, "实时汇率源不可用，使用缓存", None, cached=True)
         return cached, "；".join(errors)
     return None, "；".join(errors) or "所有汇率源均不可用"
 
@@ -1193,6 +1548,7 @@ def parse_sina_gold(text):
 
 
 def fetch_sina_gold_result():
+    started_at = time.monotonic()
     try:
         resp = requests.get(
             SINA_GOLD_URL,
@@ -1204,16 +1560,20 @@ def fetch_sina_gold_result():
             },
         )
         resp.raise_for_status()
-        return parse_sina_gold(resp.text)
+        data, error = parse_sina_gold(resp.text)
+        record_source_health("新浪贵金属", "gold", data is not None, error, started_at)
+        return data, error
     except requests.Timeout:
-        return None, "新浪贵金属请求超时"
+        error = "新浪贵金属请求超时"
     except requests.ConnectionError:
-        return None, "新浪贵金属网络连接失败"
+        error = "新浪贵金属网络连接失败"
     except requests.HTTPError as exc:
         code = exc.response.status_code if exc.response is not None else "未知"
-        return None, f"新浪贵金属HTTP错误 {code}"
+        error = f"新浪贵金属HTTP错误 {code}"
     except requests.RequestException as exc:
-        return None, f"新浪贵金属请求失败: {exc}"
+        error = f"新浪贵金属请求失败: {exc}"
+    record_source_health("新浪贵金属", "gold", False, error, started_at)
+    return None, error
 
 
 def parse_eastmoney_gold(payload):
@@ -1252,6 +1612,7 @@ def parse_eastmoney_gold(payload):
 
 def fetch_eastmoney_gold_result():
     """从东方财富公开行情接口获取 XAU/USD，并返回用户可读的失败原因。"""
+    started_at = time.monotonic()
     try:
         resp = requests.get(
             EASTMONEY_GOLD_URL,
@@ -1263,18 +1624,22 @@ def fetch_eastmoney_gold_result():
             },
         )
         resp.raise_for_status()
-        return parse_eastmoney_gold(resp.json())
+        data, error = parse_eastmoney_gold(resp.json())
+        record_source_health("东方财富", "gold", data is not None, error, started_at)
+        return data, error
     except requests.Timeout:
-        return None, "东方财富请求超时"
+        error = "东方财富请求超时"
     except requests.ConnectionError:
-        return None, "东方财富网络连接失败"
+        error = "东方财富网络连接失败"
     except requests.HTTPError as exc:
         code = exc.response.status_code if exc.response is not None else "未知"
-        return None, f"东方财富HTTP错误 {code}"
+        error = f"东方财富HTTP错误 {code}"
     except requests.RequestException as exc:
-        return None, f"东方财富请求失败: {exc}"
+        error = f"东方财富请求失败: {exc}"
     except (ValueError, json.JSONDecodeError):
-        return None, "东方财富返回格式异常"
+        error = "东方财富返回格式异常"
+    record_source_health("东方财富", "gold", False, error, started_at)
+    return None, error
 
 
 def parse_goldprice_rates(payload):
@@ -1315,6 +1680,7 @@ def parse_goldprice_rates(payload):
 
 def fetch_goldprice_data_result():
     """从 GoldPrice.org 公开接口获取实时金价，并返回用户可读的失败原因。"""
+    started_at = time.monotonic()
     try:
         resp = requests.get(
             GOLDPRICE_URL,
@@ -1323,18 +1689,22 @@ def fetch_goldprice_data_result():
             headers={"User-Agent": HTTP_USER_AGENT},
         )
         resp.raise_for_status()
-        return parse_goldprice_rates(resp.json())
+        data, rate, error = parse_goldprice_rates(resp.json())
+        record_source_health("GoldPrice", "gold", data is not None, error, started_at)
+        return data, rate, error
     except requests.Timeout:
-        return None, None, "GoldPrice 请求超时"
+        error = "GoldPrice 请求超时"
     except requests.ConnectionError:
-        return None, None, "GoldPrice 网络连接失败"
+        error = "GoldPrice 网络连接失败"
     except requests.HTTPError as exc:
         code = exc.response.status_code if exc.response is not None else "未知"
-        return None, None, f"GoldPrice HTTP错误 {code}"
+        error = f"GoldPrice HTTP错误 {code}"
     except requests.RequestException as exc:
-        return None, None, f"GoldPrice 请求失败: {exc}"
+        error = f"GoldPrice 请求失败: {exc}"
     except (ValueError, json.JSONDecodeError):
-        return None, None, "GoldPrice 返回格式异常"
+        error = "GoldPrice 返回格式异常"
+    record_source_health("GoldPrice", "gold", False, error, started_at)
+    return None, None, error
 
 
 def fetch_market_data_result():
@@ -1393,6 +1763,7 @@ def fetch_market_data_result():
     gold_error = "；".join(errors) or "所有金价接口均不可用"
     if cached_gold:
         cache_source = cached_gold.get("source") or "缓存金价"
+        record_source_health("缓存金价", "gold", True, gold_error, None, cached=True)
         return cached_gold, rate_info, f"缓存金价（{cache_source}）", gold_error, forex_error
     return None, rate_info, "", gold_error, forex_error
 
@@ -1703,6 +2074,150 @@ def clear_risk_analysis_history_state():
         return get_risk_analysis_history_state()
 
 
+def normalize_price_history(items):
+    if not isinstance(items, list):
+        return []
+    normalized = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        timestamp = str(item.get("timestamp") or "").strip()
+        if not timestamp:
+            continue
+        parsed = _parse_iso_datetime(timestamp)
+        if not parsed:
+            continue
+
+        def optional_float(key):
+            value = item.get(key)
+            if value in (None, ""):
+                return None
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                return None
+            return number if math.isfinite(number) else None
+
+        normalized.append({
+            "usd": optional_float("usd"),
+            "rmb": optional_float("rmb"),
+            "rate": optional_float("rate"),
+            "time": str(item.get("time") or parsed.strftime("%H:%M:%S")),
+            "timestamp": parsed.isoformat(timespec="seconds"),
+        })
+    normalized.sort(key=lambda item: item.get("timestamp", ""))
+    return normalized[-PRICE_HISTORY_ARCHIVE_LIMIT:]
+
+
+def load_price_history_archive():
+    if not os.path.exists(PRICE_HISTORY_PATH):
+        return []
+    try:
+        with open(PRICE_HISTORY_PATH, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        if isinstance(payload, dict):
+            return normalize_price_history(payload.get("items", []))
+        return normalize_price_history(payload)
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def save_price_history_archive(items=None):
+    items = price_archive if items is None else items
+    normalized = normalize_price_history(items)
+    os.makedirs(APPDATA_DIR, exist_ok=True)
+    payload = {
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "items": normalized,
+    }
+    tmp_path = PRICE_HISTORY_PATH + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, PRICE_HISTORY_PATH)
+    return normalized
+
+
+def add_price_history_entry(entry, force_save=False):
+    global price_archive, last_price_history_save_at
+    normalized = normalize_price_history([entry])
+    if not normalized:
+        return
+    point = normalized[0]
+    price_archive.append(point)
+    if len(price_archive) > PRICE_HISTORY_ARCHIVE_LIMIT:
+        price_archive = price_archive[-PRICE_HISTORY_ARCHIVE_LIMIT:]
+    now_monotonic = time.monotonic()
+    if force_save or now_monotonic - last_price_history_save_at >= PRICE_HISTORY_SAVE_INTERVAL_SECONDS:
+        try:
+            price_archive = save_price_history_archive(price_archive)
+            last_price_history_save_at = now_monotonic
+        except OSError as exc:
+            logging.warning("价格历史保存失败: %s", exc)
+
+
+def _filter_price_archive(minutes=None, limit=600):
+    with lock:
+        items = list(price_archive)
+    if minutes:
+        latest_time = _parse_iso_datetime(items[-1].get("timestamp")) if items else datetime.now()
+        cutoff = (latest_time or datetime.now()) - timedelta(minutes=int(minutes))
+        items = [
+            item for item in items
+            if (_parse_iso_datetime(item.get("timestamp")) or cutoff) >= cutoff
+        ]
+    if limit:
+        items = items[-int(limit):]
+    return items
+
+
+def build_price_history_state(minutes=None, limit=600):
+    items = _filter_price_archive(minutes, limit)
+
+    def series_stats(field):
+        values = [item.get(field) for item in items if item.get(field) is not None]
+        if not values:
+            return {"points": 0, "start": None, "end": None, "high": None, "low": None, "change": None, "change_pct": None}
+        start = values[0]
+        end = values[-1]
+        change = end - start
+        return {
+            "points": len(values),
+            "start": _format_number(start),
+            "end": _format_number(end),
+            "high": _format_number(max(values)),
+            "low": _format_number(min(values)),
+            "change": _format_number(change),
+            "change_pct": _format_number(change / start * 100 if start else 0),
+        }
+
+    return {
+        "items": items,
+        "stats": {
+            "usd": series_stats("usd"),
+            "rmb": series_stats("rmb"),
+        },
+        "total": len(items),
+        "minutes": minutes,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def build_price_history_csv(minutes=None):
+    items = _filter_price_archive(minutes, PRICE_HISTORY_EXPORT_LIMIT)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["timestamp", "time", "usd_per_oz", "rmb_per_gram", "usdcny_rate"])
+    for item in items:
+        writer.writerow([
+            item.get("timestamp", ""),
+            item.get("time", ""),
+            item.get("usd", ""),
+            item.get("rmb", ""),
+            item.get("rate", ""),
+        ])
+    return output.getvalue(), len(items)
+
+
 def news_loop():
     while True:
         refresh_gold_news(emit_update=True)
@@ -1711,6 +2226,9 @@ def news_loop():
 
 news_items = load_news_cache()
 risk_analysis_history = load_risk_analysis_history()
+price_archive = load_price_history_archive()
+if price_archive:
+    price_history = list(price_archive[-360:])
 initialize_market_cache()
 
 
@@ -1956,15 +2474,22 @@ def build_risk_scorecard(context):
     }
 
 
-def build_risk_analysis_context(trigger=None):
+def build_risk_analysis_context(trigger=None, depth=None):
+    depth = depth if depth in VALID_RISK_ASSISTANT_DEPTHS else get_settings_snapshot().get("risk_assistant_depth", "standard")
+    if depth not in VALID_RISK_ASSISTANT_DEPTHS:
+        depth = "standard"
+    history_limit = {"quick": 120, "standard": 360, "deep": 1440}.get(depth, 360)
+    news_limit = {"quick": 3, "standard": RISK_ASSISTANT_NEWS_LIMIT, "deep": 10}.get(depth, RISK_ASSISTANT_NEWS_LIMIT)
     with lock:
-        history = list(price_history[-360:])
+        source_history = price_archive if depth == "deep" and price_archive else price_history
+        history = list(source_history[-history_limit:])
         candles = list(klines_5min[-72:])
-        news = list(news_items[:RISK_ASSISTANT_NEWS_LIMIT])
+        news = list(news_items[:news_limit])
         daily_change_usd = price_usd - today_open_usd if price_usd is not None and today_open_usd else None
         daily_change_rmb = price_rmb - today_open_rmb if price_rmb is not None and today_open_rmb else None
         context = {
             "analysis_time": datetime.now().isoformat(timespec="seconds"),
+            "analysis_depth": depth,
             "market": {
                 "price_usd": _format_number(price_usd),
                 "price_rmb": _format_number(price_rmb),
@@ -2039,6 +2564,7 @@ def build_risk_analysis_snapshot(context):
     history = context.get("history_summary", {})
     return {
         "analysis_time": context.get("analysis_time"),
+        "analysis_depth": context.get("analysis_depth", "standard"),
         "price_usd": market.get("price_usd"),
         "price_rmb": market.get("price_rmb"),
         "usdcny_rate": market.get("usdcny_rate"),
@@ -2093,6 +2619,7 @@ def parse_risk_analysis_sections(content):
 
 def build_risk_analysis_cache_key(snapshot):
     data = {
+        "analysis_depth": snapshot.get("analysis_depth", "standard"),
         "price_usd": snapshot.get("price_usd"),
         "price_rmb": snapshot.get("price_rmb"),
         "usdcny_rate": snapshot.get("usdcny_rate"),
@@ -2186,6 +2713,8 @@ def test_risk_model_availability(settings):
 
 
 def build_risk_analysis_messages(context):
+    depth = context.get("analysis_depth", "standard")
+    depth_label = {"quick": "快速", "standard": "标准", "deep": "深度"}.get(depth, "标准")
     system_prompt = (
         "你是金价监控工具中的风险分析助手。"
         "请只做风险、趋势和观察依据分析，不提供交易动作、持有比例、收益承诺或保证性结论。"
@@ -2194,7 +2723,7 @@ def build_risk_analysis_messages(context):
         "请使用固定字段输出：风险等级、趋势方向、数据可信度、主要影响因素、观察价格区间、后续关注。"
     )
     user_prompt = (
-        "请基于以下实时上下文分析当前黄金价格风险与趋势。"
+        f"请基于以下实时上下文进行{depth_label}黄金价格风险与趋势分析。"
         "请优先说明风险评分卡、多周期趋势是否一致，以及数据可信度对结论的影响。"
         "仅输出风险研判，不输出具体操作指令。"
         "请严格使用以下标签开头：风险等级：、趋势方向：、数据可信度：、主要影响因素：、观察价格区间：、后续关注：。\n\n"
@@ -2272,6 +2801,11 @@ def call_openai_chat_completion(settings, context, provider, base_url, model, ap
         return None, "请先选择或填写模型。"
 
     max_tokens = settings.get("risk_assistant_max_tokens", RISK_ASSISTANT_MAX_TOKENS)
+    depth = context.get("analysis_depth", "standard")
+    if depth == "quick":
+        max_tokens = min(max_tokens, 900)
+    elif depth == "deep":
+        max_tokens = max(max_tokens, 1800)
     payload = {
         "model": model,
         "messages": build_risk_analysis_messages(context),
@@ -2474,12 +3008,14 @@ def fetch_price_once():
                 daily_pct_rmb = round(daily_change_rmb / today_open_rmb * 100, 2) if today_open_rmb and today_open_rmb != 0 else 0
 
                 # --- 更新历史 ---
-                price_history.append({
+                history_entry = {
                     "usd": price_usd, "rmb": price_rmb, "rate": usdcny_rate,
                     "time": now_str, "timestamp": now_iso,
-                })
+                }
+                price_history.append(history_entry)
                 if len(price_history) > 360:  # 保留 1 小时
                     price_history = price_history[-360:]
+                add_price_history_entry(history_entry)
 
                 _aggregate_klines()
 
@@ -2553,6 +3089,7 @@ def fetch_price_once():
                     error="" if status_ok else last_fetch_error,
                     retryable=True,
                 ))
+                socketio.emit("price_history_updated", build_price_history_state(limit=240))
                 return True
             else:
                 last_fetch_ok = False
@@ -2735,6 +3272,8 @@ def on_connect(auth=None):
             "alert_log": alert_log[-20:],
             "ok": last_fetch_ok,
             "fetch_status": _current_fetch_status_locked(),
+            "source_health": get_source_health_state(),
+            "price_history_state": build_price_history_state(limit=240),
             "daily": {
                 "open_usd": today_open_usd, "high_usd": today_high_usd, "low_usd": today_low_usd,
                 "open_rmb": today_open_rmb, "high_rmb": today_high_rmb, "low_rmb": today_low_rmb,
@@ -2908,7 +3447,7 @@ def on_request_risk_analysis(data=None):
         return
     trigger = data.get("trigger") if isinstance(data, dict) else None
     force = bool(data.get("force")) if isinstance(data, dict) else False
-    context = build_risk_analysis_context(trigger=trigger)
+    context = build_risk_analysis_context(trigger=trigger, depth=settings.get("risk_assistant_depth", "standard"))
     snapshot = build_risk_analysis_snapshot(context)
     cache_minutes = settings.get("risk_assistant_cache_minutes", 0)
     if not force:
@@ -3065,6 +3604,99 @@ def on_refresh_news():
     threading.Thread(target=refresh_gold_news, daemon=True).start()
 
 
+@socketio.on("get_source_health")
+def on_get_source_health():
+    emit("source_health_updated", get_source_health_state())
+
+
+@socketio.on("get_price_history")
+def on_get_price_history(data=None):
+    minutes = None
+    limit = 600
+    if isinstance(data, dict):
+        try:
+            minutes = int(data.get("minutes")) if data.get("minutes") else None
+        except (TypeError, ValueError):
+            minutes = None
+        try:
+            limit = max(1, min(PRICE_HISTORY_EXPORT_LIMIT, int(data.get("limit", limit))))
+        except (TypeError, ValueError):
+            limit = 600
+    emit("price_history_updated", build_price_history_state(minutes=minutes, limit=limit))
+
+
+@socketio.on("export_price_history")
+def on_export_price_history(data=None):
+    minutes = None
+    if isinstance(data, dict):
+        try:
+            minutes = int(data.get("minutes")) if data.get("minutes") else None
+        except (TypeError, ValueError):
+            minutes = None
+    content, count = build_price_history_csv(minutes=minutes)
+    emit("price_history_export_ready", {
+        "filename": f"GoldMonitor-price-history-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv",
+        "content": content,
+        "count": count,
+    })
+
+
+@socketio.on("export_config")
+def on_export_config():
+    emit("config_backup_ready", {
+        "filename": f"GoldMonitor-config-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json",
+        "content": json.dumps(build_config_backup(), ensure_ascii=False, indent=2),
+    })
+
+
+@socketio.on("import_config")
+def on_import_config(data=None):
+    try:
+        payload = data.get("payload") if isinstance(data, dict) else data
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        result = restore_config_backup(payload)
+        emit("config_import_result", {**result, "message": "配置导入完成。"})
+    except (ValueError, json.JSONDecodeError) as exc:
+        emit("config_import_result", {"ok": False, "message": str(exc)})
+    except OSError:
+        emit("config_import_result", {"ok": False, "message": "配置导入失败，请检查配置目录权限。"})
+
+
+@socketio.on("reset_settings")
+def on_reset_settings():
+    try:
+        result = reset_to_default_settings()
+        emit("settings_reset_result", {**result, "message": "已恢复默认设置。"})
+    except OSError:
+        emit("settings_reset_result", {"ok": False, "message": "恢复默认设置失败，请检查配置目录权限。"})
+
+
+@socketio.on("get_diagnostics")
+def on_get_diagnostics():
+    emit("diagnostics_ready", {
+        "filename": f"GoldMonitor-diagnostics-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json",
+        "content": build_diagnostics_report(),
+    })
+
+
+@socketio.on("test_alert")
+def on_test_alert(data=None):
+    alert_type = "warning"
+    if isinstance(data, dict) and data.get("type") in {"warning", "critical", "volatility"}:
+        alert_type = data.get("type")
+    now_str = datetime.now().strftime("%H:%M:%S")
+    entry = {
+        "time": now_str,
+        "type": alert_type,
+        "mode": "rmb",
+        "message": "这是一条手动测试提醒，用于验证弹窗、声音和邮件通知配置。",
+        "force_notify": True,
+    }
+    emit_alert(entry, "金价监控测试提醒")
+    emit("test_alert_result", {"ok": True, "message": "测试提醒已触发。"})
+
+
 @socketio.on("check_update")
 def on_check_update():
     try:
@@ -3101,13 +3733,31 @@ def on_install_update(data=None):
             "current_version": APP_VERSION,
             "latest_version": update_info["version"],
             "message": "正在下载更新安装包...",
+            "progress_percent": 0,
         })
-        installer_path = download_update_installer(update_info)
+
+        def emit_progress(received_bytes, total_bytes):
+            percent = int(received_bytes / total_bytes * 100) if total_bytes else None
+            socketio.emit("update_status", {
+                "state": "downloading",
+                "current_version": APP_VERSION,
+                "latest_version": update_info["version"],
+                "message": "正在下载更新安装包...",
+                "downloaded_bytes": received_bytes,
+                "total_bytes": total_bytes,
+                "progress_percent": percent,
+            }, room=request.sid)
+
+        try:
+            installer_path = download_update_installer(update_info, progress_callback=emit_progress)
+        except TypeError:
+            installer_path = download_update_installer(update_info)
         emit("update_status", {
             "state": "installing",
             "current_version": APP_VERSION,
             "latest_version": update_info["version"],
             "message": "安装包已下载，正在启动更新程序。",
+            "progress_percent": 100,
         })
         launch_update_installer(installer_path)
     except ValueError as exc:
@@ -3180,6 +3830,7 @@ def update_desktop_price_title(title=None):
 
 
 def format_floating_price_text(rmb=None, usd=None, pct=None):
+    display_mode = get_settings_snapshot().get("floating_price_display_mode", "rmb_usd")
     if rmb is None and usd is None:
         with lock:
             rmb = price_rmb
@@ -3234,21 +3885,29 @@ def format_floating_price_text(rmb=None, usd=None, pct=None):
     if rmb is None and usd is None:
         return "黄金 --", "等待行情数据", status, "neutral", source_state
 
+    if display_mode == "usd_only" and usd is not None:
+        primary = f"黄金 ${usd:,.2f}/oz"
+        return primary, trend or "双击打开主窗口", status, trend_state, source_state
+
     if rmb is not None:
         primary = f"黄金 ¥{rmb:,.2f}/克"
-        if usd is not None and trend:
+        if display_mode == "rmb_only" and trend:
+            secondary = trend
+        elif display_mode == "rmb_only":
+            secondary = "双击打开主窗口"
+        elif usd is not None and trend:
             secondary = f"${usd:,.2f}/oz  {trend}"
         elif usd is not None:
             secondary = f"${usd:,.2f}/oz"
         elif trend:
             secondary = trend
         else:
-            secondary = "点击打开主窗口"
+            secondary = "双击打开主窗口"
         return primary, secondary, status, trend_state, source_state
 
     if usd is not None:
         primary = f"黄金 ${usd:,.2f}/oz"
-        return primary, trend or "点击打开主窗口", status, trend_state, source_state
+        return primary, trend or "双击打开主窗口", status, trend_state, source_state
 
     return "黄金 --", "等待行情数据", status, "neutral", source_state
 
@@ -3296,6 +3955,30 @@ def _default_floating_position(user32, width, height):
     return right - width - 16, bottom - height - 16
 
 
+def _snap_floating_position(x, y, user32=None):
+    settings = get_settings_snapshot()
+    if not settings.get("floating_price_snap_edge", True):
+        return x, y
+    try:
+        import ctypes
+
+        user32 = user32 or ctypes.windll.user32
+        width, height = _floating_window_size()
+        left, top, right, bottom = _get_work_area(user32)
+        distances = [
+            (abs(x - left), left + 8, y),
+            (abs((right - width) - x), right - width - 8, y),
+            (abs(y - top), x, top + 8),
+            (abs((bottom - height) - y), x, bottom - height - 8),
+        ]
+        distance, snap_x, snap_y = min(distances, key=lambda item: item[0])
+        if distance <= 28:
+            return _clamp_floating_position(snap_x, snap_y, user32)
+    except Exception:
+        pass
+    return x, y
+
+
 def _resolve_floating_position(user32, width, height):
     settings = get_settings_snapshot()
     x = settings.get("floating_price_x")
@@ -3308,20 +3991,23 @@ def _resolve_floating_position(user32, width, height):
 def _save_floating_position(x, y):
     try:
         x, y = _clamp_floating_position(x, y)
+        x, y = _snap_floating_position(x, y)
         snapshot = get_settings_snapshot()
         if (
             snapshot.get("floating_price_position_saved")
             and snapshot.get("floating_price_x") == x
             and snapshot.get("floating_price_y") == y
         ):
-            return
+            return x, y
         snapshot["floating_price_position_saved"] = True
         snapshot["floating_price_x"] = x
         snapshot["floating_price_y"] = y
         save_settings(snapshot)
         socketio.emit("settings_updated", public_settings_snapshot())
+        return x, y
     except Exception:
         logging.warning("桌面金价悬浮条位置保存失败", exc_info=True)
+    return x, y
 
 
 def _position_floating_window(hwnd, user32=None, x=None, y=None):
@@ -3395,6 +4081,7 @@ def _set_floating_window_visible(visible):
         if visible:
             if not _floating_positioned:
                 _position_floating_window(hwnd, user32)
+            _apply_floating_opacity(hwnd, user32)
             user32.ShowWindow(hwnd, SW_SHOWNOACTIVATE)
             _invalidate_floating_window()
         else:
@@ -3415,6 +4102,22 @@ def _set_floating_price_enabled(enabled):
         socketio.emit("settings_updated", public_settings_snapshot(snapshot))
     except Exception:
         logging.warning("桌面金价悬浮条显示状态更新失败", exc_info=True)
+
+
+def _apply_floating_opacity(hwnd=None, user32=None):
+    hwnd = hwnd or _floating_hwnd
+    if not hwnd or os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        user32 = user32 or ctypes.windll.user32
+        LWA_ALPHA = 0x00000002
+        opacity = get_settings_snapshot().get("floating_price_opacity", 94)
+        alpha = max(1, min(255, int(int(opacity) / 100 * 255)))
+        user32.SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA)
+    except Exception:
+        pass
 
 
 def _refresh_price_from_floating_menu():
@@ -3780,7 +4483,8 @@ def _floating_price_window_loop():
                     try:
                         rect = wintypes.RECT()
                         if user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-                            _save_floating_position(rect.left, rect.top)
+                            saved_x, saved_y = _save_floating_position(rect.left, rect.top)
+                            _position_floating_window(hwnd, user32, saved_x, saved_y)
                     except Exception:
                         pass
                 return 0
@@ -3842,7 +4546,7 @@ def _floating_price_window_loop():
             return
 
         _floating_hwnd = hwnd
-        user32.SetLayeredWindowAttributes(hwnd, 0, 238, LWA_ALPHA)
+        _apply_floating_opacity(hwnd, user32)
         if get_settings_snapshot().get("floating_price_enabled", True):
             _set_floating_window_visible(True)
         _floating_window_ready.set()

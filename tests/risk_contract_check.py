@@ -533,4 +533,92 @@ finally:
         risk_tmp.cleanup()
 
 
+original_settings = dict(app.app_settings)
+original_appdata_dir = app.APPDATA_DIR
+original_settings_path = app.SETTINGS_PATH
+original_thresholds_path = app.THRESHOLDS_PATH
+original_price_history_path = app.PRICE_HISTORY_PATH
+original_price_archive = list(app.price_archive)
+original_source_health = dict(app.source_health)
+original_alert_cooldown_state = dict(app.alert_cooldown_state)
+
+try:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        app.APPDATA_DIR = tmp_dir
+        app.SETTINGS_PATH = str(Path(tmp_dir) / "settings.json")
+        app.THRESHOLDS_PATH = str(Path(tmp_dir) / "thresholds.json")
+        app.PRICE_HISTORY_PATH = str(Path(tmp_dir) / "price_history.json")
+        app.price_archive = []
+        app.source_health = {}
+        app.alert_cooldown_state = {}
+        app.app_settings = app._normalize_settings({
+            "smtp_password": "smtp-secret",
+            "risk_assistant_depth": "deep",
+            "floating_price_opacity": "88",
+            "floating_price_display_mode": "usd_only",
+            "floating_price_snap_edge": False,
+            "alert_cooldown_minutes": "45",
+            "alert_quiet_start": "22:00",
+            "alert_quiet_end": "07:30",
+            "email_subject_template": "[{level}] {title}",
+            "email_body_template": "{message}\n{price_rmb}",
+        })
+        if app.app_settings["risk_assistant_depth"] != "deep":
+            raise SystemExit("risk assistant depth must be normalized and saved")
+        if app.app_settings["floating_price_opacity"] != 88:
+            raise SystemExit("floating price opacity must be normalized")
+        if app.app_settings["alert_quiet_start"] != "22:00" or app.app_settings["alert_quiet_end"] != "07:30":
+            raise SystemExit("alert quiet hours must be normalized")
+
+        app.record_source_health("测试行情源", "gold", False, "测试失败", time.monotonic())
+        health = app.get_source_health_state()
+        if not health.get("items") or health["items"][0].get("name") != "测试行情源":
+            raise SystemExit(f"source health must expose recorded source state, got: {health}")
+
+        point = {
+            "usd": 2350.12,
+            "rmb": 543.21,
+            "rate": 7.19,
+            "time": "12:00:00",
+            "timestamp": "2026-06-08T12:00:00",
+        }
+        app.add_price_history_entry(point, force_save=True)
+        if not Path(app.PRICE_HISTORY_PATH).exists():
+            raise SystemExit("price history must be persisted to disk")
+        history_state = app.build_price_history_state(limit=10)
+        if history_state.get("total") != 1 or history_state["stats"]["rmb"]["end"] != 543.21:
+            raise SystemExit(f"price history state must summarize saved points, got: {history_state}")
+        csv_text, count = app.build_price_history_csv()
+        if count != 1 or "usd_per_oz" not in csv_text or "2350.12" not in csv_text:
+            raise SystemExit(f"price history CSV export is invalid: {csv_text}")
+
+        diagnostics = app.build_diagnostics_report()
+        if "smtp-secret" in diagnostics:
+            raise SystemExit("diagnostics report must not include raw SMTP password")
+        if "smtp_password_masked" not in diagnostics:
+            raise SystemExit("diagnostics report must include masked SMTP password state")
+
+        client = authorized_client()
+        try:
+            client.emit("get_source_health")
+            assert_event(client.get_received(), "source_health_updated")
+            client.emit("get_price_history", {"limit": 10})
+            assert_event(client.get_received(), "price_history_updated")
+            client.emit("export_price_history", {})
+            export_event = wait_for_event(client, "price_history_export_ready")
+            if "2350.12" not in export_event.get("content", ""):
+                raise SystemExit(f"price history export event must include CSV content, got: {export_event}")
+        finally:
+            client.disconnect()
+finally:
+    app.app_settings = original_settings
+    app.APPDATA_DIR = original_appdata_dir
+    app.SETTINGS_PATH = original_settings_path
+    app.THRESHOLDS_PATH = original_thresholds_path
+    app.PRICE_HISTORY_PATH = original_price_history_path
+    app.price_archive = original_price_archive
+    app.source_health = original_source_health
+    app.alert_cooldown_state = original_alert_cooldown_state
+
+
 print("risk contract checks passed.")
