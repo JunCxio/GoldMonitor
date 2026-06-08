@@ -37,9 +37,9 @@ python -m venv .venv
 推送版本标签会触发自动发布流程：
 
 ```powershell
-git tag v1.1.0
+git tag v1.1.1
 git push origin main
-git push origin v1.1.0
+git push origin v1.1.1
 ```
 
 GitHub Actions 会生成 `GoldMonitorSetup.exe` 和 `version.json`，并上传到对应 Release。

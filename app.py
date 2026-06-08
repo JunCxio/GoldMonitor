@@ -32,7 +32,7 @@ app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 GOLD_URL = "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcven"
 FOREX_URL = "https://stooq.com/q/l/?s=usdcny&f=sd2t2ohlcven"
