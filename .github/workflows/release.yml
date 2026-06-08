@@ -90,9 +90,9 @@ jobs:
           @"
           GoldMonitor $version
 
-          - 安装包：GoldMonitorSetup.exe
-          - 更新清单：version.json
-          - SHA256：$sha256
+          - Installer: GoldMonitorSetup.exe
+          - Update manifest: version.json
+          - SHA256: $sha256
           "@ | Set-Content -Path .\release\release-notes.md -Encoding UTF8
 
       - name: Publish GitHub Release
