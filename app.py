@@ -32,8 +32,9 @@ app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.1.2"
 APP_USER_MODEL_ID = "GoldMonitor.App"
+DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 GOLD_URL = "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcven"
 FOREX_URL = "https://stooq.com/q/l/?s=usdcny&f=sd2t2ohlcven"
 SINA_GOLD_URL = "https://hq.sinajs.cn/rn=1&list=hf_XAU"
@@ -105,7 +106,7 @@ DEFAULT_SETTINGS = {
     "close_remembered": False,
     "alert_sound_enabled": True,
     "alert_dialog_enabled": True,
-    "update_manifest_url": "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json",
+    "update_manifest_url": DEFAULT_UPDATE_MANIFEST_URL,
     # 邮件通知
     "smtp_server": "",
     "smtp_port": "465",
@@ -239,7 +240,7 @@ def _normalize_settings(raw):
     data["close_remembered"] = bool(data.get("close_remembered"))
     data["alert_sound_enabled"] = bool(data.get("alert_sound_enabled"))
     data["alert_dialog_enabled"] = bool(data.get("alert_dialog_enabled"))
-    data["update_manifest_url"] = str(data.get("update_manifest_url") or "").strip()
+    data["update_manifest_url"] = str(data.get("update_manifest_url") or DEFAULT_UPDATE_MANIFEST_URL).strip()
     if data.get("close_behavior") not in VALID_CLOSE_BEHAVIORS:
         data["close_behavior"] = DEFAULT_SETTINGS["close_behavior"]
         data["close_remembered"] = False
@@ -3573,6 +3574,7 @@ def _floating_price_window_loop():
         WM_PAINT = 0x000F
         WM_LBUTTONDOWN = 0x0201
         WM_LBUTTONUP = 0x0202
+        WM_LBUTTONDBLCLK = 0x0203
         WM_MOUSEMOVE = 0x0200
         WM_RBUTTONUP = 0x0205
         WM_CONTEXTMENU = 0x007B
@@ -3599,6 +3601,7 @@ def _floating_price_window_loop():
         CLEARTYPE_QUALITY = 5
         DEFAULT_PITCH = 0
         FF_DONTCARE = 0
+        CS_DBLCLKS = 0x0008
 
         def rgb(red, green, blue):
             return red | (green << 8) | (blue << 16)
@@ -3780,8 +3783,14 @@ def _floating_price_window_loop():
                             _save_floating_position(rect.left, rect.top)
                     except Exception:
                         pass
-                else:
-                    show_main_window()
+                return 0
+            if msg == WM_LBUTTONDBLCLK:
+                _floating_drag_state = None
+                try:
+                    user32.ReleaseCapture()
+                except Exception:
+                    pass
+                show_main_window()
                 return 0
             if msg in (WM_RBUTTONUP, WM_CONTEXTMENU):
                 show_floating_context_menu(hwnd)
@@ -3799,6 +3808,7 @@ def _floating_price_window_loop():
         hinstance = kernel32.GetModuleHandleW(None)
         class_name = "GoldMonitorFloatingPriceWindow"
         wc = WNDCLASSW()
+        wc.style = CS_DBLCLKS
         wc.lpfnWndProc = wnd_proc
         wc.hInstance = hinstance
         wc.hCursor = user32.LoadCursorW(None, ctypes.c_void_p(32649))

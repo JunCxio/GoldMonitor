@@ -80,11 +80,18 @@ jobs:
           $installer = ".\release\GoldMonitorSetup.exe"
           $sha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
           $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/GoldMonitorSetup.exe"
+          $changelog = Get-Content -Path .\CHANGELOG.md -Raw -Encoding UTF8
+          $escapedVersion = [Regex]::Escape($version)
+          $match = [Regex]::Match($changelog, "(?ms)^##\s+$escapedVersion\s*\r?\n(?<notes>.*?)(?=^##\s+|\z)")
+          if (-not $match.Success -or -not $match.Groups["notes"].Value.Trim()) {
+            throw "CHANGELOG.md is missing release notes for version $version."
+          }
+          $releaseNotes = $match.Groups["notes"].Value.Trim()
           $manifest = [ordered]@{
             version = $version
             url = $downloadUrl
             sha256 = $sha256
-            notes = "GoldMonitor $version"
+            notes = $releaseNotes
           }
           $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
           $manifestJson = $manifest | ConvertTo-Json
@@ -92,9 +99,11 @@ jobs:
           $notes = @(
             "GoldMonitor $version",
             "",
-            "- Installer: GoldMonitorSetup.exe",
-            "- Update manifest: version.json",
-            "- SHA256: $sha256"
+            $releaseNotes,
+            "",
+            "Installer: GoldMonitorSetup.exe",
+            "Update manifest: version.json",
+            "SHA256: $sha256"
           ) -join "`n"
           [System.IO.File]::WriteAllText((Resolve-Path .\release).Path + "\release-notes.md", $notes, $utf8NoBom)
 

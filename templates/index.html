@@ -997,6 +997,9 @@ let pendingSettingsSave = false;
 let settingsSaveFailed = false;
 let settingsSaveTimer = null;
 let pendingUpdateInfo = null;
+let autoUpdateTimer = null;
+let lastAutoUpdateCheckAt = 0;
+const AUTO_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 let alertQueue = [];
 let activeAlert = null;
 let riskAnalysisRunning = false;
@@ -1318,6 +1321,7 @@ function applySettings(data) {
   }
   updateRiskProviderFields();
   updateRiskButtonState();
+  scheduleAutoUpdateCheck();
 }
 
 function renderDeepseekModelOptions(selected) {
@@ -1739,13 +1743,35 @@ function onUpdateBackdrop(event) {
 }
 
 function checkUpdate() {
+  requestUpdateCheck(false);
+}
+
+function requestUpdateCheck(silent) {
+  if (!appSettings.update_manifest_url) return;
   pendingUpdateInfo = null;
   document.getElementById('updateButton').classList.remove('update-ready');
   document.getElementById('installUpdateButton').disabled = true;
-  document.getElementById('updateStatus').textContent = '正在检查更新...';
-  document.getElementById('updateMeta').textContent = '';
-  document.getElementById('updateNotes').style.display = 'none';
+  if (!silent) {
+    document.getElementById('updateStatus').textContent = '正在检查更新...';
+    document.getElementById('updateMeta').textContent = '';
+    document.getElementById('updateNotes').style.display = 'none';
+  }
+  lastAutoUpdateCheckAt = Date.now();
   socket.emit('check_update');
+}
+
+function scheduleAutoUpdateCheck() {
+  if (autoUpdateTimer) {
+    clearTimeout(autoUpdateTimer);
+    autoUpdateTimer = null;
+  }
+  if (!appSettings.update_manifest_url) return;
+  const elapsed = Date.now() - lastAutoUpdateCheckAt;
+  const delay = lastAutoUpdateCheckAt ? Math.max(AUTO_UPDATE_CHECK_INTERVAL_MS - elapsed, 60 * 1000) : 2000;
+  autoUpdateTimer = setTimeout(() => {
+    requestUpdateCheck(true);
+    scheduleAutoUpdateCheck();
+  }, delay);
 }
 
 function applyUpdateStatus(data) {
