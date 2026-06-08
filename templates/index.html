@@ -217,6 +217,16 @@
   .risk-toolbar { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
   .risk-toolbar button { min-height:32px; padding:6px 10px; font-size:0.72rem; }
 
+  .source-comparison { margin-bottom:8px; padding:10px; border:1px solid var(--hairline); border-radius:10px; background:rgba(255,255,255,0.025); }
+  .source-comparison-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:7px; color:var(--text-dim); font-size:0.74rem; }
+  .source-comparison-badge { padding:3px 7px; border-radius:999px; border:1px solid var(--hairline); font-size:0.66rem; font-weight:800; color:var(--text-dim); }
+  .source-comparison-badge.normal { color:var(--down); background:rgba(76,175,132,0.1); border-color:rgba(76,175,132,0.25); }
+  .source-comparison-badge.anomaly { color:var(--up); background:rgba(224,85,106,0.12); border-color:rgba(224,85,106,0.3); }
+  .source-comparison-badge.insufficient { color:var(--warn); background:rgba(224,160,64,0.1); border-color:rgba(224,160,64,0.24); }
+  .source-comparison-list { display:grid; gap:5px; }
+  .source-comparison-item { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px; color:var(--text-dim); font-size:0.72rem; }
+  .source-comparison-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#dedef0; }
+  .source-comparison-price { font-family:"SF Mono","JetBrains Mono","Consolas",monospace; color:var(--text); }
   .source-health { margin-bottom:10px; padding:10px; border:1px solid var(--hairline); border-radius:10px; background:rgba(255,255,255,0.025); }
   .source-health-head { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--text-dim); font-size:0.74rem; margin-bottom:8px; }
   .source-health-list { display:grid; gap:5px; max-height:88px; overflow:auto; }
@@ -252,7 +262,10 @@
   /* ====== 左右分栏 ====== */
   .main-layout { flex:1 1 auto; min-height:0; display:grid; grid-template-columns:minmax(0, 1fr) var(--right-width); gap:clamp(10px, 0.9vw, 18px); align-items:stretch; overflow:hidden; }
   .main-left  { min-width:0; min-height:0; display:grid; grid-template-rows:auto minmax(0, 1fr); gap:clamp(10px, 0.9vw, 18px); overflow:hidden; }
-  .main-right { min-width:0; min-height:0; overflow:hidden; }
+  .main-right { min-width:0; min-height:0; overflow-x:hidden; overflow-y:auto; padding-right:4px; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:rgba(232,184,48,0.45) rgba(255,255,255,0.04); }
+  .main-right::-webkit-scrollbar { width:6px; }
+  .main-right::-webkit-scrollbar-track { background:rgba(255,255,255,0.04); border-radius:99px; }
+  .main-right::-webkit-scrollbar-thumb { background:rgba(232,184,48,0.38); border-radius:99px; }
 
   /* ====== Double-Bezel 卡片 ====== */
   .card-outer { background:linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.018)); border-radius:12px; padding:1px; border:1px solid var(--hairline); box-shadow:0 1px 0 var(--highlight),0 4px 24px rgba(0,0,0,0.28); }
@@ -287,7 +300,7 @@
   /* ====== 图表 ====== */
   .chart-card, .chart-card .card-inner { min-height:0; }
   .chart-card .card-inner { height:100%; display:flex; flex-direction:column; padding:clamp(12px, 1vw, 20px); }
-  .chart-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+  .chart-header { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px; }
   .chart-header h3 { font-size:0.85rem; color:var(--text-dim); font-weight:500; letter-spacing:0.03em; }
   .chart-toggles { display:flex; gap:3px; max-width:100%; overflow-x:auto; background:rgba(255,255,255,0.035); border:1px solid var(--control-border); border-radius:8px; padding:3px; scrollbar-width:none; }
   .chart-toggles::-webkit-scrollbar { display:none; }
@@ -300,65 +313,47 @@
   canvas { width:100% !important; }
 
   /* ====== 右侧面板 ====== */
-  .right-panel { height:100%; min-height:0; display:grid; grid-template-rows:minmax(260px, 1.35fr) minmax(110px, 0.65fr); gap:clamp(10px, 0.9vw, 18px); overflow:hidden; }
+  .right-panel { min-height:100%; display:flex; flex-direction:column; gap:clamp(10px, 0.9vw, 18px); overflow:visible; }
 
   /* ====== 阈值卡片 ====== */
-  .threshold-card { min-height:0; overflow:hidden; }
-  .threshold-card .card-inner { height:100%; overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:rgba(232,184,48,0.5) rgba(255,255,255,0.04); }
-  .threshold-card .card-inner::-webkit-scrollbar { width:6px; }
-  .threshold-card .card-inner::-webkit-scrollbar-track { background:rgba(255,255,255,0.04); border-radius:99px; }
-  .threshold-card .card-inner::-webkit-scrollbar-thumb { background:rgba(232,184,48,0.45); border-radius:99px; }
+  .threshold-card { flex:0 0 auto; min-height:0; overflow:visible; }
+  .threshold-card .card-inner { height:auto; overflow:visible; }
   .threshold-card .card-inner h3 { font-size:0.82rem; color:var(--text-dim); font-weight:500; margin-bottom:10px; letter-spacing:0.03em; }
-  .threshold-section { margin-bottom:9px; }
-  .threshold-section:last-child { margin-bottom:0; }
+  .alert-rules-list { display:grid; gap:6px; margin-bottom:10px; }
+  .alert-rule-item { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px; align-items:center; padding:9px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(255,255,255,0.022); }
+  .alert-rule-item.expanded { border-color:rgba(232,184,48,0.24); background:rgba(232,184,48,0.045); }
+  .alert-rule-main { min-width:0; }
+  .alert-rule-title { color:#f0f0f4; font-size:0.76rem; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .alert-rule-meta { margin-top:3px; color:var(--text-dim); font-size:0.68rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .alert-rule-actions { display:flex; gap:5px; align-items:center; justify-content:flex-end; flex-wrap:wrap; }
+  .alert-rule-state { min-width:38px; padding:3px 6px; border-radius:6px; text-align:center; font-size:0.64rem; font-weight:800; border:1px solid var(--hairline); color:var(--text-dim); }
+  .alert-rule-state.on { color:var(--down); background:rgba(76,175,132,0.1); border-color:rgba(76,175,132,0.25); }
+  .alert-rule-state.off { color:var(--text-dim); background:rgba(255,255,255,0.02); }
+  .alert-rule-edit { min-height:28px; padding:4px 8px; font-size:0.66rem; }
+  .alert-rule-editor { grid-column:1 / -1; display:grid; gap:8px; padding-top:8px; border-top:1px solid var(--hairline); }
+  .alert-rule-fields { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; }
+  .alert-rule-field { min-width:0; }
+  .alert-rule-field label, .alert-rule-mail span { display:block; color:var(--text-dim); font-size:0.68rem; margin-bottom:4px; }
+  .alert-rule-field input { width:100%; min-height:34px; padding:7px 9px; border-radius:8px; border:1px solid var(--control-border); background:rgba(255,255,255,0.035); color:var(--text); font-size:0.8rem; outline:none; font-variant-numeric:tabular-nums; }
+  .alert-rule-field input:focus { border-color:var(--control-border-strong); background:#121225; box-shadow:var(--focus-ring); }
+  .alert-rule-mail { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 9px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(0,0,0,0.12); }
+  .alert-rule-mail span { margin-bottom:0; }
+  .alert-rule-editor-actions { display:flex; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
+  .alert-rule-editor-actions button { min-height:32px; padding:6px 10px; font-size:0.7rem; }
   .section-label { font-size:0.68rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px; font-weight:600; }
-  .section-label.upper-label { color:var(--up); }
-  .section-label.lower-label { color:var(--down); }
-  .th-row { display:flex; gap:6px; margin-bottom:5px; align-items:center; }
-  .th-row:last-child { margin-bottom:0; }
-  .th-row .level-badge { font-size:0.65rem; min-width:36px; padding:2px 6px; border-radius:4px; text-align:center; font-weight:600; }
   .level-badge.warn { background:rgba(224,160,64,0.15); color:var(--warn); }
   .level-badge.crit { background:rgba(224,85,106,0.15); color:var(--up); }
-  .section-label.email-label { color:var(--gold); }
-  .section-label.volatility-label { color:var(--blue); }
-  .th-row input { flex:1; min-width:0; min-height:32px; padding:6px 8px; border-radius:8px; border:1px solid var(--control-border); background:rgba(255,255,255,0.035); color:var(--text); font-size:0.8rem; outline:none; transition:all 0.24s cubic-bezier(0.16,1,0.3,1); font-variant-numeric:tabular-nums; }
-  .th-row input:focus { border-color:var(--control-border-strong); background:#121225; box-shadow:var(--focus-ring); }
-  .th-row input::placeholder { color:rgba(255,255,255,0.12); }
-  .th-row input::-webkit-outer-spin-button,
-  .th-row input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
-  .th-row input[type=number] { -moz-appearance:textfield; }
-  .th-row button { min-height:32px; padding:6px 9px; font-size:0.72rem; }
   .btn-clear-sm { min-height:var(--control-height-sm); padding:5px 9px; font-size:0.66rem; }
   .btn-clear-sm:hover { color:var(--danger-text); border-color:var(--danger-border); background:var(--danger-bg); transform:translateY(-1px); }
   .btn-form { min-height:38px; padding:8px 16px; font-size:0.78rem; }
-  .threshold-info { font-size:0.68rem; color:var(--text-dim); margin-top:6px; padding-top:6px; border-top:1px solid var(--hairline); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .email-switches-section { margin-top:8px; padding-top:8px; border-top:1px solid var(--hairline); }
-  .email-sw-row { display:flex; gap:8px; align-items:center; margin-bottom:4px; }
-  .email-sw-row:last-child { margin-bottom:0; }
-  .email-sw-label { font-size:0.7rem; color:var(--text-dim); flex:1; }
   .level-badge.vol { background:rgba(100,160,220,0.15); color:var(--blue); }
   .switch-sm { transform:scale(0.75); transform-origin:right center; }
-  .threshold-info span { font-weight:600; }
-
-  /* ====== 波动率预警 ====== */
-  .volatility-section { margin-top:9px; padding-top:9px; border-top:1px solid var(--hairline); }
-  .vol-row { display:flex; gap:6px; align-items:center; margin-bottom:6px; }
-  .vol-row label { font-size:0.78rem; color:var(--text-dim); white-space:nowrap; }
-  .vol-row input { width:64px; min-height:32px; padding:6px 8px; border-radius:8px; border:1px solid var(--control-border); background:rgba(255,255,255,0.035); color:var(--text); font-size:0.8rem; outline:none; text-align:center; transition:all 0.24s ease; }
-  .vol-row input:focus { border-color:var(--control-border-strong); background:#121225; box-shadow:var(--focus-ring); }
-  .vol-row input::-webkit-outer-spin-button,
-  .vol-row input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
-  .vol-row input[type=number] { -moz-appearance:textfield; }
-  .vol-unit { color:var(--text-dim); font-size:0.78rem; }
-  .vol-status { font-size:0.72rem; margin-top:4px; }
-  .vol-status.on { color:var(--down); }
-  .vol-status.off { color:var(--text-dim); }
 
   /* ====== 警报日志 ====== */
-  .log-card { min-height:0; overflow:hidden; }
-  .log-card .card-inner { display:flex; flex-direction:column; height:100%; min-height:0; }
+  .log-card { flex:0 0 auto; min-height:0; overflow:visible; }
+  .log-card .card-inner { display:block; height:auto; min-height:0; }
   .log-card h3 { font-size:0.82rem; color:var(--text-dim); font-weight:500; margin-bottom:10px; letter-spacing:0.03em; }
-  .log-list { flex:1; overflow-y:auto; max-height:none; }
+  .log-list { overflow-y:auto; max-height:220px; }
   .log-item { padding:6px 0; font-size:0.76rem; border-bottom:1px solid var(--hairline); animation:fadeIn 0.4s cubic-bezier(0.16,1,0.3,1); }
   @keyframes fadeIn { from{opacity:0;transform:translateY(-8px)} to{opacity:1;transform:translateY(0)} }
   .log-item:last-child { border-bottom:none; }
@@ -383,7 +378,6 @@
     :root { --right-width: clamp(320px, 28vw, 380px); }
     .daily-stats { gap:14px; }
     .price-value { font-size:clamp(2.25rem, 3.7vw, 3.8rem); }
-    .th-row .level-badge { min-width:32px; padding-left:4px; padding-right:4px; }
   }
 
   @media (max-width:1100px) {
@@ -394,8 +388,8 @@
     .main-layout::-webkit-scrollbar-track { background:rgba(255,255,255,0.04); border-radius:99px; }
     .main-layout::-webkit-scrollbar-thumb { background:rgba(232,184,48,0.38); border-radius:99px; }
     .main-left { min-height:clamp(420px, 68vh, 560px); grid-template-rows:auto minmax(220px, 1fr); }
-    .main-right { width:100%; min-width:0; min-height:260px; overflow:visible; }
-    .right-panel { grid-template-columns:minmax(0, 1fr) minmax(260px, 0.8fr); grid-template-rows:minmax(260px, 1fr); align-items:stretch; min-height:260px; }
+    .main-right { width:100%; min-width:0; min-height:260px; overflow:visible; padding-right:0; }
+    .right-panel { min-height:260px; }
     .log-card .card-inner { min-height:100%; }
     .log-list { max-height:none; }
     .price-value { font-size:2rem; }
@@ -408,7 +402,7 @@
 
   @media (max-width:900px) {
     .main-right { min-height:390px; }
-    .right-panel { grid-template-columns:1fr; grid-template-rows:auto minmax(150px, auto); min-height:0; overflow:visible; }
+    .right-panel { min-height:0; overflow:visible; }
     .threshold-card { overflow:visible; }
     .threshold-card .card-inner { height:auto; overflow:visible; }
     .source-health-list { max-height:108px; }
@@ -418,8 +412,6 @@
   @media (max-width:720px) {
     .main-layout { gap:8px; }
     .main-left { gap:8px; }
-    .right-panel { grid-template-columns:1fr; }
-    .threshold-card { display:none; }
     .log-list { max-height:none; }
     .risk-structured { grid-template-columns:1fr; }
     .daily-stats { display:none; }
@@ -440,8 +432,6 @@
     .daily-stats { gap:8px; }
     .daily-stat .ds-label { font-size:0.62rem; }
     .daily-stat .ds-value { font-size:0.78rem; }
-    .th-row { flex-wrap:wrap; }
-    .th-row button { font-size:0.7rem; padding:6px 8px; }
     .header { padding:2px 0 8px; }
     .header h1 { font-size:1rem; }
     .header-actions { gap:6px; }
@@ -449,7 +439,9 @@
     .icon-btn svg { width:16px; height:16px; }
     .status { display:none; }
     .chart-header { margin-bottom:8px; }
-    .vol-row { flex-wrap:wrap; }
+    .alert-rule-item { grid-template-columns:1fr; }
+    .alert-rule-actions { justify-content:flex-start; }
+    .alert-rule-fields { grid-template-columns:1fr; }
     .settings-backdrop { padding:10px; }
     .settings-modal { max-height:calc(100vh - 20px); }
     .settings-tabs { padding:10px 14px 0; }
@@ -548,6 +540,10 @@
             <h3 id="chartTitle">价格走势 · RMB/克</h3>
             <div class="chart-toggles">
               <button class="chart-tg active" data-period="realtime" onclick="switchChartPeriod('realtime')">实时</button>
+              <button class="chart-tg" data-period="1h" onclick="switchChartPeriod('1h')">1小时</button>
+              <button class="chart-tg" data-period="4h" onclick="switchChartPeriod('4h')">4小时</button>
+              <button class="chart-tg" data-period="day" onclick="switchChartPeriod('day')">日内</button>
+              <button class="chart-tg" data-period="7d" onclick="switchChartPeriod('7d')">7日</button>
               <button class="chart-tg" data-period="5min" onclick="switchChartPeriod('5min')">5分K线</button>
             </div>
           </div>
@@ -564,84 +560,20 @@
         <div class="card-outer threshold-card">
           <div class="card-inner">
             <h3>预警阈值 <span class="threshold-unit" id="thresholdUnit">(RMB/克)</span></h3>
-
-            <!-- 上涨阈值 -->
-            <div class="threshold-section">
-              <div class="section-label upper-label">上涨预警</div>
-              <div class="th-row">
-                <span class="level-badge warn">关注</span>
-                <input type="number" id="upperWarn" step="0.01" placeholder="关注价位">
-                <button class="btn-set" onclick="setThreshold('upper_warning')">设置</button>
-                <button class="btn-clear-sm" onclick="clearThreshold('upper_warning')">清除</button>
-              </div>
-              <div class="th-row">
-                <span class="level-badge crit">警告</span>
-                <input type="number" id="upperCrit" step="0.01" placeholder="警告价位">
-                <button class="btn-set" onclick="setThreshold('upper_critical')">设置</button>
-                <button class="btn-clear-sm" onclick="clearThreshold('upper_critical')">清除</button>
-              </div>
-            </div>
-
-            <!-- 下跌阈值 -->
-            <div class="threshold-section">
-              <div class="section-label lower-label">下跌预警</div>
-              <div class="th-row">
-                <span class="level-badge warn">关注</span>
-                <input type="number" id="lowerWarn" step="0.01" placeholder="关注价位">
-                <button class="btn-set" onclick="setThreshold('lower_warning')">设置</button>
-                <button class="btn-clear-sm" onclick="clearThreshold('lower_warning')">清除</button>
-              </div>
-              <div class="th-row">
-                <span class="level-badge crit">警告</span>
-                <input type="number" id="lowerCrit" step="0.01" placeholder="警告价位">
-                <button class="btn-set" onclick="setThreshold('lower_critical')">设置</button>
-                <button class="btn-clear-sm" onclick="clearThreshold('lower_critical')">清除</button>
-              </div>
-            </div>
-
-            <div class="threshold-info" id="thresholdInfo">尚未设置阈值</div>
-
-            <!-- 邮件通知开关 -->
-            <div class="email-switches-section">
-              <div class="section-label email-label">邮件通知</div>
-              <div class="email-sw-row">
-                <span class="level-badge warn">关注</span>
-                <span class="email-sw-label">触发时发送邮件</span>
-                <label class="switch switch-sm"><input type="checkbox" id="emailWarningEnabled" checked onchange="updateEmailSwitch('email_warning_enabled', this.checked)"><span class="slider"></span></label>
-              </div>
-              <div class="email-sw-row">
-                <span class="level-badge crit">警告</span>
-                <span class="email-sw-label">触发时发送邮件</span>
-                <label class="switch switch-sm"><input type="checkbox" id="emailCriticalEnabled" checked onchange="updateEmailSwitch('email_critical_enabled', this.checked)"><span class="slider"></span></label>
-              </div>
-              <div class="email-sw-row">
-                <span class="level-badge vol">波动</span>
-                <span class="email-sw-label">触发时发送邮件</span>
-                <label class="switch switch-sm"><input type="checkbox" id="emailVolatilityEnabled" checked onchange="updateEmailSwitch('email_volatility_enabled', this.checked)"><span class="slider"></span></label>
-              </div>
-            </div>
-
-            <!-- 波动率预警 -->
-            <div class="volatility-section">
-              <div class="section-label volatility-label">波动预警</div>
-              <div class="vol-row">
-                <label>波动</label>
-                <input type="number" id="volPct" step="0.1" placeholder="2.0" value="2.0"> <span class="vol-unit">%</span>
-                <label>内</label>
-                <input type="number" id="volMin" step="1" placeholder="10" value="10"> <span class="vol-unit">分钟</span>
-              </div>
-              <div class="vol-row">
-                <button class="btn-set btn-form" onclick="setVolatility()">开启</button>
-                <button class="btn-clear btn-form" onclick="clearVolatility()">关闭</button>
-                <span class="vol-status off" id="volStatus">已关闭</span>
-              </div>
-            </div>
+            <div class="alert-rules-list" id="alertRulesList"></div>
           </div>
         </div>
 
         <div class="card-outer log-card">
           <div class="card-inner">
             <h3>数据状态</h3>
+            <div class="source-comparison" id="sourceComparison">
+              <div class="source-comparison-head">
+                <span>行情源价差</span>
+                <span class="source-comparison-badge insufficient">等待</span>
+              </div>
+              <div class="source-comparison-list"></div>
+            </div>
             <div class="source-health" id="sourceHealth">
               <div class="source-health-head">
                 <span>等待数据源检查</span>
@@ -703,6 +635,17 @@
             <option value="rmb_usd">人民币 + 美元</option>
             <option value="rmb_only">仅人民币</option>
             <option value="usd_only">仅美元</option>
+          </select>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">悬浮条尺寸</div>
+            <div class="setting-desc">极简适合长期贴边显示，标准模式保留更多状态信息。</div>
+          </div>
+          <select class="settings-select" id="setFloatingPreset">
+            <option value="minimal">极简</option>
+            <option value="compact">紧凑</option>
+            <option value="standard">标准</option>
           </select>
         </div>
         <div class="setting-row">
@@ -1188,19 +1131,36 @@ let currentMode = 'rmb';
 let chartPeriod = 'realtime';
 let chart = null;
 const MAX_POINTS = 60;
+const CHART_PERIODS = {
+  realtime: { label: '价格走势', minutes: null, limit: 60, live: true },
+  '1h': { label: '1小时走势', minutes: 60, limit: 360 },
+  '4h': { label: '4小时走势', minutes: 240, limit: 720 },
+  day: { label: '日内走势', minutes: 1440, limit: 1440 },
+  '7d': { label: '7日走势', minutes: 10080, limit: 2000 },
+  '5min': { label: '5分钟K线', minutes: null, limit: 96, kline: true },
+};
+const ALERT_RULE_DEFS = [
+  { type: 'upper_warning', title: '上涨关注', direction: '高于或等于', emailKey: 'email_warning_enabled', badgeClass: 'warn' },
+  { type: 'upper_critical', title: '上涨警告', direction: '高于或等于', emailKey: 'email_critical_enabled', badgeClass: 'crit' },
+  { type: 'lower_warning', title: '下跌关注', direction: '低于或等于', emailKey: 'email_warning_enabled', badgeClass: 'warn' },
+  { type: 'lower_critical', title: '下跌警告', direction: '低于或等于', emailKey: 'email_critical_enabled', badgeClass: 'crit' },
+];
 
 let historyUsd = { labels: [], prices: [] };
 let historyRmb = { labels: [], prices: [] };
 let klines5min = [];
+let chartHistoryState = { period: null, items: [] };
 let latestData = null;
 let allThresholds = {};
 let volConfig = { percent: null, minutes: 10, enabled: false };
+let activeAlertRule = null;
 let appSettings = {
   startup_enabled: false,
   startup_to_tray: true,
   floating_price_enabled: true,
   floating_price_opacity: 94,
   floating_price_display_mode: 'rmb_usd',
+  floating_price_preset: 'compact',
   floating_price_snap_edge: true,
   close_behavior: 'ask',
   close_remembered: false,
@@ -1208,6 +1168,9 @@ let appSettings = {
   alert_dialog_enabled: true,
   update_manifest_url: '',
   update_auto_check_interval_hours: 6,
+  email_warning_enabled: true,
+  email_critical_enabled: true,
+  email_volatility_enabled: true,
   alert_cooldown_minutes: 30,
   alert_quiet_start: '',
   alert_quiet_end: '',
@@ -1247,6 +1210,41 @@ let pendingRiskForceTrigger = null;
 let deepseekModelOptions = ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'];
 let latestPriceHistoryState = { items: [], stats: {}, total: 0 };
 let latestSourceHealthState = { items: [], summary: {} };
+let latestSourceComparisonState = { items: [], summary: {}, status: 'insufficient' };
+
+function chartUnitLabel() {
+  return currentMode === 'usd' ? 'USD/oz' : 'RMB/克';
+}
+
+function updateChartTitle() {
+  const config = CHART_PERIODS[chartPeriod] || CHART_PERIODS.realtime;
+  document.getElementById('chartTitle').textContent = config.label + ' · ' + chartUnitLabel();
+}
+
+function requestChartHistory(period) {
+  const config = CHART_PERIODS[period];
+  if (!config || config.live || config.kline) return;
+  socket.emit('get_price_history', {
+    scope: 'chart',
+    period,
+    minutes: config.minutes,
+    limit: config.limit,
+  });
+}
+
+function chartHistoryLabel(item) {
+  const raw = item.timestamp || item.time || '';
+  if (!raw) return '--';
+  const date = new Date(raw);
+  if (!Number.isNaN(date.getTime())) {
+    const hhmm = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+    if (chartPeriod === '7d') {
+      return (date.getMonth() + 1) + '/' + date.getDate() + ' ' + hhmm;
+    }
+    return hhmm;
+  }
+  return String(raw).replace('T', ' ').slice(0, chartPeriod === '7d' ? 16 : 8);
+}
 
 // ========== 模式切换 ==========
 function switchMode(mode) {
@@ -1255,7 +1253,7 @@ function switchMode(mode) {
   document.querySelector(`.mode-btn[data-mode="${mode}"]`).classList.add('active');
   const isUsd = mode === 'usd';
   document.getElementById('priceLabel').textContent = isUsd ? 'XAU/USD · 美元/盎司' : 'XAU/CNY · 人民币/克';
-  document.getElementById('chartTitle').textContent = (chartPeriod==='realtime' ? '价格走势' : '5分钟K线') + (isUsd ? ' · USD/oz' : ' · RMB/克');
+  updateChartTitle();
   document.getElementById('thresholdUnit').textContent = isUsd ? '(USD/oz)' : '(RMB/克)';
   if (latestData) { updatePriceDisplay(latestData); updateDailyStats(latestData); }
   switchChartData();
@@ -1264,11 +1262,13 @@ function switchMode(mode) {
 
 // ========== 图表周期切换 ==========
 function switchChartPeriod(period) {
+  if (!CHART_PERIODS[period]) period = 'realtime';
   chartPeriod = period;
   document.querySelectorAll('.chart-tg').forEach(b => b.classList.remove('active'));
-  document.querySelector(`.chart-tg[data-period="${period}"]`).classList.add('active');
-  const isUsd = currentMode === 'usd';
-  document.getElementById('chartTitle').textContent = (period==='realtime' ? '价格走势' : '5分钟K线') + (isUsd ? ' · USD/oz' : ' · RMB/克');
+  const active = document.querySelector(`.chart-tg[data-period="${period}"]`);
+  if (active) active.classList.add('active');
+  updateChartTitle();
+  requestChartHistory(period);
   switchChartData();
 }
 
@@ -1277,9 +1277,21 @@ function switchChartData() {
   const isUsd = currentMode === 'usd';
   let labels, prices;
 
-  if (chartPeriod === '5min' && klines5min.length) {
+  if (chartPeriod === '5min') {
     labels = klines5min.map(k => k.time);
-    prices = klines5min.map(k => ({ o: k.open, h: k.high, l: k.low, c: k.close }));
+    prices = klines5min.map(k => ({ y: k.close, o: k.open, h: k.high, l: k.low, c: k.close }));
+  } else if (chartPeriod !== 'realtime') {
+    const items = chartHistoryState.period === chartPeriod && Array.isArray(chartHistoryState.items)
+      ? chartHistoryState.items
+      : [];
+    const field = isUsd ? 'usd' : 'rmb';
+    labels = items.map(chartHistoryLabel);
+    prices = items.map(item => item[field]).filter(value => value != null);
+    if (prices.length !== labels.length) {
+      const filtered = items.filter(item => item[field] != null);
+      labels = filtered.map(chartHistoryLabel);
+      prices = filtered.map(item => item[field]);
+    }
   } else {
     const hist = isUsd ? historyUsd : historyRmb;
     labels = [...hist.labels]; prices = [...hist.prices];
@@ -1349,6 +1361,7 @@ socket.on('init_state', data => {
   volConfig = data.volatility_config || { percent: null, minutes: 10, enabled: false };
   if (data.settings) applySettings(data.settings);
   if (data.risk_analysis_history) applyRiskHistory(data.risk_analysis_history);
+  if (data.source_comparison) renderSourceComparison(data.source_comparison);
   if (data.source_health) renderSourceHealth(data.source_health);
   if (data.price_history_state) applyPriceHistory(data.price_history_state);
   updateVolUI();
@@ -1375,6 +1388,7 @@ socket.on('price_update', data => {
 
   updatePriceDisplay(data);
   updateDailyStats(data);
+  if (data.source_comparison) renderSourceComparison(data.source_comparison);
   if (chart && chartPeriod === 'realtime') {
     const hist = currentMode === 'usd' ? historyUsd : historyRmb;
     chart.data.labels = [...hist.labels];
@@ -1567,6 +1581,7 @@ function downloadText(filename, content, mimeType) {
 
 function renderSourceHealth(data) {
   latestSourceHealthState = data || { items: [], summary: {} };
+  if (data && data.comparison) renderSourceComparison(data.comparison);
   const box = document.getElementById('sourceHealth');
   if (!box) return;
   const items = Array.isArray(data.items) ? data.items : [];
@@ -1593,11 +1608,49 @@ function renderSourceHealth(data) {
   }).join('');
 }
 
+function renderSourceComparison(data) {
+  latestSourceComparisonState = Object.assign({ items: [], summary: {}, status: 'insufficient' }, data || {});
+  const box = document.getElementById('sourceComparison');
+  if (!box) return;
+  const head = box.querySelector('.source-comparison-head span:first-child');
+  const badge = box.querySelector('.source-comparison-badge');
+  const list = box.querySelector('.source-comparison-list');
+  const summary = latestSourceComparisonState.summary || {};
+  const status = latestSourceComparisonState.status || 'insufficient';
+  const statusText = status === 'anomaly' ? '异常' : status === 'normal' ? '正常' : '不足';
+  head.textContent = summary.spread_pct == null
+    ? '行情源价差'
+    : '行情源价差 ' + Number(summary.spread_pct).toFixed(2) + '%';
+  badge.textContent = statusText;
+  badge.className = 'source-comparison-badge ' + status;
+  const items = Array.isArray(latestSourceComparisonState.items)
+    ? latestSourceComparisonState.items.filter(item => item && item.usd != null).slice(0, 4)
+    : [];
+  if (!items.length) {
+    list.innerHTML = '<div class="source-comparison-item"><span class="source-comparison-name">等待行情源样本</span><span class="source-comparison-price">--</span></div>';
+    return;
+  }
+  list.innerHTML = items.map(item => {
+    const state = item.cached ? '缓存' : item.stale ? '过期' : item.available ? '可比' : '待确认';
+    return [
+      '<div class="source-comparison-item" title="' + escapeHtml((item.name || '') + ' · ' + state) + '">',
+      '<span class="source-comparison-name">' + escapeHtml(item.name || '--') + ' · ' + escapeHtml(state) + '</span>',
+      '<span class="source-comparison-price">$' + Number(item.usd).toFixed(2) + '</span>',
+      '</div>',
+    ].join('');
+  }).join('');
+}
+
 function refreshSourceHealth() {
   socket.emit('get_source_health');
 }
 
 function applyPriceHistory(data) {
+  if (data && data.scope === 'chart') {
+    chartHistoryState = Object.assign({ period: data.period || chartPeriod, items: [] }, data);
+    if (chartHistoryState.period === chartPeriod) switchChartData();
+    return;
+  }
   latestPriceHistoryState = Object.assign({ items: [], stats: {}, total: 0 }, data || {});
   renderHistory(latestPriceHistoryState);
 }
@@ -1701,6 +1754,7 @@ function applySettings(data) {
   document.getElementById('setStartupTray').checked = !!appSettings.startup_to_tray;
   document.getElementById('setFloatingPrice').checked = appSettings.floating_price_enabled !== false;
   document.getElementById('setFloatingDisplayMode').value = appSettings.floating_price_display_mode || 'rmb_usd';
+  document.getElementById('setFloatingPreset').value = appSettings.floating_price_preset || 'compact';
   document.getElementById('setFloatingOpacity').value = appSettings.floating_price_opacity || 94;
   document.getElementById('setFloatingSnapEdge').checked = appSettings.floating_price_snap_edge !== false;
   document.getElementById('setCloseBehavior').value = closeBehavior;
@@ -1715,9 +1769,6 @@ function applySettings(data) {
   document.getElementById('setSmtpSender').value = appSettings.smtp_sender || '';
   document.getElementById('setSmtpPassword').value = appSettings.smtp_password || '';
   document.getElementById('setSmtpRecipient').value = appSettings.smtp_recipient || '';
-  document.getElementById('emailWarningEnabled').checked = appSettings.email_warning_enabled !== false;
-  document.getElementById('emailCriticalEnabled').checked = appSettings.email_critical_enabled !== false;
-  document.getElementById('emailVolatilityEnabled').checked = appSettings.email_volatility_enabled !== false;
   document.getElementById('setAlertCooldownMinutes').value = appSettings.alert_cooldown_minutes ?? 30;
   document.getElementById('setAlertQuietStart').value = appSettings.alert_quiet_start || '';
   document.getElementById('setAlertQuietEnd').value = appSettings.alert_quiet_end || '';
@@ -1759,6 +1810,7 @@ function applySettings(data) {
   }
   updateRiskProviderFields();
   updateRiskButtonState();
+  renderAlertRules();
   scheduleAutoUpdateCheck();
 }
 
@@ -1830,6 +1882,7 @@ function saveSettings() {
     startup_to_tray: document.getElementById('setStartupTray').checked,
     floating_price_enabled: document.getElementById('setFloatingPrice').checked,
     floating_price_display_mode: document.getElementById('setFloatingDisplayMode').value,
+    floating_price_preset: document.getElementById('setFloatingPreset').value,
     floating_price_opacity: document.getElementById('setFloatingOpacity').value.trim(),
     floating_price_snap_edge: document.getElementById('setFloatingSnapEdge').checked,
     close_behavior: closeBehavior,
@@ -1845,9 +1898,9 @@ function saveSettings() {
     smtp_sender: document.getElementById('setSmtpSender').value.trim(),
     smtp_password: document.getElementById('setSmtpPassword').value,
     smtp_recipient: document.getElementById('setSmtpRecipient').value.trim(),
-    email_warning_enabled: document.getElementById('emailWarningEnabled').checked,
-    email_critical_enabled: document.getElementById('emailCriticalEnabled').checked,
-    email_volatility_enabled: document.getElementById('emailVolatilityEnabled').checked,
+    email_warning_enabled: appSettings.email_warning_enabled !== false,
+    email_critical_enabled: appSettings.email_critical_enabled !== false,
+    email_volatility_enabled: appSettings.email_volatility_enabled !== false,
     alert_cooldown_minutes: document.getElementById('setAlertCooldownMinutes').value.trim(),
     alert_quiet_start: document.getElementById('setAlertQuietStart').value,
     alert_quiet_end: document.getElementById('setAlertQuietEnd').value,
@@ -2549,7 +2602,12 @@ function initChart() {
               const sym = currentMode === 'usd'?'$':'¥';
               const raw = ctx.raw;
               if (typeof raw === 'object' && raw !== null && 'o' in raw) {
-                return [' 开: ' + sym + raw.o.toFixed(2), ' 高: ' + sym + raw.h.toFixed(2), ' 低: ' + sym + raw.l.toFixed(2), ' 收: ' + sym + raw.c.toFixed(2)];
+                return [
+                  ' 开: ' + sym + Number(raw.o).toFixed(2),
+                  ' 高: ' + sym + Number(raw.h).toFixed(2),
+                  ' 低: ' + sym + Number(raw.l).toFixed(2),
+                  ' 收: ' + sym + Number(raw.c).toFixed(2),
+                ];
               }
               return '  ' + sym + Number(raw).toLocaleString('en-US',{minimumFractionDigits:2});
             },
@@ -2565,128 +2623,192 @@ function initChart() {
 }
 
 // ========== 阈值 ==========
-function updateThresholdInputs() {
-  const m = currentMode;
-  document.getElementById('upperWarn').value = allThresholds['upper_warning_'+m] != null ? allThresholds['upper_warning_'+m] : '';
-  document.getElementById('upperCrit').value = allThresholds['upper_critical_'+m] != null ? allThresholds['upper_critical_'+m] : '';
-  document.getElementById('lowerWarn').value = allThresholds['lower_warning_'+m] != null ? allThresholds['lower_warning_'+m] : '';
-  document.getElementById('lowerCrit').value = allThresholds['lower_critical_'+m] != null ? allThresholds['lower_critical_'+m] : '';
-  updateThresholdInfo();
+function formatAlertRuleValue(value, unit) {
+  if (value == null || value === '') return '未设置';
+  return unit + Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function updateThresholdInfo() {
-  const m = currentMode, unit = m === 'usd' ? '$' : '¥';
-  const el = document.getElementById('thresholdInfo');
-  const p = [];
-  const keys = ['upper_warning_'+m,'upper_critical_'+m,'lower_warning_'+m,'lower_critical_'+m];
-  const labels = ['上涨关注','上涨警告','下跌关注','下跌警告'];
-  keys.forEach((k,i) => {
-    if (allThresholds[k] != null) p.push(labels[i]+': '+unit+Number(allThresholds[k]).toLocaleString('en-US',{minimumFractionDigits:2}));
+function formatAlertEmailState(emailKey) {
+  return appSettings[emailKey] === false ? '邮件关闭' : '邮件开启';
+}
+
+function setActiveAlertRule(type) {
+  activeAlertRule = activeAlertRule === type ? null : type;
+  renderAlertRules();
+}
+
+function buildThresholdRuleEditor(rule, value) {
+  const inputValue = value == null ? '' : String(value);
+  const mailChecked = appSettings[rule.emailKey] !== false ? ' checked' : '';
+  return [
+    '<div class="alert-rule-editor">',
+    '<div class="alert-rule-fields">',
+    '<div class="alert-rule-field">',
+    '<label for="alertRuleValue_' + escapeHtml(rule.type) + '">触发价位</label>',
+    '<input id="alertRuleValue_' + escapeHtml(rule.type) + '" type="number" step="0.01" value="' + escapeHtml(inputValue) + '" placeholder="输入价位">',
+    '</div>',
+    '<div class="alert-rule-mail">',
+    '<span>触发时发送邮件</span>',
+    '<label class="switch switch-sm"><input type="checkbox" id="alertRuleEmail_' + escapeHtml(rule.type) + '"' + mailChecked + '><span class="slider"></span></label>',
+    '</div>',
+    '</div>',
+    '<div class="alert-rule-editor-actions">',
+    '<button class="btn-set" type="button" onclick="saveThresholdRule(\'' + rule.type + '\')">保存</button>',
+    '<button class="btn-clear-sm" type="button" onclick="clearThreshold(\'' + rule.type + '\')">关闭</button>',
+    '<button class="btn-clear-sm" type="button" onclick="setActiveAlertRule(\'' + rule.type + '\')">取消</button>',
+    '</div>',
+    '</div>',
+  ].join('');
+}
+
+function buildVolatilityRuleEditor() {
+  const pct = volConfig.percent == null ? '2.0' : String(volConfig.percent);
+  const minutes = volConfig.minutes || 10;
+  const mailChecked = appSettings.email_volatility_enabled !== false ? ' checked' : '';
+  return [
+    '<div class="alert-rule-editor">',
+    '<div class="alert-rule-fields">',
+    '<div class="alert-rule-field">',
+    '<label for="alertRuleVolPct">波动幅度</label>',
+    '<input id="alertRuleVolPct" type="number" step="0.1" value="' + escapeHtml(pct) + '" placeholder="2.0">',
+    '</div>',
+    '<div class="alert-rule-field">',
+    '<label for="alertRuleVolMin">观察分钟</label>',
+    '<input id="alertRuleVolMin" type="number" step="1" value="' + escapeHtml(minutes) + '" placeholder="10">',
+    '</div>',
+    '</div>',
+    '<div class="alert-rule-mail">',
+    '<span>触发时发送邮件</span>',
+    '<label class="switch switch-sm"><input type="checkbox" id="alertRuleEmail_volatility"' + mailChecked + '><span class="slider"></span></label>',
+    '</div>',
+    '<div class="alert-rule-editor-actions">',
+    '<button class="btn-set" type="button" onclick="saveVolatilityRule()">保存</button>',
+    '<button class="btn-clear-sm" type="button" onclick="clearVolatility()">关闭</button>',
+    '<button class="btn-clear-sm" type="button" onclick="setActiveAlertRule(\'volatility\')">取消</button>',
+    '</div>',
+    '</div>',
+  ].join('');
+}
+
+function renderAlertRules() {
+  const box = document.getElementById('alertRulesList');
+  if (!box) return;
+  const unit = currentMode === 'usd' ? '$' : '¥';
+  const modeLabel = currentMode === 'usd' ? 'USD/oz' : 'RMB/克';
+  const ruleItems = ALERT_RULE_DEFS.map(rule => {
+    const key = rule.type + '_' + currentMode;
+    const value = allThresholds[key];
+    const enabled = value != null;
+    return {
+      badgeClass: rule.badgeClass,
+      title: rule.title,
+      meta: rule.direction + ' ' + formatAlertRuleValue(value, unit) + ' · ' + modeLabel + ' · ' + formatAlertEmailState(rule.emailKey),
+      state: enabled ? '已启用' : '未设置',
+      enabled,
+      type: rule.type,
+      editor: activeAlertRule === rule.type ? buildThresholdRuleEditor(rule, value) : '',
+      edit: "setActiveAlertRule('" + rule.type + "')",
+      clear: "clearThreshold('" + rule.type + "')",
+    };
   });
-  el.innerHTML = p.length ? p.join(' | ') : '尚未设置阈值';
+  const volEnabled = !!(volConfig.enabled && volConfig.percent != null);
+  ruleItems.push({
+    badgeClass: 'vol',
+    title: '波动预警',
+    meta: (volEnabled ? volConfig.minutes + '分钟内波动达到 ' + volConfig.percent + '%' : '未启用') + ' · ' + formatAlertEmailState('email_volatility_enabled'),
+    state: volEnabled ? '已启用' : '已关闭',
+    enabled: volEnabled,
+    type: 'volatility',
+    editor: activeAlertRule === 'volatility' ? buildVolatilityRuleEditor() : '',
+    edit: "setActiveAlertRule('volatility')",
+    clear: "clearVolatility()",
+  });
+  box.innerHTML = ruleItems.map(rule => [
+    '<div class="alert-rule-item' + (activeAlertRule === rule.type ? ' expanded' : '') + '">',
+    '<div class="alert-rule-main">',
+    '<div class="alert-rule-title"><span class="level-badge ' + escapeHtml(rule.badgeClass) + '">' + escapeHtml(rule.title.replace('上涨', '').replace('下跌', '').replace('预警', '')) + '</span> ' + escapeHtml(rule.title) + '</div>',
+    '<div class="alert-rule-meta">' + escapeHtml(rule.meta) + '</div>',
+    '</div>',
+    '<div class="alert-rule-actions">',
+    '<span class="alert-rule-state ' + (rule.enabled ? 'on' : 'off') + '">' + escapeHtml(rule.state) + '</span>',
+    '<button class="btn-clear-sm alert-rule-edit" type="button" onclick="' + rule.edit + '">编辑</button>',
+    '<button class="btn-clear-sm alert-rule-edit" type="button" onclick="' + rule.clear + '">关闭</button>',
+    '</div>',
+    rule.editor,
+    '</div>',
+  ].join('')).join('');
+}
+
+function updateThresholdInputs() {
+  renderAlertRules();
 }
 
 function setThreshold(type) {
-  const inputMap = {
-    upper_warning: 'upperWarn', upper_critical: 'upperCrit',
-    lower_warning: 'lowerWarn', lower_critical: 'lowerCrit',
-  };
-  const input = document.getElementById(inputMap[type]);
-  const val = input.value.trim();
+  const input = document.getElementById('alertRuleValue_' + type);
+  const val = input ? input.value.trim() : '';
+  socket.emit('set_threshold', { mode: currentMode, type, value: val === '' ? null : val });
+}
+
+function saveThresholdRule(type) {
+  const rule = ALERT_RULE_DEFS.find(item => item.type === type);
+  if (!rule) return;
+  const input = document.getElementById('alertRuleValue_' + type);
+  const emailInput = document.getElementById('alertRuleEmail_' + type);
+  const val = input ? input.value.trim() : '';
+  if (emailInput) updateEmailSwitch(rule.emailKey, emailInput.checked);
   socket.emit('set_threshold', { mode: currentMode, type, value: val === '' ? null : val });
 }
 
 function clearThreshold(type) {
-  // 清除对应输入框的值
-  const inputMap = {
-    upper_warning: 'upperWarn', upper_critical: 'upperCrit',
-    lower_warning: 'lowerWarn', lower_critical: 'lowerCrit',
-  };
-  const input = document.getElementById(inputMap[type]);
-  if (input) input.value = '';
   socket.emit('clear_threshold', { mode: currentMode, type });
 }
 
 function updateEmailSwitch(key, value) {
-  // 直接发送更新到后台，无需整个设置保存流程
   const update = {};
   update[key] = value;
   socket.emit('update_settings', update);
-  // 同步本地状态
   appSettings[key] = value;
+  renderAlertRules();
 }
 
 // ========== 波动率 ==========
 function setVolatility() {
-  const pctEl = document.getElementById('volPct');
-  const minEl = document.getElementById('volMin');
-  const pct = pctEl.value || '2.0';
-  const min = minEl.value || '10';
+  const pctEl = document.getElementById('alertRuleVolPct');
+  const minEl = document.getElementById('alertRuleVolMin');
+  const pct = pctEl ? (pctEl.value || '2.0') : String(volConfig.percent || '2.0');
+  const min = minEl ? (minEl.value || '10') : String(volConfig.minutes || 10);
   const parsedPct = parseFloat(pct);
   const parsedMin = parseInt(min, 10);
 
   if (!Number.isFinite(parsedPct) || parsedPct <= 0 || !Number.isInteger(parsedMin) || parsedMin < 1) {
-    const statusEl = document.getElementById('volStatus');
-    statusEl.textContent = '请输入有效数字';
-    statusEl.className = 'vol-status off';
+    alert('请输入有效的波动预警数字。');
     return;
   }
 
-  // 立即更新本地状态
   volConfig = { percent: parsedPct, minutes: parsedMin, enabled: true };
   updateVolUI();
-
-  // 发送到服务器
   socket.emit('set_volatility', { percent: pct, minutes: min, enabled: true });
 }
 
+function saveVolatilityRule() {
+  const emailInput = document.getElementById('alertRuleEmail_volatility');
+  setVolatility();
+  if (emailInput) updateEmailSwitch('email_volatility_enabled', emailInput.checked);
+}
+
 function clearVolatility() {
-  // 立即更新本地状态
   volConfig = { percent: null, minutes: 10, enabled: false };
   updateVolUI();
-
-  // 发送到服务器
   socket.emit('set_volatility', { percent: null, minutes: 10, enabled: false });
 }
 
 function updateVolUI() {
-  const pctEl = document.getElementById('volPct');
-  const minEl = document.getElementById('volMin');
-  const statusEl = document.getElementById('volStatus');
-
-  if (volConfig.enabled && volConfig.percent != null) {
-    statusEl.textContent = '监控中: ' + volConfig.percent + '% / ' + volConfig.minutes + '分钟';
-    statusEl.className = 'vol-status on';
-  } else {
-    // 保留输入框中的值
-    if (volConfig.percent == null && pctEl.value) {
-      // 已关闭但保留输入值
-    }
-    statusEl.textContent = '已关闭';
-    statusEl.className = 'vol-status off';
-  }
+  renderAlertRules();
 }
 
 // ========== 阈值接近提示 ==========
 function checkThresholdProximity() {
-  if (!latestData) return;
-  const price = currentMode === 'usd' ? latestData.usd : latestData.rmb;
-  const m = currentMode;
-  const checks = [
-    ['upperWarn', 'upper_warning_'+m, 'var(--warn)'],
-    ['upperCrit', 'upper_critical_'+m, 'var(--up)'],
-    ['lowerWarn', 'lower_warning_'+m, 'var(--warn)'],
-    ['lowerCrit', 'lower_critical_'+m, 'var(--down)'],
-  ];
-  checks.forEach(([elId, key, color]) => {
-    const val = allThresholds[key];
-    const el = document.getElementById(elId);
-    if (val != null && ((key.includes('upper') && price >= val * 0.995) || (key.includes('lower') && price <= val * 1.005))) {
-      el.style.borderColor = color;
-    } else {
-      el.style.borderColor = '';
-    }
-  });
+  renderAlertRules();
 }
 
 // ========== 日志 ==========

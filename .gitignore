@@ -4,6 +4,7 @@
 .trellis/
 .claude/
 .cursor/
+.codegraph/
 
 __pycache__/
 *.py[cod]

@@ -3,6 +3,7 @@ import sys
 import tempfile
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -540,6 +541,8 @@ original_thresholds_path = app.THRESHOLDS_PATH
 original_price_history_path = app.PRICE_HISTORY_PATH
 original_price_archive = list(app.price_archive)
 original_source_health = dict(app.source_health)
+original_source_price_samples = dict(app.source_price_samples)
+original_source_comparison_state = dict(app.source_comparison_state)
 original_alert_cooldown_state = dict(app.alert_cooldown_state)
 
 try:
@@ -550,12 +553,15 @@ try:
         app.PRICE_HISTORY_PATH = str(Path(tmp_dir) / "price_history.json")
         app.price_archive = []
         app.source_health = {}
+        app.source_price_samples = {}
+        app.source_comparison_state = {}
         app.alert_cooldown_state = {}
         app.app_settings = app._normalize_settings({
             "smtp_password": "smtp-secret",
             "risk_assistant_depth": "deep",
             "floating_price_opacity": "88",
             "floating_price_display_mode": "usd_only",
+            "floating_price_preset": "minimal",
             "floating_price_snap_edge": False,
             "alert_cooldown_minutes": "45",
             "alert_quiet_start": "22:00",
@@ -567,13 +573,27 @@ try:
             raise SystemExit("risk assistant depth must be normalized and saved")
         if app.app_settings["floating_price_opacity"] != 88:
             raise SystemExit("floating price opacity must be normalized")
+        if app.app_settings["floating_price_preset"] != "minimal":
+            raise SystemExit("floating price preset must be normalized")
+        invalid_preset = app._normalize_settings({"floating_price_preset": "giant"})
+        if invalid_preset["floating_price_preset"] != app.DEFAULT_SETTINGS["floating_price_preset"]:
+            raise SystemExit("invalid floating price preset must fall back to default")
         if app.app_settings["alert_quiet_start"] != "22:00" or app.app_settings["alert_quiet_end"] != "07:30":
             raise SystemExit("alert quiet hours must be normalized")
+
+        comparison = app.build_source_comparison_state([
+            {"name": "A", "usd": 2300.0, "checked_at": datetime.now().isoformat(timespec="seconds"), "cached": False},
+            {"name": "B", "usd": 2320.0, "checked_at": datetime.now().isoformat(timespec="seconds"), "cached": False},
+        ])
+        if comparison.get("status") != "anomaly" or comparison.get("summary", {}).get("compared") != 2:
+            raise SystemExit(f"source comparison must flag abnormal spreads, got: {comparison}")
 
         app.record_source_health("测试行情源", "gold", False, "测试失败", time.monotonic())
         health = app.get_source_health_state()
         if not health.get("items") or health["items"][0].get("name") != "测试行情源":
             raise SystemExit(f"source health must expose recorded source state, got: {health}")
+        if "comparison" not in health:
+            raise SystemExit("source health state must include source comparison")
 
         point = {
             "usd": 2350.12,
@@ -602,8 +622,10 @@ try:
         try:
             client.emit("get_source_health")
             assert_event(client.get_received(), "source_health_updated")
-            client.emit("get_price_history", {"limit": 10})
-            assert_event(client.get_received(), "price_history_updated")
+            client.emit("get_price_history", {"limit": 10, "scope": "chart", "period": "4h", "minutes": 240})
+            history_event = wait_for_event(client, "price_history_updated")
+            if history_event.get("scope") != "chart" or history_event.get("period") != "4h":
+                raise SystemExit(f"price history chart requests must echo scope and period, got: {history_event}")
             client.emit("export_price_history", {})
             export_event = wait_for_event(client, "price_history_export_ready")
             if "2350.12" not in export_event.get("content", ""):
@@ -618,6 +640,8 @@ finally:
     app.PRICE_HISTORY_PATH = original_price_history_path
     app.price_archive = original_price_archive
     app.source_health = original_source_health
+    app.source_price_samples = original_source_price_samples
+    app.source_comparison_state = original_source_comparison_state
     app.alert_cooldown_state = original_alert_cooldown_state
 
 

@@ -74,6 +74,9 @@ PRICE_HISTORY_ARCHIVE_LIMIT = 20000
 PRICE_HISTORY_EXPORT_LIMIT = 5000
 PRICE_HISTORY_SAVE_INTERVAL_SECONDS = 60
 SOURCE_HEALTH_LIMIT = 20
+SOURCE_COMPARISON_REFRESH_SECONDS = 60
+SOURCE_COMPARISON_STALE_SECONDS = 5 * 60
+SOURCE_COMPARISON_ANOMALY_PCT = 0.5
 RISK_ASSISTANT_TIMEOUT = 20
 RISK_ASSISTANT_MAX_TOKENS = 1200
 RISK_ASSISTANT_TEMPERATURE = 0.2
@@ -137,6 +140,7 @@ DEFAULT_SETTINGS = {
     "floating_price_y": None,
     "floating_price_opacity": 94,
     "floating_price_display_mode": "rmb_usd",
+    "floating_price_preset": "compact",
     "floating_price_snap_edge": True,
     "close_behavior": "ask",
     "close_remembered": False,
@@ -178,6 +182,39 @@ VALID_CLOSE_BEHAVIORS = {"ask", "minimize_to_tray", "exit"}
 VALID_RISK_ASSISTANT_PROVIDERS = {"deepseek", "openai_compatible"}
 VALID_RISK_ASSISTANT_DEPTHS = {"quick", "standard", "deep"}
 VALID_FLOATING_DISPLAY_MODES = {"rmb_usd", "rmb_only", "usd_only"}
+VALID_FLOATING_PRESETS = {"minimal", "compact", "standard"}
+FLOATING_PRICE_PRESETS = {
+    "minimal": {
+        "size": (178, 40),
+        "radius": 10,
+        "title_font": -13,
+        "meta_font": -9,
+        "status_font": -8,
+        "title_rect": (8, 2, -8, 20),
+        "meta_rect": (8, 19, -8, -2),
+        "status_rect": None,
+    },
+    "compact": {
+        "size": (220, 52),
+        "radius": 14,
+        "title_font": -15,
+        "meta_font": -10,
+        "status_font": -9,
+        "title_rect": (10, 3, -9, 21),
+        "meta_rect": (10, 21, -9, 36),
+        "status_rect": (10, 36, -9, -3),
+    },
+    "standard": {
+        "size": (292, 78),
+        "radius": 18,
+        "title_font": -17,
+        "meta_font": -12,
+        "status_font": -11,
+        "title_rect": (14, 7, -14, 30),
+        "meta_rect": (14, 31, -14, 52),
+        "status_rect": (14, 54, -14, -6),
+    },
+}
 DEEPSEEK_FALLBACK_MODELS = ("deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner")
 RISK_STRUCTURED_SECTION_LABELS = (
     ("risk_level", "风险等级"),
@@ -250,6 +287,9 @@ server_port = DEFAULT_PORT
 risk_analysis_lock = threading.Lock()
 risk_analysis_last_started = 0.0
 source_health = {}
+source_price_samples = {}
+source_comparison_state = {}
+last_source_comparison_probe_at = 0.0
 
 
 # ---------- 设置与系统集成 ----------
@@ -312,6 +352,8 @@ def _normalize_settings(raw):
     data["floating_price_opacity"] = bounded_int(data.get("floating_price_opacity", 94), 94, 50, 100)
     if data.get("floating_price_display_mode") not in VALID_FLOATING_DISPLAY_MODES:
         data["floating_price_display_mode"] = "rmb_usd"
+    if data.get("floating_price_preset") not in VALID_FLOATING_PRESETS:
+        data["floating_price_preset"] = DEFAULT_SETTINGS["floating_price_preset"]
     data["floating_price_snap_edge"] = bool(data.get("floating_price_snap_edge", True))
     data["close_remembered"] = bool(data.get("close_remembered"))
     data["alert_sound_enabled"] = bool(data.get("alert_sound_enabled"))
@@ -1136,8 +1178,122 @@ def get_source_health_state():
     return {
         "items": items,
         "summary": summary,
+        "comparison": get_source_comparison_state(),
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
+
+
+def record_source_price_sample(name, data, cached=False):
+    if not name or not isinstance(data, dict):
+        return
+    try:
+        close = float(data.get("close"))
+    except (TypeError, ValueError):
+        return
+    if not math.isfinite(close) or close <= 0:
+        return
+    with lock:
+        source_price_samples[name] = {
+            "name": name,
+            "usd": round(close, 4),
+            "open": _format_number(data.get("open")),
+            "high": _format_number(data.get("high")),
+            "low": _format_number(data.get("low")),
+            "source_time": data.get("timestamp") or data.get("time") or "",
+            "checked_at": datetime.now().isoformat(timespec="seconds"),
+            "cached": bool(cached or data.get("cached")),
+        }
+
+
+def build_source_comparison_state(samples=None):
+    if samples is None:
+        with lock:
+            samples = [dict(item) for item in source_price_samples.values()]
+    now = datetime.now()
+    items = []
+    for sample in samples:
+        checked_at = _parse_iso_datetime(sample.get("checked_at"))
+        age_seconds = None
+        if checked_at:
+            age_seconds = max(0, int((now - checked_at).total_seconds()))
+        stale = age_seconds is None or age_seconds > SOURCE_COMPARISON_STALE_SECONDS
+        item = dict(sample)
+        item["age_seconds"] = age_seconds
+        item["stale"] = stale
+        item["available"] = bool(item.get("usd")) and not item.get("cached") and not stale
+        items.append(item)
+    items.sort(key=lambda item: item.get("name", ""))
+    comparable = [item for item in items if item.get("available")]
+    state = {
+        "items": items,
+        "summary": {
+            "total": len(items),
+            "compared": len(comparable),
+            "spread_usd": None,
+            "spread_pct": None,
+            "threshold_pct": SOURCE_COMPARISON_ANOMALY_PCT,
+        },
+        "status": "insufficient",
+        "message": "可对比数据源不足",
+        "updated_at": now.isoformat(timespec="seconds"),
+    }
+    if len(comparable) >= 2:
+        low = min(comparable, key=lambda item: item.get("usd"))
+        high = max(comparable, key=lambda item: item.get("usd"))
+        spread_usd = round(float(high["usd"]) - float(low["usd"]), 4)
+        midpoint = (float(high["usd"]) + float(low["usd"])) / 2
+        spread_pct = round(spread_usd / midpoint * 100, 4) if midpoint else 0
+        state["summary"].update({
+            "spread_usd": spread_usd,
+            "spread_pct": spread_pct,
+            "low_source": low.get("name"),
+            "high_source": high.get("name"),
+        })
+        if spread_pct >= SOURCE_COMPARISON_ANOMALY_PCT:
+            state["status"] = "anomaly"
+            state["message"] = f"数据源价差 {spread_pct:.2f}% ，建议核对行情源"
+        else:
+            state["status"] = "normal"
+            state["message"] = f"数据源价差 {spread_pct:.2f}% ，处于正常范围"
+    return state
+
+
+def get_source_comparison_state():
+    with lock:
+        if source_comparison_state:
+            return json.loads(json.dumps(source_comparison_state, ensure_ascii=False))
+    return build_source_comparison_state()
+
+
+def refresh_source_comparison(primary_data=None, primary_source="", primary_cached=False):
+    global source_comparison_state, last_source_comparison_probe_at
+    if primary_data is not None and primary_source:
+        record_source_price_sample(primary_source, primary_data, cached=primary_cached)
+
+    now_monotonic = time.monotonic()
+    should_probe = now_monotonic - last_source_comparison_probe_at >= SOURCE_COMPARISON_REFRESH_SECONDS
+    if should_probe:
+        last_source_comparison_probe_at = now_monotonic
+        probes = [
+            ("新浪贵金属", lambda: fetch_sina_gold_result()[0]),
+            ("东方财富", lambda: fetch_eastmoney_gold_result()[0]),
+            ("GoldPrice", lambda: fetch_goldprice_data_result()[0]),
+            ("Stooq", lambda: fetch_gold_data_result(GOLD_URL, "Stooq 金价源")[0]),
+        ]
+        for name, getter in probes:
+            if name == primary_source:
+                continue
+            try:
+                data = getter()
+            except Exception:
+                data = None
+            if data is not None:
+                record_source_price_sample(name, data)
+
+    state = build_source_comparison_state()
+    with lock:
+        source_comparison_state = state
+    return state
 
 
 def fetch_gold_data(url):
@@ -2942,6 +3098,11 @@ def fetch_price_once():
         now_str = now.strftime("%H:%M:%S")
         now_iso = now.isoformat()
         today_str = now.strftime("%Y-%m-%d")
+        source_comparison = refresh_source_comparison(
+            data,
+            source_name,
+            primary_cached=bool(data.get("cached")) if isinstance(data, dict) else False,
+        ) if data is not None else get_source_comparison_state()
 
         with lock:
             if data is not None:
@@ -3058,6 +3219,7 @@ def fetch_price_once():
                     "change_rmb": chg_rmb, "change_pct_rmb": pct_rmb,
                     "time": now_str, "timestamp": now_iso,
                     "daily": daily_stats,
+                    "source_comparison": source_comparison,
                 })
                 desktop_title = format_price_title(price_rmb, price_usd)
                 update_desktop_price_title(desktop_title)
@@ -3089,7 +3251,9 @@ def fetch_price_once():
                     error="" if status_ok else last_fetch_error,
                     retryable=True,
                 ))
-                socketio.emit("price_history_updated", build_price_history_state(limit=240))
+                history_state = build_price_history_state(limit=240)
+                history_state["scope"] = "live"
+                socketio.emit("price_history_updated", history_state)
                 return True
             else:
                 last_fetch_ok = False
@@ -3273,6 +3437,7 @@ def on_connect(auth=None):
             "ok": last_fetch_ok,
             "fetch_status": _current_fetch_status_locked(),
             "source_health": get_source_health_state(),
+            "source_comparison": get_source_comparison_state(),
             "price_history_state": build_price_history_state(limit=240),
             "daily": {
                 "open_usd": today_open_usd, "high_usd": today_high_usd, "low_usd": today_low_usd,
@@ -3613,7 +3778,11 @@ def on_get_source_health():
 def on_get_price_history(data=None):
     minutes = None
     limit = 600
+    period = None
+    scope = "history"
     if isinstance(data, dict):
+        period = str(data.get("period") or "").strip() or None
+        scope = str(data.get("scope") or "history").strip() or "history"
         try:
             minutes = int(data.get("minutes")) if data.get("minutes") else None
         except (TypeError, ValueError):
@@ -3622,7 +3791,10 @@ def on_get_price_history(data=None):
             limit = max(1, min(PRICE_HISTORY_EXPORT_LIMIT, int(data.get("limit", limit))))
         except (TypeError, ValueError):
             limit = 600
-    emit("price_history_updated", build_price_history_state(minutes=minutes, limit=limit))
+    state = build_price_history_state(minutes=minutes, limit=limit)
+    state["period"] = period
+    state["scope"] = scope
+    emit("price_history_updated", state)
 
 
 @socketio.on("export_price_history")
@@ -3916,8 +4088,49 @@ def _is_floating_price_available():
     return _desktop_runtime_active and os.name == "nt"
 
 
+def _floating_window_metrics():
+    preset = get_settings_snapshot().get("floating_price_preset", DEFAULT_SETTINGS["floating_price_preset"])
+    if preset not in FLOATING_PRICE_PRESETS:
+        preset = DEFAULT_SETTINGS["floating_price_preset"]
+    return FLOATING_PRICE_PRESETS[preset]
+
+
+def _floating_rect(rect_config, width, height):
+    if not rect_config:
+        return None
+    left, top, right, bottom = rect_config
+    if right < 0:
+        right = width + right
+    if bottom < 0:
+        bottom = height + bottom
+    return left, top, right, bottom
+
+
 def _floating_window_size():
-    return 292, 78
+    return _floating_window_metrics()["size"]
+
+
+def _floating_window_radius():
+    return _floating_window_metrics()["radius"]
+
+
+def _apply_floating_window_corner_preference(hwnd):
+    if not hwnd or os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        DWMWA_WINDOW_CORNER_PREFERENCE = 33
+        DWMWCP_ROUND_SMALL = 3
+        value = ctypes.c_int(DWMWCP_ROUND_SMALL)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            ctypes.c_void_p(hwnd),
+            ctypes.c_uint(DWMWA_WINDOW_CORNER_PREFERENCE),
+            ctypes.byref(value),
+            ctypes.sizeof(value),
+        )
+    except Exception:
+        pass
 
 
 def _get_work_area(user32):
@@ -4129,6 +4342,20 @@ def _open_risk_analysis_from_floating_menu():
     socketio.emit("open_risk_analysis", {"run": True, "source": "floating_price"})
 
 
+def _refresh_price_from_tray_menu():
+    _refresh_price_from_floating_menu()
+
+
+def _open_risk_analysis_from_tray_menu():
+    show_main_window()
+    socketio.emit("open_risk_analysis", {"run": True, "source": "tray"})
+
+
+def _toggle_floating_price_from_tray_menu():
+    settings = get_settings_snapshot()
+    _set_floating_price_enabled(not bool(settings.get("floating_price_enabled", True)))
+
+
 def _get_lparam_point(lparam):
     value = int(lparam)
     x = value & 0xFFFF
@@ -4311,16 +4538,18 @@ def _floating_price_window_loop():
 
         def draw_window(hwnd):
             width, height = _floating_window_size()
+            metrics = _floating_window_metrics()
+            radius = metrics["radius"]
             ps = PAINTSTRUCT()
             hdc = user32.BeginPaint(hwnd, ctypes.byref(ps))
             if not hdc:
                 return
             try:
                 bg = gdi32.CreateSolidBrush(rgb(21, 21, 38))
-                border_pen = gdi32.CreatePen(PS_SOLID, 1, rgb(83, 72, 36))
+                border_pen = gdi32.CreatePen(PS_SOLID, 1, rgb(62, 58, 78))
                 old_brush = gdi32.SelectObject(hdc, bg)
                 old_pen = gdi32.SelectObject(hdc, border_pen)
-                gdi32.RoundRect(hdc, 0, 0, width, height, 12, 12)
+                gdi32.RoundRect(hdc, 0, 0, width, height, radius, radius)
                 gdi32.SelectObject(hdc, old_brush)
                 gdi32.SelectObject(hdc, old_pen)
                 gdi32.DeleteObject(bg)
@@ -4335,24 +4564,27 @@ def _floating_price_window_loop():
 
                 gdi32.SetBkMode(hdc, TRANSPARENT)
                 title_font = gdi32.CreateFontW(
-                    -17, 0, 0, 0, 700, 0, 0, 0, DEFAULT_CHARSET,
+                    metrics["title_font"], 0, 0, 0, 700, 0, 0, 0, DEFAULT_CHARSET,
                     OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                     DEFAULT_PITCH | FF_DONTCARE, "Microsoft YaHei UI",
                 )
                 meta_font = gdi32.CreateFontW(
-                    -12, 0, 0, 0, 500, 0, 0, 0, DEFAULT_CHARSET,
+                    metrics["meta_font"], 0, 0, 0, 500, 0, 0, 0, DEFAULT_CHARSET,
                     OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                     DEFAULT_PITCH | FF_DONTCARE, "Microsoft YaHei UI",
                 )
                 status_font = gdi32.CreateFontW(
-                    -11, 0, 0, 0, 500, 0, 0, 0, DEFAULT_CHARSET,
+                    metrics["status_font"], 0, 0, 0, 500, 0, 0, 0, DEFAULT_CHARSET,
                     OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                     DEFAULT_PITCH | FF_DONTCARE, "Microsoft YaHei UI",
                 )
 
-                title_rect = wintypes.RECT(14, 7, width - 14, 30)
-                meta_rect = wintypes.RECT(14, 31, width - 14, 52)
-                status_rect = wintypes.RECT(14, 54, width - 14, height - 6)
+                title_rect_values = _floating_rect(metrics["title_rect"], width, height)
+                meta_rect_values = _floating_rect(metrics["meta_rect"], width, height)
+                status_rect_values = _floating_rect(metrics.get("status_rect"), width, height)
+                title_rect = wintypes.RECT(*title_rect_values)
+                meta_rect = wintypes.RECT(*meta_rect_values)
+                status_rect = wintypes.RECT(*status_rect_values) if status_rect_values else None
                 trend_color = rgb(232, 184, 48)
                 if trend_state == "up":
                     trend_color = rgb(224, 85, 106)
@@ -4384,15 +4616,16 @@ def _floating_price_window_loop():
                     ctypes.byref(meta_rect),
                     DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
                 )
-                gdi32.SelectObject(hdc, status_font)
-                gdi32.SetTextColor(hdc, status_color)
-                user32.DrawTextW(
-                    hdc,
-                    status,
-                    -1,
-                    ctypes.byref(status_rect),
-                    DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
-                )
+                if status_rect is not None:
+                    gdi32.SelectObject(hdc, status_font)
+                    gdi32.SetTextColor(hdc, status_color)
+                    user32.DrawTextW(
+                        hdc,
+                        status,
+                        -1,
+                        ctypes.byref(status_rect),
+                        DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+                    )
                 gdi32.SelectObject(hdc, old_font)
                 gdi32.DeleteObject(title_font)
                 gdi32.DeleteObject(meta_font)
@@ -4546,6 +4779,7 @@ def _floating_price_window_loop():
             return
 
         _floating_hwnd = hwnd
+        _apply_floating_window_corner_preference(hwnd)
         _apply_floating_opacity(hwnd, user32)
         if get_settings_snapshot().get("floating_price_enabled", True):
             _set_floating_window_visible(True)
@@ -4578,6 +4812,10 @@ def apply_floating_price_settings(settings=None):
     enabled = bool(settings.get("floating_price_enabled", True))
     if enabled:
         start_floating_price_window()
+        if _floating_hwnd:
+            _position_floating_window(_floating_hwnd)
+            _apply_floating_opacity(_floating_hwnd)
+            _invalidate_floating_window()
         _set_floating_window_visible(True)
     else:
         _set_floating_window_visible(False)
@@ -4721,11 +4959,23 @@ def create_tray_icon():
         def on_show(icon, item):
             show_main_window()
 
+        def on_refresh(icon, item):
+            _refresh_price_from_tray_menu()
+
+        def on_risk_analysis(icon, item):
+            _open_risk_analysis_from_tray_menu()
+
+        def on_toggle_floating(icon, item):
+            _toggle_floating_price_from_tray_menu()
+
         def on_quit(icon, item):
             exit_app()
 
         menu = (
             pystray.MenuItem("显示窗口", on_show, default=True),
+            pystray.MenuItem("刷新行情", on_refresh),
+            pystray.MenuItem("风险分析", on_risk_analysis),
+            pystray.MenuItem("切换悬浮条", on_toggle_floating),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("退出", on_quit),
         )
