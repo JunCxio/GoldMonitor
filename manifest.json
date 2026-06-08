@@ -1,0 +1,22 @@
+{
+  "name": "金价监控",
+  "short_name": "金价",
+  "description": "实时黄金价格监控与预警",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#080812",
+  "theme_color": "#e8b830",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/static/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

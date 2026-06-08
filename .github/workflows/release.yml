@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        shell: powershell
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup -y
+
+      - name: Run checks
+        shell: powershell
+        run: |
+          python -m py_compile app.py setup_gui.py tests\risk_contract_check.py
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\contract_checks.ps1
+          python tests\risk_contract_check.py
+          python tests\gold_cache_check.py
+          python tests\price_fetch_with_cache_check.py
+          python tests\fetch_status_check.py
+          python tests\threshold_persistence_check.py
+          python tests\socket_connect_check.py
+          python tests\news_logic_check.py
+          python tests\forex_cache_check.py
+          python tests\startup_contract_check.py
+          python tests\update_logic_check.py
+          python tests\port_selection_check.py
+
+      - name: Build application
+        shell: powershell
+        run: pyinstaller --clean --noconfirm GoldMonitor.spec
+
+      - name: Build installer
+        shell: powershell
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            throw "ISCC.exe was not found after installing Inno Setup."
+          }
+          & $iscc .\installer\GoldMonitor.iss
+
+      - name: Generate update manifest
+        shell: powershell
+        run: |
+          $versionMatch = Select-String -Path .\app.py -Pattern 'APP_VERSION\s*=\s*"([^"]+)"'
+          if (-not $versionMatch) {
+            throw "APP_VERSION was not found."
+          }
+          $version = $versionMatch.Matches[0].Groups[1].Value
+          $tag = "v$version"
+          if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -ne $tag) {
+            throw "Tag ${{ github.ref_name }} does not match APP_VERSION $version."
+          }
+          $installer = ".\release\GoldMonitorSetup.exe"
+          $sha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/GoldMonitorSetup.exe"
+          $manifest = [ordered]@{
+            version = $version
+            url = $downloadUrl
+            sha256 = $sha256
+            notes = "GoldMonitor $version"
+          }
+          $manifest | ConvertTo-Json | Set-Content -Path .\release\version.json -Encoding UTF8
+          @"
+          GoldMonitor $version
+
+          - 安装包：GoldMonitorSetup.exe
+          - 更新清单：version.json
+          - SHA256：$sha256
+          "@ | Set-Content -Path .\release\release-notes.md -Encoding UTF8
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: GoldMonitor ${{ github.ref_name }}
+          body_path: release/release-notes.md
+          files: |
+            release/GoldMonitorSetup.exe
+            release/version.json

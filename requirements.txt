@@ -1,0 +1,7 @@
+flask>=2.3
+flask-socketio>=5.3
+requests>=2.31
+win11toast>=0.36
+pystray>=0.19
+Pillow>=10.0
+pywebview>=6.0

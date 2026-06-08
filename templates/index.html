@@ -1,0 +1,2197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>金价监控</title>
+<link rel="icon" type="image/png" sizes="64x64" href="/static/icon-64.png">
+<link rel="manifest" href="/manifest.json">
+<style>
+  :root {
+    --bg-deep: #080812;
+    --surface: #12121f;
+    --card-outer: rgba(255,255,255,0.03);
+    --card-inner: #16162a;
+    --text: #d8d8e0;
+    --text-dim: #7a7a90;
+    --gold: #e8b830;
+    --gold-dim: rgba(232,184,48,0.12);
+    --up: #e0556a; --down: #4caf84; --blue: #5b9bd5;
+    --warn: #e0a040;
+    --hairline: rgba(255,255,255,0.06);
+    --highlight: rgba(255,255,255,0.04);
+    --right-width: clamp(360px, 24vw, 440px);
+    --control-bg: rgba(255,255,255,0.045);
+    --control-bg-hover: rgba(255,255,255,0.075);
+    --control-border: rgba(255,255,255,0.10);
+    --control-border-strong: rgba(232,184,48,0.42);
+    --control-text: #ececf3;
+    --control-muted: #9b9baa;
+    --focus-ring: 0 0 0 3px rgba(232,184,48,0.18);
+    --shadow-control: 0 8px 18px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.05);
+    --shadow-control-strong: 0 10px 24px rgba(232,184,48,0.22), inset 0 1px 0 rgba(255,255,255,0.24);
+    --danger: #e0556a;
+    --danger-bg: rgba(224,85,106,0.13);
+    --danger-border: rgba(224,85,106,0.34);
+    --danger-text: #f3a1ad;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  button, input, select { font:inherit; }
+  body {
+    font-family: "PingFang SC","Hiragino Sans GB","Microsoft YaHei",-apple-system,sans-serif;
+    background:var(--bg-deep); color:var(--text);
+    height:100vh; min-height:0; display:flex; justify-content:center; overflow:hidden;
+    padding:clamp(10px, 1.2vw, 22px); position:relative; isolation:isolate;
+  }
+  body::before {
+    content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
+    background:
+      linear-gradient(180deg, rgba(232,184,48,0.055) 0%, transparent 34%),
+      repeating-linear-gradient(90deg, rgba(255,255,255,0.022) 0 1px, transparent 1px 58px),
+      repeating-linear-gradient(0deg, rgba(255,255,255,0.016) 0 1px, transparent 1px 58px);
+    mask-image: linear-gradient(180deg, rgba(0,0,0,0.9), transparent 76%);
+  }
+  .container { position:relative; z-index:2; width:100%; max-width:none; height:calc(100vh - clamp(20px, 2.4vw, 44px)); min-height:0; display:flex; flex-direction:column; overflow:hidden; }
+
+  /* ====== 标题栏 ====== */
+  .header { flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; padding:clamp(2px, 0.4vw, 8px) 4px clamp(8px, 0.75vw, 14px); }
+  .header h1 { font-size:clamp(1.16rem, 1.25vw, 1.55rem); font-weight:700; color:#f0f0f4; letter-spacing:0.02em; }
+  .header-actions { display:flex; align-items:center; gap:10px; min-width:0; }
+  .icon-btn { width:36px; height:36px; display:grid; place-items:center; border:1px solid var(--control-border); border-radius:9px; background:linear-gradient(180deg, rgba(255,255,255,0.065), rgba(255,255,255,0.025)); color:var(--control-muted); cursor:pointer; box-shadow:var(--shadow-control); transition:transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease; }
+  .icon-btn:hover { color:var(--gold); border-color:var(--control-border-strong); background:rgba(232,184,48,0.09); transform:translateY(-1px); }
+  .icon-btn:active { transform:translateY(0) scale(0.97); }
+  .icon-btn:focus-visible { outline:none; box-shadow:var(--focus-ring), var(--shadow-control); }
+  .icon-btn.update-ready { color:var(--gold); border-color:rgba(232,184,48,0.52); background:rgba(232,184,48,0.1); box-shadow:var(--focus-ring), var(--shadow-control); }
+  .icon-btn svg { width:17px; height:17px; stroke:currentColor; }
+  .status { display:flex; align-items:center; gap:8px; min-width:0; font-size:0.8rem; color:var(--text-dim); }
+  .status span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .status-dot { width:8px; height:8px; border-radius:50%; background:var(--down); box-shadow:0 0 6px rgba(76,175,132,0.5); transition:background 0.5s,box-shadow 0.5s; }
+  .status-dot.disconnected { background:var(--up); box-shadow:0 0 6px rgba(224,85,106,0.5); }
+  @keyframes pulse-dot { 0%,100%{box-shadow:0 0 4px rgba(76,175,132,0.4)} 50%{box-shadow:0 0 10px rgba(76,175,132,0.7)} }
+  .status-dot:not(.disconnected) { animation:pulse-dot 2.5s ease-in-out infinite; }
+
+  /* ====== 设置弹窗 ====== */
+  .settings-backdrop { position:fixed; inset:0; z-index:20; display:none; align-items:center; justify-content:center; padding:20px; background:rgba(0,0,0,0.58); backdrop-filter:blur(10px); }
+  .settings-backdrop.show { display:flex; }
+  .settings-modal { width:min(560px, 100%); max-height:calc(100vh - 40px); display:flex; flex-direction:column; border:1px solid var(--hairline); border-radius:16px; background:#151526; box-shadow:0 24px 80px rgba(0,0,0,0.48), inset 0 1px 0 rgba(255,255,255,0.05); overflow:hidden; }
+  .settings-head { display:flex; align-items:center; justify-content:space-between; padding:18px 20px; border-bottom:1px solid var(--hairline); }
+  .settings-head h2 { font-size:1rem; color:#f0f0f4; font-weight:700; }
+  .settings-close { width:32px; height:32px; border:1px solid transparent; border-radius:8px; background:transparent; color:var(--text-dim); cursor:pointer; font-size:1.15rem; line-height:1; display:grid; place-items:center; transition:all 0.18s ease; }
+  .settings-close:hover { background:var(--control-bg-hover); border-color:var(--control-border); color:var(--text); }
+  .settings-close:active { transform:scale(0.96); }
+  .settings-close:focus-visible { outline:none; box-shadow:var(--focus-ring); }
+  .settings-tabs { flex:0 0 auto; display:flex; gap:4px; padding:12px 20px 0; background:#151526; }
+  .settings-tab { flex:1; min-height:36px; padding:9px 12px; border:1px solid var(--control-border); border-radius:8px; background:var(--control-bg); color:var(--control-muted); cursor:pointer; font-size:0.82rem; font-weight:700; transition:all 0.2s ease; }
+  .settings-tab:hover { color:var(--text); border-color:rgba(232,184,48,0.28); background:var(--control-bg-hover); }
+  .settings-tab:active { transform:translateY(1px); }
+  .settings-tab:focus-visible { outline:none; box-shadow:var(--focus-ring); }
+  .settings-tab.active { background:linear-gradient(180deg, #f0c64a, var(--gold)); border-color:rgba(232,184,48,0.66); color:#111116; box-shadow:var(--shadow-control-strong); }
+  .settings-body { flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:6px 20px 18px; scrollbar-width:thin; scrollbar-color:rgba(232,184,48,0.55) rgba(255,255,255,0.05); }
+  .settings-body::-webkit-scrollbar { width:8px; }
+  .settings-body::-webkit-scrollbar-track { background:rgba(255,255,255,0.04); border-radius:99px; }
+  .settings-body::-webkit-scrollbar-thumb { background:rgba(232,184,48,0.45); border-radius:99px; }
+  .settings-panel { display:none; }
+  .settings-panel.active { display:block; }
+  .setting-row { display:flex; align-items:center; justify-content:space-between; gap:18px; padding:16px 0; border-bottom:1px solid var(--hairline); }
+  .setting-row:last-child { border-bottom:none; }
+  .setting-label { font-size:0.9rem; color:var(--text); margin-bottom:4px; }
+  .setting-desc { font-size:0.74rem; color:var(--text-dim); line-height:1.45; }
+  .switch { position:relative; display:inline-block; width:48px; height:26px; flex:0 0 auto; }
+  .switch input { opacity:0; width:0; height:0; }
+  .slider { position:absolute; inset:0; cursor:pointer; border-radius:999px; background:#27273a; transition:0.25s; border:1px solid var(--control-border); }
+  .slider::before { content:""; position:absolute; height:20px; width:20px; left:2px; top:2px; border-radius:50%; background:#8a8a9c; transition:0.25s; }
+  .switch input:checked + .slider { background:rgba(232,184,48,0.22); border-color:rgba(232,184,48,0.55); }
+  .switch input:checked + .slider::before { transform:translateX(22px); background:var(--gold); }
+  .switch input:focus-visible + .slider { box-shadow:var(--focus-ring); }
+  .settings-select { min-width:170px; min-height:38px; padding:8px 10px; border-radius:8px; border:1px solid var(--control-border); background:#101020; color:var(--text); outline:none; transition:border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease; }
+  .settings-input { min-width:230px; width:min(320px, 45vw); min-height:38px; padding:8px 10px; border-radius:8px; border:1px solid var(--control-border); background:#101020; color:var(--text); outline:none; transition:border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease; }
+  .settings-input:focus, .settings-select:focus { border-color:var(--control-border-strong); background:#121225; box-shadow:var(--focus-ring); }
+  .settings-input.smtp-port { max-width:100px; }
+  .settings-stack { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
+  .settings-stack .settings-select { min-width:190px; }
+  .risk-provider-row.hidden { display:none; }
+  .settings-foot { flex:0 0 auto; display:flex; justify-content:flex-end; gap:10px; padding:16px 20px 20px; border-top:1px solid var(--hairline); background:#151526; }
+  .settings-save, .settings-cancel, .update-install, .dialog-danger, .btn-set, .btn-clear, .btn-clear-sm, .price-retry, .risk-open { min-height:34px; border-radius:8px; cursor:pointer; font-weight:700; white-space:nowrap; transition:transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease; }
+  .settings-save, .update-install, .btn-set { border:1px solid rgba(232,184,48,0.68); background:linear-gradient(180deg, #f0c64a, var(--gold)); color:#111116; box-shadow:var(--shadow-control-strong); }
+  .settings-save:hover, .update-install:hover, .btn-set:hover { filter:brightness(1.04); transform:translateY(-1px); box-shadow:0 12px 26px rgba(232,184,48,0.26), inset 0 1px 0 rgba(255,255,255,0.28); }
+  .settings-save:active, .update-install:active, .btn-set:active { transform:translateY(0) scale(0.98); }
+  .settings-save:focus-visible, .settings-cancel:focus-visible, .update-install:focus-visible, .dialog-danger:focus-visible, .btn-set:focus-visible, .btn-clear:focus-visible, .btn-clear-sm:focus-visible, .price-retry:focus-visible, .risk-open:focus-visible { outline:none; box-shadow:var(--focus-ring), var(--shadow-control); }
+  .settings-cancel, .btn-clear, .btn-clear-sm { border:1px solid var(--control-border); background:var(--control-bg); color:var(--control-muted); box-shadow:var(--shadow-control); }
+  .settings-cancel:hover, .btn-clear:hover { border-color:rgba(255,255,255,0.18); background:var(--control-bg-hover); color:var(--control-text); transform:translateY(-1px); }
+  .settings-cancel:active, .btn-clear:active, .btn-clear-sm:active { transform:translateY(0) scale(0.98); }
+  .settings-save { padding:9px 20px; }
+  .settings-cancel { padding:9px 16px; }
+  .settings-message { min-height:18px; padding:0 20px 14px; color:var(--warn); font-size:0.78rem; }
+  .setting-section-divider { height:1px; background:var(--hairline); margin:6px 0 12px; }
+  .setting-section-title { font-size:0.82rem; color:var(--gold); font-weight:700; margin-bottom:10px; letter-spacing:0.04em; }
+  .test-email-status { font-size:0.72rem; margin-left:8px; font-weight:500; }
+  .test-email-status.ok { color:#4ecf8a; }
+  .test-email-status.fail { color:var(--up); }
+  .update-modal { width:min(560px, 100%); }
+  .update-status { color:var(--text); font-size:0.9rem; line-height:1.55; }
+  .update-meta { margin-top:8px; color:var(--text-dim); font-size:0.78rem; line-height:1.5; }
+  .update-notes { margin-top:12px; padding:10px 12px; border:1px solid var(--hairline); border-radius:10px; color:var(--text-dim); font-size:0.78rem; line-height:1.55; background:rgba(255,255,255,0.025); max-height:120px; overflow:auto; white-space:pre-wrap; }
+  .update-install { padding:9px 20px; }
+  .update-install:disabled, .btn-set:disabled, .settings-save:disabled, .price-retry:disabled, .risk-open:disabled { opacity:0.48; cursor:not-allowed; transform:none; box-shadow:none; filter:none; }
+  .confirm-modal { width:min(460px, 100%); }
+  .close-choice-copy { color:var(--text); font-size:0.92rem; line-height:1.65; }
+  .dialog-check { margin-top:16px; display:flex; align-items:center; gap:10px; color:var(--text-dim); font-size:0.82rem; cursor:pointer; }
+  .dialog-check input { width:16px; height:16px; accent-color:var(--gold); }
+  .dialog-danger { padding:9px 16px; border:1px solid var(--danger-border); background:var(--danger-bg); color:var(--danger-text); box-shadow:0 8px 18px rgba(224,85,106,0.12), inset 0 1px 0 rgba(255,255,255,0.05); }
+  .dialog-danger:hover { border-color:rgba(224,85,106,0.52); background:rgba(224,85,106,0.18); color:#ffd1d8; transform:translateY(-1px); }
+  .dialog-danger:active { transform:translateY(0) scale(0.98); }
+  .alert-modal { width:min(500px, 100%); border-color:rgba(232,184,48,0.32); }
+  .alert-body { padding:20px; }
+  .alert-badge { display:inline-flex; align-items:center; padding:5px 10px; border-radius:999px; background:rgba(232,184,48,0.14); color:var(--gold); font-size:0.74rem; font-weight:700; margin-bottom:12px; }
+  .alert-message { color:#f0f0f4; font-size:1rem; line-height:1.6; }
+  .alert-meta { margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; color:var(--text-dim); font-size:0.76rem; }
+  .alert-meta span { padding:5px 8px; border:1px solid var(--hairline); border-radius:8px; background:rgba(255,255,255,0.025); }
+  .related-news { display:none; margin-top:16px; padding-top:14px; border-top:1px solid var(--hairline); }
+  .related-news.show { display:block; }
+  .related-news-title { color:var(--text-dim); font-size:0.74rem; margin-bottom:8px; }
+  .related-news a { display:block; color:#f0f0f4; text-decoration:none; font-size:0.8rem; line-height:1.45; padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.04); }
+  .related-news a:hover { color:var(--gold); }
+  .alert-level-critical .alert-badge { background:rgba(224,85,106,0.16); color:#f29aaa; }
+  .alert-level-warning .alert-badge { background:rgba(224,160,64,0.16); color:#efc37a; }
+  .alert-level-volatility .alert-badge { background:rgba(91,155,213,0.16); color:#9fc8f1; }
+  .risk-modal { width:min(720px, 100%); }
+  .risk-status { color:var(--text-dim); font-size:0.82rem; line-height:1.5; }
+  .risk-status.loading { color:var(--gold); }
+  .risk-status.error { color:var(--up); }
+  .risk-result { margin-top:14px; padding:14px; border:1px solid var(--hairline); border-radius:10px; background:rgba(255,255,255,0.025); color:#f0f0f4; font-size:0.88rem; line-height:1.75; white-space:pre-wrap; max-height:42vh; overflow:auto; }
+  .risk-meta { display:none; margin-top:12px; gap:8px; flex-wrap:wrap; color:var(--text-dim); font-size:0.74rem; }
+  .risk-meta.show { display:flex; }
+  .risk-meta span { padding:5px 8px; border:1px solid var(--hairline); border-radius:8px; background:rgba(255,255,255,0.025); }
+  .risk-insight-grid { display:grid; grid-template-columns:minmax(0, 0.75fr) minmax(0, 1.25fr); gap:10px; margin-top:12px; }
+  .risk-quality, .risk-trends { display:none; border:1px solid var(--hairline); border-radius:10px; background:rgba(255,255,255,0.025); padding:12px; }
+  .risk-quality.show, .risk-trends.show { display:block; }
+  .risk-block-title { color:var(--text-dim); font-size:0.72rem; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:8px; font-weight:700; }
+  .risk-quality-score { font-size:1.55rem; color:var(--gold); font-weight:800; line-height:1; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; }
+  .risk-quality-level { margin-top:5px; color:#f0f0f4; font-size:0.78rem; }
+  .risk-quality-summary { margin-top:8px; color:var(--text-dim); font-size:0.74rem; line-height:1.5; }
+  .risk-trend-list { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px; }
+  .risk-trend-item { border:1px solid rgba(255,255,255,0.055); border-radius:8px; padding:8px; background:rgba(0,0,0,0.12); }
+  .risk-trend-period { color:var(--text-dim); font-size:0.7rem; margin-bottom:4px; }
+  .risk-trend-direction { font-size:0.86rem; font-weight:700; }
+  .risk-trend-direction.up { color:var(--up); }
+  .risk-trend-direction.down { color:var(--down); }
+  .risk-trend-direction.flat { color:var(--gold); }
+  .risk-trend-direction.missing { color:var(--text-dim); }
+  .risk-trend-change { margin-top:3px; color:var(--text-dim); font-size:0.7rem; }
+  .risk-scorecard { display:none; margin-top:10px; border:1px solid var(--hairline); border-radius:10px; background:rgba(255,255,255,0.025); padding:12px; }
+  .risk-scorecard.show { display:block; }
+  .risk-score-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:8px; }
+  .risk-score-item { border:1px solid rgba(255,255,255,0.055); border-radius:8px; padding:8px; background:rgba(0,0,0,0.12); }
+  .risk-score-label { color:var(--text-dim); font-size:0.7rem; margin-bottom:4px; }
+  .risk-score-value { color:#f0f0f4; font-size:1rem; font-weight:800; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; }
+  .risk-structured { display:none; margin-top:10px; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; }
+  .risk-structured.show { display:grid; }
+  .risk-structured-item { border:1px solid rgba(255,255,255,0.055); border-radius:8px; padding:10px; background:rgba(0,0,0,0.14); min-width:0; }
+  .risk-structured-label { color:var(--gold); font-size:0.72rem; font-weight:800; margin-bottom:5px; }
+  .risk-structured-value { color:#f0f0f4; font-size:0.8rem; line-height:1.55; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .model-test-status { color:var(--text-dim); font-size:0.72rem; line-height:1.45; text-align:right; max-width:260px; }
+  .model-test-status.ok { color:var(--down); }
+  .model-test-status.fail { color:var(--up); }
+  .risk-history { margin-top:14px; padding-top:12px; border-top:1px solid var(--hairline); }
+  .risk-history-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
+  .risk-history-title { color:var(--text-dim); font-size:0.74rem; letter-spacing:0.06em; text-transform:uppercase; font-weight:700; }
+  .risk-history-clear { min-height:28px; padding:5px 10px; font-size:0.7rem; }
+  .risk-history-list { max-height:160px; overflow:auto; display:grid; gap:6px; }
+  .risk-history-item { width:100%; text-align:left; border:1px solid var(--hairline); border-radius:8px; background:rgba(255,255,255,0.025); color:var(--text); padding:8px 10px; cursor:pointer; transition:all 0.18s ease; }
+  .risk-history-item:hover { border-color:rgba(232,184,48,0.32); background:rgba(232,184,48,0.06); }
+  .risk-history-time { color:var(--gold); font-size:0.72rem; margin-bottom:4px; }
+  .risk-history-text { color:var(--text-dim); font-size:0.74rem; line-height:1.45; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .risk-history-empty { color:var(--text-dim); font-size:0.76rem; padding:10px 0; text-align:center; }
+
+  /* ====== 模式切换 ====== */
+  .mode-toggle { flex:0 0 auto; display:flex; background:rgba(255,255,255,0.035); border-radius:12px; padding:4px; margin-bottom:clamp(8px, 0.8vw, 14px); border:1px solid var(--control-border); box-shadow:inset 0 1px 0 var(--highlight), 0 8px 22px rgba(0,0,0,0.22); }
+  .mode-btn { flex:1; min-height:40px; padding:clamp(7px, 0.65vw, 11px) 0; text-align:center; cursor:pointer; border-radius:8px; font-size:clamp(0.82rem, 0.78vw, 0.95rem); font-weight:700; transition:all 0.24s cubic-bezier(0.16,1,0.3,1); color:var(--control-muted); border:1px solid transparent; background:transparent; }
+  .mode-btn small { opacity:0.6; font-size:0.78rem; font-weight:600; }
+  .mode-btn.active { background:linear-gradient(180deg, #f0c64a, var(--gold)); border-color:rgba(232,184,48,0.7); color:#111116; box-shadow:var(--shadow-control-strong); }
+  .mode-btn:hover:not(.active) { color:var(--text); background:var(--control-bg-hover); border-color:rgba(255,255,255,0.12); }
+  .mode-btn:active:not(.active) { transform:scale(0.98); }
+  .mode-btn:focus-visible { outline:none; box-shadow:var(--focus-ring); }
+
+  /* ====== 左右分栏 ====== */
+  .main-layout { flex:1 1 auto; min-height:0; display:grid; grid-template-columns:minmax(0, 1fr) var(--right-width); gap:clamp(10px, 0.9vw, 18px); align-items:stretch; overflow:hidden; }
+  .main-left  { min-width:0; min-height:0; display:grid; grid-template-rows:auto minmax(0, 1fr); gap:clamp(10px, 0.9vw, 18px); overflow:hidden; }
+  .main-right { min-width:0; min-height:0; overflow:hidden; }
+
+  /* ====== Double-Bezel 卡片 ====== */
+  .card-outer { background:var(--card-outer); border-radius:20px; padding:2px; border:1px solid var(--hairline); box-shadow:0 1px 0 var(--highlight),0 4px 24px rgba(0,0,0,0.3); }
+  .card-inner { background:var(--card-inner); border-radius:18px; padding:clamp(12px, 1vw, 20px); box-shadow:inset 0 1px 0 rgba(255,255,255,0.04); }
+
+  /* ====== 价格卡片 ====== */
+  .price-card .card-inner { text-align:center; padding:clamp(14px, 1.1vw, 24px) clamp(16px, 1.2vw, 24px) clamp(12px, 0.9vw, 18px); }
+  .price-label { font-size:0.76rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:6px; }
+  .price-value { font-size:clamp(2.4rem, 3.45vw, 4.8rem); font-weight:800; color:var(--gold); letter-spacing:0.02em; line-height:1; transition:transform 0.15s,opacity 0.15s; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; }
+  .price-change { font-size:0.88rem; margin-top:7px; font-weight:500; transition:all 0.4s cubic-bezier(0.16,1,0.3,1); }
+  .price-change.up{color:var(--up)} .price-change.down{color:var(--down)} .price-change.neutral{color:var(--text-dim)}
+  .price-time { font-size:0.75rem; color:var(--text-dim); margin-top:4px; }
+  .price-rate { font-size:0.75rem; color:var(--text-dim); margin-top:2px; }
+  .price-stale { display:none; font-size:0.75rem; margin-top:6px; background:rgba(224,160,64,0.12); color:#e0a040; padding:6px 12px; border-radius:6px; line-height:1.45; }
+  .price-stale.show { display:inline-block; }
+  .price-retry { display:none; margin:8px auto 0; padding:7px 13px; border:1px solid rgba(232,184,48,0.42); background:rgba(232,184,48,0.12); color:var(--gold); font-size:0.75rem; box-shadow:none; }
+  .price-retry.show { display:block; }
+  .price-retry:hover { background:rgba(232,184,48,0.18); border-color:rgba(232,184,48,0.58); transform:translateY(-1px); }
+  .price-actions { display:flex; justify-content:center; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .risk-open { padding:7px 14px; border:1px solid rgba(91,155,213,0.42); background:rgba(91,155,213,0.12); color:#9fc8f1; font-size:0.75rem; box-shadow:none; }
+  .risk-open:hover { background:rgba(91,155,213,0.18); border-color:rgba(91,155,213,0.58); transform:translateY(-1px); }
+
+  /* ====== 日内统计条 ====== */
+  .daily-stats { display:flex; justify-content:center; gap:clamp(14px, 2vw, 28px); margin-top:10px; padding-top:10px; border-top:1px solid var(--hairline); }
+  .daily-stat { text-align:center; }
+  .daily-stat .ds-label { font-size:0.68rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:3px; }
+  .daily-stat .ds-value { font-size:0.95rem; font-weight:600; color:var(--text); font-variant-numeric:tabular-nums; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; }
+  .daily-stat .ds-value.ds-up { color:var(--up); }
+  .daily-stat .ds-value.ds-down { color:var(--down); }
+  .daily-stat .ds-sub { font-size:0.68rem; color:var(--text-dim); margin-top:1px; }
+
+  /* ====== 图表 ====== */
+  .chart-card, .chart-card .card-inner { min-height:0; }
+  .chart-card .card-inner { height:100%; display:flex; flex-direction:column; padding:clamp(12px, 1vw, 20px); }
+  .chart-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+  .chart-header h3 { font-size:0.85rem; color:var(--text-dim); font-weight:500; letter-spacing:0.03em; }
+  .chart-toggles { display:flex; gap:3px; background:rgba(255,255,255,0.035); border:1px solid var(--control-border); border-radius:8px; padding:3px; }
+  .chart-tg { min-height:28px; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.72rem; font-weight:700; color:var(--control-muted); border:1px solid transparent; background:transparent; transition:all 0.22s ease; white-space:nowrap; }
+  .chart-tg.active { background:linear-gradient(180deg, #f0c64a, var(--gold)); border-color:rgba(232,184,48,0.68); color:#111116; box-shadow:0 6px 14px rgba(232,184,48,0.18); }
+  .chart-tg:hover:not(.active) { color:var(--text); background:var(--control-bg-hover); }
+  .chart-tg:active:not(.active) { transform:scale(0.98); }
+  .chart-tg:focus-visible { outline:none; box-shadow:var(--focus-ring); }
+  .chart-wrapper { position:relative; flex:1; min-height:0; height:auto; }
+  canvas { width:100% !important; }
+
+  /* ====== 右侧面板 ====== */
+  .right-panel { height:100%; min-height:0; display:grid; grid-template-rows:minmax(260px, 1.35fr) minmax(110px, 0.65fr); gap:clamp(10px, 0.9vw, 18px); overflow:hidden; }
+
+  /* ====== 阈值卡片 ====== */
+  .threshold-card { min-height:0; overflow:hidden; }
+  .threshold-card .card-inner { height:100%; overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin; scrollbar-color:rgba(232,184,48,0.5) rgba(255,255,255,0.04); }
+  .threshold-card .card-inner::-webkit-scrollbar { width:6px; }
+  .threshold-card .card-inner::-webkit-scrollbar-track { background:rgba(255,255,255,0.04); border-radius:99px; }
+  .threshold-card .card-inner::-webkit-scrollbar-thumb { background:rgba(232,184,48,0.45); border-radius:99px; }
+  .threshold-card .card-inner h3 { font-size:0.82rem; color:var(--text-dim); font-weight:500; margin-bottom:10px; letter-spacing:0.03em; }
+  .threshold-section { margin-bottom:9px; }
+  .threshold-section:last-child { margin-bottom:0; }
+  .section-label { font-size:0.68rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px; font-weight:600; }
+  .section-label.upper-label { color:var(--up); }
+  .section-label.lower-label { color:var(--down); }
+  .th-row { display:flex; gap:6px; margin-bottom:5px; align-items:center; }
+  .th-row:last-child { margin-bottom:0; }
+  .th-row .level-badge { font-size:0.65rem; min-width:36px; padding:2px 6px; border-radius:4px; text-align:center; font-weight:600; }
+  .level-badge.warn { background:rgba(224,160,64,0.15); color:var(--warn); }
+  .level-badge.crit { background:rgba(224,85,106,0.15); color:var(--up); }
+  .section-label.email-label { color:var(--gold); }
+  .section-label.volatility-label { color:var(--blue); }
+  .th-row input { flex:1; min-width:0; min-height:32px; padding:6px 8px; border-radius:8px; border:1px solid var(--control-border); background:rgba(255,255,255,0.035); color:var(--text); font-size:0.8rem; outline:none; transition:all 0.24s cubic-bezier(0.16,1,0.3,1); font-variant-numeric:tabular-nums; }
+  .th-row input:focus { border-color:var(--control-border-strong); background:#121225; box-shadow:var(--focus-ring); }
+  .th-row input::placeholder { color:rgba(255,255,255,0.12); }
+  .th-row input::-webkit-outer-spin-button,
+  .th-row input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  .th-row input[type=number] { -moz-appearance:textfield; }
+  .th-row button { padding:6px 9px; font-size:0.72rem; }
+  .btn-clear-sm { min-height:30px; padding:4px 8px; font-size:0.66rem; }
+  .btn-clear-sm:hover { color:var(--danger-text); border-color:var(--danger-border); background:var(--danger-bg); transform:translateY(-1px); }
+  .btn-form { min-height:36px; padding:8px 16px; font-size:0.78rem; }
+  .threshold-info { font-size:0.68rem; color:var(--text-dim); margin-top:6px; padding-top:6px; border-top:1px solid var(--hairline); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .email-switches-section { margin-top:8px; padding-top:8px; border-top:1px solid var(--hairline); }
+  .email-sw-row { display:flex; gap:8px; align-items:center; margin-bottom:4px; }
+  .email-sw-row:last-child { margin-bottom:0; }
+  .email-sw-label { font-size:0.7rem; color:var(--text-dim); flex:1; }
+  .level-badge.vol { background:rgba(100,160,220,0.15); color:var(--blue); }
+  .switch-sm { transform:scale(0.75); transform-origin:right center; }
+  .threshold-info span { font-weight:600; }
+
+  /* ====== 波动率预警 ====== */
+  .volatility-section { margin-top:9px; padding-top:9px; border-top:1px solid var(--hairline); }
+  .vol-row { display:flex; gap:6px; align-items:center; margin-bottom:6px; }
+  .vol-row label { font-size:0.78rem; color:var(--text-dim); white-space:nowrap; }
+  .vol-row input { width:64px; min-height:32px; padding:6px 8px; border-radius:8px; border:1px solid var(--control-border); background:rgba(255,255,255,0.035); color:var(--text); font-size:0.8rem; outline:none; text-align:center; transition:all 0.24s ease; }
+  .vol-row input:focus { border-color:var(--control-border-strong); background:#121225; box-shadow:var(--focus-ring); }
+  .vol-row input::-webkit-outer-spin-button,
+  .vol-row input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  .vol-row input[type=number] { -moz-appearance:textfield; }
+  .vol-unit { color:var(--text-dim); font-size:0.78rem; }
+  .vol-status { font-size:0.72rem; margin-top:4px; }
+  .vol-status.on { color:var(--down); }
+  .vol-status.off { color:var(--text-dim); }
+
+  /* ====== 警报日志 ====== */
+  .log-card { min-height:0; overflow:hidden; }
+  .log-card .card-inner { display:flex; flex-direction:column; height:100%; min-height:0; }
+  .log-card h3 { font-size:0.82rem; color:var(--text-dim); font-weight:500; margin-bottom:10px; letter-spacing:0.03em; }
+  .log-list { flex:1; overflow-y:auto; max-height:none; }
+  .log-item { padding:6px 0; font-size:0.76rem; border-bottom:1px solid var(--hairline); animation:fadeIn 0.4s cubic-bezier(0.16,1,0.3,1); }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(-8px)} to{opacity:1;transform:translateY(0)} }
+  .log-item:last-child { border-bottom:none; }
+  .log-time { color:var(--text-dim); font-size:0.72rem; margin-bottom:2px; }
+  .log-msg.warning { color:var(--warn); }
+  .log-msg.critical,.log-msg.upper { color:var(--up); }
+  .log-msg.lower { color:var(--down); }
+  .log-msg.volatility { color:var(--blue); }
+  .log-empty { color:var(--text-dim); font-size:0.8rem; text-align:center; padding:32px 0; }
+
+  ::-webkit-scrollbar { width:4px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  ::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:2px; }
+
+  /* ====== 响应式 ====== */
+  @media (min-width:1800px) {
+    .main-layout { grid-template-columns:minmax(0, 1fr) clamp(420px, 22vw, 500px); }
+    .price-card .card-inner { padding-top:30px; padding-bottom:22px; }
+  }
+
+  @media (max-width:1300px) {
+    :root { --right-width: clamp(320px, 28vw, 380px); }
+    .daily-stats { gap:14px; }
+    .price-value { font-size:clamp(2.25rem, 3.7vw, 3.8rem); }
+    .th-row .level-badge { min-width:32px; padding-left:4px; padding-right:4px; }
+  }
+
+  @media (max-width:1100px) {
+    body { padding:12px; }
+    .container { height:calc(100vh - 24px); }
+    .main-layout { grid-template-columns:1fr; }
+    .main-left { grid-template-rows:auto minmax(0, 1fr); }
+    .main-right { width:100%; min-width:0; }
+    .right-panel { grid-template-columns:minmax(0, 1fr) minmax(260px, 0.8fr); grid-template-rows:minmax(0, 1fr); align-items:stretch; }
+    .log-card .card-inner { min-height:100%; }
+    .log-list { max-height:none; }
+    .price-value { font-size:2rem; }
+    .daily-stats { gap:12px; flex-wrap:wrap; }
+    .daily-stat .ds-value { font-size:0.85rem; }
+    .header { padding:4px 0 10px; }
+    .mode-toggle { margin-bottom:10px; }
+    .mode-btn { font-size:0.82rem; padding:8px 0; }
+  }
+
+  @media (max-width:720px) {
+    .main-layout { gap:8px; }
+    .main-left { gap:8px; }
+    .right-panel { grid-template-columns:1fr; }
+    .threshold-card { display:none; }
+    .log-list { max-height:none; }
+    .risk-structured { grid-template-columns:1fr; }
+    .daily-stats { display:none; }
+    .price-value { font-size:1.75rem; }
+    .risk-insight-grid { grid-template-columns:1fr; }
+    .risk-trend-list { grid-template-columns:1fr; }
+    .risk-score-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+  }
+
+  @media (max-width:500px) {
+    body { padding:8px 6px; }
+    .container { height:calc(100vh - 16px); }
+    .price-value { font-size:1.55rem; }
+    .price-card .card-inner { padding:12px 10px; }
+    .daily-stats { gap:8px; }
+    .daily-stat .ds-label { font-size:0.62rem; }
+    .daily-stat .ds-value { font-size:0.78rem; }
+    .th-row { flex-wrap:wrap; }
+    .th-row button { font-size:0.7rem; padding:6px 8px; }
+    .header { padding:2px 0 8px; }
+    .header h1 { font-size:1rem; }
+    .icon-btn { width:30px; height:30px; border-radius:8px; }
+    .status { display:none; }
+    .chart-header { margin-bottom:8px; }
+    .vol-row { flex-wrap:wrap; }
+    .settings-backdrop { padding:10px; }
+    .settings-modal { max-height:calc(100vh - 20px); }
+    .settings-tabs { padding:10px 14px 0; }
+    .settings-body { padding:4px 14px 14px; }
+    .setting-row { flex-direction:column; align-items:stretch; gap:10px; padding:14px 0; }
+    .settings-input { min-width:0; width:100%; }
+    .settings-select { min-width:0; width:100%; }
+    .settings-foot { flex-wrap:wrap; }
+    .settings-foot button { flex:1 1 auto; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <h1>金价监控</h1>
+    <div class="header-actions">
+      <button class="icon-btn" id="updateButton" onclick="openUpdate()" title="检查更新" aria-label="检查更新">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12a9 9 0 0 1-15.32 6.36"></path>
+          <path d="M3 12A9 9 0 0 1 18.32 5.64"></path>
+          <path d="M18 2v4h-4"></path>
+          <path d="M6 22v-4h4"></path>
+        </svg>
+      </button>
+      <button class="icon-btn" onclick="openSettings()" title="设置" aria-label="设置">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"></path>
+          <path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.04.04a2.1 2.1 0 0 1-2.97 2.97l-.04-.04a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.09 1.65V21.3a2.1 2.1 0 0 1-4.2 0v-.06a1.8 1.8 0 0 0-1.09-1.65 1.8 1.8 0 0 0-1.98.36l-.04.04a2.1 2.1 0 0 1-2.97-2.97l.04-.04A1.8 1.8 0 0 0 3.8 15a1.8 1.8 0 0 0-1.65-1.09H2.1a2.1 2.1 0 0 1 0-4.2h.06A1.8 1.8 0 0 0 3.8 8.62a1.8 1.8 0 0 0-.36-1.98L3.4 6.6a2.1 2.1 0 0 1 2.97-2.97l.04.04a1.8 1.8 0 0 0 1.98.36h.01A1.8 1.8 0 0 0 9.5 2.38V2.1a2.1 2.1 0 0 1 4.2 0v.06a1.8 1.8 0 0 0 1.09 1.65 1.8 1.8 0 0 0 1.98-.36l.04-.04a2.1 2.1 0 0 1 2.97 2.97l-.04.04a1.8 1.8 0 0 0-.36 1.98 1.8 1.8 0 0 0 1.65 1.09h.06a2.1 2.1 0 0 1 0 4.2h-.06A1.8 1.8 0 0 0 19.4 15Z"></path>
+        </svg>
+      </button>
+      <div class="status">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusText">连接中...</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="mode-toggle">
+    <button class="mode-btn" data-mode="usd" onclick="switchMode('usd')">国际金价 <small>USD/oz</small></button>
+    <button class="mode-btn active" data-mode="rmb" onclick="switchMode('rmb')">国内金价 <small>RMB/克</small></button>
+  </div>
+
+  <div class="main-layout">
+
+    <!-- ====== 左侧 ====== -->
+    <div class="main-left">
+
+      <div class="card-outer price-card">
+        <div class="card-inner">
+          <div class="price-label" id="priceLabel">XAU/CNY · 人民币/克</div>
+          <div class="price-value" id="priceValue">--</div>
+          <div class="price-change neutral" id="priceChange">等待数据...</div>
+          <div class="price-time" id="priceTime">--</div>
+          <div class="price-rate" id="priceRate"></div>
+          <div class="price-stale" id="priceStale">等待行情数据...</div>
+          <div class="price-actions">
+            <button class="price-retry" id="priceRetry" onclick="refreshPrice()">重新获取</button>
+            <button class="risk-open" id="riskAnalyzeButton" onclick="openRiskAnalysis()">风险分析</button>
+          </div>
+
+          <div class="daily-stats" id="dailyStats">
+            <div class="daily-stat"><div class="ds-label">开盘</div><div class="ds-value" id="statOpen">--</div></div>
+            <div class="daily-stat"><div class="ds-label">最高</div><div class="ds-value ds-up" id="statHigh">--</div></div>
+            <div class="daily-stat"><div class="ds-label">最低</div><div class="ds-value ds-down" id="statLow">--</div></div>
+            <div class="daily-stat"><div class="ds-label">涨幅</div><div class="ds-value" id="statDayChg">--</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-outer chart-card">
+        <div class="card-inner">
+          <div class="chart-header">
+            <h3 id="chartTitle">价格走势 · RMB/克</h3>
+            <div class="chart-toggles">
+              <button class="chart-tg active" data-period="realtime" onclick="switchChartPeriod('realtime')">实时</button>
+              <button class="chart-tg" data-period="5min" onclick="switchChartPeriod('5min')">5分K线</button>
+            </div>
+          </div>
+          <div class="chart-wrapper"><canvas id="priceChart"></canvas></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ====== 右侧 ====== -->
+    <div class="main-right">
+      <div class="right-panel">
+
+        <div class="card-outer threshold-card">
+          <div class="card-inner">
+            <h3>预警阈值 <span class="threshold-unit" id="thresholdUnit">(RMB/克)</span></h3>
+
+            <!-- 上涨阈值 -->
+            <div class="threshold-section">
+              <div class="section-label upper-label">上涨预警</div>
+              <div class="th-row">
+                <span class="level-badge warn">关注</span>
+                <input type="number" id="upperWarn" step="0.01" placeholder="关注价位">
+                <button class="btn-set" onclick="setThreshold('upper_warning')">设置</button>
+                <button class="btn-clear-sm" onclick="clearThreshold('upper_warning')">清除</button>
+              </div>
+              <div class="th-row">
+                <span class="level-badge crit">警告</span>
+                <input type="number" id="upperCrit" step="0.01" placeholder="警告价位">
+                <button class="btn-set" onclick="setThreshold('upper_critical')">设置</button>
+                <button class="btn-clear-sm" onclick="clearThreshold('upper_critical')">清除</button>
+              </div>
+            </div>
+
+            <!-- 下跌阈值 -->
+            <div class="threshold-section">
+              <div class="section-label lower-label">下跌预警</div>
+              <div class="th-row">
+                <span class="level-badge warn">关注</span>
+                <input type="number" id="lowerWarn" step="0.01" placeholder="关注价位">
+                <button class="btn-set" onclick="setThreshold('lower_warning')">设置</button>
+                <button class="btn-clear-sm" onclick="clearThreshold('lower_warning')">清除</button>
+              </div>
+              <div class="th-row">
+                <span class="level-badge crit">警告</span>
+                <input type="number" id="lowerCrit" step="0.01" placeholder="警告价位">
+                <button class="btn-set" onclick="setThreshold('lower_critical')">设置</button>
+                <button class="btn-clear-sm" onclick="clearThreshold('lower_critical')">清除</button>
+              </div>
+            </div>
+
+            <div class="threshold-info" id="thresholdInfo">尚未设置阈值</div>
+
+            <!-- 邮件通知开关 -->
+            <div class="email-switches-section">
+              <div class="section-label email-label">邮件通知</div>
+              <div class="email-sw-row">
+                <span class="level-badge warn">关注</span>
+                <span class="email-sw-label">触发时发送邮件</span>
+                <label class="switch switch-sm"><input type="checkbox" id="emailWarningEnabled" checked onchange="updateEmailSwitch('email_warning_enabled', this.checked)"><span class="slider"></span></label>
+              </div>
+              <div class="email-sw-row">
+                <span class="level-badge crit">警告</span>
+                <span class="email-sw-label">触发时发送邮件</span>
+                <label class="switch switch-sm"><input type="checkbox" id="emailCriticalEnabled" checked onchange="updateEmailSwitch('email_critical_enabled', this.checked)"><span class="slider"></span></label>
+              </div>
+              <div class="email-sw-row">
+                <span class="level-badge vol">波动</span>
+                <span class="email-sw-label">触发时发送邮件</span>
+                <label class="switch switch-sm"><input type="checkbox" id="emailVolatilityEnabled" checked onchange="updateEmailSwitch('email_volatility_enabled', this.checked)"><span class="slider"></span></label>
+              </div>
+            </div>
+
+            <!-- 波动率预警 -->
+            <div class="volatility-section">
+              <div class="section-label volatility-label">波动预警</div>
+              <div class="vol-row">
+                <label>波动</label>
+                <input type="number" id="volPct" step="0.1" placeholder="2.0" value="2.0"> <span class="vol-unit">%</span>
+                <label>内</label>
+                <input type="number" id="volMin" step="1" placeholder="10" value="10"> <span class="vol-unit">分钟</span>
+              </div>
+              <div class="vol-row">
+                <button class="btn-set btn-form" onclick="setVolatility()">开启</button>
+                <button class="btn-clear btn-form" onclick="clearVolatility()">关闭</button>
+                <span class="vol-status off" id="volStatus">已关闭</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-outer log-card">
+          <div class="card-inner">
+            <h3>警报记录</h3>
+            <div class="log-list" id="logList"><div class="log-empty">暂无警报</div></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="settings-backdrop" id="settingsBackdrop" onclick="onSettingsBackdrop(event)">
+  <div class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="settings-head">
+      <h2 id="settingsTitle">设置</h2>
+      <button class="settings-close" onclick="closeSettings()" aria-label="关闭设置">×</button>
+    </div>
+    <div class="settings-tabs" role="tablist" aria-label="设置分类">
+      <button class="settings-tab active" id="settingsTabGeneral" type="button" role="tab" aria-selected="true" aria-controls="settingsPanelGeneral" onclick="switchSettingsTab('general')">通用设置</button>
+      <button class="settings-tab" id="settingsTabEmail" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelEmail" onclick="switchSettingsTab('email')">邮件配置</button>
+      <button class="settings-tab" id="settingsTabRisk" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelRisk" onclick="switchSettingsTab('risk')">风险分析</button>
+    </div>
+    <div class="settings-body">
+      <div class="settings-panel active" id="settingsPanelGeneral" role="tabpanel" aria-labelledby="settingsTabGeneral">
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">开机自启动</div>
+            <div class="setting-desc">开机后自动启动金价监控。</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="setStartup"><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">自启动时进入托盘</div>
+            <div class="setting-desc">开机启动后不弹出主窗口，可从右下角托盘打开。</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="setStartupTray"><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">桌面金价悬浮条</div>
+            <div class="setting-desc">主窗口隐藏时，仍在桌面右下角显示当前金价。</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="setFloatingPrice"><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">关闭窗口时</div>
+            <div class="setting-desc">控制点击右上角关闭按钮后的行为。</div>
+          </div>
+          <select class="settings-select" id="setCloseBehavior">
+            <option value="ask">每次询问</option>
+            <option value="minimize_to_tray">最小化到托盘</option>
+            <option value="exit">退出程序</option>
+          </select>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">告警提示音</div>
+            <div class="setting-desc">达到预警条件时播放系统提示音。</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="setAlertSound"><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">系统级告警弹窗</div>
+            <div class="setting-desc">达到预警条件时弹出置顶提示框。</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="setAlertDialog"><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">更新源地址</div>
+            <div class="setting-desc">用于检查新版本的 version.json 地址。</div>
+          </div>
+          <input class="settings-input" id="setUpdateManifestUrl" type="url" placeholder="https://example.com/version.json">
+        </div>
+      </div>
+      <div class="settings-panel" id="settingsPanelEmail" role="tabpanel" aria-labelledby="settingsTabEmail">
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">SMTP 服务器</div>
+            <div class="setting-desc">邮件服务商 SMTP 地址 (如 smtp.qq.com)。</div>
+          </div>
+          <input class="settings-input" id="setSmtpServer" type="text" placeholder="smtp.qq.com">
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">端口</div>
+            <div class="setting-desc">SSL 通常为 465，TLS 通常为 587。</div>
+          </div>
+          <input class="settings-input smtp-port" id="setSmtpPort" type="number" placeholder="465">
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">加密方式</div>
+            <div class="setting-desc">SSL 或 TLS 加密连接。</div>
+          </div>
+          <select class="settings-select" id="setSmtpEncryption">
+            <option value="ssl">SSL</option>
+            <option value="tls">TLS</option>
+          </select>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">发件邮箱</div>
+            <div class="setting-desc">用于发送通知的邮箱地址。</div>
+          </div>
+          <input class="settings-input" id="setSmtpSender" type="email" placeholder="your@qq.com">
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">SMTP 授权码</div>
+            <div class="setting-desc">邮箱 SMTP 授权码，非邮箱登录密码。</div>
+          </div>
+          <input class="settings-input" id="setSmtpPassword" type="password" placeholder="授权码">
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">收件邮箱</div>
+            <div class="setting-desc">接收金价预警通知的邮箱。</div>
+          </div>
+          <input class="settings-input" id="setSmtpRecipient" type="email" placeholder="receiver@qq.com">
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">测试邮件</div>
+            <div class="setting-desc">发送一封测试邮件验证配置是否正确。</div>
+          </div>
+          <button class="btn-set btn-form" id="btnTestEmail" onclick="testEmail()">发送测试</button>
+          <span class="test-email-status" id="testEmailStatus"></span>
+        </div>
+      </div>
+      <div class="settings-panel" id="settingsPanelRisk" role="tabpanel" aria-labelledby="settingsTabRisk">
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">启用风险分析助手</div>
+            <div class="setting-desc">仅在手动点击风险分析时调用模型，不会自动消耗 token。</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="setRiskAssistantEnabled"><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">模型提供商</div>
+            <div class="setting-desc">当前版本优先支持 DeepSeek。</div>
+          </div>
+          <select class="settings-select" id="setRiskAssistantProvider" onchange="updateRiskProviderFields()">
+            <option value="deepseek">DeepSeek</option>
+            <option value="openai_compatible">OpenAI 兼容</option>
+          </select>
+        </div>
+        <div class="setting-row risk-provider-row" data-provider="deepseek">
+          <div>
+            <div class="setting-label">DeepSeek API 地址</div>
+            <div class="setting-desc">默认使用 DeepSeek 官方 OpenAI 兼容接口。</div>
+          </div>
+          <input class="settings-input" id="setDeepseekBaseUrl" type="url" placeholder="https://api.deepseek.com">
+        </div>
+        <div class="setting-row risk-provider-row" data-provider="deepseek">
+          <div>
+            <div class="setting-label">DeepSeek 模型</div>
+            <div class="setting-desc" id="deepseekModelStatus">默认模型为 deepseek-v4-pro，可从接口自动获取。</div>
+          </div>
+          <div class="settings-stack">
+            <select class="settings-select" id="setDeepseekModel"></select>
+            <button class="settings-cancel risk-history-clear" type="button" onclick="refreshRiskModels()">刷新模型</button>
+          </div>
+        </div>
+        <div class="setting-row risk-provider-row" data-provider="deepseek">
+          <div>
+            <div class="setting-label">DeepSeek API Key</div>
+            <div class="setting-desc" id="deepseekKeyStatus">未配置。留空保存会保留当前密钥。</div>
+          </div>
+          <input class="settings-input" id="setDeepseekApiKey" type="password" placeholder="留空表示不修改">
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">清空 API Key</div>
+            <div class="setting-desc">下次保存时删除本机已保存的 DeepSeek API Key。</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="clearDeepseekApiKey"><span class="slider"></span></label>
+        </div>
+        <div class="setting-row risk-provider-row" data-provider="openai_compatible">
+          <div>
+            <div class="setting-label">兼容接口地址</div>
+            <div class="setting-desc">填写 OpenAI 兼容服务的基础地址，例如 https://example.com/v1。</div>
+          </div>
+          <input class="settings-input" id="setOpenaiCompatibleBaseUrl" type="url" placeholder="https://example.com/v1">
+        </div>
+        <div class="setting-row risk-provider-row" data-provider="openai_compatible">
+          <div>
+            <div class="setting-label">兼容模型</div>
+            <div class="setting-desc">填写兼容服务支持的模型名称。</div>
+          </div>
+          <input class="settings-input" id="setOpenaiCompatibleModel" type="text" placeholder="model-name">
+        </div>
+        <div class="setting-row risk-provider-row" data-provider="openai_compatible">
+          <div>
+            <div class="setting-label">兼容 API Key</div>
+            <div class="setting-desc" id="openaiCompatibleKeyStatus">未配置。留空保存会保留当前密钥。</div>
+          </div>
+          <input class="settings-input" id="setOpenaiCompatibleApiKey" type="password" placeholder="留空表示不修改">
+        </div>
+        <div class="setting-row risk-provider-row" data-provider="openai_compatible">
+          <div>
+            <div class="setting-label">清空兼容 API Key</div>
+            <div class="setting-desc">下次保存时删除本机已保存的兼容 API Key。</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="clearOpenaiCompatibleApiKey"><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">模型连接测试</div>
+            <div class="setting-desc">仅调用模型列表接口验证当前配置，不触发风险分析。</div>
+          </div>
+          <div class="settings-stack">
+            <button class="settings-cancel risk-history-clear" type="button" onclick="testRiskModel()">测试模型</button>
+            <span class="model-test-status" id="riskModelTestStatus"></span>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">单次输出上限</div>
+            <div class="setting-desc">限制每次分析的最大输出 token，控制成本。</div>
+          </div>
+          <input class="settings-input smtp-port" id="setRiskMaxTokens" type="number" min="300" max="4000" step="100" placeholder="1200">
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">分析冷却时间</div>
+            <div class="setting-desc">两次手动分析之间的最短间隔，避免误点重复消耗。</div>
+          </div>
+          <input class="settings-input smtp-port" id="setRiskCooldownSeconds" type="number" min="0" max="300" step="1" placeholder="15">
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">重复分析缓存</div>
+            <div class="setting-desc">同一行情快照在此时间内复用最近分析，避免重复消耗 token。</div>
+          </div>
+          <input class="settings-input smtp-port" id="setRiskCacheMinutes" type="number" min="0" max="60" step="1" placeholder="10">
+        </div>
+      </div>
+    </div>
+    <div class="settings-message" id="settingsMessage"></div>
+    <div class="settings-foot">
+      <button class="settings-cancel" onclick="closeSettings()">取消</button>
+      <button class="settings-save" onclick="saveSettings()">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="settings-backdrop" id="riskBackdrop" onclick="onRiskBackdrop(event)">
+  <div class="settings-modal risk-modal" role="dialog" aria-modal="true" aria-labelledby="riskTitle">
+    <div class="settings-head">
+      <h2 id="riskTitle">风险分析助手</h2>
+      <button class="settings-close" onclick="closeRiskAnalysis()" aria-label="关闭风险分析">×</button>
+    </div>
+    <div class="settings-body">
+      <div class="risk-status" id="riskStatus">点击开始分析，助手会基于当前时间、金价、汇率、历史走势和近期资讯生成风险趋势判断。</div>
+      <div class="risk-meta" id="riskMeta"></div>
+      <div class="risk-insight-grid">
+        <div class="risk-quality" id="riskQuality"></div>
+        <div class="risk-trends" id="riskTrends"></div>
+      </div>
+      <div class="risk-scorecard" id="riskScorecard"></div>
+      <div class="risk-structured" id="riskStructured"></div>
+      <div class="risk-result" id="riskResult">暂无分析结果。</div>
+      <div class="risk-history">
+        <div class="risk-history-head">
+          <div class="risk-history-title">分析历史</div>
+          <button class="settings-cancel risk-history-clear" id="riskClearHistoryButton" onclick="clearRiskHistory()">清空历史</button>
+        </div>
+        <div class="risk-history-list" id="riskHistoryList">
+          <div class="risk-history-empty">暂无历史记录</div>
+        </div>
+      </div>
+    </div>
+    <div class="settings-foot">
+      <button class="settings-cancel" onclick="closeRiskAnalysis()">关闭</button>
+      <button class="settings-cancel" id="riskForceRunButton" onclick="rerunRiskAnalysis()" style="display:none">重新分析</button>
+      <button class="settings-save" id="riskRunButton" onclick="requestRiskAnalysis()">开始分析</button>
+    </div>
+  </div>
+</div>
+
+<div class="settings-backdrop" id="updateBackdrop" onclick="onUpdateBackdrop(event)">
+  <div class="settings-modal update-modal" role="dialog" aria-modal="true" aria-labelledby="updateTitle">
+    <div class="settings-head">
+      <h2 id="updateTitle">软件更新</h2>
+      <button class="settings-close" onclick="closeUpdate()" aria-label="关闭更新窗口">×</button>
+    </div>
+    <div class="settings-body">
+      <div class="update-status" id="updateStatus">点击检查更新获取最新版本。</div>
+      <div class="update-meta" id="updateMeta"></div>
+      <div class="update-notes" id="updateNotes" style="display:none"></div>
+    </div>
+    <div class="settings-foot">
+      <button class="settings-cancel" onclick="closeUpdate()">关闭</button>
+      <button class="settings-cancel" onclick="checkUpdate()">检查更新</button>
+      <button class="update-install" id="installUpdateButton" onclick="installUpdate()" disabled>立即更新</button>
+    </div>
+  </div>
+</div>
+
+<div class="settings-backdrop" id="closeBackdrop" onclick="onCloseBackdrop(event)">
+  <div class="settings-modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="closeTitle">
+    <div class="settings-head">
+      <h2 id="closeTitle">关闭金价监控</h2>
+      <button class="settings-close" onclick="submitCloseChoice('cancel')" aria-label="关闭确认窗口">×</button>
+    </div>
+    <div class="settings-body">
+      <div class="close-choice-copy">最小化到右下角托盘后，程序会继续监控金价并在触发条件时提醒。也可以直接退出程序。</div>
+      <label class="dialog-check">
+        <input type="checkbox" id="closeRemember">
+        <span>不再提示，记住本次选择</span>
+      </label>
+    </div>
+    <div class="settings-foot">
+      <button class="settings-cancel" onclick="submitCloseChoice('cancel')">取消</button>
+      <button class="settings-save" onclick="submitCloseChoice('minimize_to_tray')">最小化到托盘</button>
+      <button class="dialog-danger" onclick="submitCloseChoice('exit')">退出程序</button>
+    </div>
+  </div>
+</div>
+
+<div class="settings-backdrop" id="alertBackdrop" onclick="onAlertBackdrop(event)">
+  <div class="settings-modal alert-modal" id="alertModal" role="alertdialog" aria-modal="true" aria-labelledby="alertTitle">
+    <div class="settings-head">
+      <h2 id="alertTitle">金价预警</h2>
+      <button class="settings-close" onclick="closeAlertModal()" aria-label="关闭告警">×</button>
+    </div>
+    <div class="alert-body">
+      <div class="alert-badge" id="alertBadge">预警</div>
+      <div class="alert-message" id="alertMessage">--</div>
+      <div class="alert-meta">
+        <span id="alertTime">--</span>
+        <span id="alertMode">--</span>
+      </div>
+      <div class="related-news" id="relatedNews">
+        <div class="related-news-title">近期相关资讯</div>
+        <div id="relatedNewsList"></div>
+      </div>
+    </div>
+    <div class="settings-foot">
+      <button class="settings-cancel" onclick="analyzeActiveAlert()">分析本次预警</button>
+      <button class="settings-save" onclick="closeAlertModal()">知道了</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+<script>
+// ========== PWA Service Worker ==========
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+
+// ========== 音效 ==========
+function playAlertSound(type) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    if (type === 'critical' || type === 'upper') {
+      osc.frequency.value = 1000; osc.type = 'square';
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+      osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.4);
+    } else if (type === 'warning' || type === 'volatility') {
+      osc.frequency.value = 660; osc.type = 'sine';
+      gain.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.6);
+      osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.6);
+    } else {
+      osc.frequency.value = 520; osc.type = 'triangle';
+      gain.gain.setValueAtTime(0.1, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.8);
+      osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.8);
+    }
+  } catch(e) {}
+}
+
+// ========== 全局状态 ==========
+const SOCKET_ACCESS_TOKEN = {{ socket_access_token | tojson }};
+const BASE_TITLE = '金价监控';
+const socket = io({
+  auth: { token: SOCKET_ACCESS_TOKEN },
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000,
+  timeout: 5000,
+});
+let currentMode = 'rmb';
+let chartPeriod = 'realtime';
+let chart = null;
+const MAX_POINTS = 60;
+
+let historyUsd = { labels: [], prices: [] };
+let historyRmb = { labels: [], prices: [] };
+let klines5min = [];
+let latestData = null;
+let allThresholds = {};
+let volConfig = { percent: null, minutes: 10, enabled: false };
+let appSettings = {
+  startup_enabled: false,
+  startup_to_tray: true,
+  close_behavior: 'ask',
+  close_remembered: false,
+  alert_sound_enabled: true,
+  alert_dialog_enabled: true,
+  update_manifest_url: '',
+  risk_assistant_enabled: true,
+  risk_assistant_provider: 'deepseek',
+  deepseek_base_url: 'https://api.deepseek.com',
+  deepseek_model: 'deepseek-v4-pro',
+  deepseek_api_key_configured: false,
+  deepseek_api_key_masked: '',
+  openai_compatible_base_url: '',
+  openai_compatible_model: '',
+  openai_compatible_api_key_configured: false,
+  openai_compatible_api_key_masked: '',
+  risk_assistant_max_tokens: 1200,
+  risk_assistant_cooldown_seconds: 15,
+  risk_assistant_cache_minutes: 10,
+};
+let pendingSettingsSave = false;
+let settingsSaveFailed = false;
+let settingsSaveTimer = null;
+let pendingUpdateInfo = null;
+let alertQueue = [];
+let activeAlert = null;
+let riskAnalysisRunning = false;
+let riskAnalysisHistory = [];
+let pendingRiskForceTrigger = null;
+let deepseekModelOptions = ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'];
+
+// ========== 模式切换 ==========
+function switchMode(mode) {
+  currentMode = mode;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.mode-btn[data-mode="${mode}"]`).classList.add('active');
+  const isUsd = mode === 'usd';
+  document.getElementById('priceLabel').textContent = isUsd ? 'XAU/USD · 美元/盎司' : 'XAU/CNY · 人民币/克';
+  document.getElementById('chartTitle').textContent = (chartPeriod==='realtime' ? '价格走势' : '5分钟K线') + (isUsd ? ' · USD/oz' : ' · RMB/克');
+  document.getElementById('thresholdUnit').textContent = isUsd ? '(USD/oz)' : '(RMB/克)';
+  if (latestData) { updatePriceDisplay(latestData); updateDailyStats(latestData); }
+  switchChartData();
+  updateThresholdInputs();
+}
+
+// ========== 图表周期切换 ==========
+function switchChartPeriod(period) {
+  chartPeriod = period;
+  document.querySelectorAll('.chart-tg').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.chart-tg[data-period="${period}"]`).classList.add('active');
+  const isUsd = currentMode === 'usd';
+  document.getElementById('chartTitle').textContent = (period==='realtime' ? '价格走势' : '5分钟K线') + (isUsd ? ' · USD/oz' : ' · RMB/克');
+  switchChartData();
+}
+
+function switchChartData() {
+  if (!chart) return;
+  const isUsd = currentMode === 'usd';
+  let labels, prices;
+
+  if (chartPeriod === '5min' && klines5min.length) {
+    labels = klines5min.map(k => k.time);
+    prices = klines5min.map(k => ({ o: k.open, h: k.high, l: k.low, c: k.close }));
+  } else {
+    const hist = isUsd ? historyUsd : historyRmb;
+    labels = [...hist.labels]; prices = [...hist.prices];
+  }
+  chart.data.labels = labels;
+  chart.data.datasets[0].data = prices;
+  chart.options.scales.y.ticks.callback = v => (isUsd ? '$' : '¥') + v.toLocaleString('en-US');
+  chart.update();
+}
+
+// ========== Socket.IO ==========
+socket.on('connect', () => {
+  document.getElementById('statusDot').classList.remove('disconnected');
+  document.getElementById('statusText').textContent = '本地服务已连接';
+  document.getElementById('priceRetry').textContent = '重新获取';
+});
+socket.on('disconnect', () => {
+  document.getElementById('statusDot').classList.add('disconnected');
+  document.getElementById('statusText').textContent = '本地服务已断开';
+  document.getElementById('priceRetry').textContent = '重新连接';
+  applyFetchStatus({
+    ok: false,
+    message: '本地服务连接已断开，程序会自动尝试重连。',
+    retryable: true,
+    reconnect: true,
+  });
+});
+socket.on('connect_error', error => {
+  document.getElementById('statusDot').classList.add('disconnected');
+  document.getElementById('statusText').textContent = '本地服务连接失败';
+  const reason = error && error.message ? error.message : '连接超时';
+  applyFetchStatus({
+    ok: false,
+    message: '本地服务连接失败：' + reason,
+    retryable: true,
+    reconnect: true,
+  });
+});
+
+socket.on('init_state', data => {
+  latestData = {
+    usd: data.usd, rmb: data.rmb, rate: data.rate,
+    gold_source: data.gold_source,
+    gold_time: data.gold_time,
+    gold_cached: data.gold_cached,
+    gold_error: data.gold_error,
+    rate_source: data.rate_source,
+    rate_time: data.rate_time,
+    rate_cached: data.rate_cached,
+    rate_error: data.rate_error,
+    previous_usd: data.previous_usd, previous_rmb: data.previous_rmb,
+    change_usd: data.usd && data.previous_usd ? data.usd - data.previous_usd : 0,
+    change_pct_usd: data.usd && data.previous_usd ? (data.usd - data.previous_usd) / data.previous_usd * 100 : 0,
+    change_rmb: data.rmb && data.previous_rmb ? data.rmb - data.previous_rmb : 0,
+    change_pct_rmb: data.rmb && data.previous_rmb ? (data.rmb - data.previous_rmb) / data.previous_rmb * 100 : 0,
+    time: data.history.length ? data.history[data.history.length-1].time : '--',
+    daily: data.daily || {},
+  };
+  historyUsd = { labels:[], prices:[] };
+  historyRmb = { labels:[], prices:[] };
+  data.history.forEach(h => {
+    historyUsd.labels.push(h.time); historyUsd.prices.push(h.usd);
+    historyRmb.labels.push(h.time); historyRmb.prices.push(h.rmb);
+  });
+  klines5min = data.klines_5min || [];
+  allThresholds = data.thresholds || {};
+  volConfig = data.volatility_config || { percent: null, minutes: 10, enabled: false };
+  if (data.settings) applySettings(data.settings);
+  if (data.risk_analysis_history) applyRiskHistory(data.risk_analysis_history);
+  updateVolUI();
+
+  updatePriceDisplay(latestData);
+  updateDailyStats(latestData);
+  initChart();
+  switchChartData();
+  updateThresholdInputs();
+
+  if (data.fetch_status) applyFetchStatus(data.fetch_status);
+  else if (!data.ok) applyFetchStatus({ ok:false, message:'行情数据获取失败', retryable:true });
+  if (data.alert_log && data.alert_log.length) data.alert_log.forEach(addLogEntry);
+  socket.emit('get_settings');
+});
+
+socket.on('price_update', data => {
+  latestData = data;
+
+  historyUsd.labels.push(data.time); historyUsd.prices.push(data.usd);
+  historyRmb.labels.push(data.time); historyRmb.prices.push(data.rmb);
+  if (historyUsd.labels.length > MAX_POINTS) { historyUsd.labels.shift(); historyUsd.prices.shift(); }
+  if (historyRmb.labels.length > MAX_POINTS) { historyRmb.labels.shift(); historyRmb.prices.shift(); }
+
+  updatePriceDisplay(data);
+  updateDailyStats(data);
+  if (chart && chartPeriod === 'realtime') {
+    const hist = currentMode === 'usd' ? historyUsd : historyRmb;
+    chart.data.labels = [...hist.labels];
+    chart.data.datasets[0].data = [...hist.prices];
+    chart.update('none');
+  }
+  checkThresholdProximity();
+});
+
+socket.on('fetch_error', data => applyFetchStatus(data || { ok:false, message:'行情数据获取失败', retryable:true }));
+
+socket.on('fetch_status', data => {
+  applyFetchStatus(data || {});
+});
+
+socket.on('alert', data => {
+  addLogEntry(data);
+  showAlertModal(data);
+  flashTitle(data.type === 'critical' ? '警告' : data.type === 'warning' ? '关注' : '波动预警');
+});
+
+socket.on('show_close_dialog', data => {
+  openCloseDialog(data || {});
+});
+
+socket.on('thresholds_updated', data => {
+  allThresholds = data;
+  updateThresholdInputs();
+});
+
+socket.on('volatility_updated', data => {
+  volConfig = {
+    percent: data.percent != null ? data.percent : null,
+    minutes: data.minutes || 10,
+    enabled: !!data.enabled,
+  };
+  updateVolUI();
+});
+
+socket.on('settings_updated', data => {
+  applySettings(data || {});
+  if (settingsSaveTimer) {
+    clearTimeout(settingsSaveTimer);
+    settingsSaveTimer = null;
+  }
+  if (settingsSaveFailed) {
+    pendingSettingsSave = false;
+    return;
+  }
+  document.getElementById('settingsMessage').textContent = '';
+  if (pendingSettingsSave) closeSettings();
+  pendingSettingsSave = false;
+});
+
+socket.on('settings_error', data => {
+  if (settingsSaveTimer) {
+    clearTimeout(settingsSaveTimer);
+    settingsSaveTimer = null;
+  }
+  pendingSettingsSave = false;
+  settingsSaveFailed = true;
+  document.getElementById('settingsMessage').textContent = data.message || '设置保存失败';
+});
+
+socket.on('threshold_error', data => alert(data.message));
+
+socket.on('update_status', data => {
+  applyUpdateStatus(data || {});
+});
+
+socket.on('risk_analysis_status', data => {
+  riskAnalysisRunning = !!(data && data.running);
+  if (data && data.message) {
+    applyRiskStatus(data.message, riskAnalysisRunning ? 'loading' : '');
+  }
+  updateRiskButtonState();
+});
+
+socket.on('risk_analysis_result', data => {
+  riskAnalysisRunning = false;
+  const usageText = formatRiskUsage(data && data.usage ? data.usage : null);
+  applyRiskStatus(usageText ? '分析完成。' + usageText : '分析完成。', '');
+  renderRiskSnapshot(data && data.snapshot ? data.snapshot : null);
+  renderRiskStructured(data && data.structured ? data.structured : null);
+  document.getElementById('riskResult').textContent = data && data.content ? data.content : '未返回分析内容。';
+  pendingRiskForceTrigger = null;
+  setRiskForceButtonVisible(false);
+  updateRiskButtonState();
+});
+
+socket.on('risk_analysis_error', data => {
+  riskAnalysisRunning = false;
+  applyRiskStatus(data && data.message ? data.message : '风险分析失败。', 'error');
+  if (data && data.snapshot) renderRiskSnapshot(data.snapshot);
+  updateRiskButtonState();
+});
+
+socket.on('risk_analysis_cache_hit', data => {
+  riskAnalysisRunning = false;
+  const age = data && data.cache_age_seconds != null ? Math.max(0, Number(data.cache_age_seconds)) : 0;
+  const ageText = age >= 60 ? Math.floor(age / 60) + ' 分钟前' : Math.max(1, age) + ' 秒前';
+  applyRiskStatus((data && data.message ? data.message : '已复用最近同一行情分析。') + ' 生成于 ' + ageText + '。', '');
+  renderRiskSnapshot(data && data.snapshot ? data.snapshot : null);
+  renderRiskStructured(data && data.structured ? data.structured : null);
+  document.getElementById('riskResult').textContent = data && data.content ? data.content : '暂无缓存分析内容。';
+  pendingRiskForceTrigger = data && data.trigger ? data.trigger : null;
+  setRiskForceButtonVisible(true);
+  updateRiskButtonState();
+});
+
+socket.on('risk_analysis_history_updated', data => {
+  applyRiskHistory(data || {});
+});
+
+socket.on('risk_model_test_result', data => {
+  const el = document.getElementById('riskModelTestStatus');
+  if (!el) return;
+  el.textContent = data && data.message ? data.message : '模型测试完成。';
+  el.className = 'model-test-status ' + (data && data.ok ? 'ok' : 'fail');
+});
+
+socket.on('open_risk_analysis', data => {
+  openRiskAnalysis();
+  if (data && data.run) requestRiskAnalysis({ source: data.source || 'floating_price' });
+});
+
+socket.on('risk_model_options_updated', data => {
+  if (!data || data.provider !== 'deepseek') return;
+  deepseekModelOptions = Array.isArray(data.models) && data.models.length ? data.models : deepseekModelOptions;
+  renderDeepseekModelOptions(appSettings.deepseek_model || 'deepseek-v4-pro');
+  const status = document.getElementById('deepseekModelStatus');
+  if (status) {
+    status.textContent = data.error
+      ? data.error + ' 当前显示兜底模型。'
+      : '模型列表已更新，来源：' + (data.source === 'api' ? '接口' : '兜底列表') + '。';
+  }
+});
+
+// ========== 设置 ==========
+function applySettings(data) {
+  appSettings = Object.assign({}, appSettings, data);
+  const closeBehavior = appSettings.close_behavior || 'ask';
+  document.getElementById('setStartup').checked = !!appSettings.startup_enabled;
+  document.getElementById('setStartupTray').checked = !!appSettings.startup_to_tray;
+  document.getElementById('setFloatingPrice').checked = appSettings.floating_price_enabled !== false;
+  document.getElementById('setCloseBehavior').value = closeBehavior;
+  document.getElementById('setAlertSound').checked = !!appSettings.alert_sound_enabled;
+  document.getElementById('setAlertDialog').checked = !!appSettings.alert_dialog_enabled;
+  document.getElementById('setUpdateManifestUrl').value = appSettings.update_manifest_url || '';
+  // 邮件通知
+  document.getElementById('setSmtpServer').value = appSettings.smtp_server || '';
+  document.getElementById('setSmtpPort').value = appSettings.smtp_port || '465';
+  document.getElementById('setSmtpEncryption').value = appSettings.smtp_encryption || 'ssl';
+  document.getElementById('setSmtpSender').value = appSettings.smtp_sender || '';
+  document.getElementById('setSmtpPassword').value = appSettings.smtp_password || '';
+  document.getElementById('setSmtpRecipient').value = appSettings.smtp_recipient || '';
+  document.getElementById('emailWarningEnabled').checked = appSettings.email_warning_enabled !== false;
+  document.getElementById('emailCriticalEnabled').checked = appSettings.email_critical_enabled !== false;
+  document.getElementById('emailVolatilityEnabled').checked = appSettings.email_volatility_enabled !== false;
+  document.getElementById('testEmailStatus').textContent = '';
+  document.getElementById('testEmailStatus').className = 'test-email-status';
+  document.getElementById('setRiskAssistantEnabled').checked = appSettings.risk_assistant_enabled !== false;
+  document.getElementById('setRiskAssistantProvider').value = appSettings.risk_assistant_provider || 'deepseek';
+  document.getElementById('setDeepseekBaseUrl').value = appSettings.deepseek_base_url || 'https://api.deepseek.com';
+  renderDeepseekModelOptions(appSettings.deepseek_model || 'deepseek-v4-pro');
+  document.getElementById('setDeepseekApiKey').value = '';
+  document.getElementById('clearDeepseekApiKey').checked = false;
+  const keyStatus = appSettings.deepseek_api_key_configured
+    ? '已配置：' + (appSettings.deepseek_api_key_masked || '******') + '。留空保存会保留当前密钥。'
+    : '未配置。留空保存会保留当前密钥。';
+  document.getElementById('deepseekKeyStatus').textContent = keyStatus;
+  document.getElementById('setOpenaiCompatibleBaseUrl').value = appSettings.openai_compatible_base_url || '';
+  document.getElementById('setOpenaiCompatibleModel').value = appSettings.openai_compatible_model || '';
+  document.getElementById('setOpenaiCompatibleApiKey').value = '';
+  document.getElementById('clearOpenaiCompatibleApiKey').checked = false;
+  const compatibleKeyStatus = appSettings.openai_compatible_api_key_configured
+    ? '已配置：' + (appSettings.openai_compatible_api_key_masked || '******') + '。留空保存会保留当前密钥。'
+    : '未配置。留空保存会保留当前密钥。';
+  document.getElementById('openaiCompatibleKeyStatus').textContent = compatibleKeyStatus;
+  document.getElementById('setRiskMaxTokens').value = appSettings.risk_assistant_max_tokens || 1200;
+  document.getElementById('setRiskCooldownSeconds').value = appSettings.risk_assistant_cooldown_seconds || 15;
+  document.getElementById('setRiskCacheMinutes').value = appSettings.risk_assistant_cache_minutes ?? 10;
+  const modelTestStatus = document.getElementById('riskModelTestStatus');
+  if (modelTestStatus) {
+    modelTestStatus.textContent = '';
+    modelTestStatus.className = 'model-test-status';
+  }
+  updateRiskProviderFields();
+  updateRiskButtonState();
+}
+
+function renderDeepseekModelOptions(selected) {
+  const select = document.getElementById('setDeepseekModel');
+  const model = selected || 'deepseek-v4-pro';
+  const options = Array.from(new Set([model, ...deepseekModelOptions].filter(Boolean)));
+  select.innerHTML = options.map(item => (
+    '<option value="' + escapeHtml(item) + '">' + escapeHtml(item) + '</option>'
+  )).join('');
+  select.value = model;
+}
+
+function updateRiskProviderFields() {
+  const provider = document.getElementById('setRiskAssistantProvider').value || 'deepseek';
+  document.querySelectorAll('.risk-provider-row').forEach(row => {
+    row.classList.toggle('hidden', row.getAttribute('data-provider') !== provider);
+  });
+}
+
+function refreshRiskModels() {
+  const status = document.getElementById('deepseekModelStatus');
+  if (status) status.textContent = '正在获取模型列表...';
+  socket.emit('get_risk_model_options', { provider: 'deepseek' });
+}
+
+function testRiskModel() {
+  const status = document.getElementById('riskModelTestStatus');
+  if (status) {
+    status.textContent = '正在测试当前模型...';
+    status.className = 'model-test-status';
+  }
+  socket.emit('test_risk_model');
+}
+
+function switchSettingsTab(tab) {
+  const tabs = ['general', 'email', 'risk'];
+  tabs.forEach(name => {
+    const active = tab === name;
+    const suffix = name.charAt(0).toUpperCase() + name.slice(1);
+    document.getElementById('settingsTab' + suffix).classList.toggle('active', active);
+    document.getElementById('settingsTab' + suffix).setAttribute('aria-selected', String(active));
+    document.getElementById('settingsPanel' + suffix).classList.toggle('active', active);
+  });
+  const body = document.querySelector('#settingsBackdrop .settings-body');
+  if (body) body.scrollTop = 0;
+  if (tab === 'risk') refreshRiskModels();
+}
+
+function openSettings() {
+  applySettings(appSettings);
+  switchSettingsTab('general');
+  document.getElementById('settingsMessage').textContent = '';
+  document.getElementById('settingsBackdrop').classList.add('show');
+}
+
+function closeSettings() {
+  document.getElementById('settingsBackdrop').classList.remove('show');
+}
+
+function onSettingsBackdrop(event) {
+  if (event.target.id === 'settingsBackdrop') closeSettings();
+}
+
+function saveSettings() {
+  const closeBehavior = document.getElementById('setCloseBehavior').value;
+  const next = {
+    startup_enabled: document.getElementById('setStartup').checked,
+    startup_to_tray: document.getElementById('setStartupTray').checked,
+    floating_price_enabled: document.getElementById('setFloatingPrice').checked,
+    close_behavior: closeBehavior,
+    close_remembered: closeBehavior !== 'ask',
+    alert_sound_enabled: document.getElementById('setAlertSound').checked,
+    alert_dialog_enabled: document.getElementById('setAlertDialog').checked,
+    update_manifest_url: document.getElementById('setUpdateManifestUrl').value.trim(),
+    // 邮件通知
+    smtp_server: document.getElementById('setSmtpServer').value.trim(),
+    smtp_port: document.getElementById('setSmtpPort').value.trim(),
+    smtp_encryption: document.getElementById('setSmtpEncryption').value,
+    smtp_sender: document.getElementById('setSmtpSender').value.trim(),
+    smtp_password: document.getElementById('setSmtpPassword').value,
+    smtp_recipient: document.getElementById('setSmtpRecipient').value.trim(),
+    email_warning_enabled: document.getElementById('emailWarningEnabled').checked,
+    email_critical_enabled: document.getElementById('emailCriticalEnabled').checked,
+    email_volatility_enabled: document.getElementById('emailVolatilityEnabled').checked,
+    risk_assistant_enabled: document.getElementById('setRiskAssistantEnabled').checked,
+    risk_assistant_provider: document.getElementById('setRiskAssistantProvider').value,
+    deepseek_base_url: document.getElementById('setDeepseekBaseUrl').value.trim(),
+    deepseek_model: document.getElementById('setDeepseekModel').value,
+    deepseek_api_key: document.getElementById('setDeepseekApiKey').value.trim(),
+    deepseek_api_key_clear: document.getElementById('clearDeepseekApiKey').checked,
+    openai_compatible_base_url: document.getElementById('setOpenaiCompatibleBaseUrl').value.trim(),
+    openai_compatible_model: document.getElementById('setOpenaiCompatibleModel').value.trim(),
+    openai_compatible_api_key: document.getElementById('setOpenaiCompatibleApiKey').value.trim(),
+    openai_compatible_api_key_clear: document.getElementById('clearOpenaiCompatibleApiKey').checked,
+    risk_assistant_max_tokens: document.getElementById('setRiskMaxTokens').value.trim(),
+    risk_assistant_cooldown_seconds: document.getElementById('setRiskCooldownSeconds').value.trim(),
+    risk_assistant_cache_minutes: document.getElementById('setRiskCacheMinutes').value.trim(),
+  };
+  pendingSettingsSave = true;
+  settingsSaveFailed = false;
+  document.getElementById('settingsMessage').textContent = '正在保存...';
+  socket.emit('update_settings', next);
+  if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
+  settingsSaveTimer = setTimeout(() => {
+    if (!pendingSettingsSave) return;
+    pendingSettingsSave = false;
+    settingsSaveFailed = true;
+    document.getElementById('settingsMessage').textContent = '保存失败：后台服务未响应，请退出托盘中的旧程序后重新打开最新版。';
+  }, 5000);
+}
+
+function testEmail() {
+  const statusEl = document.getElementById('testEmailStatus');
+  const btn = document.getElementById('btnTestEmail');
+  statusEl.textContent = '正在发送...';
+  statusEl.className = 'test-email-status';
+  btn.disabled = true;
+  socket.emit('test_email');
+}
+
+socket.on('test_email_result', data => {
+  const statusEl = document.getElementById('testEmailStatus');
+  const btn = document.getElementById('btnTestEmail');
+  btn.disabled = false;
+  if (data.ok) {
+    statusEl.textContent = data.message;
+    statusEl.className = 'test-email-status ok';
+  } else {
+    statusEl.textContent = data.message;
+    statusEl.className = 'test-email-status fail';
+  }
+});
+
+// ========== 风险分析助手 ==========
+function openRiskAnalysis() {
+  document.getElementById('riskBackdrop').classList.add('show');
+  socket.emit('get_risk_analysis_history');
+  const providerMessage = riskProviderErrorMessage();
+  if (!appSettings.risk_assistant_enabled) {
+    applyRiskStatus('风险分析助手已关闭，请先在设置中启用。', 'error');
+  } else if (providerMessage) {
+    applyRiskStatus(providerMessage, 'error');
+  } else if (!document.getElementById('riskResult').textContent || document.getElementById('riskResult').textContent === '暂无分析结果。') {
+    applyRiskStatus('点击开始分析，助手会基于当前行情生成风险趋势判断。', '');
+  }
+  updateRiskButtonState();
+}
+
+function closeRiskAnalysis() {
+  document.getElementById('riskBackdrop').classList.remove('show');
+}
+
+function onRiskBackdrop(event) {
+  if (event.target.id === 'riskBackdrop') closeRiskAnalysis();
+}
+
+function applyRiskStatus(message, type) {
+  const statusEl = document.getElementById('riskStatus');
+  statusEl.textContent = message || '';
+  statusEl.className = 'risk-status' + (type ? ' ' + type : '');
+}
+
+function updateRiskButtonState() {
+  const runBtn = document.getElementById('riskRunButton');
+  const openBtn = document.getElementById('riskAnalyzeButton');
+  const forceBtn = document.getElementById('riskForceRunButton');
+  const disabled = riskAnalysisRunning || !appSettings.risk_assistant_enabled || !!riskProviderErrorMessage();
+  if (runBtn) {
+    runBtn.disabled = disabled;
+    runBtn.textContent = riskAnalysisRunning ? '分析中...' : '开始分析';
+  }
+  if (forceBtn) forceBtn.disabled = disabled;
+  if (openBtn) openBtn.disabled = !appSettings.risk_assistant_enabled;
+}
+
+function requestRiskAnalysis(trigger, force) {
+  if (riskAnalysisRunning) return;
+  if (!appSettings.risk_assistant_enabled) {
+    applyRiskStatus('风险分析助手已关闭，请先在设置中启用。', 'error');
+    return;
+  }
+  const providerMessage = riskProviderErrorMessage();
+  if (providerMessage) {
+    applyRiskStatus(providerMessage, 'error');
+    return;
+  }
+  riskAnalysisRunning = true;
+  document.getElementById('riskResult').textContent = '正在分析当前行情...';
+  renderRiskSnapshot(null);
+  renderRiskStructured(null);
+  pendingRiskForceTrigger = null;
+  setRiskForceButtonVisible(false);
+  applyRiskStatus('正在生成风险分析...', 'loading');
+  updateRiskButtonState();
+  socket.emit('request_risk_analysis', Object.assign({}, trigger ? { trigger } : {}, force ? { force: true } : {}));
+}
+
+function setRiskForceButtonVisible(visible) {
+  const btn = document.getElementById('riskForceRunButton');
+  if (btn) btn.style.display = visible ? '' : 'none';
+}
+
+function rerunRiskAnalysis() {
+  requestRiskAnalysis(pendingRiskForceTrigger || null, true);
+}
+
+function riskProviderErrorMessage() {
+  const provider = appSettings.risk_assistant_provider || 'deepseek';
+  if (provider === 'deepseek') {
+    if (!appSettings.deepseek_api_key_configured) return '请先在设置中配置 DeepSeek API Key。';
+    if (!appSettings.deepseek_model) return '请先选择 DeepSeek 模型。';
+    return '';
+  }
+  if (provider === 'openai_compatible') {
+    if (!appSettings.openai_compatible_base_url) return '请先配置兼容接口地址。';
+    if (!appSettings.openai_compatible_model) return '请先配置兼容模型。';
+    if (!appSettings.openai_compatible_api_key_configured) return '请先配置兼容 API Key。';
+    return '';
+  }
+  return '当前模型提供商暂不支持。';
+}
+
+function formatRiskNumber(value, suffix) {
+  if (value === null || value === undefined || value === '') return '--';
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  return num.toLocaleString('en-US', { maximumFractionDigits: 2 }) + (suffix || '');
+}
+
+function formatRiskUsage(usage) {
+  if (!usage || usage.total_tokens == null) return '';
+  return '本次用量 ' + usage.total_tokens + ' tokens。';
+}
+
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[ch]));
+}
+
+function renderRiskSnapshot(snapshot) {
+  const meta = document.getElementById('riskMeta');
+  if (!snapshot) {
+    meta.innerHTML = '';
+    meta.classList.remove('show');
+    renderRiskQuality(null);
+    renderRiskTrends(null);
+    renderRiskScorecard(null);
+    renderRiskStructured(null);
+    return;
+  }
+  const items = [
+    '时间 ' + (snapshot.analysis_time || '--'),
+    'RMB ' + formatRiskNumber(snapshot.price_rmb, '/克'),
+    'USD ' + formatRiskNumber(snapshot.price_usd, '/oz'),
+    '汇率 ' + formatRiskNumber(snapshot.usdcny_rate, ''),
+    '历史点 ' + (snapshot.history_points || 0),
+    'K线 ' + (snapshot.kline_points || 0),
+    '资讯 ' + (snapshot.news_count || 0),
+  ];
+  if (snapshot.data_quality) items.push('可信度 ' + snapshot.data_quality.score + '分/' + snapshot.data_quality.level);
+  if (snapshot.sample_warning) items.push(snapshot.sample_warning);
+  meta.innerHTML = items.map(item => '<span>' + escapeHtml(item) + '</span>').join('');
+  meta.classList.add('show');
+  renderRiskQuality(snapshot.data_quality || null);
+  renderRiskTrends(snapshot.multi_period_trends || []);
+  renderRiskScorecard(snapshot.risk_scorecard || null);
+}
+
+function renderRiskQuality(quality) {
+  const el = document.getElementById('riskQuality');
+  if (!quality) {
+    el.innerHTML = '';
+    el.classList.remove('show');
+    return;
+  }
+  el.innerHTML = [
+    '<div class="risk-block-title">数据可信度</div>',
+    '<div class="risk-quality-score">' + escapeHtml(quality.score == null ? '--' : quality.score) + '</div>',
+    '<div class="risk-quality-level">等级 ' + escapeHtml(quality.level || '--') + '</div>',
+    '<div class="risk-quality-summary">' + escapeHtml(quality.summary || '暂无说明') + '</div>',
+  ].join('');
+  el.classList.add('show');
+}
+
+function riskTrendClass(direction) {
+  if (direction === '上行') return 'up';
+  if (direction === '下行') return 'down';
+  if (direction === '震荡') return 'flat';
+  return 'missing';
+}
+
+function renderRiskTrends(trends) {
+  const el = document.getElementById('riskTrends');
+  if (!Array.isArray(trends) || !trends.length) {
+    el.innerHTML = '';
+    el.classList.remove('show');
+    return;
+  }
+  const items = trends.map(item => {
+    const direction = item.direction_rmb || item.direction_usd || '样本不足';
+    const pct = item.rmb && item.rmb.change_pct != null ? item.rmb.change_pct : item.usd && item.usd.change_pct;
+    return [
+      '<div class="risk-trend-item">',
+      '<div class="risk-trend-period">' + escapeHtml(item.minutes || '--') + '分钟 · ' + escapeHtml(item.points || 0) + '点</div>',
+      '<div class="risk-trend-direction ' + riskTrendClass(direction) + '">' + escapeHtml(direction) + '</div>',
+      '<div class="risk-trend-change">变动 ' + escapeHtml(pct == null ? '--' : Number(pct).toFixed(2) + '%') + '</div>',
+      '</div>',
+    ].join('');
+  }).join('');
+  el.innerHTML = '<div class="risk-block-title">多周期趋势</div><div class="risk-trend-list">' + items + '</div>';
+  el.classList.add('show');
+}
+
+function renderRiskScorecard(scorecard) {
+  const el = document.getElementById('riskScorecard');
+  if (!scorecard) {
+    el.innerHTML = '';
+    el.classList.remove('show');
+    return;
+  }
+  const items = [
+    ['总体风险', scorecard.overall_risk],
+    ['趋势强度', scorecard.trend_strength],
+    ['波动风险', scorecard.volatility_risk],
+    ['汇率影响', scorecard.fx_impact],
+    ['事件风险', scorecard.event_risk],
+    ['数据可信度', scorecard.data_credibility],
+  ];
+  el.innerHTML = '<div class="risk-block-title">风险评分卡</div><div class="risk-score-grid">' + items.map(item => (
+    '<div class="risk-score-item"><div class="risk-score-label">' + escapeHtml(item[0]) + '</div><div class="risk-score-value">' + escapeHtml(item[1] == null ? '--' : item[1]) + '</div></div>'
+  )).join('') + '</div>';
+  el.classList.add('show');
+}
+
+function renderRiskStructured(structured) {
+  const el = document.getElementById('riskStructured');
+  if (!el) return;
+  const labels = [
+    ['risk_level', '风险等级'],
+    ['trend_direction', '趋势方向'],
+    ['data_credibility', '数据可信度'],
+    ['main_factors', '主要影响因素'],
+    ['watch_range', '观察价格区间'],
+    ['follow_up', '后续关注'],
+  ];
+  const items = labels
+    .map(([key, label]) => [label, structured && structured[key]])
+    .filter(([, value]) => value);
+  if (!items.length) {
+    el.innerHTML = '';
+    el.classList.remove('show');
+    return;
+  }
+  el.innerHTML = items.map(([label, value]) => (
+    '<div class="risk-structured-item"><div class="risk-structured-label">' + escapeHtml(label) + '</div><div class="risk-structured-value">' + escapeHtml(value) + '</div></div>'
+  )).join('');
+  el.classList.add('show');
+}
+
+function applyRiskHistory(data) {
+  riskAnalysisHistory = Array.isArray(data && data.items) ? data.items : [];
+  renderRiskHistory();
+}
+
+function renderRiskHistory() {
+  const list = document.getElementById('riskHistoryList');
+  const clearBtn = document.getElementById('riskClearHistoryButton');
+  if (clearBtn) clearBtn.disabled = riskAnalysisHistory.length === 0;
+  if (!riskAnalysisHistory.length) {
+    list.innerHTML = '<div class="risk-history-empty">暂无历史记录</div>';
+    return;
+  }
+  list.innerHTML = riskAnalysisHistory.map((item, index) => {
+    const firstLine = String(item.content || '').split('\n').find(Boolean) || '历史分析';
+    const quality = item.snapshot && item.snapshot.data_quality ? ' · 可信度 ' + item.snapshot.data_quality.score + '分' : '';
+    return [
+      '<button class="risk-history-item" type="button" onclick="openRiskHistoryItem(' + index + ')">',
+      '<div class="risk-history-time">' + escapeHtml(item.analysis_time || '--') + escapeHtml(quality) + '</div>',
+      '<div class="risk-history-text">' + escapeHtml(firstLine) + '</div>',
+      '</button>',
+    ].join('');
+  }).join('');
+}
+
+function openRiskHistoryItem(index) {
+  const item = riskAnalysisHistory[index];
+  if (!item) return;
+  renderRiskSnapshot(item.snapshot || null);
+  renderRiskStructured(item.structured || null);
+  document.getElementById('riskResult').textContent = item.content || '历史记录无内容。';
+  const usageText = formatRiskUsage(item.usage || null);
+  applyRiskStatus(usageText ? '已打开历史分析。' + usageText : '已打开历史分析。', '');
+}
+
+function clearRiskHistory() {
+  if (riskAnalysisRunning) return;
+  socket.emit('clear_risk_analysis_history');
+}
+
+// ========== 更新 ==========
+function openUpdate() {
+  document.getElementById('updateBackdrop').classList.add('show');
+  if (!pendingUpdateInfo) {
+    checkUpdate();
+  }
+}
+
+function closeUpdate() {
+  document.getElementById('updateBackdrop').classList.remove('show');
+}
+
+function onUpdateBackdrop(event) {
+  if (event.target.id === 'updateBackdrop') closeUpdate();
+}
+
+function checkUpdate() {
+  pendingUpdateInfo = null;
+  document.getElementById('updateButton').classList.remove('update-ready');
+  document.getElementById('installUpdateButton').disabled = true;
+  document.getElementById('updateStatus').textContent = '正在检查更新...';
+  document.getElementById('updateMeta').textContent = '';
+  document.getElementById('updateNotes').style.display = 'none';
+  socket.emit('check_update');
+}
+
+function applyUpdateStatus(data) {
+  const statusEl = document.getElementById('updateStatus');
+  const metaEl = document.getElementById('updateMeta');
+  const notesEl = document.getElementById('updateNotes');
+  const installBtn = document.getElementById('installUpdateButton');
+  const updateBtn = document.getElementById('updateButton');
+
+  const current = data.current_version ? '当前版本 ' + data.current_version : '';
+  const latest = data.latest_version ? '最新版本 ' + data.latest_version : '';
+  metaEl.textContent = [current, latest].filter(Boolean).join(' · ');
+  statusEl.textContent = data.message || '更新状态未知。';
+  notesEl.textContent = data.notes || '';
+  notesEl.style.display = data.notes ? 'block' : 'none';
+
+  if (data.state === 'available' && data.url) {
+    pendingUpdateInfo = {
+      version: data.latest_version,
+      url: data.url,
+      notes: data.notes || '',
+      sha256: data.sha256 || '',
+    };
+    installBtn.disabled = false;
+    updateBtn.classList.add('update-ready');
+    return;
+  }
+
+  if (data.state === 'downloading' || data.state === 'installing') {
+    installBtn.disabled = true;
+    updateBtn.classList.add('update-ready');
+    return;
+  }
+
+  pendingUpdateInfo = null;
+  installBtn.disabled = true;
+  updateBtn.classList.remove('update-ready');
+}
+
+function installUpdate() {
+  if (!pendingUpdateInfo) return;
+  document.getElementById('installUpdateButton').disabled = true;
+  document.getElementById('updateStatus').textContent = '正在准备更新...';
+  socket.emit('install_update');
+}
+
+// ========== 行情状态 ==========
+function applyFetchStatus(data) {
+  const stale = document.getElementById('priceStale');
+  const retry = document.getElementById('priceRetry');
+  const ok = data.ok === true;
+  const message = data.message || (ok ? '行情数据正常' : '行情数据获取失败');
+  retry.textContent = data.reconnect ? '重新连接' : '重新获取';
+  stale.textContent = message;
+  retry.disabled = data.retryable === false;
+
+  if (ok) {
+    stale.classList.remove('show');
+    retry.classList.remove('show');
+    return;
+  }
+
+  stale.classList.add('show');
+  if (data.retryable !== false) retry.classList.add('show');
+  else retry.classList.remove('show');
+}
+
+function refreshPrice() {
+  const retry = document.getElementById('priceRetry');
+  retry.disabled = true;
+  if (!socket.connected) {
+    applyFetchStatus({ ok:false, message:'正在重新连接本地服务...', retryable:false, reconnect:true });
+    socket.connect();
+    setTimeout(() => {
+      if (!socket.connected) applyFetchStatus({ ok:false, message:'本地服务仍未连接，请确认程序没有被安全软件拦截。', retryable:true, reconnect:true });
+    }, 2500);
+    return;
+  }
+  applyFetchStatus({ ok:false, message:'正在重新获取行情数据...', retryable:false });
+  socket.emit('refresh_price');
+}
+
+// ========== 关闭确认 ==========
+function openCloseDialog() {
+  document.getElementById('closeRemember').checked = false;
+  document.getElementById('closeBackdrop').classList.add('show');
+}
+
+function closeCloseDialog() {
+  document.getElementById('closeBackdrop').classList.remove('show');
+}
+
+function submitCloseChoice(choice) {
+  closeCloseDialog();
+  socket.emit('close_choice', {
+    choice,
+    remember: document.getElementById('closeRemember').checked,
+  });
+}
+
+function onCloseBackdrop(event) {
+  if (event.target.id === 'closeBackdrop') submitCloseChoice('cancel');
+}
+
+// ========== 应用内告警 ==========
+function alertLevelLabel(type) {
+  if (type === 'critical') return '关键预警';
+  if (type === 'warning') return '价格预警';
+  if (type === 'volatility') return '波动预警';
+  return '金价预警';
+}
+
+function alertModeLabel(mode) {
+  if (mode === 'usd') return '国际金价';
+  if (mode === 'rmb') return '国内金价';
+  return '金价监控';
+}
+
+function renderAlertModal(entry) {
+  const modal = document.getElementById('alertModal');
+  modal.className = 'settings-modal alert-modal alert-level-' + (entry.type || 'warning');
+  document.getElementById('alertBadge').textContent = alertLevelLabel(entry.type);
+  document.getElementById('alertMessage').textContent = entry.message || '达到预警条件';
+  document.getElementById('alertTime').textContent = '时间 ' + (entry.time || '--');
+  document.getElementById('alertMode').textContent = alertModeLabel(entry.mode);
+  renderRelatedNews(entry.related_news || []);
+  document.getElementById('alertBackdrop').classList.add('show');
+}
+
+function renderRelatedNews(items) {
+  const box = document.getElementById('relatedNews');
+  const list = document.getElementById('relatedNewsList');
+  list.innerHTML = '';
+  if (!items.length) {
+    box.classList.remove('show');
+    return;
+  }
+  items.slice(0, 3).forEach(item => {
+    const link = document.createElement('a');
+    link.href = item.url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = (item.topic ? '[' + item.topic + '] ' : '') + (item.title || '--');
+    list.appendChild(link);
+  });
+  box.classList.add('show');
+}
+
+function showAlertModal(entry) {
+  const normalized = entry || {};
+  if (activeAlert) {
+    alertQueue.push(normalized);
+    return;
+  }
+  activeAlert = normalized;
+  renderAlertModal(activeAlert);
+}
+
+function closeAlertModal() {
+  document.getElementById('alertBackdrop').classList.remove('show');
+  activeAlert = null;
+  const next = alertQueue.shift();
+  if (next) {
+    setTimeout(() => showAlertModal(next), 120);
+  }
+}
+
+function analyzeActiveAlert() {
+  if (!activeAlert) return;
+  const alertContext = {
+    source: 'alert',
+    time: activeAlert.time || '',
+    type: activeAlert.type || '',
+    mode: activeAlert.mode || '',
+    message: activeAlert.message || '',
+  };
+  document.getElementById('alertBackdrop').classList.remove('show');
+  activeAlert = null;
+  openRiskAnalysis();
+  document.getElementById('riskResult').textContent = '正在分析本次预警...';
+  requestRiskAnalysis(alertContext);
+}
+
+function onAlertBackdrop(event) {
+  if (event.target.id === 'alertBackdrop') closeAlertModal();
+}
+
+// ========== UI更新 ==========
+
+function updatePriceDisplay(data) {
+  const isUsd = currentMode === 'usd';
+  const price = isUsd ? data.usd : data.rmb;
+  const prev = isUsd ? data.previous_usd : data.previous_rmb;
+  const change = isUsd ? data.change_usd : data.change_rmb;
+  const pct = isUsd ? data.change_pct_usd : data.change_pct_rmb;
+  const unit = isUsd ? '$' : '¥';
+
+  const priceEl = document.getElementById('priceValue');
+  if (price == null) { priceEl.textContent = '--'; document.title = BASE_TITLE; return; }
+
+  const newText = unit + price.toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 });
+  document.title = BASE_TITLE + ' ' + newText + (isUsd ? '/oz' : '/克');
+  if (priceEl.textContent !== newText && priceEl.textContent !== '--') {
+    priceEl.style.transform = 'translateY(-4px)'; priceEl.style.opacity = '0.6';
+    setTimeout(() => { priceEl.textContent = newText; priceEl.style.transform = 'translateY(0)'; priceEl.style.opacity = '1'; }, 150);
+  } else { priceEl.textContent = newText; }
+
+  const changeEl = document.getElementById('priceChange');
+  if (prev == null || change == null) {
+    changeEl.innerHTML = '首次获取'; changeEl.className = 'price-change neutral';
+  } else {
+    const sign = change >= 0 ? '▲' : '▼';
+    const dirCls = change > 0 ? 'up' : change < 0 ? 'down' : 'neutral';
+    changeEl.innerHTML = sign + ' ' + unit + Math.abs(change).toFixed(2) + ' (' + Math.abs(pct).toFixed(2) + '%)';
+    changeEl.className = 'price-change ' + dirCls;
+  }
+  document.getElementById('priceTime').textContent = data.time || '--';
+  const rateEl = document.getElementById('priceRate');
+  const goldSource = data.gold_source ? '行情源 ' + data.gold_source : '';
+  if (data.rate) {
+    const rateKind = data.rate_cached ? '缓存汇率' : '实时汇率';
+    const rateSource = data.rate_source ? ' · ' + data.rate_source : '';
+    rateEl.textContent = (goldSource ? goldSource + ' · ' : '') + '1盎司 = 31.1035g · ' + rateKind + ' ' + data.rate.toFixed(4) + rateSource;
+  }
+  else rateEl.textContent = goldSource;
+}
+
+function updateDailyStats(data) {
+  const isUsd = currentMode === 'usd';
+  const d = data.daily || {};
+  const unit = isUsd ? '$' : '¥';
+
+  const openVal = isUsd ? d.open_usd : d.open_rmb;
+  const highVal = isUsd ? d.high_usd : d.high_rmb;
+  const lowVal  = isUsd ? d.low_usd : d.low_rmb;
+  const dayChg  = isUsd ? d.change_usd : d.change_rmb;
+  const dayPct  = isUsd ? d.pct_usd : d.pct_rmb;
+
+  document.getElementById('statOpen').textContent = openVal != null ? unit + Number(openVal).toLocaleString('en-US',{minimumFractionDigits:2}) : '--';
+  document.getElementById('statHigh').textContent = highVal != null ? unit + Number(highVal).toLocaleString('en-US',{minimumFractionDigits:2}) : '--';
+  document.getElementById('statLow').textContent  = lowVal  != null ? unit + Number(lowVal).toLocaleString('en-US',{minimumFractionDigits:2}) : '--';
+
+  const chgEl = document.getElementById('statDayChg');
+  if (dayChg != null) {
+    const sign = dayChg >= 0 ? '+' : '';
+    chgEl.textContent = sign + dayChg.toFixed(2) + (dayPct != null ? ' (' + (dayPct>=0?'+':'') + dayPct.toFixed(2) + '%)' : '');
+    chgEl.style.color = dayChg > 0 ? 'var(--up)' : dayChg < 0 ? 'var(--down)' : 'var(--text)';
+  } else { chgEl.textContent = '--'; chgEl.style.color = 'var(--text)'; }
+}
+
+function initChart() {
+  if (chart) chart.destroy();
+  const ctx = document.getElementById('priceChart').getContext('2d');
+  const isUsd = currentMode === 'usd';
+  const hist = isUsd ? historyUsd : historyRmb;
+
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [...hist.labels],
+      datasets: [{
+        data: [...hist.prices],
+        borderColor: '#e8b830', backgroundColor: 'rgba(232,184,48,0.06)',
+        borderWidth: 2, fill: true, pointRadius: 0, pointHoverRadius: 4,
+        pointHoverBackgroundColor: '#e8b830', tension: 0.25,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: { duration: 400, easing: 'easeOutQuart' },
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#16162a', titleColor: '#aaa', bodyColor: '#e8b830',
+          borderColor: 'rgba(255,255,255,0.08)', borderWidth: 1, cornerRadius: 8, padding: 10,
+          callbacks: {
+            label: ctx => {
+              const sym = currentMode === 'usd'?'$':'¥';
+              const raw = ctx.raw;
+              if (typeof raw === 'object' && raw !== null && 'o' in raw) {
+                return [' 开: ' + sym + raw.o.toFixed(2), ' 高: ' + sym + raw.h.toFixed(2), ' 低: ' + sym + raw.l.toFixed(2), ' 收: ' + sym + raw.c.toFixed(2)];
+              }
+              return '  ' + sym + Number(raw).toLocaleString('en-US',{minimumFractionDigits:2});
+            },
+          },
+        },
+      },
+      scales: {
+        x: { ticks:{ color:'rgba(255,255,255,0.25)', maxTicksLimit:8, font:{size:9} }, grid:{ color:'rgba(255,255,255,0.03)' } },
+        y: { ticks:{ color:'rgba(255,255,255,0.3)', font:{size:9}, callback:v=>(isUsd?'$':'¥')+v.toLocaleString('en-US') }, grid:{ color:'rgba(255,255,255,0.04)' } },
+      },
+    },
+  });
+}
+
+// ========== 阈值 ==========
+function updateThresholdInputs() {
+  const m = currentMode;
+  document.getElementById('upperWarn').value = allThresholds['upper_warning_'+m] != null ? allThresholds['upper_warning_'+m] : '';
+  document.getElementById('upperCrit').value = allThresholds['upper_critical_'+m] != null ? allThresholds['upper_critical_'+m] : '';
+  document.getElementById('lowerWarn').value = allThresholds['lower_warning_'+m] != null ? allThresholds['lower_warning_'+m] : '';
+  document.getElementById('lowerCrit').value = allThresholds['lower_critical_'+m] != null ? allThresholds['lower_critical_'+m] : '';
+  updateThresholdInfo();
+}
+
+function updateThresholdInfo() {
+  const m = currentMode, unit = m === 'usd' ? '$' : '¥';
+  const el = document.getElementById('thresholdInfo');
+  const p = [];
+  const keys = ['upper_warning_'+m,'upper_critical_'+m,'lower_warning_'+m,'lower_critical_'+m];
+  const labels = ['上涨关注','上涨警告','下跌关注','下跌警告'];
+  keys.forEach((k,i) => {
+    if (allThresholds[k] != null) p.push(labels[i]+': '+unit+Number(allThresholds[k]).toLocaleString('en-US',{minimumFractionDigits:2}));
+  });
+  el.innerHTML = p.length ? p.join(' | ') : '尚未设置阈值';
+}
+
+function setThreshold(type) {
+  const inputMap = {
+    upper_warning: 'upperWarn', upper_critical: 'upperCrit',
+    lower_warning: 'lowerWarn', lower_critical: 'lowerCrit',
+  };
+  const input = document.getElementById(inputMap[type]);
+  const val = input.value.trim();
+  socket.emit('set_threshold', { mode: currentMode, type, value: val === '' ? null : val });
+}
+
+function clearThreshold(type) {
+  // 清除对应输入框的值
+  const inputMap = {
+    upper_warning: 'upperWarn', upper_critical: 'upperCrit',
+    lower_warning: 'lowerWarn', lower_critical: 'lowerCrit',
+  };
+  const input = document.getElementById(inputMap[type]);
+  if (input) input.value = '';
+  socket.emit('clear_threshold', { mode: currentMode, type });
+}
+
+function updateEmailSwitch(key, value) {
+  // 直接发送更新到后台，无需整个设置保存流程
+  const update = {};
+  update[key] = value;
+  socket.emit('update_settings', update);
+  // 同步本地状态
+  appSettings[key] = value;
+}
+
+// ========== 波动率 ==========
+function setVolatility() {
+  const pctEl = document.getElementById('volPct');
+  const minEl = document.getElementById('volMin');
+  const pct = pctEl.value || '2.0';
+  const min = minEl.value || '10';
+  const parsedPct = parseFloat(pct);
+  const parsedMin = parseInt(min, 10);
+
+  if (!Number.isFinite(parsedPct) || parsedPct <= 0 || !Number.isInteger(parsedMin) || parsedMin < 1) {
+    const statusEl = document.getElementById('volStatus');
+    statusEl.textContent = '请输入有效数字';
+    statusEl.className = 'vol-status off';
+    return;
+  }
+
+  // 立即更新本地状态
+  volConfig = { percent: parsedPct, minutes: parsedMin, enabled: true };
+  updateVolUI();
+
+  // 发送到服务器
+  socket.emit('set_volatility', { percent: pct, minutes: min, enabled: true });
+}
+
+function clearVolatility() {
+  // 立即更新本地状态
+  volConfig = { percent: null, minutes: 10, enabled: false };
+  updateVolUI();
+
+  // 发送到服务器
+  socket.emit('set_volatility', { percent: null, minutes: 10, enabled: false });
+}
+
+function updateVolUI() {
+  const pctEl = document.getElementById('volPct');
+  const minEl = document.getElementById('volMin');
+  const statusEl = document.getElementById('volStatus');
+
+  if (volConfig.enabled && volConfig.percent != null) {
+    statusEl.textContent = '监控中: ' + volConfig.percent + '% / ' + volConfig.minutes + '分钟';
+    statusEl.className = 'vol-status on';
+  } else {
+    // 保留输入框中的值
+    if (volConfig.percent == null && pctEl.value) {
+      // 已关闭但保留输入值
+    }
+    statusEl.textContent = '已关闭';
+    statusEl.className = 'vol-status off';
+  }
+}
+
+// ========== 阈值接近提示 ==========
+function checkThresholdProximity() {
+  if (!latestData) return;
+  const price = currentMode === 'usd' ? latestData.usd : latestData.rmb;
+  const m = currentMode;
+  const checks = [
+    ['upperWarn', 'upper_warning_'+m, 'var(--warn)'],
+    ['upperCrit', 'upper_critical_'+m, 'var(--up)'],
+    ['lowerWarn', 'lower_warning_'+m, 'var(--warn)'],
+    ['lowerCrit', 'lower_critical_'+m, 'var(--down)'],
+  ];
+  checks.forEach(([elId, key, color]) => {
+    const val = allThresholds[key];
+    const el = document.getElementById(elId);
+    if (val != null && ((key.includes('upper') && price >= val * 0.995) || (key.includes('lower') && price <= val * 1.005))) {
+      el.style.borderColor = color;
+    } else {
+      el.style.borderColor = '';
+    }
+  });
+}
+
+// ========== 日志 ==========
+function addLogEntry(entry) {
+  const list = document.getElementById('logList');
+  const empty = list.querySelector('.log-empty');
+  if (empty) empty.remove();
+  const div = document.createElement('div');
+  div.className = 'log-item';
+  div.innerHTML = '<div class="log-time">'+entry.time+'</div><div class="log-msg '+entry.type+'">'+entry.message+'</div>';
+  list.appendChild(div);
+  while (list.children.length > 50) list.removeChild(list.firstChild);
+  list.scrollTop = list.scrollHeight;
+}
+
+// ========== 标题闪烁 ==========
+let flashTimer = null;
+function flashTitle(type) {
+  if (flashTimer) clearTimeout(flashTimer);
+  const orig = document.title, alertTitle = '['+type+'] 金价监控';
+  let count = 0; document.title = alertTitle;
+  flashTimer = setInterval(() => {
+    document.title = count % 2 === 0 ? orig : alertTitle;
+    count++;
+    if (count >= 6) { clearInterval(flashTimer); flashTimer = null; document.title = orig; }
+  }, 800);
+}
+</script>
+</body>
+</html>
