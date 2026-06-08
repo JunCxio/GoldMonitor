@@ -108,9 +108,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\contract_checks.ps1
 推送版本标签会触发 GitHub Actions 自动发布：
 
 ```powershell
-git tag v1.2.1
+git tag v1.2.2
 git push origin main
-git push origin v1.2.1
+git push origin v1.2.2
 ```
 
 GitHub Actions 会执行检查、构建安装包、生成 `version.json`，并把 `GoldMonitorSetup.exe` 与 `version.json` 上传到对应 Release。
