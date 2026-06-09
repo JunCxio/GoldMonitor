@@ -33,7 +33,7 @@ app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.3.4"
+APP_VERSION = "1.3.5"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 GOLD_URL = "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcven"
@@ -756,17 +756,18 @@ def launch_update_installer(installer_path):
         args = [
             installer_path,
             "/CURRENTUSER",
-            "/SILENT",
             "/CLOSEAPPLICATIONS",
-            "/RESTARTAPPLICATIONS",
         ]
-        subprocess.Popen(args, close_fds=True)
-
-        def _exit_later():
-            time.sleep(1)
-            os._exit(0)
-
-        threading.Thread(target=_exit_later, daemon=True).start()
+        creationflags = (
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            | getattr(subprocess, "DETACHED_PROCESS", 0)
+        )
+        subprocess.Popen(
+            args,
+            close_fds=True,
+            cwd=os.path.dirname(installer_path) or None,
+            creationflags=creationflags,
+        )
         return
 
     if sys.platform == "darwin":
@@ -4292,6 +4293,13 @@ def on_install_update(data=None):
             "progress_percent": 100,
         })
         launch_update_installer(installer_path)
+        emit("update_status", {
+            "state": "installer_opened",
+            "current_version": APP_VERSION,
+            "latest_version": update_info["version"],
+            "message": "安装程序已打开，请按提示完成更新。安装过程中当前程序可能会被关闭。",
+            "progress_percent": 100,
+        })
     except ValueError as exc:
         emit("update_status", {
             "state": "error",

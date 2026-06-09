@@ -264,7 +264,8 @@ Assert-Contains -Path "installer\GoldMonitor.iss" -Pattern 'RestartApplications=
 Assert-Contains -Path "installer\GoldMonitor.iss" -Pattern 'CloseApplicationsFilter=\{#MyAppExeName\}' -Message "installer must only close the app executable during updates"
 Assert-Contains -Path "installer\GoldMonitor.iss" -Pattern 'InitializeSetup' -Message "installer must run a pre-install close hook"
 Assert-Contains -Path "installer\GoldMonitor.iss" -Pattern 'taskkill\.exe' -Message "installer must terminate stale GoldMonitor processes before replacing files"
-Assert-Contains -Path "installer\GoldMonitor.iss" -Pattern '/F /T /IM \{#MyAppExeName\}' -Message "installer taskkill must target only the app executable"
+Assert-Contains -Path "installer\GoldMonitor.iss" -Pattern '/F /IM \{#MyAppExeName\}' -Message "installer taskkill must target only the app executable"
+Assert-NotContains -Path "installer\GoldMonitor.iss" -Pattern '/F /T /IM \{#MyAppExeName\}' -Message "installer must not terminate the updater child process tree"
 Assert-Contains -Path "installer\GoldMonitor.iss" -Pattern 'Filename: "\{app\}\\\{#MyAppExeName\}".*Flags: nowait' -Message "installer must launch the app after install and update"
 Assert-NotContains -Path "installer\GoldMonitor.iss" -Pattern 'skipifsilent' -Message "silent updates must not skip launching the app after install"
 

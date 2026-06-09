@@ -1,5 +1,5 @@
 #define MyAppName "金价监控"
-#define MyAppVersion "1.3.4"
+#define MyAppVersion "1.3.5"
 #define MyAppPublisher "GoldMonitor"
 #define MyAppExeName "GoldMonitor.exe"
 
@@ -49,5 +49,5 @@ var
   ResultCode: Integer;
 begin
   Result := True;
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM {#MyAppExeName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyAppExeName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
