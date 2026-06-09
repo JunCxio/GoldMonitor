@@ -1,5 +1,10 @@
 # 更新记录
 
+## 1.3.4
+
+- 优化 macOS DMG 构建脚本，仅打包 macOS 所需的 pywebview Cocoa 后端，降低跨平台依赖干扰。
+- 固定 DMG 文件系统为 HFS+，提升 GitHub Actions 与 macOS 安装场景兼容性。
+
 ## 1.3.3
 
 - 修复 macOS Release 检查中的外部汇率源依赖，避免真实网络数据导致 CI 检查失败。
