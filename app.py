@@ -33,7 +33,7 @@ app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 GOLD_URL = "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcven"
@@ -5490,14 +5490,14 @@ def start_desktop_window(start_hidden=False):
 
 # ---------- 启动 ----------
 if __name__ == "__main__":
-    desktop_mode = "--web" not in sys.argv  # 默认桌面模式, --web 切换浏览器模式
+    desktop_mode = "--desktop" in sys.argv or (os.name == "nt" and "--web" not in sys.argv)
     startup_mode = "--startup" in sys.argv
     server_port = find_available_port(DEFAULT_PORT)
     _desktop_runtime_active = desktop_mode
 
-    # 托盘线程
-    tray_thread = threading.Thread(target=create_tray_icon, daemon=True)
-    tray_thread.start()
+    if desktop_mode or os.name == "nt":
+        tray_thread = threading.Thread(target=create_tray_icon, daemon=True)
+        tray_thread.start()
 
     if desktop_mode:
         # 桌面模式：在后台线程启动 Flask，前台显示原生窗口

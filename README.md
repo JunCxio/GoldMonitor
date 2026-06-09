@@ -59,6 +59,14 @@ https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json
 
 ## 本地开发
 
+macOS 可双击根目录中的 `GoldMonitor.command` 启动浏览器模式，也可以在终端运行：
+
+```bash
+./scripts/start_mac.sh
+```
+
+脚本会创建 `.venv`，安装 Flask、Flask-SocketIO 和 requests，并把本地数据写入 `~/Library/Application Support/GoldMonitor`。macOS 启动方式不包含 Windows 托盘、桌面悬浮条、系统通知和安装器能力。
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\pip.exe install -r requirements.txt pyinstaller

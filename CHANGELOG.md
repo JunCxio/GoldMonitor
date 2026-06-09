@@ -1,5 +1,10 @@
 # 更新记录
 
+## 1.3.1
+
+- 新增 macOS 本地启动程序，支持双击 `GoldMonitor.command` 或执行 `scripts/start_mac.sh` 启动浏览器模式。
+- 调整跨平台启动逻辑：非 Windows 默认进入 Web 模式，保留 Windows 桌面模式与托盘能力。
+
 ## 1.3.0
 
 - 新增本地价格历史 SQLite 存储，并保留 JSON 侧写用于兼容现有导出和诊断链路。
