@@ -118,6 +118,8 @@
   .settings-input.smtp-port { max-width:100px; }
   .settings-stack { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
   .settings-stack .settings-select { min-width:190px; }
+  .inline-check { min-height:32px; display:inline-flex; align-items:center; gap:6px; padding:6px 8px; border:1px solid var(--hairline); border-radius:8px; background:rgba(255,255,255,0.025); color:var(--text-dim); font-size:0.74rem; cursor:pointer; }
+  .inline-check input { width:14px; height:14px; accent-color:var(--gold); }
   .risk-provider-row.hidden { display:none; }
   .settings-foot { flex:0 0 auto; display:flex; justify-content:flex-end; gap:10px; padding:16px 20px 20px; border-top:1px solid var(--hairline); background:var(--surface-elevated); }
   .settings-save, .settings-cancel, .update-install, .dialog-danger, .btn-set, .btn-clear, .btn-clear-sm, .price-retry, .risk-open { min-height:var(--control-height); display:inline-flex; align-items:center; justify-content:center; gap:6px; max-width:100%; border-radius:8px; cursor:pointer; font-weight:700; line-height:1.2; white-space:nowrap; user-select:none; overflow:hidden; text-overflow:ellipsis; transition:transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease, filter 0.16s ease; }
@@ -764,6 +766,41 @@
           <button class="settings-cancel btn-form" id="btnTestAlert" onclick="testAlert()">触发测试</button>
           <span class="test-email-status" id="testAlertStatus"></span>
         </div>
+        <div class="setting-section-divider"></div>
+        <div class="setting-section-title">Webhook 通知</div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">启用 Webhook</div>
+            <div class="setting-desc">达到预警条件时向 HTTPS Webhook 地址发送 JSON 通知。</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="setWebhookEnabled"><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Webhook 地址</div>
+            <div class="setting-desc">支持企业微信、钉钉、自建服务等 HTTPS 接收地址。</div>
+          </div>
+          <input class="settings-input" id="setWebhookUrl" type="url" placeholder="https://example.com/webhook">
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Webhook 分级</div>
+            <div class="setting-desc">分别控制价格预警、关键预警和波动预警是否发送 Webhook。</div>
+          </div>
+          <div class="settings-stack">
+            <label class="inline-check"><input type="checkbox" id="setWebhookWarning"> 价格</label>
+            <label class="inline-check"><input type="checkbox" id="setWebhookCritical"> 关键</label>
+            <label class="inline-check"><input type="checkbox" id="setWebhookVolatility"> 波动</label>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">测试 Webhook</div>
+            <div class="setting-desc">发送一条测试 JSON 请求验证地址是否可用。</div>
+          </div>
+          <button class="settings-cancel btn-form" id="btnTestWebhook" onclick="testWebhook()">发送测试</button>
+          <span class="test-email-status" id="testWebhookStatus"></span>
+        </div>
         <div class="setting-row">
           <div>
             <div class="setting-label">提醒冷却时间</div>
@@ -1150,6 +1187,7 @@ let historyUsd = { labels: [], prices: [] };
 let historyRmb = { labels: [], prices: [] };
 let klines5min = [];
 let chartHistoryState = { period: null, items: [] };
+let chartEvents = [];
 let latestData = null;
 let allThresholds = {};
 let volConfig = { percent: null, minutes: 10, enabled: false };
@@ -1168,6 +1206,11 @@ let appSettings = {
   alert_dialog_enabled: true,
   update_manifest_url: '',
   update_auto_check_interval_hours: 6,
+  webhook_enabled: false,
+  webhook_url: '',
+  webhook_warning_enabled: true,
+  webhook_critical_enabled: true,
+  webhook_volatility_enabled: true,
   email_warning_enabled: true,
   email_critical_enabled: true,
   email_volatility_enabled: true,
@@ -1246,6 +1289,92 @@ function chartHistoryLabel(item) {
   return String(raw).replace('T', ' ').slice(0, chartPeriod === '7d' ? 16 : 8);
 }
 
+function normalizeChartEvents(events) {
+  if (!Array.isArray(events)) return [];
+  const seen = new Set();
+  return events
+    .filter(item => item && (item.timestamp || item.time))
+    .map(item => ({
+      type: item.type || 'alert',
+      level: item.level || item.type || 'warning',
+      timestamp: item.timestamp || '',
+      time: item.time || '',
+      label: item.label || (item.type === 'risk' ? '风险分析' : '预警'),
+      message: item.message || '',
+    }))
+    .filter(item => {
+      const key = [item.type, item.level, item.timestamp, item.time, item.message].join('|');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(-120);
+}
+
+function addChartEvent(event) {
+  chartEvents = normalizeChartEvents([...chartEvents, event]);
+  switchChartData();
+}
+
+function chartEventLabel(event) {
+  const raw = event.timestamp || event.time || '';
+  const date = new Date(raw);
+  if (!Number.isNaN(date.getTime())) {
+    if (chartPeriod === '7d') {
+      const hhmm = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+      return (date.getMonth() + 1) + '/' + date.getDate() + ' ' + hhmm;
+    }
+    if (chartPeriod === 'realtime') {
+      return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    }
+    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+  const text = String(raw).replace('T', ' ');
+  if (chartPeriod === 'realtime' && /^\d{2}:\d{2}:\d{2}$/.test(text)) return text;
+  if (/^\d{2}:\d{2}/.test(text)) return chartPeriod === 'realtime' ? text.slice(0, 8) : text.slice(0, 5);
+  return text.slice(0, chartPeriod === '7d' ? 16 : 5);
+}
+
+function activeChartEvents(labels) {
+  const labelSet = new Set((labels || []).map(item => String(item)));
+  return chartEvents
+    .map(item => Object.assign({}, item, { chartLabel: chartEventLabel(item) }))
+    .filter(item => labelSet.has(item.chartLabel));
+}
+
+const chartEventPlugin = {
+  id: 'goldMonitorEvents',
+  afterDatasetsDraw(chartInstance, args, pluginOptions) {
+    const events = pluginOptions && Array.isArray(pluginOptions.events) ? pluginOptions.events : [];
+    if (!events.length) return;
+    const xScale = chartInstance.scales.x;
+    const area = chartInstance.chartArea;
+    const ctx = chartInstance.ctx;
+    const labels = chartInstance.data.labels.map(item => String(item));
+    ctx.save();
+    events.forEach(event => {
+      const index = labels.indexOf(String(event.chartLabel));
+      if (index < 0) return;
+      const x = xScale.getPixelForValue(index);
+      const isRisk = event.type === 'risk';
+      const color = isRisk ? 'rgba(91,155,213,0.85)' : event.level === 'critical' ? 'rgba(224,85,106,0.9)' : 'rgba(232,184,48,0.85)';
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(x, area.top + 4);
+      ctx.lineTo(x, area.bottom - 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x, area.top + 8, 3, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.restore();
+  },
+};
+
 // ========== 模式切换 ==========
 function switchMode(mode) {
   currentMode = mode;
@@ -1298,6 +1427,7 @@ function switchChartData() {
   }
   chart.data.labels = labels;
   chart.data.datasets[0].data = prices;
+  chart.options.plugins.goldMonitorEvents = { events: activeChartEvents(labels) };
   chart.options.scales.y.ticks.callback = v => (isUsd ? '$' : '¥') + v.toLocaleString('en-US');
   chart.update();
 }
@@ -1393,6 +1523,7 @@ socket.on('price_update', data => {
     const hist = currentMode === 'usd' ? historyUsd : historyRmb;
     chart.data.labels = [...hist.labels];
     chart.data.datasets[0].data = [...hist.prices];
+    chart.options.plugins.goldMonitorEvents = { events: activeChartEvents(chart.data.labels) };
     chart.update('none');
   }
   checkThresholdProximity();
@@ -1406,6 +1537,14 @@ socket.on('fetch_status', data => {
 
 socket.on('alert', data => {
   addLogEntry(data);
+  addChartEvent({
+    type: 'alert',
+    level: data.type || 'warning',
+    timestamp: data.timestamp || '',
+    time: data.time || '',
+    label: alertLevelLabel(data.type),
+    message: data.message || '',
+  });
   showAlertModal(data);
   flashTitle(data.type === 'critical' ? '警告' : data.type === 'warning' ? '关注' : '波动预警');
 });
@@ -1476,6 +1615,15 @@ socket.on('risk_analysis_result', data => {
   document.getElementById('riskResult').textContent = data && data.content ? data.content : '未返回分析内容。';
   pendingRiskForceTrigger = null;
   setRiskForceButtonVisible(false);
+  if (data && data.snapshot) {
+    addChartEvent({
+      type: 'risk',
+      level: 'analysis',
+      timestamp: data.snapshot.analysis_time || '',
+      label: data.structured && data.structured.risk_level ? '风险 ' + data.structured.risk_level : '风险分析',
+      message: data.content || '',
+    });
+  }
   updateRiskButtonState();
 });
 
@@ -1496,6 +1644,15 @@ socket.on('risk_analysis_cache_hit', data => {
   document.getElementById('riskResult').textContent = data && data.content ? data.content : '暂无缓存分析内容。';
   pendingRiskForceTrigger = data && data.trigger ? data.trigger : null;
   setRiskForceButtonVisible(true);
+  if (data && data.snapshot) {
+    addChartEvent({
+      type: 'risk',
+      level: 'analysis',
+      timestamp: data.snapshot.analysis_time || '',
+      label: data.structured && data.structured.risk_level ? '风险 ' + data.structured.risk_level : '风险分析',
+      message: data.content || '',
+    });
+  }
   updateRiskButtonState();
 });
 
@@ -1646,6 +1803,9 @@ function refreshSourceHealth() {
 }
 
 function applyPriceHistory(data) {
+  if (Array.isArray(data.events)) {
+    chartEvents = normalizeChartEvents(data.events);
+  }
   if (data && data.scope === 'chart') {
     chartHistoryState = Object.assign({ period: data.period || chartPeriod, items: [] }, data);
     if (chartHistoryState.period === chartPeriod) switchChartData();
@@ -1774,8 +1934,18 @@ function applySettings(data) {
   document.getElementById('setAlertQuietEnd').value = appSettings.alert_quiet_end || '';
   document.getElementById('setEmailSubjectTemplate').value = appSettings.email_subject_template || '[金价预警·{level}] {title}';
   document.getElementById('setEmailBodyTemplate').value = appSettings.email_body_template || '';
+  document.getElementById('setWebhookEnabled').checked = !!appSettings.webhook_enabled;
+  document.getElementById('setWebhookUrl').value = appSettings.webhook_url || '';
+  document.getElementById('setWebhookWarning').checked = appSettings.webhook_warning_enabled !== false;
+  document.getElementById('setWebhookCritical').checked = appSettings.webhook_critical_enabled !== false;
+  document.getElementById('setWebhookVolatility').checked = appSettings.webhook_volatility_enabled !== false;
   document.getElementById('testEmailStatus').textContent = '';
   document.getElementById('testEmailStatus').className = 'test-email-status';
+  const webhookStatus = document.getElementById('testWebhookStatus');
+  if (webhookStatus) {
+    webhookStatus.textContent = '';
+    webhookStatus.className = 'test-email-status';
+  }
   const testAlertStatus = document.getElementById('testAlertStatus');
   if (testAlertStatus) {
     testAlertStatus.textContent = '';
@@ -1906,6 +2076,11 @@ function saveSettings() {
     alert_quiet_end: document.getElementById('setAlertQuietEnd').value,
     email_subject_template: document.getElementById('setEmailSubjectTemplate').value,
     email_body_template: document.getElementById('setEmailBodyTemplate').value,
+    webhook_enabled: document.getElementById('setWebhookEnabled').checked,
+    webhook_url: document.getElementById('setWebhookUrl').value.trim(),
+    webhook_warning_enabled: document.getElementById('setWebhookWarning').checked,
+    webhook_critical_enabled: document.getElementById('setWebhookCritical').checked,
+    webhook_volatility_enabled: document.getElementById('setWebhookVolatility').checked,
     risk_assistant_enabled: document.getElementById('setRiskAssistantEnabled').checked,
     risk_assistant_provider: document.getElementById('setRiskAssistantProvider').value,
     risk_assistant_depth: document.getElementById('setRiskAssistantDepth').value,
@@ -1954,6 +2129,26 @@ socket.on('test_email_result', data => {
     statusEl.textContent = data.message;
     statusEl.className = 'test-email-status fail';
   }
+});
+
+function testWebhook() {
+  const statusEl = document.getElementById('testWebhookStatus');
+  const btn = document.getElementById('btnTestWebhook');
+  if (statusEl) {
+    statusEl.textContent = '正在发送...';
+    statusEl.className = 'test-email-status';
+  }
+  if (btn) btn.disabled = true;
+  socket.emit('test_webhook');
+}
+
+socket.on('test_webhook_result', data => {
+  const statusEl = document.getElementById('testWebhookStatus');
+  const btn = document.getElementById('btnTestWebhook');
+  if (btn) btn.disabled = false;
+  if (!statusEl) return;
+  statusEl.textContent = data && data.message ? data.message : 'Webhook 测试完成。';
+  statusEl.className = 'test-email-status ' + (data && data.ok ? 'ok' : 'fail');
 });
 
 function testAlert() {
@@ -2579,6 +2774,7 @@ function initChart() {
 
   chart = new Chart(ctx, {
     type: 'line',
+    plugins: [chartEventPlugin],
     data: {
       labels: [...hist.labels],
       datasets: [{
@@ -2594,6 +2790,7 @@ function initChart() {
       interaction: { intersect: false, mode: 'index' },
       plugins: {
         legend: { display: false },
+        goldMonitorEvents: { events: activeChartEvents(hist.labels) },
         tooltip: {
           backgroundColor: '#16162a', titleColor: '#aaa', bodyColor: '#e8b830',
           borderColor: 'rgba(255,255,255,0.08)', borderWidth: 1, cornerRadius: 8, padding: 10,

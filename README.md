@@ -7,11 +7,12 @@ GoldMonitor 是一个 Windows 桌面黄金价格监控工具，用于查看实�
 - 实时获取 XAU/USD、人民币克价和 USD/CNY 汇率，展示数据源、更新时间、缓存状态和日内统计。
 - 支持上涨、下跌、关键价位和短时波动提醒，可分别控制弹窗、声音和邮件通知。
 - 支持提醒冷却时间、静默时段、邮件标题模板和正文模板。
+- 支持 Webhook 通知，可按预警级别控制是否发送。
 - 支持桌面金价悬浮条，显示涨跌颜色、更新时间和数据源状态，并提供右键菜单。
 - 支持风险分析助手，用户手动触发，避免后台自动消耗模型 token。
 - 风险分析支持 DeepSeek 和 OpenAI 兼容接口，支持模型列表下拉、连接测试、分析深度、缓存、历史、复制和导出报告。
 - 支持数据源健康面板，展示行情源、汇率源、缓存回退、失败原因和响应耗时。
-- 支持本地价格历史持久化、历史复盘和 CSV 导出。
+- 支持本地价格历史 SQLite 持久化、历史复盘、图表事件标记和 CSV 导出。
 - 支持配置导出、配置导入、恢复默认设置和诊断报告导出。
 - 支持软件更新检查、下载进度、SHA256 校验、安装器启动和 GitHub Release 更新源。
 
@@ -50,6 +51,7 @@ https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json
 - `thresholds.json`：价格阈值和波动提醒配置。
 - `market_cache.json`：最近可用金价与汇率缓存。
 - `price_history.json`：本地价格历史。
+- `price_history.sqlite3`：本地价格历史主存储。
 - `risk_analysis_history.json`：风险分析历史。
 - `GoldMonitor.log`：运行日志。
 

@@ -185,6 +185,40 @@ finally:
 
 
 original_settings = dict(app.app_settings)
+original_requests_post = app.requests.post
+webhook_payloads = []
+
+class OkWebhookResponse:
+    def raise_for_status(self):
+        pass
+
+
+try:
+    app.app_settings = app._normalize_settings({
+        "webhook_enabled": True,
+        "webhook_url": "https://notify.example/webhook",
+        "webhook_warning_enabled": True,
+    })
+
+    def capture_webhook(url, **kwargs):
+        webhook_payloads.append({"url": url, "kwargs": kwargs})
+        return OkWebhookResponse()
+
+    app.requests.post = capture_webhook
+    error = app.WebhookNotifier.send("warning", "测试 Webhook", "测试内容", blocking=True)
+    if error is not None:
+        raise SystemExit(f"blocking webhook send should succeed, got: {error}")
+    if not webhook_payloads or webhook_payloads[0]["url"] != "https://notify.example/webhook":
+        raise SystemExit(f"webhook notifier must post to configured url, got: {webhook_payloads}")
+    payload = webhook_payloads[0]["kwargs"].get("json") or {}
+    if payload.get("title") != "测试 Webhook" or payload.get("type") != "warning":
+        raise SystemExit(f"webhook payload must include alert metadata, got: {payload}")
+finally:
+    app.app_settings = original_settings
+    app.requests.post = original_requests_post
+
+
+original_settings = dict(app.app_settings)
 original_appdata_dir = app.APPDATA_DIR
 original_settings_path = app.SETTINGS_PATH
 original_set_startup_enabled = app.set_startup_enabled
@@ -544,6 +578,7 @@ original_source_health = dict(app.source_health)
 original_source_price_samples = dict(app.source_price_samples)
 original_source_comparison_state = dict(app.source_comparison_state)
 original_alert_cooldown_state = dict(app.alert_cooldown_state)
+original_alert_log = list(app.alert_log)
 
 try:
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -605,9 +640,21 @@ try:
         app.add_price_history_entry(point, force_save=True)
         if not Path(app.PRICE_HISTORY_PATH).exists():
             raise SystemExit("price history must be persisted to disk")
+        if not Path(app._price_history_db_path()).exists():
+            raise SystemExit("price history must create a SQLite archive")
         history_state = app.build_price_history_state(limit=10)
         if history_state.get("total") != 1 or history_state["stats"]["rmb"]["end"] != 543.21:
             raise SystemExit(f"price history state must summarize saved points, got: {history_state}")
+        app.alert_log.append({
+            "type": "warning",
+            "mode": "rmb",
+            "time": "12:00:00",
+            "timestamp": "2026-06-08T12:00:00",
+            "message": "测试价格预警",
+        })
+        history_with_events = app.build_price_history_state(limit=10)
+        if not history_with_events.get("events") or history_with_events["events"][0].get("type") != "alert":
+            raise SystemExit(f"price history state must expose chart events, got: {history_with_events}")
         csv_text, count = app.build_price_history_csv()
         if count != 1 or "usd_per_oz" not in csv_text or "2350.12" not in csv_text:
             raise SystemExit(f"price history CSV export is invalid: {csv_text}")
@@ -643,6 +690,7 @@ finally:
     app.source_price_samples = original_source_price_samples
     app.source_comparison_state = original_source_comparison_state
     app.alert_cooldown_state = original_alert_cooldown_state
+    app.alert_log = original_alert_log
 
 
 print("risk contract checks passed.")

@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import os
+import sqlite3
 import smtplib
 import subprocess
 import socket
@@ -32,7 +33,7 @@ app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.2.2"
+APP_VERSION = "1.3.0"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 GOLD_URL = "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcven"
@@ -155,6 +156,11 @@ DEFAULT_SETTINGS = {
     "smtp_sender": "",
     "smtp_password": "",
     "smtp_recipient": "",
+    "webhook_enabled": False,
+    "webhook_url": "",
+    "webhook_warning_enabled": True,
+    "webhook_critical_enabled": True,
+    "webhook_volatility_enabled": True,
     "email_warning_enabled": True,
     "email_critical_enabled": True,
     "email_volatility_enabled": True,
@@ -371,6 +377,11 @@ def _normalize_settings(raw):
     data["smtp_sender"] = str(data.get("smtp_sender") or "").strip()
     data["smtp_password"] = str(data.get("smtp_password") or "")
     data["smtp_recipient"] = str(data.get("smtp_recipient") or "").strip()
+    data["webhook_enabled"] = bool(data.get("webhook_enabled", False))
+    data["webhook_url"] = str(data.get("webhook_url") or "").strip()
+    data["webhook_warning_enabled"] = bool(data.get("webhook_warning_enabled", True))
+    data["webhook_critical_enabled"] = bool(data.get("webhook_critical_enabled", True))
+    data["webhook_volatility_enabled"] = bool(data.get("webhook_volatility_enabled", True))
     data["email_warning_enabled"] = bool(data.get("email_warning_enabled", True))
     data["email_critical_enabled"] = bool(data.get("email_critical_enabled", True))
     data["email_volatility_enabled"] = bool(data.get("email_volatility_enabled", True))
@@ -797,6 +808,7 @@ def build_diagnostics_report():
             "thresholds": THRESHOLDS_PATH,
             "market_cache": MARKET_CACHE_PATH,
             "price_history": PRICE_HISTORY_PATH,
+            "price_history_db": _price_history_db_path(),
             "log": APP_LOG_PATH,
         },
         "settings": diagnostic_settings_snapshot(),
@@ -1016,6 +1028,64 @@ class EmailNotifier:
         return None  # None 表示成功入队
 
 
+class WebhookNotifier:
+    """Webhook 通知器"""
+
+    @staticmethod
+    def send(alert_type, title, message, timeout=8, blocking=False):
+        settings = get_settings_snapshot()
+        if not settings.get("webhook_enabled", False):
+            return "Webhook 通知未启用"
+        url = settings.get("webhook_url", "").strip()
+        if not url:
+            return "Webhook 地址未配置，跳过发送"
+        try:
+            _require_https_url(url, "Webhook 地址")
+        except ValueError as exc:
+            return str(exc)
+
+        values = build_alert_template_values(alert_type, title, message)
+        payload = {
+            "app": "GoldMonitor",
+            "version": APP_VERSION,
+            "type": alert_type,
+            "level": values["level"],
+            "title": title,
+            "message": message,
+            "time": values["time"],
+            "price_usd": values["price_usd"],
+            "price_rmb": values["price_rmb"],
+            "rate": values["rate"],
+            "gold_source": values["gold_source"],
+            "rate_source": values["rate_source"],
+        }
+
+        def _send():
+            try:
+                response = requests.post(
+                    url,
+                    json=payload,
+                    headers={"User-Agent": HTTP_USER_AGENT, "Content-Type": "application/json"},
+                    timeout=timeout,
+                    proxies=REQ_PROXY,
+                )
+                response.raise_for_status()
+                return None
+            except Exception as exc:
+                return str(exc)
+
+        if blocking:
+            return _send()
+
+        def _send_async():
+            error = _send()
+            if error:
+                logging.warning("Webhook 通知发送失败: %s", error)
+
+        threading.Thread(target=_send_async, daemon=True).start()
+        return None
+
+
 def dispatch_alert(entry, title):
     """通知渠道分发: 根据设置决定哪些渠道发送"""
     alert_type = entry.get("type", "warning")
@@ -1028,6 +1098,16 @@ def dispatch_alert(entry, title):
         error = EmailNotifier.send(alert_type, title, entry["message"])
         if error:
             logging.warning("邮件通知跳过: %s", error)
+
+    webhook_key_map = {
+        "warning": "webhook_warning_enabled",
+        "critical": "webhook_critical_enabled",
+        "volatility": "webhook_volatility_enabled",
+    }
+    if settings.get("webhook_enabled", False) and settings.get(webhook_key_map.get(alert_type, "webhook_warning_enabled"), True):
+        error = WebhookNotifier.send(alert_type, title, entry["message"])
+        if error:
+            logging.warning("Webhook 通知跳过: %s", error)
 
 
 def emit_alert(entry, title):
@@ -1042,10 +1122,14 @@ def emit_alert(entry, title):
         elif reason == "cooldown":
             entry["notification_message"] = "提醒冷却中，仅记录本次触发。"
     entry["related_news"] = select_related_news(title)
+    entry["timestamp"] = datetime.now().isoformat(timespec="seconds")
     alert_log.append(entry)
     while len(alert_log) > 50:
         alert_log.pop(0)
     socketio.emit("alert", entry)
+    history_state = build_price_history_state(limit=240)
+    history_state["scope"] = "live"
+    socketio.emit("price_history_updated", history_state)
     if delivery.get("deliver"):
         send_desktop_notification(title, entry["message"])
         play_system_alert_sound(entry.get("type", "warning"))
@@ -2265,7 +2349,106 @@ def normalize_price_history(items):
     return normalized[-PRICE_HISTORY_ARCHIVE_LIMIT:]
 
 
-def load_price_history_archive():
+def _price_history_db_path():
+    base, _ext = os.path.splitext(PRICE_HISTORY_PATH)
+    return base + ".sqlite3"
+
+
+def _connect_price_history_db():
+    path = _price_history_db_path()
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    conn = sqlite3.connect(path, timeout=5)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS price_history (
+            timestamp TEXT PRIMARY KEY,
+            time TEXT NOT NULL,
+            usd REAL,
+            rmb REAL,
+            rate REAL
+        )
+    """)
+    return conn
+
+
+def _upsert_price_history_points(items):
+    normalized = normalize_price_history(items)
+    if not normalized:
+        return []
+    with _connect_price_history_db() as conn:
+        conn.executemany(
+            """
+            INSERT OR REPLACE INTO price_history(timestamp, time, usd, rmb, rate)
+            VALUES(:timestamp, :time, :usd, :rmb, :rate)
+            """,
+            normalized,
+        )
+        conn.execute(
+            """
+            DELETE FROM price_history
+            WHERE timestamp NOT IN (
+                SELECT timestamp FROM price_history
+                ORDER BY timestamp DESC
+                LIMIT ?
+            )
+            """,
+            (PRICE_HISTORY_ARCHIVE_LIMIT,),
+        )
+    return normalized
+
+
+def _load_price_history_from_db():
+    path = _price_history_db_path()
+    if not os.path.exists(path):
+        return []
+    with _connect_price_history_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT usd, rmb, rate, time, timestamp
+            FROM price_history
+            ORDER BY timestamp ASC
+            LIMIT ?
+            """,
+            (PRICE_HISTORY_ARCHIVE_LIMIT,),
+        ).fetchall()
+    return normalize_price_history([
+        {"usd": row[0], "rmb": row[1], "rate": row[2], "time": row[3], "timestamp": row[4]}
+        for row in rows
+    ])
+
+
+def _filter_price_history_from_db(minutes=None, limit=600):
+    path = _price_history_db_path()
+    if not os.path.exists(path):
+        return []
+    params = []
+    where = ""
+    if minutes:
+        latest_items = _load_price_history_from_db()
+        latest_time = _parse_iso_datetime(latest_items[-1].get("timestamp")) if latest_items else datetime.now()
+        cutoff = (latest_time or datetime.now()) - timedelta(minutes=int(minutes))
+        where = "WHERE timestamp >= ?"
+        params.append(cutoff.isoformat(timespec="seconds"))
+    params.append(int(limit or PRICE_HISTORY_EXPORT_LIMIT))
+    with _connect_price_history_db() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT usd, rmb, rate, time, timestamp
+            FROM price_history
+            {where}
+            ORDER BY timestamp DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+    rows.reverse()
+    return normalize_price_history([
+        {"usd": row[0], "rmb": row[1], "rate": row[2], "time": row[3], "timestamp": row[4]}
+        for row in rows
+    ])
+
+
+def _load_price_history_json_archive():
     if not os.path.exists(PRICE_HISTORY_PATH):
         return []
     try:
@@ -2278,8 +2461,24 @@ def load_price_history_archive():
         return []
 
 
-def save_price_history_archive(items=None):
-    items = price_archive if items is None else items
+def load_price_history_archive():
+    try:
+        db_items = _load_price_history_from_db()
+        if db_items:
+            return db_items
+    except (OSError, sqlite3.Error) as exc:
+        logging.warning("价格历史数据库读取失败: %s", exc)
+
+    json_items = _load_price_history_json_archive()
+    if json_items:
+        try:
+            _upsert_price_history_points(json_items)
+        except (OSError, sqlite3.Error) as exc:
+            logging.warning("价格历史迁移到 SQLite 失败: %s", exc)
+    return json_items
+
+
+def _write_price_history_json_archive(items):
     normalized = normalize_price_history(items)
     os.makedirs(APPDATA_DIR, exist_ok=True)
     payload = {
@@ -2293,6 +2492,17 @@ def save_price_history_archive(items=None):
     return normalized
 
 
+def save_price_history_archive(items=None):
+    items = price_archive if items is None else items
+    normalized = normalize_price_history(items)
+    try:
+        _upsert_price_history_points(normalized)
+    except (OSError, sqlite3.Error) as exc:
+        logging.warning("价格历史写入 SQLite 失败: %s", exc)
+    _write_price_history_json_archive(normalized)
+    return normalized
+
+
 def add_price_history_entry(entry, force_save=False):
     global price_archive, last_price_history_save_at
     normalized = normalize_price_history([entry])
@@ -2302,10 +2512,14 @@ def add_price_history_entry(entry, force_save=False):
     price_archive.append(point)
     if len(price_archive) > PRICE_HISTORY_ARCHIVE_LIMIT:
         price_archive = price_archive[-PRICE_HISTORY_ARCHIVE_LIMIT:]
+    try:
+        _upsert_price_history_points([point])
+    except (OSError, sqlite3.Error) as exc:
+        logging.warning("价格历史增量写入 SQLite 失败: %s", exc)
     now_monotonic = time.monotonic()
     if force_save or now_monotonic - last_price_history_save_at >= PRICE_HISTORY_SAVE_INTERVAL_SECONDS:
         try:
-            price_archive = save_price_history_archive(price_archive)
+            price_archive = _write_price_history_json_archive(price_archive)
             last_price_history_save_at = now_monotonic
         except OSError as exc:
             logging.warning("价格历史保存失败: %s", exc)
@@ -2314,6 +2528,13 @@ def add_price_history_entry(entry, force_save=False):
 def _filter_price_archive(minutes=None, limit=600):
     with lock:
         items = list(price_archive)
+    if len(items) < int(limit or 0):
+        try:
+            db_items = _filter_price_history_from_db(minutes=minutes, limit=limit)
+            if db_items:
+                return db_items
+        except (OSError, sqlite3.Error) as exc:
+            logging.warning("价格历史数据库查询失败: %s", exc)
     if minutes:
         latest_time = _parse_iso_datetime(items[-1].get("timestamp")) if items else datetime.now()
         cutoff = (latest_time or datetime.now()) - timedelta(minutes=int(minutes))
@@ -2324,6 +2545,79 @@ def _filter_price_archive(minutes=None, limit=600):
     if limit:
         items = items[-int(limit):]
     return items
+
+
+def _event_time_from_alert(entry):
+    timestamp = entry.get("timestamp")
+    parsed = _parse_iso_datetime(timestamp)
+    if parsed:
+        return parsed
+    raw_time = str(entry.get("time") or "").strip()
+    if raw_time and today_date:
+        parsed = _parse_iso_datetime(f"{today_date}T{raw_time}")
+        if parsed:
+            return parsed
+    return None
+
+
+def _build_price_event_state(items):
+    if not items:
+        return []
+    parsed_points = [
+        _parse_iso_datetime(item.get("timestamp"))
+        for item in items
+    ]
+    parsed_points = [item for item in parsed_points if item]
+    if not parsed_points:
+        return []
+    start_time = min(parsed_points)
+    end_time = max(parsed_points)
+    events = []
+
+    for entry in list(alert_log[-50:]):
+        event_time = _event_time_from_alert(entry)
+        if not event_time or event_time < start_time or event_time > end_time:
+            continue
+        events.append({
+            "type": "alert",
+            "level": entry.get("type", "warning"),
+            "mode": entry.get("mode", ""),
+            "timestamp": event_time.isoformat(timespec="seconds"),
+            "time": entry.get("time", event_time.strftime("%H:%M:%S")),
+            "label": alert_level_label(entry.get("type")),
+            "message": str(entry.get("message") or "")[:180],
+        })
+
+    with risk_history_lock:
+        risk_items = list(risk_analysis_history[:RISK_ANALYSIS_HISTORY_LIMIT])
+    for entry in risk_items:
+        snapshot = entry.get("snapshot") if isinstance(entry.get("snapshot"), dict) else {}
+        event_time = _parse_iso_datetime(entry.get("analysis_time") or snapshot.get("analysis_time"))
+        if not event_time or event_time < start_time or event_time > end_time:
+            continue
+        structured = entry.get("structured") if isinstance(entry.get("structured"), dict) else {}
+        label = "风险分析"
+        if structured.get("risk_level"):
+            label = f"风险 {structured.get('risk_level')}"
+        events.append({
+            "type": "risk",
+            "level": "analysis",
+            "timestamp": event_time.isoformat(timespec="seconds"),
+            "time": event_time.strftime("%H:%M:%S"),
+            "label": label[:40],
+            "message": str(entry.get("content") or "")[:180],
+        })
+
+    events.sort(key=lambda item: item.get("timestamp", ""))
+    return events[-100:]
+
+
+def alert_level_label(alert_type):
+    if alert_type == "critical":
+        return "关键预警"
+    if alert_type == "volatility":
+        return "波动预警"
+    return "价格预警"
 
 
 def build_price_history_state(minutes=None, limit=600):
@@ -2354,6 +2648,7 @@ def build_price_history_state(minutes=None, limit=600):
         },
         "total": len(items),
         "minutes": minutes,
+        "events": _build_price_event_state(items),
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
 
@@ -3719,6 +4014,33 @@ def on_test_email():
             socketio.emit("test_email_result", {"ok": False, "message": f"发送失败: {error}"})
         else:
             socketio.emit("test_email_result", {"ok": True, "message": "测试邮件发送成功！请检查收件箱（如未收到请查看垃圾邮件文件夹）。"})
+
+    threading.Thread(target=_test, daemon=True).start()
+
+
+@socketio.on("test_webhook")
+def on_test_webhook():
+    """发送测试 Webhook，验证通知地址是否正确"""
+    settings = get_settings_snapshot()
+    if not settings.get("webhook_enabled", False):
+        emit("test_webhook_result", {"ok": False, "message": "Webhook 通知未启用，请先打开开关。"})
+        return
+    if not settings.get("webhook_url", "").strip():
+        emit("test_webhook_result", {"ok": False, "message": "Webhook 地址未配置，请先填写 HTTPS 地址。"})
+        return
+
+    def _test():
+        error = WebhookNotifier.send(
+            alert_type="warning",
+            title="测试 Webhook - 金价监控",
+            message="这是一条测试 Webhook，用于验证金价预警通知配置。",
+            timeout=8,
+            blocking=True,
+        )
+        if error:
+            socketio.emit("test_webhook_result", {"ok": False, "message": f"发送失败: {error}"})
+        else:
+            socketio.emit("test_webhook_result", {"ok": True, "message": "测试 Webhook 发送成功。"})
 
     threading.Thread(target=_test, daemon=True).start()
 
