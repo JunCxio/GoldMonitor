@@ -50,11 +50,17 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         if app.usdcny_rate != 7.3333 or not app.usdcny_rate_cached:
             raise SystemExit("startup must initialize USD/CNY from fresh cache")
 
+        original_sina_gold = app.fetch_sina_gold_result
         original_eastmoney = app.fetch_eastmoney_gold_result
+        original_goldprice = app.fetch_goldprice_data_result
+        original_stooq_gold = app.fetch_gold_data_result
         original_sina = app.fetch_sina_forex_result
         original_frankfurter = app.fetch_frankfurter_forex_result
         original_stooq = app.fetch_csv_price_result
         try:
+            def failing_sina_gold():
+                return None, "新浪贵金属请求超时"
+
             def working_gold():
                 return {
                     "date": "2026-06-01",
@@ -74,14 +80,26 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             def failing_stooq(*args, **kwargs):
                 return None, "Stooq 汇率源请求超时"
 
+            def failing_goldprice():
+                return None, None, "GoldPrice 请求超时"
+
+            def failing_stooq_gold(*args, **kwargs):
+                return None, "Stooq 金价源请求超时"
+
+            app.fetch_sina_gold_result = failing_sina_gold
             app.fetch_eastmoney_gold_result = working_gold
+            app.fetch_goldprice_data_result = failing_goldprice
+            app.fetch_gold_data_result = failing_stooq_gold
             app.fetch_sina_forex_result = failing_sina
             app.fetch_frankfurter_forex_result = failing_frankfurter
             app.fetch_csv_price_result = failing_stooq
 
             data, rate_info, source, gold_error, forex_error = app.fetch_market_data_result()
         finally:
+            app.fetch_sina_gold_result = original_sina_gold
             app.fetch_eastmoney_gold_result = original_eastmoney
+            app.fetch_goldprice_data_result = original_goldprice
+            app.fetch_gold_data_result = original_stooq_gold
             app.fetch_sina_forex_result = original_sina
             app.fetch_frankfurter_forex_result = original_frankfurter
             app.fetch_csv_price_result = original_stooq

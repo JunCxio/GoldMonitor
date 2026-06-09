@@ -1,5 +1,10 @@
 # 更新记录
 
+## 1.3.3
+
+- 修复 macOS Release 检查中的外部汇率源依赖，避免真实网络数据导致 CI 检查失败。
+- 继续提供 macOS DMG 安装包发布能力。
+
 ## 1.3.2
 
 - 新增 macOS DMG 安装包发布，Release 会同时生成 `GoldMonitorSetup.exe` 和 `GoldMonitor-macOS.dmg`。

@@ -97,6 +97,8 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         original_eastmoney = app.fetch_eastmoney_gold_result
         original_sina_gold = app.fetch_sina_gold_result
         original_csv_price = app.fetch_csv_price_result
+        original_sina_forex = app.fetch_sina_forex_result
+        original_frankfurter_forex = app.fetch_frankfurter_forex_result
         try:
             def working_eastmoney():
                 raise SystemExit("eastmoney should not be called when sina gold source works")
@@ -117,6 +119,8 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             app.fetch_eastmoney_gold_result = working_eastmoney
             app.fetch_goldprice_data_result = working_goldprice
             app.fetch_gold_data_result = failing_stooq
+            app.fetch_sina_forex_result = no_forex
+            app.fetch_frankfurter_forex_result = no_forex
             app.fetch_csv_price_result = no_forex
             market_data, market_rate_info, market_source, market_error, forex_error = app.fetch_market_data_result()
         finally:
@@ -124,6 +128,8 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             app.fetch_sina_gold_result = original_sina_gold
             app.fetch_goldprice_data_result = original_goldprice
             app.fetch_gold_data_result = original_gold_data
+            app.fetch_sina_forex_result = original_sina_forex
+            app.fetch_frankfurter_forex_result = original_frankfurter_forex
             app.fetch_csv_price_result = original_csv_price
 
         if market_data["close"] != 2300.5:
