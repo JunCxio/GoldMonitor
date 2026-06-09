@@ -1,5 +1,11 @@
 # 更新记录
 
+## 1.3.2
+
+- 新增 macOS DMG 安装包发布，Release 会同时生成 `GoldMonitorSetup.exe` 和 `GoldMonitor-macOS.dmg`。
+- macOS 打包版默认以桌面窗口运行，并将本地数据写入 `~/Library/Application Support/GoldMonitor`。
+- 更新清单新增平台下载信息，保留 Windows 兼容字段，并为 macOS 提供 DMG 下载地址和 SHA256。
+
 ## 1.3.1
 
 - 新增 macOS 本地启动程序，支持双击 `GoldMonitor.command` 或执行 `scripts/start_mac.sh` 启动浏览器模式。

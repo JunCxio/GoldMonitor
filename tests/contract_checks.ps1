@@ -110,9 +110,11 @@ Assert-Contains -Path "app.py" -Pattern '@socketio\.on\("check_update"\)' -Messa
 Assert-Contains -Path "app.py" -Pattern '@socketio\.on\("install_update"\)' -Message "app.py must expose install_update socket event"
 Assert-Contains -Path "app.py" -Pattern 'progress_callback' -Message "updater must report installer download progress"
 Assert-Contains -Path "app.py" -Pattern 'GoldMonitorSetup' -Message "updater must download the setup executable"
-Assert-Contains -Path ".github\workflows\release.yml" -Pattern 'CHANGELOG\.md' -Message "release workflow must read version notes from CHANGELOG.md"
-Assert-Contains -Path ".github\workflows\release.yml" -Pattern 'missing release notes' -Message "release workflow must fail when release notes are missing"
-Assert-Contains -Path "CHANGELOG.md" -Pattern '## 1\.2\.0' -Message "CHANGELOG.md must document the current release"
+Assert-Contains -Path ".github\workflows\release.yml" -Pattern 'GoldMonitor-macOS\.dmg' -Message "release workflow must publish the macOS DMG"
+Assert-Contains -Path "scripts\build_macos_dmg.sh" -Pattern 'hdiutil create' -Message "macOS packaging must create a DMG"
+Assert-Contains -Path "scripts\generate_release_manifest.py" -Pattern 'CHANGELOG\.md' -Message "release metadata must read version notes from CHANGELOG.md"
+Assert-Contains -Path "scripts\generate_release_manifest.py" -Pattern 'missing release notes' -Message "release metadata must fail when release notes are missing"
+Assert-Contains -Path "CHANGELOG.md" -Pattern '## 1\.3\.2' -Message "CHANGELOG.md must document the current release"
 Assert-Contains -Path "app.py" -Pattern 'NEWS_CACHE_PATH' -Message "app.py must cache gold-related news locally"
 Assert-Contains -Path "app.py" -Pattern 'THRESHOLDS_PATH' -Message "app.py must persist thresholds locally"
 Assert-Contains -Path "app.py" -Pattern 'load_thresholds' -Message "app.py must load thresholds from disk"
@@ -267,4 +269,3 @@ Assert-Contains -Path "installer\GoldMonitor.iss" -Pattern 'Filename: "\{app\}\\
 Assert-NotContains -Path "installer\GoldMonitor.iss" -Pattern 'skipifsilent' -Message "silent updates must not skip launching the app after install"
 
 Write-Host "Contract checks passed."
-

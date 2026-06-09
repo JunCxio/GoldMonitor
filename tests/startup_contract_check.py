@@ -23,11 +23,23 @@ if start_background < 0:
 if start_window < 0:
     raise SystemExit("desktop entrypoint must create the pywebview window")
 
-if 'desktop_mode = "--desktop" in sys.argv or (os.name == "nt" and "--web" not in sys.argv)' not in main_block:
-    raise SystemExit("non-Windows startup must default to web mode unless --desktop is passed")
+if 'macos_packaged_app = sys.platform == "darwin" and getattr(sys, "frozen", False)' not in main_block:
+    raise SystemExit("startup must detect packaged macOS app bundles")
 
-if 'if desktop_mode or os.name == "nt":' not in main_block:
-    raise SystemExit("tray startup must be limited to desktop mode or Windows")
+if 'or (macos_packaged_app and "--web" not in sys.argv)' not in main_block:
+    raise SystemExit("packaged macOS app must default to desktop mode")
+
+if 'if os.name == "nt":' not in main_block:
+    raise SystemExit("tray startup must be limited to Windows")
+
+if 'start_hidden = os.name == "nt" and startup_mode' not in main_block:
+    raise SystemExit("startup-to-tray must be limited to Windows")
+
+if 'webview.start(gui="edgechromium")' not in source or 'webview.start()' not in source:
+    raise SystemExit("desktop window must choose the pywebview backend by platform")
+
+if 'if os.name != "nt":\n                exit_app()' not in source:
+    raise SystemExit("non-Windows desktop close must exit because there is no tray")
 
 if 'exec "$ROOT_DIR/scripts/start_mac.sh"' not in mac_launcher:
     raise SystemExit("macOS launcher must delegate to scripts/start_mac.sh")

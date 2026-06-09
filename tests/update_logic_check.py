@@ -30,6 +30,33 @@ if manifest["url"] != "https://example.com/GoldMonitorSetup.exe":
 if manifest["sha256"] != "a" * 64:
     raise SystemExit("manifest sha256 must be lower-cased")
 
+original_platform_key = app._platform_update_key
+try:
+    app._platform_update_key = lambda: "macos"
+    platform_manifest = app.normalize_update_manifest({
+        "version": "1.0.2",
+        "url": "https://example.com/GoldMonitorSetup.exe",
+        "sha256": "b" * 64,
+        "downloads": {
+            "windows": {
+                "url": "https://example.com/GoldMonitorSetup.exe",
+                "sha256": "b" * 64,
+            },
+            "macos": {
+                "url": "https://example.com/GoldMonitor-macOS.dmg",
+                "sha256": "c" * 64,
+            },
+        },
+    })
+finally:
+    app._platform_update_key = original_platform_key
+
+if platform_manifest["url"] != "https://example.com/GoldMonitor-macOS.dmg":
+    raise SystemExit("macOS update manifest must select the DMG download")
+
+if platform_manifest["sha256"] != "c" * 64:
+    raise SystemExit("macOS update manifest must select the DMG sha256")
+
 try:
     app.normalize_update_manifest({
         "version": "1.0.1",

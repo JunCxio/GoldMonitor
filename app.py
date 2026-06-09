@@ -33,7 +33,7 @@ app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.3.1"
+APP_VERSION = "1.3.2"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 GOLD_URL = "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcven"
@@ -58,12 +58,23 @@ DEFAULT_PORT = 5000
 SOCKET_ACCESS_TOKEN = secrets.token_urlsafe(32)
 RUN_KEY_NAME = "GoldMonitor"
 RUN_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
-APPDATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "GoldMonitor")
+
+
+def _default_appdata_root():
+    configured = os.environ.get("APPDATA")
+    if configured:
+        return configured
+    if sys.platform == "darwin":
+        return os.path.join(os.path.expanduser("~"), "Library", "Application Support")
+    return os.path.expanduser("~")
+
+
+APPDATA_DIR = os.path.join(_default_appdata_root(), "GoldMonitor")
 SETTINGS_PATH = os.path.join(APPDATA_DIR, "settings.json")
 THRESHOLDS_PATH = os.path.join(APPDATA_DIR, "thresholds.json")
 MARKET_CACHE_PATH = os.path.join(APPDATA_DIR, "market_cache.json")
 UPDATE_DIR = os.path.join(APPDATA_DIR, "updates")
-UPDATE_INSTALLER_NAME = "GoldMonitorSetup.exe"
+UPDATE_INSTALLER_NAME = "GoldMonitor-macOS.dmg" if sys.platform == "darwin" else "GoldMonitorSetup.exe"
 NEWS_CACHE_PATH = os.path.join(APPDATA_DIR, "news.json")
 RISK_ANALYSIS_HISTORY_PATH = os.path.join(APPDATA_DIR, "risk_analysis_history.json")
 PRICE_HISTORY_PATH = os.path.join(APPDATA_DIR, "price_history.json")
@@ -618,16 +629,35 @@ def _require_https_url(value, label):
         raise ValueError(f"{label}必须使用 HTTPS 地址")
 
 
+def _platform_update_key():
+    if sys.platform == "darwin":
+        return "macos"
+    if os.name == "nt":
+        return "windows"
+    return ""
+
+
 def normalize_update_manifest(raw, base_url=None):
     if not isinstance(raw, dict):
         raise ValueError("更新清单格式无效")
 
     version = str(raw.get("version") or "").strip()
+    notes = str(raw.get("notes") or "").strip()
     download_url = str(raw.get("url") or raw.get("download_url") or "").strip()
+    sha256 = str(raw.get("sha256") or "").strip().lower()
+    downloads = raw.get("downloads")
+    platform_key = _platform_update_key()
+
+    if isinstance(downloads, dict) and platform_key:
+        platform_payload = downloads.get(platform_key)
+        if platform_payload is None and platform_key != "windows":
+            raise ValueError("当前平台暂无可用更新包")
+        if isinstance(platform_payload, dict):
+            download_url = str(platform_payload.get("url") or platform_payload.get("download_url") or "").strip()
+            sha256 = str(platform_payload.get("sha256") or "").strip().lower()
+
     if base_url and download_url:
         download_url = urljoin(base_url, download_url)
-    notes = str(raw.get("notes") or "").strip()
-    sha256 = str(raw.get("sha256") or "").strip().lower()
 
     if not version:
         raise ValueError("更新清单缺少版本号")
@@ -722,20 +752,28 @@ def download_update_installer(update_info, progress_callback=None):
 def launch_update_installer(installer_path):
     if not os.path.exists(installer_path):
         raise FileNotFoundError(installer_path)
-    args = [
-        installer_path,
-        "/CURRENTUSER",
-        "/SILENT",
-        "/CLOSEAPPLICATIONS",
-        "/RESTARTAPPLICATIONS",
-    ]
-    subprocess.Popen(args, close_fds=True)
+    if os.name == "nt":
+        args = [
+            installer_path,
+            "/CURRENTUSER",
+            "/SILENT",
+            "/CLOSEAPPLICATIONS",
+            "/RESTARTAPPLICATIONS",
+        ]
+        subprocess.Popen(args, close_fds=True)
 
-    def _exit_later():
-        time.sleep(1)
-        os._exit(0)
+        def _exit_later():
+            time.sleep(1)
+            os._exit(0)
 
-    threading.Thread(target=_exit_later, daemon=True).start()
+        threading.Thread(target=_exit_later, daemon=True).start()
+        return
+
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", installer_path], close_fds=True)
+        return
+
+    subprocess.Popen([installer_path], close_fds=True)
 
 
 def read_log_tail(max_lines=120):
@@ -5417,12 +5455,14 @@ def start_desktop_window(start_hidden=False):
     global _window_instance, _window_hwnd
     try:
         import webview
-        import ctypes
 
         def on_shown():
             global _window_hwnd
+            if os.name != "nt":
+                return
             # 窗口显示后: 最大化 + 设置金块图标
             try:
+                import ctypes
                 user32 = ctypes.windll.user32
                 hwnd = user32.FindWindowW(None, APP_NAME)
                 if hwnd:
@@ -5443,6 +5483,10 @@ def start_desktop_window(start_hidden=False):
                 pass
 
         def on_closing():
+            if os.name != "nt":
+                exit_app()
+                return False
+
             snapshot = get_settings_snapshot()
             behavior = snapshot.get("close_behavior", "ask")
             if snapshot.get("close_remembered") and behavior != "ask":
@@ -5482,7 +5526,10 @@ def start_desktop_window(start_hidden=False):
         _window_instance.events.shown += on_shown
         _window_instance.events.closing += on_closing
 
-        webview.start(gui="edgechromium")
+        if os.name == "nt":
+            webview.start(gui="edgechromium")
+        else:
+            webview.start()
 
     except Exception:
         pass
@@ -5490,12 +5537,17 @@ def start_desktop_window(start_hidden=False):
 
 # ---------- 启动 ----------
 if __name__ == "__main__":
-    desktop_mode = "--desktop" in sys.argv or (os.name == "nt" and "--web" not in sys.argv)
+    macos_packaged_app = sys.platform == "darwin" and getattr(sys, "frozen", False)
+    desktop_mode = (
+        "--desktop" in sys.argv
+        or (os.name == "nt" and "--web" not in sys.argv)
+        or (macos_packaged_app and "--web" not in sys.argv)
+    )
     startup_mode = "--startup" in sys.argv
     server_port = find_available_port(DEFAULT_PORT)
     _desktop_runtime_active = desktop_mode
 
-    if desktop_mode or os.name == "nt":
+    if os.name == "nt":
         tray_thread = threading.Thread(target=create_tray_icon, daemon=True)
         tray_thread.start()
 
@@ -5512,7 +5564,8 @@ if __name__ == "__main__":
         update_floating_price()
         start_background_fetching()
         start_news_fetching()
-        start_desktop_window(start_hidden=startup_mode and get_settings_snapshot().get("startup_to_tray", True))
+        start_hidden = os.name == "nt" and startup_mode and get_settings_snapshot().get("startup_to_tray", True)
+        start_desktop_window(start_hidden=start_hidden)
     else:
         # Web 模式 (--web): Flask 主线程 + 浏览器
         start_background_fetching()

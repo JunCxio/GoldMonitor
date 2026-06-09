@@ -1,6 +1,6 @@
 # GoldMonitor
 
-GoldMonitor 是一个 Windows 桌面黄金价格监控工具，用于查看实时金价、设置风险提醒、接收邮件通知、手动生成风险分析，并通过桌面悬浮条持续关注行情。
+GoldMonitor 是一个黄金价格监控工具，提供 Windows 桌面版和 macOS DMG 安装包，用于查看实时金价、设置风险提醒、接收邮件通知、手动生成风险分析，并持续关注行情。
 
 ## 主要功能
 
@@ -24,7 +24,9 @@ GoldMonitor 是一个 Windows 桌面黄金价格监控工具，用于查看实�
 https://github.com/JunCxio/GoldMonitor/releases/latest
 ```
 
-用户通常只需要下载 `GoldMonitorSetup.exe` 并运行安装。安装包是按用户目录安装，不需要管理员权限。
+Windows 用户通常只需要下载 `GoldMonitorSetup.exe` 并运行安装。安装包是按用户目录安装，不需要管理员权限。
+
+macOS 用户可下载 `GoldMonitor-macOS.dmg`，打开后把 `GoldMonitor.app` 拖入“应用程序”目录即可安装。
 
 ## 更新源
 
@@ -45,7 +47,12 @@ https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json
 
 ## 本地数据
 
-配置和运行数据默认保存在当前 Windows 用户的 `%APPDATA%\GoldMonitor` 目录，包括：
+配置和运行数据默认保存在以下目录：
+
+- Windows：`%APPDATA%\GoldMonitor`
+- macOS：`~/Library/Application Support/GoldMonitor`
+
+其中包括：
 
 - `settings.json`：通用设置、邮件设置、风险分析设置和更新源。
 - `thresholds.json`：价格阈值和波动提醒配置。
@@ -65,11 +72,16 @@ macOS 可双击根目录中的 `GoldMonitor.command` 启动浏览器模式，也
 ./scripts/start_mac.sh
 ```
 
-脚本会创建 `.venv`，安装 Flask、Flask-SocketIO 和 requests，并把本地数据写入 `~/Library/Application Support/GoldMonitor`。macOS 启动方式不包含 Windows 托盘、桌面悬浮条、系统通知和安装器能力。
+脚本会创建 `.venv`，安装 Flask、Flask-SocketIO 和 requests，并把本地数据写入 `~/Library/Application Support/GoldMonitor`。源码目录下的 macOS 启动方式默认使用浏览器模式；Release 中的 `.app` 会以桌面窗口启动。
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\pip.exe install -r requirements.txt pyinstaller
+```
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt pyinstaller
 ```
 
 运行静态与契约检查：
@@ -102,10 +114,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\contract_checks.ps1
 .\.tools\InnoSetup6\ISCC.exe .\installer\GoldMonitor.iss
 ```
 
+```bash
+PYTHON_BIN=.venv/bin/python ./scripts/build_macos_dmg.sh
+```
+
 构建结果：
 
-- 程序目录：`dist\GoldMonitor`
-- 安装包：`release\GoldMonitorSetup.exe`
+- Windows 程序目录：`dist\GoldMonitor`
+- Windows 安装包：`release\GoldMonitorSetup.exe`
+- macOS 安装包：`release\GoldMonitor-macOS.dmg`
 
 ## 发布流程
 
@@ -123,6 +140,6 @@ git push origin main
 git push origin v1.2.2
 ```
 
-GitHub Actions 会执行检查、构建安装包、生成 `version.json`，并把 `GoldMonitorSetup.exe` 与 `version.json` 上传到对应 Release。
+GitHub Actions 会执行检查、构建 Windows EXE 和 macOS DMG、生成 `version.json`，并把 `GoldMonitorSetup.exe`、`GoldMonitor-macOS.dmg` 与 `version.json` 上传到对应 Release。
 
 如果 `CHANGELOG.md` 中缺少当前版本说明，发布流程会失败。

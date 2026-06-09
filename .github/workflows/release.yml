@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  build-release:
+  build-windows:
     runs-on: windows-latest
 
     steps:
@@ -34,7 +34,7 @@ jobs:
       - name: Run checks
         shell: powershell
         run: |
-          python -m py_compile app.py setup_gui.py tests\risk_contract_check.py
+          python -m py_compile app.py setup_gui.py tests\risk_contract_check.py tests\update_logic_check.py tests\startup_contract_check.py
           powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\contract_checks.ps1
           python tests\risk_contract_check.py
           python tests\gold_cache_check.py
@@ -48,11 +48,11 @@ jobs:
           python tests\update_logic_check.py
           python tests\port_selection_check.py
 
-      - name: Build application
+      - name: Build Windows application
         shell: powershell
         run: pyinstaller --clean --noconfirm GoldMonitor.spec
 
-      - name: Build installer
+      - name: Build Windows installer
         shell: powershell
         run: |
           $candidates = @(
@@ -65,47 +65,84 @@ jobs:
           }
           & $iscc .\installer\GoldMonitor.iss
 
-      - name: Generate update manifest
-        shell: powershell
+      - name: Upload Windows assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: release/GoldMonitorSetup.exe
+          if-no-files-found: error
+
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
         run: |
-          $versionMatch = Select-String -Path .\app.py -Pattern 'APP_VERSION\s*=\s*"([^"]+)"'
-          if (-not $versionMatch) {
-            throw "APP_VERSION was not found."
-          }
-          $version = $versionMatch.Matches[0].Groups[1].Value
-          $tag = "v$version"
-          if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -ne $tag) {
-            throw "Tag ${{ github.ref_name }} does not match APP_VERSION $version."
-          }
-          $installer = ".\release\GoldMonitorSetup.exe"
-          $sha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
-          $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/$tag/GoldMonitorSetup.exe"
-          $changelog = Get-Content -Path .\CHANGELOG.md -Raw -Encoding UTF8
-          $escapedVersion = [Regex]::Escape($version)
-          $match = [Regex]::Match($changelog, "(?ms)^##\s+$escapedVersion\s*\r?\n(?<notes>.*?)(?=^##\s+|\z)")
-          if (-not $match.Success -or -not $match.Groups["notes"].Value.Trim()) {
-            throw "CHANGELOG.md is missing release notes for version $version."
-          }
-          $releaseNotes = $match.Groups["notes"].Value.Trim()
-          $manifest = [ordered]@{
-            version = $version
-            url = $downloadUrl
-            sha256 = $sha256
-            notes = $releaseNotes
-          }
-          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-          $manifestJson = $manifest | ConvertTo-Json
-          [System.IO.File]::WriteAllText((Resolve-Path .\release).Path + "\version.json", $manifestJson, $utf8NoBom)
-          $notes = @(
-            "GoldMonitor $version",
-            "",
-            $releaseNotes,
-            "",
-            "Installer: GoldMonitorSetup.exe",
-            "Update manifest: version.json",
-            "SHA256: $sha256"
-          ) -join "`n"
-          [System.IO.File]::WriteAllText((Resolve-Path .\release).Path + "\release-notes.md", $notes, $utf8NoBom)
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Run checks
+        run: |
+          python -m py_compile app.py setup_gui.py tests/risk_contract_check.py tests/update_logic_check.py tests/startup_contract_check.py
+          python tests/risk_contract_check.py
+          python tests/gold_cache_check.py
+          python tests/price_fetch_with_cache_check.py
+          python tests/fetch_status_check.py
+          python tests/threshold_persistence_check.py
+          python tests/socket_connect_check.py
+          python tests/news_logic_check.py
+          python tests/forex_cache_check.py
+          python tests/startup_contract_check.py
+          python tests/update_logic_check.py
+          python tests/port_selection_check.py
+
+      - name: Build macOS DMG
+        run: |
+          chmod +x scripts/build_macos_dmg.sh
+          PYTHON_BIN=python scripts/build_macos_dmg.sh
+
+      - name: Upload macOS assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: release/GoldMonitor-macOS.dmg
+          if-no-files-found: error
+
+  publish-release:
+    runs-on: ubuntu-latest
+    needs:
+      - build-windows
+      - build-macos
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Generate update manifest
+        run: |
+          python scripts/generate_release_manifest.py \
+            --tag "${{ github.ref_name }}" \
+            --repository "${{ github.repository }}" \
+            --release-dir release
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -113,6 +150,8 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: GoldMonitor ${{ github.ref_name }}
           body_path: release/release-notes.md
+          fail_on_unmatched_files: true
           files: |
             release/GoldMonitorSetup.exe
+            release/GoldMonitor-macOS.dmg
             release/version.json
