@@ -241,6 +241,7 @@ Assert-Contains -Path "templates\index.html" -Pattern 'setActiveAlertRule' -Mess
 Assert-Contains -Path "templates\index.html" -Pattern 'saveThresholdRule' -Message "alert rules must save threshold edits inline"
 Assert-Contains -Path "templates\index.html" -Pattern 'saveVolatilityRule' -Message "alert rules must save volatility edits inline"
 Assert-Contains -Path "templates\index.html" -Pattern 'alertRuleEmail_' -Message "alert rules must include inline email controls"
+Assert-Contains -Path "templates\index.html" -Pattern 'renderNotificationBadges' -Message "alert log must render notification delivery status"
 Assert-NotContains -Path "templates\index.html" -Pattern 'class="threshold-section"' -Message "frontend must not keep the old duplicated threshold form"
 Assert-NotContains -Path "templates\index.html" -Pattern 'class="email-switches-section"' -Message "frontend must not keep the old standalone email switch section"
 Assert-NotContains -Path "templates\index.html" -Pattern 'class="volatility-section"' -Message "frontend must not keep the old standalone volatility form"

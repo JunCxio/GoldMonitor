@@ -33,7 +33,7 @@ app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.3.7"
+APP_VERSION = "1.3.8"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 OFFICIAL_UPDATE_HOST = "github.com"
@@ -1410,10 +1410,20 @@ class WebhookNotifier:
         return None
 
 
+def _notification_status(channel, label, status, message):
+    return {
+        "channel": channel,
+        "label": label,
+        "status": status,
+        "message": message,
+    }
+
+
 def dispatch_alert(entry, title):
     """通知渠道分发: 根据设置决定哪些渠道发送"""
     alert_type = entry.get("type", "warning")
     settings = get_settings_snapshot()
+    notifications = []
 
     # 邮件通知 — 按级别独立开关
     key_map = {"warning": "email_warning_enabled", "critical": "email_critical_enabled", "volatility": "email_volatility_enabled"}
@@ -1422,6 +1432,11 @@ def dispatch_alert(entry, title):
         error = EmailNotifier.send(alert_type, title, entry["message"])
         if error:
             logging.warning("邮件通知跳过: %s", error)
+            notifications.append(_notification_status("email", "邮件", "skipped", error))
+        else:
+            notifications.append(_notification_status("email", "邮件", "queued", "已提交发送"))
+    else:
+        notifications.append(_notification_status("email", "邮件", "disabled", "未启用"))
 
     webhook_key_map = {
         "warning": "webhook_warning_enabled",
@@ -1432,6 +1447,13 @@ def dispatch_alert(entry, title):
         error = WebhookNotifier.send(alert_type, title, entry["message"])
         if error:
             logging.warning("Webhook 通知跳过: %s", error)
+            notifications.append(_notification_status("webhook", "Webhook", "skipped", error))
+        else:
+            notifications.append(_notification_status("webhook", "Webhook", "queued", "已提交发送"))
+    else:
+        notifications.append(_notification_status("webhook", "Webhook", "disabled", "未启用"))
+
+    return notifications
 
 
 def emit_alert(entry, title):
@@ -1445,6 +1467,11 @@ def emit_alert(entry, title):
             entry["notification_message"] = "当前处于静默时段，仅记录提醒。"
         elif reason == "cooldown":
             entry["notification_message"] = "提醒冷却中，仅记录本次触发。"
+        entry["notifications"] = [
+            _notification_status("all", "通知", "muted", entry.get("notification_message", "仅记录提醒")),
+        ]
+    else:
+        entry["notifications"] = dispatch_alert(entry, title)
     entry["related_news"] = select_related_news(title)
     entry["timestamp"] = datetime.now().isoformat(timespec="seconds")
     alert_log.append(entry)
@@ -1458,7 +1485,6 @@ def emit_alert(entry, title):
         send_desktop_notification(title, entry["message"])
         play_system_alert_sound(entry.get("type", "warning"))
         show_alert_dialog(title, f"{entry['message']}\n\n时间: {entry['time']}")
-        dispatch_alert(entry, title)
 
 
 def initialize_market_cache():

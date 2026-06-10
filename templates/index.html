@@ -347,6 +347,11 @@
   .section-label { font-size:0.68rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px; font-weight:600; }
   .level-badge.warn { background:rgba(224,160,64,0.15); color:var(--warn); }
   .level-badge.crit { background:rgba(224,85,106,0.15); color:var(--up); }
+  .log-notify { display:flex; gap:5px; flex-wrap:wrap; margin-top:5px; }
+  .log-notify-badge { min-height:20px; display:inline-flex; align-items:center; max-width:100%; padding:2px 6px; border:1px solid var(--hairline); border-radius:6px; color:var(--text-dim); background:rgba(255,255,255,0.025); font-size:0.62rem; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .log-notify-badge.ok { color:var(--down); border-color:rgba(76,175,132,0.25); background:rgba(76,175,132,0.08); }
+  .log-notify-badge.fail { color:var(--up); border-color:rgba(224,85,106,0.28); background:rgba(224,85,106,0.08); }
+  .log-notify-badge.muted { color:var(--warn); border-color:rgba(224,160,64,0.24); background:rgba(224,160,64,0.08); }
   .btn-clear-sm { min-height:var(--control-height-sm); padding:5px 9px; font-size:0.66rem; }
   .btn-clear-sm:hover { color:var(--danger-text); border-color:var(--danger-border); background:var(--danger-bg); transform:translateY(-1px); }
   .btn-form { min-height:38px; padding:8px 16px; font-size:0.78rem; }
@@ -3088,13 +3093,25 @@ function checkThresholdProximity() {
 }
 
 // ========== 日志 ==========
+function renderNotificationBadges(entry) {
+  const items = Array.isArray(entry.notifications) ? entry.notifications : [];
+  if (!items.length) return '';
+  return '<div class="log-notify">' + items.map(item => {
+    const status = item.status || '';
+    const cls = status === 'queued' ? 'ok' : (status === 'skipped' ? 'fail' : (status === 'muted' ? 'muted' : ''));
+    const label = item.label || item.channel || '通知';
+    const message = item.message ? '：' + item.message : '';
+    return '<span class="log-notify-badge ' + cls + '">' + escapeHtml(label + message) + '</span>';
+  }).join('') + '</div>';
+}
+
 function addLogEntry(entry) {
   const list = document.getElementById('logList');
   const empty = list.querySelector('.log-empty');
   if (empty) empty.remove();
   const div = document.createElement('div');
   div.className = 'log-item';
-  div.innerHTML = '<div class="log-time">'+entry.time+'</div><div class="log-msg '+entry.type+'">'+entry.message+'</div>';
+  div.innerHTML = '<div class="log-time">' + escapeHtml(entry.time || '') + '</div><div class="log-msg ' + escapeHtml(entry.type || '') + '">' + escapeHtml(entry.message || '') + renderNotificationBadges(entry) + '</div>';
   list.appendChild(div);
   while (list.children.length > 50) list.removeChild(list.firstChild);
   list.scrollTop = list.scrollHeight;

@@ -219,6 +219,45 @@ finally:
 
 
 original_settings = dict(app.app_settings)
+original_email_send = app.EmailNotifier.send
+original_webhook_send = app.WebhookNotifier.send
+try:
+    app.app_settings = app._normalize_settings({
+        "smtp_server": "smtp.example.com",
+        "smtp_sender": "sender@example.com",
+        "smtp_password": "smtp-secret",
+        "smtp_recipient": "receiver@example.com",
+        "email_warning_enabled": True,
+        "webhook_enabled": True,
+        "webhook_url": "https://notify.example/webhook",
+        "webhook_warning_enabled": True,
+    })
+    sent_channels = []
+
+    def fake_email_send(alert_type, title, message, **kwargs):
+        sent_channels.append(("email", alert_type, title, message))
+        return None
+
+    def fake_webhook_send(alert_type, title, message, **kwargs):
+        sent_channels.append(("webhook", alert_type, title, message))
+        return None
+
+    app.EmailNotifier.send = fake_email_send
+    app.WebhookNotifier.send = fake_webhook_send
+    notifications = app.dispatch_alert({"type": "warning", "message": "测试提醒"}, "通知测试")
+    if [item.get("channel") for item in notifications] != ["email", "webhook"]:
+        raise SystemExit(f"dispatch alert must report email and webhook notification status, got: {notifications}")
+    if any(item.get("status") != "queued" for item in notifications):
+        raise SystemExit(f"enabled notification channels must be marked queued, got: {notifications}")
+    if len(sent_channels) != 2:
+        raise SystemExit(f"dispatch alert must call enabled notification channels, got: {sent_channels}")
+finally:
+    app.app_settings = original_settings
+    app.EmailNotifier.send = original_email_send
+    app.WebhookNotifier.send = original_webhook_send
+
+
+original_settings = dict(app.app_settings)
 original_appdata_dir = app.APPDATA_DIR
 original_settings_path = app.SETTINGS_PATH
 original_thresholds_path = app.THRESHOLDS_PATH
