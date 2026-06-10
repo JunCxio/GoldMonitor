@@ -100,7 +100,7 @@ original_download_update_installer = app.download_update_installer
 original_launch_update_installer = app.launch_update_installer
 captured = []
 try:
-    def fake_update_status():
+    def fake_update_status(expose_download=False):
         return {
             "state": "available",
             "current_version": app.APP_VERSION,
@@ -657,6 +657,7 @@ original_appdata_dir = app.APPDATA_DIR
 original_settings_path = app.SETTINGS_PATH
 original_thresholds_path = app.THRESHOLDS_PATH
 original_price_history_path = app.PRICE_HISTORY_PATH
+original_export_dir = app.EXPORT_DIR
 original_price_archive = list(app.price_archive)
 original_source_health = dict(app.source_health)
 original_source_price_samples = dict(app.source_price_samples)
@@ -670,6 +671,7 @@ try:
         app.SETTINGS_PATH = str(Path(tmp_dir) / "settings.json")
         app.THRESHOLDS_PATH = str(Path(tmp_dir) / "thresholds.json")
         app.PRICE_HISTORY_PATH = str(Path(tmp_dir) / "price_history.json")
+        app.EXPORT_DIR = str(Path(tmp_dir) / "exports")
         app.price_archive = []
         app.source_health = {}
         app.source_price_samples = {}
@@ -761,6 +763,22 @@ try:
             export_event = wait_for_event(client, "price_history_export_ready")
             if "2350.12" not in export_event.get("content", ""):
                 raise SystemExit(f"price history export event must include CSV content, got: {export_event}")
+            client.emit("export_config")
+            config_export = wait_for_event(client, "config_backup_ready")
+            config_saved_path = config_export.get("saved_path", "")
+            config_path = Path(config_saved_path)
+            if not config_export.get("ok") or not config_saved_path or not config_path.exists():
+                raise SystemExit(f"config export must save a visible file path, got: {config_export}")
+            if "smtp-secret" in config_export.get("content", ""):
+                raise SystemExit("config export must not include raw SMTP password")
+            client.emit("get_diagnostics")
+            diagnostics_export = wait_for_event(client, "diagnostics_ready")
+            diagnostics_saved_path = diagnostics_export.get("saved_path", "")
+            diagnostics_path = Path(diagnostics_saved_path)
+            if not diagnostics_export.get("ok") or not diagnostics_saved_path or not diagnostics_path.exists():
+                raise SystemExit(f"diagnostics export must save a visible file path, got: {diagnostics_export}")
+            if "smtp-secret" in diagnostics_export.get("content", ""):
+                raise SystemExit("diagnostics export must not include raw SMTP password")
         finally:
             client.disconnect()
 finally:
@@ -769,6 +787,7 @@ finally:
     app.SETTINGS_PATH = original_settings_path
     app.THRESHOLDS_PATH = original_thresholds_path
     app.PRICE_HISTORY_PATH = original_price_history_path
+    app.EXPORT_DIR = original_export_dir
     app.price_archive = original_price_archive
     app.source_health = original_source_health
     app.source_price_samples = original_source_price_samples

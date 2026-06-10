@@ -33,9 +33,13 @@ app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.3.6"
+APP_VERSION = "1.3.7"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
+OFFICIAL_UPDATE_HOST = "github.com"
+OFFICIAL_UPDATE_PATH_PREFIX = "/JunCxio/GoldMonitor/releases/"
+OFFICIAL_UPDATE_ASSET_NAMES = {"GoldMonitorSetup.exe", "GoldMonitor-macOS.dmg"}
+UPDATE_AUTO_CHECK_INTERVAL_HOURS = 6
 GOLD_URL = "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcven"
 FOREX_URL = "https://stooq.com/q/l/?s=usdcny&f=sd2t2ohlcven"
 SINA_GOLD_URL = "https://hq.sinajs.cn/rn=1&list=hf_XAU"
@@ -74,6 +78,7 @@ SETTINGS_PATH = os.path.join(APPDATA_DIR, "settings.json")
 THRESHOLDS_PATH = os.path.join(APPDATA_DIR, "thresholds.json")
 MARKET_CACHE_PATH = os.path.join(APPDATA_DIR, "market_cache.json")
 UPDATE_DIR = os.path.join(APPDATA_DIR, "updates")
+EXPORT_DIR = os.path.join(APPDATA_DIR, "exports")
 UPDATE_INSTALLER_NAME = "GoldMonitor-macOS.dmg" if sys.platform == "darwin" else "GoldMonitorSetup.exe"
 NEWS_CACHE_PATH = os.path.join(APPDATA_DIR, "news.json")
 RISK_ANALYSIS_HISTORY_PATH = os.path.join(APPDATA_DIR, "risk_analysis_history.json")
@@ -158,8 +163,6 @@ DEFAULT_SETTINGS = {
     "close_remembered": False,
     "alert_sound_enabled": True,
     "alert_dialog_enabled": True,
-    "update_manifest_url": DEFAULT_UPDATE_MANIFEST_URL,
-    "update_auto_check_interval_hours": 6,
     # 邮件通知
     "smtp_server": "",
     "smtp_port": "465",
@@ -613,8 +616,8 @@ def _normalize_settings(raw):
     data["close_remembered"] = bool(data.get("close_remembered"))
     data["alert_sound_enabled"] = bool(data.get("alert_sound_enabled"))
     data["alert_dialog_enabled"] = bool(data.get("alert_dialog_enabled"))
-    data["update_manifest_url"] = str(data.get("update_manifest_url") or DEFAULT_UPDATE_MANIFEST_URL).strip()
-    data["update_auto_check_interval_hours"] = bounded_int(data.get("update_auto_check_interval_hours", 6), 6, 1, 168)
+    data.pop("update_manifest_url", None)
+    data.pop("update_auto_check_interval_hours", None)
     if data.get("close_behavior") not in VALID_CLOSE_BEHAVIORS:
         data["close_behavior"] = DEFAULT_SETTINGS["close_behavior"]
         data["close_remembered"] = False
@@ -878,6 +881,23 @@ def _require_https_url(value, label):
         raise ValueError(f"{label}必须使用 HTTPS 地址")
 
 
+def _require_official_update_url(value, label, allowed_names=None):
+    _require_https_url(value, label)
+    parsed = urlparse(str(value or "").strip())
+    host = parsed.netloc.lower()
+    path = parsed.path
+    if host != OFFICIAL_UPDATE_HOST or not path.lower().startswith(OFFICIAL_UPDATE_PATH_PREFIX.lower()):
+        raise ValueError(f"{label}必须使用官方 GitHub Release 地址")
+    if allowed_names is not None:
+        name = path.rsplit("/", 1)[-1]
+        if name not in allowed_names:
+            raise ValueError(f"{label}文件名无效")
+
+
+def get_update_manifest_url():
+    return DEFAULT_UPDATE_MANIFEST_URL
+
+
 def _platform_update_key():
     if sys.platform == "darwin":
         return "macos"
@@ -912,7 +932,7 @@ def normalize_update_manifest(raw, base_url=None):
         raise ValueError("更新清单缺少版本号")
     if not download_url:
         raise ValueError("更新清单缺少安装包地址")
-    _require_https_url(download_url, "更新安装包")
+    _require_official_update_url(download_url, "更新安装包", OFFICIAL_UPDATE_ASSET_NAMES)
     if not sha256:
         raise ValueError("更新清单缺少安装包 sha256")
     if sha256 and (len(sha256) != 64 or any(ch not in "0123456789abcdef" for ch in sha256)):
@@ -926,29 +946,22 @@ def normalize_update_manifest(raw, base_url=None):
     }
 
 
-def fetch_update_manifest(manifest_url):
-    manifest_url = str(manifest_url or "").strip()
+def fetch_update_manifest(manifest_url=None):
+    manifest_url = str(manifest_url or get_update_manifest_url()).strip()
     if not manifest_url:
         raise ValueError("未配置更新源")
-    _require_https_url(manifest_url, "更新源")
+    _require_official_update_url(manifest_url, "更新源", {"version.json"})
     response = requests.get(manifest_url, timeout=REQUEST_TIMEOUT, proxies=REQ_PROXY)
     response.raise_for_status()
     return normalize_update_manifest(response.json(), manifest_url)
 
 
-def get_update_status():
-    manifest_url = get_settings_snapshot().get("update_manifest_url", "")
+def get_update_status(expose_download=False):
+    manifest_url = get_update_manifest_url()
     status = {
         "current_version": APP_VERSION,
-        "manifest_url": manifest_url,
         "checked_at": datetime.now().isoformat(timespec="seconds"),
     }
-    if not manifest_url:
-        status.update({
-            "state": "not_configured",
-            "message": "未配置更新源，请先在设置中填写版本清单地址。",
-        })
-        return status
 
     manifest = fetch_update_manifest(manifest_url)
     has_update = compare_versions(manifest["version"], APP_VERSION) > 0
@@ -956,10 +969,13 @@ def get_update_status():
         "state": "available" if has_update else "latest",
         "latest_version": manifest["version"],
         "notes": manifest["notes"],
-        "url": manifest["url"] if has_update else "",
-        "sha256": manifest["sha256"] if has_update else "",
         "message": "发现新版本。" if has_update else "当前已是最新版本。",
     })
+    if has_update and expose_download:
+        status.update({
+            "url": manifest["url"],
+            "sha256": manifest["sha256"],
+        })
     return status
 
 
@@ -1048,6 +1064,26 @@ def build_config_backup():
             "volatility_config": dict(volatility_config),
         },
     }
+
+
+def save_export_file(filename, content):
+    os.makedirs(EXPORT_DIR, exist_ok=True)
+    safe_name = os.path.basename(filename)
+    path = os.path.join(EXPORT_DIR, safe_name)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return path
+
+
+def open_exports_folder():
+    os.makedirs(EXPORT_DIR, exist_ok=True)
+    if os.name == "nt":
+        os.startfile(EXPORT_DIR)  # type: ignore[attr-defined]
+        return
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", EXPORT_DIR], close_fds=True)
+        return
+    subprocess.Popen(["xdg-open", EXPORT_DIR], close_fds=True)
 
 
 def restore_config_backup(payload):
@@ -4424,10 +4460,18 @@ def on_export_price_history(data=None):
 
 @socketio.on("export_config")
 def on_export_config():
-    emit("config_backup_ready", {
-        "filename": f"GoldMonitor-config-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json",
-        "content": json.dumps(build_config_backup(), ensure_ascii=False, indent=2),
-    })
+    filename = f"GoldMonitor-config-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+    try:
+        content = json.dumps(build_config_backup(), ensure_ascii=False, indent=2)
+        saved_path = save_export_file(filename, content)
+        emit("config_backup_ready", {
+            "ok": True,
+            "filename": filename,
+            "content": content,
+            "saved_path": saved_path,
+        })
+    except OSError:
+        emit("config_backup_ready", {"ok": False, "message": "配置导出失败，请检查导出目录权限。"})
 
 
 @socketio.on("import_config")
@@ -4455,10 +4499,27 @@ def on_reset_settings():
 
 @socketio.on("get_diagnostics")
 def on_get_diagnostics():
-    emit("diagnostics_ready", {
-        "filename": f"GoldMonitor-diagnostics-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json",
-        "content": build_diagnostics_report(),
-    })
+    filename = f"GoldMonitor-diagnostics-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+    try:
+        content = json.dumps(build_diagnostics_report(), ensure_ascii=False, indent=2)
+        saved_path = save_export_file(filename, content)
+        emit("diagnostics_ready", {
+            "ok": True,
+            "filename": filename,
+            "content": content,
+            "saved_path": saved_path,
+        })
+    except OSError:
+        emit("diagnostics_ready", {"ok": False, "message": "诊断报告导出失败，请检查导出目录权限。"})
+
+
+@socketio.on("open_exports_folder")
+def on_open_exports_folder():
+    try:
+        open_exports_folder()
+        emit("exports_folder_opened", {"ok": True, "message": f"已打开导出目录：{EXPORT_DIR}"})
+    except Exception:
+        emit("exports_folder_opened", {"ok": False, "message": f"无法自动打开导出目录：{EXPORT_DIR}"})
 
 
 @socketio.on("test_alert")
@@ -4492,14 +4553,14 @@ def on_check_update():
         emit("update_status", {
             "state": "error",
             "current_version": APP_VERSION,
-            "message": "检查更新失败，请确认更新源和网络连接。",
+            "message": "检查更新失败，请确认网络连接后重试。",
         })
 
 
 @socketio.on("install_update")
 def on_install_update(data=None):
     try:
-        status = get_update_status()
+        status = get_update_status(expose_download=True)
         if status.get("state") != "available":
             emit("update_status", status)
             return

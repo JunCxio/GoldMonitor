@@ -121,6 +121,7 @@
   .inline-check { min-height:32px; display:inline-flex; align-items:center; gap:6px; padding:6px 8px; border:1px solid var(--hairline); border-radius:8px; background:rgba(255,255,255,0.025); color:var(--text-dim); font-size:0.74rem; cursor:pointer; }
   .inline-check input { width:14px; height:14px; accent-color:var(--gold); }
   .risk-provider-row.hidden { display:none; }
+  .hidden-control { display:none; }
   .settings-foot { flex:0 0 auto; display:flex; justify-content:flex-end; gap:10px; padding:16px 20px 20px; border-top:1px solid var(--hairline); background:var(--surface-elevated); }
   .settings-save, .settings-cancel, .update-install, .dialog-danger, .btn-set, .btn-clear, .btn-clear-sm, .price-retry, .risk-open { min-height:var(--control-height); display:inline-flex; align-items:center; justify-content:center; gap:6px; max-width:100%; border-radius:8px; cursor:pointer; font-weight:700; line-height:1.2; white-space:nowrap; user-select:none; overflow:hidden; text-overflow:ellipsis; transition:transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease, filter 0.16s ease; }
   .settings-save, .update-install, .btn-set { border:1px solid rgba(232,184,48,0.66); background:linear-gradient(180deg, #f2ca58, #dca928); color:#111116; box-shadow:var(--shadow-control-strong); }
@@ -128,6 +129,7 @@
   .settings-save:active, .update-install:active, .btn-set:active { transform:translateY(0) scale(0.98); }
   .settings-save:focus-visible, .settings-cancel:focus-visible, .update-install:focus-visible, .dialog-danger:focus-visible, .btn-set:focus-visible, .btn-clear:focus-visible, .btn-clear-sm:focus-visible, .price-retry:focus-visible, .risk-open:focus-visible { outline:none; box-shadow:var(--focus-ring), var(--shadow-control); }
   .settings-cancel, .btn-clear, .btn-clear-sm { border:1px solid var(--control-border); background:var(--control-bg); color:var(--control-muted); box-shadow:var(--shadow-control); }
+  .clear-secret-btn.marked { border-color:var(--danger-border); background:var(--danger-bg); color:var(--danger-text); }
   .settings-cancel:hover, .btn-clear:hover, .btn-clear-sm:hover { border-color:rgba(255,255,255,0.18); background:var(--control-bg-hover); color:var(--control-text); transform:translateY(-1px); }
   .settings-cancel:active, .btn-clear:active, .btn-clear-sm:active { transform:translateY(0) scale(0.98); }
   .settings-save { padding:9px 20px; }
@@ -601,7 +603,8 @@
     </div>
     <div class="settings-tabs" role="tablist" aria-label="设置分类">
       <button class="settings-tab active" id="settingsTabGeneral" type="button" role="tab" aria-selected="true" aria-controls="settingsPanelGeneral" onclick="switchSettingsTab('general')">通用设置</button>
-      <button class="settings-tab" id="settingsTabEmail" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelEmail" onclick="switchSettingsTab('email')">邮件配置</button>
+      <button class="settings-tab" id="settingsTabEmail" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelEmail" onclick="switchSettingsTab('email')">邮件通知</button>
+      <button class="settings-tab" id="settingsTabWebhook" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelWebhook" onclick="switchSettingsTab('webhook')">Webhook</button>
       <button class="settings-tab" id="settingsTabRisk" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelRisk" onclick="switchSettingsTab('risk')">风险分析</button>
       <button class="settings-tab" id="settingsTabOps" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelOps" onclick="switchSettingsTab('ops')">运维</button>
     </div>
@@ -691,17 +694,28 @@
         </div>
         <div class="setting-row">
           <div>
-            <div class="setting-label">更新源地址</div>
-            <div class="setting-desc">用于检查新版本的 version.json 地址。</div>
+            <div class="setting-label">测试提醒</div>
+            <div class="setting-desc">触发一条手动测试提醒，用于检查弹窗、声音和通知链路。</div>
           </div>
-          <input class="settings-input" id="setUpdateManifestUrl" type="url" placeholder="https://example.com/version.json">
+          <button class="settings-cancel btn-form" id="btnTestAlert" onclick="testAlert()">触发测试</button>
+          <span class="test-email-status" id="testAlertStatus"></span>
         </div>
         <div class="setting-row">
           <div>
-            <div class="setting-label">自动检查更新间隔</div>
-            <div class="setting-desc">配置更新源后，按该间隔自动判断是否有新版本。</div>
+            <div class="setting-label">提醒冷却时间</div>
+            <div class="setting-desc">同一类型提醒在冷却期内只记录，不重复弹窗或发送通知。</div>
           </div>
-          <input class="settings-input smtp-port" id="setUpdateIntervalHours" type="number" min="1" max="168" step="1" placeholder="6">
+          <input class="settings-input smtp-port" id="setAlertCooldownMinutes" type="number" min="0" max="240" step="1" placeholder="30">
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">静默时段</div>
+            <div class="setting-desc">该时间段内只记录提醒，不弹窗、不响铃、不发送通知。</div>
+          </div>
+          <div class="settings-stack">
+            <input class="settings-input smtp-port" id="setAlertQuietStart" type="time">
+            <input class="settings-input smtp-port" id="setAlertQuietEnd" type="time">
+          </div>
         </div>
       </div>
       <div class="settings-panel" id="settingsPanelEmail" role="tabpanel" aria-labelledby="settingsTabEmail">
@@ -739,16 +753,17 @@
         <div class="setting-row">
           <div>
             <div class="setting-label">SMTP 授权码</div>
-            <div class="setting-desc" id="smtpPasswordStatus">邮箱 SMTP 授权码，非邮箱登录密码。</div>
+            <div class="setting-desc" id="smtpPasswordStatus">未保存授权码。输入授权码后保存即可启用邮件发送。</div>
           </div>
           <input class="settings-input" id="setSmtpPassword" type="password" placeholder="留空表示不修改">
         </div>
         <div class="setting-row">
           <div>
-            <div class="setting-label">清空 SMTP 授权码</div>
-            <div class="setting-desc">下次保存时删除本机已保存的 SMTP 授权码。</div>
+            <div class="setting-label">已保存授权码</div>
+            <div class="setting-desc">不再使用当前授权码时，可删除本机保存的授权码。</div>
           </div>
-          <label class="switch"><input type="checkbox" id="clearSmtpPassword"><span class="slider"></span></label>
+          <input class="hidden-control" type="checkbox" id="clearSmtpPassword">
+          <button class="settings-cancel btn-form clear-secret-btn" id="clearSmtpPasswordButton" type="button" onclick="toggleSecretClear('clearSmtpPassword', 'smtpPasswordStatus', 'clearSmtpPasswordButton', '保存后将删除已保存的 SMTP 授权码。')">删除已保存授权码</button>
         </div>
         <div class="setting-row">
           <div>
@@ -767,14 +782,20 @@
         </div>
         <div class="setting-row">
           <div>
-            <div class="setting-label">测试提醒</div>
-            <div class="setting-desc">触发一条手动测试提醒，用于检查弹窗、声音和邮件通知。</div>
+            <div class="setting-label">邮件标题模板</div>
+            <div class="setting-desc">支持 {level}、{title}、{price_rmb}、{price_usd}、{rate}。</div>
           </div>
-          <button class="settings-cancel btn-form" id="btnTestAlert" onclick="testAlert()">触发测试</button>
-          <span class="test-email-status" id="testAlertStatus"></span>
+          <input class="settings-input" id="setEmailSubjectTemplate" type="text" placeholder="[金价预警·{level}] {title}">
         </div>
-        <div class="setting-section-divider"></div>
-        <div class="setting-section-title">Webhook 通知</div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">邮件正文模板</div>
+            <div class="setting-desc">支持 {message}、{time}、{gold_source}、{rate_source} 等占位符。</div>
+          </div>
+          <textarea class="settings-textarea" id="setEmailBodyTemplate" placeholder="{message}"></textarea>
+        </div>
+      </div>
+      <div class="settings-panel" id="settingsPanelWebhook" role="tabpanel" aria-labelledby="settingsTabWebhook">
         <div class="setting-row">
           <div>
             <div class="setting-label">启用 Webhook</div>
@@ -807,37 +828,6 @@
           </div>
           <button class="settings-cancel btn-form" id="btnTestWebhook" onclick="testWebhook()">发送测试</button>
           <span class="test-email-status" id="testWebhookStatus"></span>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">提醒冷却时间</div>
-            <div class="setting-desc">同一类型提醒在冷却期内只记录，不重复弹窗或发邮件。</div>
-          </div>
-          <input class="settings-input smtp-port" id="setAlertCooldownMinutes" type="number" min="0" max="240" step="1" placeholder="30">
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">静默时段</div>
-            <div class="setting-desc">该时间段内只记录提醒，不弹窗、不响铃、不发邮件。</div>
-          </div>
-          <div class="settings-stack">
-            <input class="settings-input smtp-port" id="setAlertQuietStart" type="time">
-            <input class="settings-input smtp-port" id="setAlertQuietEnd" type="time">
-          </div>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">邮件标题模板</div>
-            <div class="setting-desc">支持 {level}、{title}、{price_rmb}、{price_usd}、{rate}。</div>
-          </div>
-          <input class="settings-input" id="setEmailSubjectTemplate" type="text" placeholder="[金价预警·{level}] {title}">
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">邮件正文模板</div>
-            <div class="setting-desc">支持 {message}、{time}、{gold_source}、{rate_source} 等占位符。</div>
-          </div>
-          <textarea class="settings-textarea" id="setEmailBodyTemplate" placeholder="{message}"></textarea>
         </div>
       </div>
       <div class="settings-panel" id="settingsPanelRisk" role="tabpanel" aria-labelledby="settingsTabRisk">
@@ -889,16 +879,17 @@
         <div class="setting-row risk-provider-row" data-provider="deepseek">
           <div>
             <div class="setting-label">DeepSeek API Key</div>
-            <div class="setting-desc" id="deepseekKeyStatus">未配置。留空保存会保留当前密钥。</div>
+            <div class="setting-desc" id="deepseekKeyStatus">未保存密钥。输入 API Key 后保存即可启用该模型。</div>
           </div>
           <input class="settings-input" id="setDeepseekApiKey" type="password" placeholder="留空表示不修改">
         </div>
-        <div class="setting-row">
+        <div class="setting-row risk-provider-row" data-provider="deepseek">
           <div>
-            <div class="setting-label">清空 API Key</div>
-            <div class="setting-desc">下次保存时删除本机已保存的 DeepSeek API Key。</div>
+            <div class="setting-label">已保存 DeepSeek Key</div>
+            <div class="setting-desc">不再使用当前密钥时，可删除本机保存的 DeepSeek API Key。</div>
           </div>
-          <label class="switch"><input type="checkbox" id="clearDeepseekApiKey"><span class="slider"></span></label>
+          <input class="hidden-control" type="checkbox" id="clearDeepseekApiKey">
+          <button class="settings-cancel btn-form clear-secret-btn" id="clearDeepseekApiKeyButton" type="button" onclick="toggleSecretClear('clearDeepseekApiKey', 'deepseekKeyStatus', 'clearDeepseekApiKeyButton', '保存后将删除已保存的 DeepSeek API Key。')">删除已保存密钥</button>
         </div>
         <div class="setting-row risk-provider-row" data-provider="openai_compatible">
           <div>
@@ -917,16 +908,17 @@
         <div class="setting-row risk-provider-row" data-provider="openai_compatible">
           <div>
             <div class="setting-label">兼容 API Key</div>
-            <div class="setting-desc" id="openaiCompatibleKeyStatus">未配置。留空保存会保留当前密钥。</div>
+            <div class="setting-desc" id="openaiCompatibleKeyStatus">未保存密钥。输入 API Key 后保存即可启用该接口。</div>
           </div>
           <input class="settings-input" id="setOpenaiCompatibleApiKey" type="password" placeholder="留空表示不修改">
         </div>
         <div class="setting-row risk-provider-row" data-provider="openai_compatible">
           <div>
-            <div class="setting-label">清空兼容 API Key</div>
-            <div class="setting-desc">下次保存时删除本机已保存的兼容 API Key。</div>
+            <div class="setting-label">已保存兼容 Key</div>
+            <div class="setting-desc">不再使用当前密钥时，可删除本机保存的兼容 API Key。</div>
           </div>
-          <label class="switch"><input type="checkbox" id="clearOpenaiCompatibleApiKey"><span class="slider"></span></label>
+          <input class="hidden-control" type="checkbox" id="clearOpenaiCompatibleApiKey">
+          <button class="settings-cancel btn-form clear-secret-btn" id="clearOpenaiCompatibleApiKeyButton" type="button" onclick="toggleSecretClear('clearOpenaiCompatibleApiKey', 'openaiCompatibleKeyStatus', 'clearOpenaiCompatibleApiKeyButton', '保存后将删除已保存的兼容接口 API Key。')">删除已保存密钥</button>
         </div>
         <div class="setting-row">
           <div>
@@ -964,7 +956,7 @@
         <div class="setting-row">
           <div>
             <div class="setting-label">导出配置</div>
-            <div class="setting-desc">导出本机设置、阈值和通知配置，备份文件会包含已保存的密钥。</div>
+            <div class="setting-desc">导出本机设置、阈值和通知配置，备份文件不包含密钥原文。</div>
           </div>
           <button class="btn-set btn-form" type="button" onclick="exportConfig()">导出配置</button>
         </div>
@@ -984,6 +976,13 @@
             <div class="setting-desc">导出版本、数据源状态、最近日志和配置摘要，便于排查问题。</div>
           </div>
           <button class="settings-cancel btn-form" type="button" onclick="exportDiagnostics()">生成诊断</button>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">导出目录</div>
+            <div class="setting-desc">配置备份和诊断报告会保存到固定目录，便于查找。</div>
+          </div>
+          <button class="settings-cancel btn-form" type="button" onclick="openExportsFolder()">打开目录</button>
         </div>
         <div class="setting-row">
           <div>
@@ -1211,8 +1210,6 @@ let appSettings = {
   close_remembered: false,
   alert_sound_enabled: true,
   alert_dialog_enabled: true,
-  update_manifest_url: '',
-  update_auto_check_interval_hours: 6,
   webhook_enabled: false,
   webhook_url: '',
   webhook_warning_enabled: true,
@@ -1249,8 +1246,7 @@ let autoUpdateTimer = null;
 let lastAutoUpdateCheckAt = 0;
 const AUTO_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 function autoUpdateIntervalMs() {
-  const hours = Number(appSettings.update_auto_check_interval_hours || 6);
-  return Math.max(1, Math.min(168, Number.isFinite(hours) ? hours : 6)) * 60 * 60 * 1000;
+  return AUTO_UPDATE_CHECK_INTERVAL_MS;
 }
 let alertQueue = [];
 let activeAlert = null;
@@ -1705,15 +1701,37 @@ socket.on('price_history_export_ready', data => {
 });
 
 socket.on('config_backup_ready', data => {
-  if (!data || !data.content) return;
+  if (!data) return;
+  if (data.ok === false) {
+    setOpsStatus(data.message || '配置导出失败。', false);
+    return;
+  }
+  if (data.saved_path) {
+    setOpsStatus('配置已导出：' + data.saved_path, true);
+    return;
+  }
+  if (!data.content) return;
   downloadText(data.filename || 'GoldMonitor-config.json', data.content, 'application/json;charset=utf-8');
-  setOpsStatus('配置已导出。', true);
+  setOpsStatus('配置已导出，文件名：' + (data.filename || 'GoldMonitor-config.json') + '。', true);
 });
 
 socket.on('diagnostics_ready', data => {
-  if (!data || !data.content) return;
+  if (!data) return;
+  if (data.ok === false) {
+    setOpsStatus(data.message || '诊断报告导出失败。', false);
+    return;
+  }
+  if (data.saved_path) {
+    setOpsStatus('诊断报告已导出：' + data.saved_path, true);
+    return;
+  }
+  if (!data.content) return;
   downloadText(data.filename || 'GoldMonitor-diagnostics.json', data.content, 'application/json;charset=utf-8');
-  setOpsStatus('诊断报告已生成。', true);
+  setOpsStatus('诊断报告已导出，文件名：' + (data.filename || 'GoldMonitor-diagnostics.json') + '。', true);
+});
+
+socket.on('exports_folder_opened', data => {
+  setOpsStatus(data && data.message ? data.message : '已打开导出目录。', !!(data && data.ok));
 });
 
 socket.on('config_import_result', data => {
@@ -1907,10 +1925,46 @@ function exportDiagnostics() {
   socket.emit('get_diagnostics');
 }
 
+function openExportsFolder() {
+  setOpsStatus('正在打开导出目录...', true);
+  socket.emit('open_exports_folder');
+}
+
 function resetSettings() {
   if (!confirm('确定恢复默认设置并清空阈值吗？')) return;
   setOpsStatus('正在恢复默认设置...', true);
   socket.emit('reset_settings');
+}
+
+function configureSecretClear(inputId, statusId, buttonId, configured, statusText, readyLabel, emptyLabel) {
+  const input = document.getElementById(inputId);
+  const status = document.getElementById(statusId);
+  const button = document.getElementById(buttonId);
+  if (!input || !status || !button) return;
+  input.checked = false;
+  status.textContent = statusText;
+  button.disabled = !configured;
+  button.textContent = configured ? readyLabel : emptyLabel;
+  button.classList.remove('marked');
+  button.dataset.defaultLabel = readyLabel;
+  button.dataset.defaultStatus = statusText;
+}
+
+function toggleSecretClear(inputId, statusId, buttonId, selectedStatus) {
+  const input = document.getElementById(inputId);
+  const status = document.getElementById(statusId);
+  const button = document.getElementById(buttonId);
+  if (!input || !status || !button || button.disabled) return;
+  input.checked = !input.checked;
+  if (input.checked) {
+    status.textContent = selectedStatus;
+    button.textContent = '取消删除';
+    button.classList.add('marked');
+    return;
+  }
+  status.textContent = button.dataset.defaultStatus || '';
+  button.textContent = button.dataset.defaultLabel || '删除已保存密钥';
+  button.classList.remove('marked');
 }
 
 // ========== 设置 ==========
@@ -1927,19 +1981,24 @@ function applySettings(data) {
   document.getElementById('setCloseBehavior').value = closeBehavior;
   document.getElementById('setAlertSound').checked = !!appSettings.alert_sound_enabled;
   document.getElementById('setAlertDialog').checked = !!appSettings.alert_dialog_enabled;
-  document.getElementById('setUpdateManifestUrl').value = appSettings.update_manifest_url || '';
-  document.getElementById('setUpdateIntervalHours').value = appSettings.update_auto_check_interval_hours || 6;
   // 邮件通知
   document.getElementById('setSmtpServer').value = appSettings.smtp_server || '';
   document.getElementById('setSmtpPort').value = appSettings.smtp_port || '465';
   document.getElementById('setSmtpEncryption').value = appSettings.smtp_encryption || 'ssl';
   document.getElementById('setSmtpSender').value = appSettings.smtp_sender || '';
   document.getElementById('setSmtpPassword').value = '';
-  document.getElementById('clearSmtpPassword').checked = false;
   const smtpPasswordStatus = appSettings.smtp_password_configured
-    ? '已配置：' + (appSettings.smtp_password_masked || '******') + '。留空保存会保留当前授权码。'
-    : '未配置。留空保存会保持未配置状态。';
-  document.getElementById('smtpPasswordStatus').textContent = smtpPasswordStatus;
+    ? '已保存授权码：' + (appSettings.smtp_password_masked || '******') + '。输入新授权码后保存会替换当前授权码。'
+    : '未保存授权码。输入授权码后保存即可启用邮件发送。';
+  configureSecretClear(
+    'clearSmtpPassword',
+    'smtpPasswordStatus',
+    'clearSmtpPasswordButton',
+    !!appSettings.smtp_password_configured,
+    smtpPasswordStatus,
+    '删除已保存授权码',
+    '暂无已保存授权码'
+  );
   document.getElementById('setSmtpRecipient').value = appSettings.smtp_recipient || '';
   document.getElementById('setAlertCooldownMinutes').value = appSettings.alert_cooldown_minutes ?? 30;
   document.getElementById('setAlertQuietStart').value = appSettings.alert_quiet_start || '';
@@ -1969,19 +2028,33 @@ function applySettings(data) {
   document.getElementById('setDeepseekBaseUrl').value = appSettings.deepseek_base_url || 'https://api.deepseek.com';
   renderDeepseekModelOptions(appSettings.deepseek_model || 'deepseek-v4-pro');
   document.getElementById('setDeepseekApiKey').value = '';
-  document.getElementById('clearDeepseekApiKey').checked = false;
   const keyStatus = appSettings.deepseek_api_key_configured
-    ? '已配置：' + (appSettings.deepseek_api_key_masked || '******') + '。留空保存会保留当前密钥。'
-    : '未配置。留空保存会保留当前密钥。';
-  document.getElementById('deepseekKeyStatus').textContent = keyStatus;
+    ? '已保存密钥：' + (appSettings.deepseek_api_key_masked || '******') + '。输入新 Key 后保存会替换当前密钥。'
+    : '未保存密钥。输入 API Key 后保存即可启用该模型。';
+  configureSecretClear(
+    'clearDeepseekApiKey',
+    'deepseekKeyStatus',
+    'clearDeepseekApiKeyButton',
+    !!appSettings.deepseek_api_key_configured,
+    keyStatus,
+    '删除已保存密钥',
+    '暂无已保存密钥'
+  );
   document.getElementById('setOpenaiCompatibleBaseUrl').value = appSettings.openai_compatible_base_url || '';
   document.getElementById('setOpenaiCompatibleModel').value = appSettings.openai_compatible_model || '';
   document.getElementById('setOpenaiCompatibleApiKey').value = '';
-  document.getElementById('clearOpenaiCompatibleApiKey').checked = false;
   const compatibleKeyStatus = appSettings.openai_compatible_api_key_configured
-    ? '已配置：' + (appSettings.openai_compatible_api_key_masked || '******') + '。留空保存会保留当前密钥。'
-    : '未配置。留空保存会保留当前密钥。';
-  document.getElementById('openaiCompatibleKeyStatus').textContent = compatibleKeyStatus;
+    ? '已保存密钥：' + (appSettings.openai_compatible_api_key_masked || '******') + '。输入新 Key 后保存会替换当前密钥。'
+    : '未保存密钥。输入 API Key 后保存即可启用该接口。';
+  configureSecretClear(
+    'clearOpenaiCompatibleApiKey',
+    'openaiCompatibleKeyStatus',
+    'clearOpenaiCompatibleApiKeyButton',
+    !!appSettings.openai_compatible_api_key_configured,
+    compatibleKeyStatus,
+    '删除已保存密钥',
+    '暂无已保存密钥'
+  );
   document.getElementById('setRiskMaxTokens').value = appSettings.risk_assistant_max_tokens || 1200;
   document.getElementById('setRiskCooldownSeconds').value = appSettings.risk_assistant_cooldown_seconds || 15;
   document.getElementById('setRiskCacheMinutes').value = appSettings.risk_assistant_cache_minutes ?? 10;
@@ -2029,7 +2102,7 @@ function testRiskModel() {
 }
 
 function switchSettingsTab(tab) {
-  const tabs = ['general', 'email', 'risk', 'ops'];
+  const tabs = ['general', 'email', 'webhook', 'risk', 'ops'];
   tabs.forEach(name => {
     const active = tab === name;
     const suffix = name.charAt(0).toUpperCase() + name.slice(1);
@@ -2071,8 +2144,6 @@ function saveSettings() {
     close_remembered: closeBehavior !== 'ask',
     alert_sound_enabled: document.getElementById('setAlertSound').checked,
     alert_dialog_enabled: document.getElementById('setAlertDialog').checked,
-    update_manifest_url: document.getElementById('setUpdateManifestUrl').value.trim(),
-    update_auto_check_interval_hours: document.getElementById('setUpdateIntervalHours').value.trim(),
     // 邮件通知
     smtp_server: document.getElementById('setSmtpServer').value.trim(),
     smtp_port: document.getElementById('setSmtpPort').value.trim(),
@@ -2494,7 +2565,6 @@ function checkUpdate() {
 }
 
 function requestUpdateCheck(silent) {
-  if (!appSettings.update_manifest_url) return;
   pendingUpdateInfo = null;
   document.getElementById('updateButton').classList.remove('update-ready');
   document.getElementById('installUpdateButton').disabled = true;
@@ -2512,7 +2582,6 @@ function scheduleAutoUpdateCheck() {
     clearTimeout(autoUpdateTimer);
     autoUpdateTimer = null;
   }
-  if (!appSettings.update_manifest_url) return;
   const elapsed = Date.now() - lastAutoUpdateCheckAt;
   const delay = lastAutoUpdateCheckAt ? Math.max(autoUpdateIntervalMs() - elapsed, 60 * 1000) : 2000;
   autoUpdateTimer = setTimeout(() => {
@@ -2533,8 +2602,7 @@ function applyUpdateStatus(data) {
   const current = data.current_version ? '当前版本 ' + data.current_version : '';
   const latest = data.latest_version ? '最新版本 ' + data.latest_version : '';
   const checked = data.checked_at ? '检查时间 ' + String(data.checked_at).replace('T', ' ') : '';
-  const manifest = data.manifest_url ? '更新源 ' + data.manifest_url : '';
-  metaEl.textContent = [current, latest, checked, manifest].filter(Boolean).join(' · ');
+  metaEl.textContent = [current, latest, checked].filter(Boolean).join(' · ');
   statusEl.textContent = data.message || '更新状态未知。';
   notesEl.textContent = data.notes || '';
   notesEl.style.display = data.notes ? 'block' : 'none';
@@ -2544,12 +2612,10 @@ function applyUpdateStatus(data) {
     progressBar.style.width = Number.isFinite(percent) ? percent + '%' : '35%';
   }
 
-  if (data.state === 'available' && data.url) {
+  if (data.state === 'available') {
     pendingUpdateInfo = {
       version: data.latest_version,
-      url: data.url,
       notes: data.notes || '',
-      sha256: data.sha256 || '',
     };
     installBtn.disabled = false;
     updateBtn.classList.add('update-ready');

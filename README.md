@@ -13,8 +13,8 @@ GoldMonitor 是一个黄金价格监控工具，提供 Windows 桌面版和 macO
 - 风险分析支持 DeepSeek 和 OpenAI 兼容接口，支持模型列表下拉、连接测试、分析深度、缓存、历史、复制和导出报告。
 - 支持数据源健康面板，展示行情源、汇率源、缓存回退、失败原因和响应耗时。
 - 支持本地价格历史 SQLite 持久化、历史复盘、图表事件标记和 CSV 导出。
-- 支持配置导出、配置导入、恢复默认设置和诊断报告导出。
-- 支持软件更新检查、下载进度、SHA256 校验、安装器启动和 GitHub Release 更新源。
+- 支持配置导出、配置导入、恢复默认设置、诊断报告导出和固定导出目录。
+- 支持软件更新检查、下载进度、SHA256 校验、安装器启动和内置 GitHub Release 官方更新源。
 
 ## 下载
 
@@ -30,11 +30,7 @@ macOS 用户可下载 `GoldMonitor-macOS.dmg`，打开后把 `GoldMonitor.app` �
 
 ## 更新源
 
-程序默认内置 GitHub Release 更新源：
-
-```text
-https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json
-```
+程序内置 GitHub Release 官方更新源，普通用户无需在设置页查看或修改具体地址。
 
 更新清单由 GitHub Actions 在发布时自动生成，包含：
 
@@ -43,7 +39,7 @@ https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json
 - `sha256`：安装包 SHA256 校验值。
 - `notes`：当前版本说明。
 
-程序会根据设置中的更新源定时检查新版本；发现可用更新后，会在主界面的更新按钮上显示状态。更新安装完成后，安装器会自动重新打开程序。
+程序会按内置更新源每 6 小时检查一次新版本；发现可用更新后，会在主界面的更新按钮上显示状态。更新安装完成后，安装器会自动重新打开程序。旧版本本地配置中保存过的 `update_manifest_url` 和 `update_auto_check_interval_hours` 会被忽略并在下次保存设置时移除。
 
 ## 本地数据
 
@@ -54,12 +50,13 @@ https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json
 
 其中包括：
 
-- `settings.json`：通用设置、邮件设置、风险分析设置和更新源。
+- `settings.json`：通用设置、邮件通知、Webhook 通知和风险分析设置。
 - `thresholds.json`：价格阈值和波动提醒配置。
 - `market_cache.json`：最近可用金价与汇率缓存。
 - `price_history.json`：本地价格历史。
 - `price_history.sqlite3`：本地价格历史主存储。
 - `risk_analysis_history.json`：风险分析历史。
+- `exports/`：配置备份和诊断报告导出目录。
 - `GoldMonitor.log`：运行日志。
 
 SMTP 授权码、DeepSeek API Key 和 OpenAI 兼容接口 API Key 会优先保存到系统凭据存储：
