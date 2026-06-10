@@ -62,6 +62,13 @@ https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json
 - `risk_analysis_history.json`：风险分析历史。
 - `GoldMonitor.log`：运行日志。
 
+SMTP 授权码、DeepSeek API Key 和 OpenAI 兼容接口 API Key 会优先保存到系统凭据存储：
+
+- Windows：Credential Manager。
+- macOS：Keychain。
+
+配置导出和诊断报告只包含敏感字段的配置状态，不导出原文密钥。旧版本中已经写入 `settings.json` 的敏感字段会在下次保存设置时迁移到系统凭据存储。
+
 重新安装程序通常不会删除这些配置。卸载或手动删除 `%APPDATA%\GoldMonitor` 后，本地配置和历史才会丢失。
 
 ## 本地开发

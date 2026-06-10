@@ -33,7 +33,7 @@ app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.3.5"
+APP_VERSION = "1.3.6"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 GOLD_URL = "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcven"
@@ -194,6 +194,9 @@ DEFAULT_SETTINGS = {
     "risk_assistant_cooldown_seconds": 15,
     "risk_assistant_cache_minutes": 10,
 }
+SECRET_SETTING_KEYS = ("smtp_password", "deepseek_api_key", "openai_compatible_api_key")
+CREDENTIAL_SERVICE_NAME = "GoldMonitor"
+CREDENTIAL_TARGET_PREFIX = "GoldMonitor:"
 VALID_SMTP_ENCRYPTIONS = {"ssl", "tls"}
 VALID_CLOSE_BEHAVIORS = {"ask", "minimize_to_tray", "exit"}
 VALID_RISK_ASSISTANT_PROVIDERS = {"deepseek", "openai_compatible"}
@@ -307,6 +310,7 @@ source_health = {}
 source_price_samples = {}
 source_comparison_state = {}
 last_source_comparison_probe_at = 0.0
+_credential_test_store = None
 
 
 # ---------- 设置与系统集成 ----------
@@ -314,6 +318,240 @@ def _current_executable():
     if getattr(sys, "frozen", False):
         return sys.executable
     return os.path.abspath(sys.argv[0])
+
+
+def _credential_target_name(key):
+    return f"{CREDENTIAL_TARGET_PREFIX}{key}"
+
+
+def _credential_store_override():
+    return _credential_test_store if isinstance(_credential_test_store, dict) else None
+
+
+def _read_windows_credential(key):
+    if os.name != "nt":
+        return ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        CRED_TYPE_GENERIC = 1
+
+        class FILETIME(ctypes.Structure):
+            _fields_ = [
+                ("dwLowDateTime", wintypes.DWORD),
+                ("dwHighDateTime", wintypes.DWORD),
+            ]
+
+        class CREDENTIALW(ctypes.Structure):
+            _fields_ = [
+                ("Flags", wintypes.DWORD),
+                ("Type", wintypes.DWORD),
+                ("TargetName", wintypes.LPWSTR),
+                ("Comment", wintypes.LPWSTR),
+                ("LastWritten", FILETIME),
+                ("CredentialBlobSize", wintypes.DWORD),
+                ("CredentialBlob", ctypes.POINTER(ctypes.c_ubyte)),
+                ("Persist", wintypes.DWORD),
+                ("AttributeCount", wintypes.DWORD),
+                ("Attributes", ctypes.c_void_p),
+                ("TargetAlias", wintypes.LPWSTR),
+                ("UserName", wintypes.LPWSTR),
+            ]
+
+        credential_ptr = ctypes.POINTER(CREDENTIALW)()
+        advapi32 = ctypes.windll.advapi32
+        if not advapi32.CredReadW(_credential_target_name(key), CRED_TYPE_GENERIC, 0, ctypes.byref(credential_ptr)):
+            return ""
+        try:
+            credential = credential_ptr.contents
+            if not credential.CredentialBlob or not credential.CredentialBlobSize:
+                return ""
+            raw = ctypes.string_at(credential.CredentialBlob, credential.CredentialBlobSize)
+            return raw.decode("utf-16-le", errors="ignore")
+        finally:
+            advapi32.CredFree(credential_ptr)
+    except Exception:
+        logging.warning("读取系统凭据失败: %s", key, exc_info=True)
+        return ""
+
+
+def _write_windows_credential(key, value):
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        CRED_TYPE_GENERIC = 1
+        CRED_PERSIST_LOCAL_MACHINE = 2
+
+        class FILETIME(ctypes.Structure):
+            _fields_ = [
+                ("dwLowDateTime", wintypes.DWORD),
+                ("dwHighDateTime", wintypes.DWORD),
+            ]
+
+        class CREDENTIALW(ctypes.Structure):
+            _fields_ = [
+                ("Flags", wintypes.DWORD),
+                ("Type", wintypes.DWORD),
+                ("TargetName", wintypes.LPWSTR),
+                ("Comment", wintypes.LPWSTR),
+                ("LastWritten", FILETIME),
+                ("CredentialBlobSize", wintypes.DWORD),
+                ("CredentialBlob", ctypes.POINTER(ctypes.c_ubyte)),
+                ("Persist", wintypes.DWORD),
+                ("AttributeCount", wintypes.DWORD),
+                ("Attributes", ctypes.c_void_p),
+                ("TargetAlias", wintypes.LPWSTR),
+                ("UserName", wintypes.LPWSTR),
+            ]
+
+        raw = str(value or "").encode("utf-16-le")
+        blob = ctypes.create_string_buffer(raw)
+        credential = CREDENTIALW()
+        credential.Flags = 0
+        credential.Type = CRED_TYPE_GENERIC
+        credential.TargetName = _credential_target_name(key)
+        credential.Comment = "GoldMonitor 本机敏感配置"
+        credential.CredentialBlobSize = len(raw)
+        credential.CredentialBlob = ctypes.cast(blob, ctypes.POINTER(ctypes.c_ubyte))
+        credential.Persist = CRED_PERSIST_LOCAL_MACHINE
+        credential.AttributeCount = 0
+        credential.Attributes = None
+        credential.TargetAlias = None
+        credential.UserName = key
+        return bool(ctypes.windll.advapi32.CredWriteW(ctypes.byref(credential), 0))
+    except Exception:
+        logging.warning("写入系统凭据失败: %s", key, exc_info=True)
+        return False
+
+
+def _delete_windows_credential(key):
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+
+        CRED_TYPE_GENERIC = 1
+        ctypes.windll.advapi32.CredDeleteW(_credential_target_name(key), CRED_TYPE_GENERIC, 0)
+        return True
+    except Exception:
+        return True
+
+
+def _run_macos_security(args):
+    try:
+        completed = subprocess.run(
+            ["security", *args],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        return completed.returncode, completed.stdout, completed.stderr
+    except Exception as exc:
+        return 1, "", str(exc)
+
+
+def _read_macos_credential(key):
+    if sys.platform != "darwin":
+        return ""
+    code, stdout, _stderr = _run_macos_security([
+        "find-generic-password",
+        "-s", CREDENTIAL_SERVICE_NAME,
+        "-a", key,
+        "-w",
+    ])
+    if code != 0:
+        return ""
+    return stdout.rstrip("\n")
+
+
+def _write_macos_credential(key, value):
+    if sys.platform != "darwin":
+        return False
+    code, _stdout, stderr = _run_macos_security([
+        "add-generic-password",
+        "-s", CREDENTIAL_SERVICE_NAME,
+        "-a", key,
+        "-w", str(value or ""),
+        "-U",
+    ])
+    if code != 0:
+        logging.warning("写入 macOS Keychain 失败: %s %s", key, stderr.strip())
+    return code == 0
+
+
+def _delete_macos_credential(key):
+    if sys.platform != "darwin":
+        return True
+    _run_macos_security([
+        "delete-generic-password",
+        "-s", CREDENTIAL_SERVICE_NAME,
+        "-a", key,
+    ])
+    return True
+
+
+def read_credential_secret(key):
+    store = _credential_store_override()
+    if store is not None:
+        return str(store.get(key) or "")
+    if os.name == "nt":
+        return _read_windows_credential(key)
+    if sys.platform == "darwin":
+        return _read_macos_credential(key)
+    return ""
+
+
+def write_credential_secret(key, value):
+    store = _credential_store_override()
+    if store is not None:
+        if value:
+            store[key] = str(value)
+        else:
+            store.pop(key, None)
+        return True
+    if os.name == "nt":
+        return _write_windows_credential(key, value) if value else _delete_windows_credential(key)
+    if sys.platform == "darwin":
+        return _write_macos_credential(key, value) if value else _delete_macos_credential(key)
+    return False
+
+
+def apply_stored_secrets(settings):
+    merged = dict(settings)
+    for key in SECRET_SETTING_KEYS:
+        if merged.get(key):
+            continue
+        stored = read_credential_secret(key)
+        if stored:
+            merged[key] = stored
+    return merged
+
+
+def persistable_settings_snapshot(settings, previous_settings=None):
+    persisted = dict(settings)
+    previous_settings = previous_settings or {}
+    credential_failures = []
+    for key in SECRET_SETTING_KEYS:
+        secret = str(persisted.get(key) or "")
+        if not secret:
+            if previous_settings.get(key):
+                write_credential_secret(key, "")
+            persisted[key] = ""
+            continue
+        if write_credential_secret(key, secret):
+            persisted[key] = ""
+        elif os.name == "nt" or sys.platform == "darwin":
+            credential_failures.append(key)
+        else:
+            logging.warning("系统凭据不可用，保留兼容配置字段: %s", key)
+    if credential_failures:
+        raise OSError("系统凭据写入失败: " + ", ".join(credential_failures))
+    return persisted
 
 
 def _normalize_settings(raw):
@@ -445,7 +683,7 @@ def load_settings():
             last_settings_error = str(exc)
             loaded = {}
 
-    data = _normalize_settings(loaded)
+    data = apply_stored_secrets(_normalize_settings(loaded))
     try:
         save_settings(data)
     except OSError as exc:
@@ -459,10 +697,11 @@ def save_settings(data=None):
         if data is None:
             data = app_settings
         normalized = _normalize_settings(data)
+        persisted = persistable_settings_snapshot(normalized, app_settings)
         os.makedirs(APPDATA_DIR, exist_ok=True)
         tmp_path = SETTINGS_PATH + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(normalized, f, ensure_ascii=False, indent=2)
+            json.dump(persisted, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, SETTINGS_PATH)
         app_settings = normalized
         last_settings_error = None
@@ -491,15 +730,14 @@ def public_settings_snapshot(settings=None):
     compatible_key = snapshot.pop("openai_compatible_api_key", "")
     snapshot["openai_compatible_api_key_configured"] = bool(compatible_key)
     snapshot["openai_compatible_api_key_masked"] = mask_secret(compatible_key)
-    return snapshot
-
-
-def diagnostic_settings_snapshot(settings=None):
-    snapshot = public_settings_snapshot(settings)
     smtp_password = snapshot.pop("smtp_password", "")
     snapshot["smtp_password_configured"] = bool(smtp_password)
     snapshot["smtp_password_masked"] = mask_secret(smtp_password)
     return snapshot
+
+
+def diagnostic_settings_snapshot(settings=None):
+    return public_settings_snapshot(settings)
 
 
 def _normalize_volatility_config(raw):
@@ -588,6 +826,17 @@ def apply_settings(data):
         saved = save_settings(saved)
     apply_floating_price_settings(saved)
     return saved, error
+
+
+def settings_payload_for_import(settings_payload):
+    current = get_settings_snapshot()
+    imported = dict(DEFAULT_SETTINGS)
+    if isinstance(settings_payload, dict):
+        imported.update({key: value for key, value in settings_payload.items() if key in DEFAULT_SETTINGS})
+    for key in SECRET_SETTING_KEYS:
+        if key not in settings_payload:
+            imported[key] = current.get(key, "")
+    return imported
 
 
 def apply_persisted_threshold_state(data):
@@ -793,7 +1042,7 @@ def build_config_backup():
         "app": "GoldMonitor",
         "version": APP_VERSION,
         "exported_at": datetime.now().isoformat(timespec="seconds"),
-        "settings": get_settings_snapshot(),
+        "settings": public_settings_snapshot(),
         "thresholds": {
             **{key: thresholds.get(key) for key in thresholds},
             "volatility_config": dict(volatility_config),
@@ -810,7 +1059,7 @@ def restore_config_backup(payload):
         raise ValueError("备份中没有可导入的配置")
     imported = []
     if isinstance(settings_payload, dict):
-        updated, startup_error = apply_settings(settings_payload)
+        updated, startup_error = apply_settings(settings_payload_for_import(settings_payload))
         if startup_error:
             logging.warning("导入配置时自启动设置失败: %s", startup_error)
         imported.append("settings")
@@ -3901,22 +4150,21 @@ def on_update_settings(data):
     current = get_settings_snapshot()
     allowed = set(DEFAULT_SETTINGS)
     incoming = {k: v for k, v in data.items() if k in allowed}
-    if "deepseek_api_key" in incoming:
-        key_value = str(incoming.get("deepseek_api_key") or "").strip()
+    secret_clear_flags = {
+        "smtp_password": "smtp_password_clear",
+        "deepseek_api_key": "deepseek_api_key_clear",
+        "openai_compatible_api_key": "openai_compatible_api_key_clear",
+    }
+    for secret_key, clear_flag in secret_clear_flags.items():
+        if secret_key not in incoming:
+            continue
+        key_value = str(incoming.get(secret_key) or "").strip()
         if key_value:
-            incoming["deepseek_api_key"] = key_value
-        elif data.get("deepseek_api_key_clear"):
-            incoming["deepseek_api_key"] = ""
+            incoming[secret_key] = key_value
+        elif data.get(clear_flag):
+            incoming[secret_key] = ""
         else:
-            incoming.pop("deepseek_api_key", None)
-    if "openai_compatible_api_key" in incoming:
-        key_value = str(incoming.get("openai_compatible_api_key") or "").strip()
-        if key_value:
-            incoming["openai_compatible_api_key"] = key_value
-        elif data.get("openai_compatible_api_key_clear"):
-            incoming["openai_compatible_api_key"] = ""
-        else:
-            incoming.pop("openai_compatible_api_key", None)
+            incoming.pop(secret_key, None)
     current.update(incoming)
     try:
         updated, startup_error = apply_settings(current)

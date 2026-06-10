@@ -739,9 +739,16 @@
         <div class="setting-row">
           <div>
             <div class="setting-label">SMTP 授权码</div>
-            <div class="setting-desc">邮箱 SMTP 授权码，非邮箱登录密码。</div>
+            <div class="setting-desc" id="smtpPasswordStatus">邮箱 SMTP 授权码，非邮箱登录密码。</div>
           </div>
-          <input class="settings-input" id="setSmtpPassword" type="password" placeholder="授权码">
+          <input class="settings-input" id="setSmtpPassword" type="password" placeholder="留空表示不修改">
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">清空 SMTP 授权码</div>
+            <div class="setting-desc">下次保存时删除本机已保存的 SMTP 授权码。</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="clearSmtpPassword"><span class="slider"></span></label>
         </div>
         <div class="setting-row">
           <div>
@@ -1927,7 +1934,12 @@ function applySettings(data) {
   document.getElementById('setSmtpPort').value = appSettings.smtp_port || '465';
   document.getElementById('setSmtpEncryption').value = appSettings.smtp_encryption || 'ssl';
   document.getElementById('setSmtpSender').value = appSettings.smtp_sender || '';
-  document.getElementById('setSmtpPassword').value = appSettings.smtp_password || '';
+  document.getElementById('setSmtpPassword').value = '';
+  document.getElementById('clearSmtpPassword').checked = false;
+  const smtpPasswordStatus = appSettings.smtp_password_configured
+    ? '已配置：' + (appSettings.smtp_password_masked || '******') + '。留空保存会保留当前授权码。'
+    : '未配置。留空保存会保持未配置状态。';
+  document.getElementById('smtpPasswordStatus').textContent = smtpPasswordStatus;
   document.getElementById('setSmtpRecipient').value = appSettings.smtp_recipient || '';
   document.getElementById('setAlertCooldownMinutes').value = appSettings.alert_cooldown_minutes ?? 30;
   document.getElementById('setAlertQuietStart').value = appSettings.alert_quiet_start || '';
@@ -2067,6 +2079,7 @@ function saveSettings() {
     smtp_encryption: document.getElementById('setSmtpEncryption').value,
     smtp_sender: document.getElementById('setSmtpSender').value.trim(),
     smtp_password: document.getElementById('setSmtpPassword').value,
+    smtp_password_clear: document.getElementById('clearSmtpPassword').checked,
     smtp_recipient: document.getElementById('setSmtpRecipient').value.trim(),
     email_warning_enabled: appSettings.email_warning_enabled !== false,
     email_critical_enabled: appSettings.email_critical_enabled !== false,

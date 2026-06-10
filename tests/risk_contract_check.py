@@ -221,6 +221,7 @@ finally:
 original_settings = dict(app.app_settings)
 original_appdata_dir = app.APPDATA_DIR
 original_settings_path = app.SETTINGS_PATH
+original_thresholds_path = app.THRESHOLDS_PATH
 original_set_startup_enabled = app.set_startup_enabled
 original_post = app.requests.post
 original_get = app.requests.get
@@ -290,10 +291,13 @@ class FakeModelsResponse:
 
 
 risk_tmp = None
+original_credential_test_store = app._credential_test_store
 try:
     with tempfile.TemporaryDirectory() as tmp_dir:
         app.APPDATA_DIR = tmp_dir
         app.SETTINGS_PATH = str(Path(tmp_dir) / "settings.json")
+        app.THRESHOLDS_PATH = str(Path(tmp_dir) / "thresholds.json")
+        app._credential_test_store = {}
         app.set_startup_enabled = lambda enabled: (True, None)
         secret = "sk-test-secret-123456"
         app.app_settings = app._normalize_settings({
@@ -303,20 +307,62 @@ try:
             "deepseek_model": "deepseek-chat",
             "deepseek_api_key": secret,
             "openai_compatible_api_key": "sk-compatible-secret",
+            "smtp_password": "smtp-secret",
+        })
+        saved = app.save_settings(app.app_settings)
+        persisted_settings = json.loads(Path(app.SETTINGS_PATH).read_text(encoding="utf-8"))
+        persisted_text = json.dumps(persisted_settings, ensure_ascii=False)
+        for raw_secret in (secret, "sk-compatible-secret", "smtp-secret"):
+            if raw_secret in persisted_text:
+                raise SystemExit("settings.json must not persist raw credentials")
+        if saved.get("deepseek_api_key") != secret or app._credential_test_store.get("deepseek_api_key") != secret:
+            raise SystemExit("DeepSeek API key must be moved to credential storage")
+        if saved.get("smtp_password") != "smtp-secret" or app._credential_test_store.get("smtp_password") != "smtp-secret":
+            raise SystemExit("SMTP password must be moved to credential storage")
+        backup_text = json.dumps(app.build_config_backup(), ensure_ascii=False)
+        for raw_secret in (secret, "sk-compatible-secret", "smtp-secret"):
+            if raw_secret in backup_text:
+                raise SystemExit("config backup must not export raw credentials")
+
+        legacy_payload = dict(persisted_settings)
+        legacy_payload["deepseek_api_key"] = "legacy-deepseek-secret"
+        legacy_payload["smtp_password"] = "legacy-smtp-secret"
+        Path(app.SETTINGS_PATH).write_text(json.dumps(legacy_payload, ensure_ascii=False), encoding="utf-8")
+        app._credential_test_store = {}
+        loaded = app.load_settings()
+        migrated_payload = Path(app.SETTINGS_PATH).read_text(encoding="utf-8")
+        if loaded.get("deepseek_api_key") != "legacy-deepseek-secret" or loaded.get("smtp_password") != "legacy-smtp-secret":
+            raise SystemExit("load_settings must migrate legacy plaintext secrets into runtime settings")
+        if "legacy-deepseek-secret" in migrated_payload or "legacy-smtp-secret" in migrated_payload:
+            raise SystemExit("legacy plaintext secrets must be removed from settings.json after load")
+        app.app_settings = app._normalize_settings({
+            "risk_assistant_enabled": True,
+            "risk_assistant_provider": "deepseek",
+            "deepseek_base_url": "https://api.deepseek.com",
+            "deepseek_model": "deepseek-chat",
+            "deepseek_api_key": secret,
+            "openai_compatible_api_key": "sk-compatible-secret",
+            "smtp_password": "smtp-secret",
         })
         public = app.public_settings_snapshot()
         if public.get("deepseek_api_key") is not None:
             raise SystemExit("public settings must not expose deepseek_api_key")
         if public.get("openai_compatible_api_key") is not None:
             raise SystemExit("public settings must not expose openai_compatible_api_key")
+        if public.get("smtp_password") is not None:
+            raise SystemExit("public settings must not expose smtp_password")
         if not public.get("deepseek_api_key_configured"):
             raise SystemExit("public settings must expose DeepSeek key configured state")
         if not public.get("openai_compatible_api_key_configured"):
             raise SystemExit("public settings must expose compatible key configured state")
+        if not public.get("smtp_password_configured"):
+            raise SystemExit("public settings must expose SMTP password configured state")
         if secret in json.dumps(public, ensure_ascii=False):
             raise SystemExit("public settings must not include raw DeepSeek API key")
         if "sk-compatible-secret" in json.dumps(public, ensure_ascii=False):
             raise SystemExit("public settings must not include raw compatible API key")
+        if "smtp-secret" in json.dumps(public, ensure_ascii=False):
+            raise SystemExit("public settings must not include raw SMTP password")
 
         client = authorized_client()
         try:
@@ -325,20 +371,56 @@ try:
             rendered_settings = json.dumps(settings_event, ensure_ascii=False)
             if "deepseek_api_key" in settings_event:
                 raise SystemExit("settings_updated must not include raw deepseek_api_key")
+            if "smtp_password" in settings_event:
+                raise SystemExit("settings_updated must not include raw smtp_password")
             if secret in rendered_settings:
                 raise SystemExit("settings_updated must not leak raw DeepSeek API key")
+            if "smtp-secret" in rendered_settings:
+                raise SystemExit("settings_updated must not leak raw SMTP password")
 
             client.emit("update_settings", {"deepseek_model": "deepseek-chat", "deepseek_api_key": ""})
             wait_for_event(client, "settings_updated")
             if app.app_settings.get("deepseek_api_key") != secret:
                 raise SystemExit("empty DeepSeek API key update must keep the existing key")
+            client.emit("update_settings", {"smtp_password": ""})
+            wait_for_event(client, "settings_updated")
+            if app.app_settings.get("smtp_password") != "smtp-secret":
+                raise SystemExit("empty SMTP password update must keep the existing password")
 
             client.emit("update_settings", {"deepseek_api_key": "", "deepseek_api_key_clear": True})
             wait_for_event(client, "settings_updated")
             if app.app_settings.get("deepseek_api_key"):
                 raise SystemExit("deepseek_api_key_clear must clear the stored key")
+            client.emit("update_settings", {"smtp_password": "", "smtp_password_clear": True})
+            wait_for_event(client, "settings_updated")
+            if app.app_settings.get("smtp_password"):
+                raise SystemExit("smtp_password_clear must clear the stored password")
         finally:
             client.disconnect()
+
+        app.app_settings = app._normalize_settings({
+            "deepseek_api_key": secret,
+            "openai_compatible_api_key": "sk-compatible-secret",
+            "smtp_password": "smtp-secret",
+        })
+        sanitized_backup = app.build_config_backup()
+        result = app.restore_config_backup(sanitized_backup)
+        if not result.get("ok"):
+            raise SystemExit(f"sanitized config backup import must succeed, got: {result}")
+        if app.app_settings.get("deepseek_api_key") != secret or app.app_settings.get("smtp_password") != "smtp-secret":
+            raise SystemExit("sanitized backup import must preserve local credentials")
+
+        legacy_backup = {
+            "settings": {
+                "deepseek_api_key": "legacy-import-deepseek",
+                "smtp_password": "legacy-import-smtp",
+            }
+        }
+        app.restore_config_backup(legacy_backup)
+        if app.app_settings.get("deepseek_api_key") != "legacy-import-deepseek":
+            raise SystemExit("legacy backup import must accept plaintext DeepSeek key")
+        if app.app_settings.get("smtp_password") != "legacy-import-smtp":
+            raise SystemExit("legacy backup import must accept plaintext SMTP password")
 
     app.price_usd = 2350.12
     app.price_rmb = 543.21
@@ -552,6 +634,8 @@ finally:
     app.app_settings = original_settings
     app.APPDATA_DIR = original_appdata_dir
     app.SETTINGS_PATH = original_settings_path
+    app.THRESHOLDS_PATH = original_thresholds_path
+    app._credential_test_store = original_credential_test_store
     app.RISK_ANALYSIS_HISTORY_PATH = original_risk_history_path
     app.set_startup_enabled = original_set_startup_enabled
     app.requests.post = original_post
