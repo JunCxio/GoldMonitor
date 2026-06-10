@@ -162,6 +162,8 @@
   .alert-message { color:#f0f0f4; font-size:1rem; line-height:1.6; }
   .alert-meta { margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; color:var(--text-dim); font-size:0.76rem; }
   .alert-meta span { padding:5px 8px; border:1px solid var(--hairline); border-radius:8px; background:rgba(255,255,255,0.025); }
+  .alert-stack-note { display:none; margin-top:12px; color:var(--warn); font-size:0.76rem; line-height:1.5; }
+  .alert-stack-note.show { display:block; }
   .related-news { display:none; margin-top:16px; padding-top:14px; border-top:1px solid var(--hairline); }
   .related-news.show { display:block; }
   .related-news-title { color:var(--text-dim); font-size:0.74rem; margin-bottom:8px; }
@@ -1117,6 +1119,7 @@
         <span id="alertTime">--</span>
         <span id="alertMode">--</span>
       </div>
+      <div class="alert-stack-note" id="alertStackNote"></div>
       <div class="related-news" id="relatedNews">
         <div class="related-news-title">近期相关资讯</div>
         <div id="relatedNewsList"></div>
@@ -1253,8 +1256,8 @@ const AUTO_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 function autoUpdateIntervalMs() {
   return AUTO_UPDATE_CHECK_INTERVAL_MS;
 }
-let alertQueue = [];
 let activeAlert = null;
+let mergedAlertCount = 0;
 let riskAnalysisRunning = false;
 let riskAnalysisHistory = [];
 let pendingRiskForceTrigger = null;
@@ -2725,6 +2728,14 @@ function renderAlertModal(entry) {
   document.getElementById('alertMessage').textContent = (entry.message || '达到预警条件') + muted;
   document.getElementById('alertTime').textContent = '时间 ' + (entry.time || '--');
   document.getElementById('alertMode').textContent = alertModeLabel(entry.mode);
+  const stackNote = document.getElementById('alertStackNote');
+  if (mergedAlertCount > 0) {
+    stackNote.textContent = '当前弹窗已合并 ' + mergedAlertCount + ' 条后续预警，警报记录中保留完整明细。';
+    stackNote.classList.add('show');
+  } else {
+    stackNote.textContent = '';
+    stackNote.classList.remove('show');
+  }
   renderRelatedNews(entry.related_news || []);
   document.getElementById('alertBackdrop').classList.add('show');
 }
@@ -2751,9 +2762,12 @@ function renderRelatedNews(items) {
 function showAlertModal(entry) {
   const normalized = entry || {};
   if (activeAlert) {
-    alertQueue.push(normalized);
+    mergedAlertCount += 1;
+    activeAlert = normalized;
+    renderAlertModal(activeAlert);
     return;
   }
+  mergedAlertCount = 0;
   activeAlert = normalized;
   renderAlertModal(activeAlert);
 }
@@ -2761,10 +2775,7 @@ function showAlertModal(entry) {
 function closeAlertModal() {
   document.getElementById('alertBackdrop').classList.remove('show');
   activeAlert = null;
-  const next = alertQueue.shift();
-  if (next) {
-    setTimeout(() => showAlertModal(next), 120);
-  }
+  mergedAlertCount = 0;
 }
 
 function analyzeActiveAlert() {
@@ -2778,6 +2789,7 @@ function analyzeActiveAlert() {
   };
   document.getElementById('alertBackdrop').classList.remove('show');
   activeAlert = null;
+  mergedAlertCount = 0;
   openRiskAnalysis();
   document.getElementById('riskResult').textContent = '正在分析本次预警...';
   requestRiskAnalysis(alertContext);

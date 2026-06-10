@@ -1,5 +1,5 @@
 #define MyAppName "金价监控"
-#define MyAppVersion "1.3.8"
+#define MyAppVersion "1.3.9"
 #define MyAppPublisher "GoldMonitor"
 #define MyAppExeName "GoldMonitor.exe"
 

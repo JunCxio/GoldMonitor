@@ -33,7 +33,7 @@ app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.3.8"
+APP_VERSION = "1.3.9"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 OFFICIAL_UPDATE_HOST = "github.com"
@@ -314,6 +314,8 @@ source_price_samples = {}
 source_comparison_state = {}
 last_source_comparison_probe_at = 0.0
 _credential_test_store = None
+_alert_dialog_lock = threading.Lock()
+_alert_dialog_active = False
 
 
 # ---------- 设置与系统集成 ----------
@@ -1149,8 +1151,15 @@ def build_diagnostics_report():
 def show_alert_dialog(title, message):
     if not get_settings_snapshot().get("alert_dialog_enabled", True):
         return
+    global _alert_dialog_active
+    with _alert_dialog_lock:
+        if _alert_dialog_active:
+            logging.info("告警弹窗已存在，跳过新的系统消息框。")
+            return
+        _alert_dialog_active = True
 
     def _show():
+        global _alert_dialog_active
         try:
             import ctypes
             MB_OK = 0x00000000
@@ -1160,6 +1169,9 @@ def show_alert_dialog(title, message):
             ctypes.windll.user32.MessageBoxW(None, message, title, MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND)
         except Exception:
             pass
+        finally:
+            with _alert_dialog_lock:
+                _alert_dialog_active = False
 
     threading.Thread(target=_show, daemon=True).start()
 
