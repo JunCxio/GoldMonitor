@@ -716,6 +716,7 @@ try:
         app.source_price_samples = {}
         app.source_comparison_state = {}
         app.alert_cooldown_state = {}
+        app.alert_log = []
         app.app_settings = app._normalize_settings({
             "smtp_password": "smtp-secret",
             "risk_assistant_depth": "deep",
@@ -777,12 +778,28 @@ try:
             "timestamp": "2026-06-08T12:00:00",
             "message": "测试价格预警",
         })
+        app.save_alert_log_entry(app.alert_log[-1])
+        loaded_alerts = app.load_alert_log_archive(limit=5)
+        if not loaded_alerts or loaded_alerts[-1].get("message") != "测试价格预警":
+            raise SystemExit(f"alert log archive must load saved alerts, got: {loaded_alerts}")
+        alert_id = app.alert_log[-1].get("id")
+        if not alert_id:
+            raise SystemExit("saved alert log entries must include stable ids")
+        ok, updated_alert = app.update_alert_log_status(alert_id, read=True, acknowledged=True)
+        if not ok or not updated_alert or not updated_alert.get("read") or not updated_alert.get("acknowledged"):
+            raise SystemExit(f"alert log status update must persist read and acknowledged flags, got: {updated_alert}")
+        reloaded_alert = app.load_alert_log_archive(limit=5)[-1]
+        if not reloaded_alert.get("read") or not reloaded_alert.get("acknowledged"):
+            raise SystemExit(f"alert log archive must keep read and acknowledged flags, got: {reloaded_alert}")
         history_with_events = app.build_price_history_state(limit=10)
         if not history_with_events.get("events") or history_with_events["events"][0].get("type") != "alert":
             raise SystemExit(f"price history state must expose chart events, got: {history_with_events}")
         csv_text, count = app.build_price_history_csv()
         if count != 1 or "usd_per_oz" not in csv_text or "2350.12" not in csv_text:
             raise SystemExit(f"price history CSV export is invalid: {csv_text}")
+        alert_csv, alert_count = app.build_alert_log_csv()
+        if alert_count != 1 or "测试价格预警" not in alert_csv or "acknowledged" not in alert_csv:
+            raise SystemExit(f"alert log CSV export is invalid: {alert_csv}")
 
         diagnostics = app.build_diagnostics_report()
         if "smtp-secret" in diagnostics:
@@ -818,6 +835,24 @@ try:
                 raise SystemExit(f"diagnostics export must save a visible file path, got: {diagnostics_export}")
             if "smtp-secret" in diagnostics_export.get("content", ""):
                 raise SystemExit("diagnostics export must not include raw SMTP password")
+            client.emit("update_alert_log_status", {"id": alert_id, "read": True, "acknowledged": True})
+            status_event = wait_for_event(client, "alert_log_status_updated")
+            if not status_event.get("ok") or not status_event.get("entry", {}).get("acknowledged"):
+                raise SystemExit(f"alert log status socket event must return updated alert, got: {status_event}")
+            client.emit("export_alert_log")
+            alert_export = wait_for_event(client, "alert_log_exported")
+            alert_saved_path = alert_export.get("saved_path", "")
+            alert_path = Path(alert_saved_path)
+            if not alert_export.get("ok") or not alert_saved_path or not alert_path.exists():
+                raise SystemExit(f"alert log export must save a visible file path, got: {alert_export}")
+            if "测试价格预警" not in alert_path.read_text(encoding="utf-8"):
+                raise SystemExit("alert log export file must include alert messages")
+            client.emit("clear_alert_log")
+            wait_for_event(client, "alert_log_cleared")
+            if app.alert_log:
+                raise SystemExit("clear alert log event must empty backend alert log")
+            if app.load_alert_log_archive(limit=5):
+                raise SystemExit("clear alert log event must empty persisted alert log")
         finally:
             client.disconnect()
 finally:

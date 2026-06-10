@@ -34,7 +34,7 @@ app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 OFFICIAL_UPDATE_HOST = "github.com"
@@ -137,6 +137,9 @@ RISK_ANALYSIS_HISTORY_LIMIT = 20
 PRICE_HISTORY_ARCHIVE_LIMIT = 20000
 PRICE_HISTORY_EXPORT_LIMIT = 5000
 PRICE_HISTORY_SAVE_INTERVAL_SECONDS = 60
+ALERT_LOG_MEMORY_LIMIT = 50
+ALERT_LOG_EXPORT_LIMIT = 1000
+ALERT_LOG_DB_LIMIT = 5000
 SOURCE_HEALTH_LIMIT = 20
 SOURCE_COMPARISON_REFRESH_SECONDS = 60
 SOURCE_COMPARISON_STALE_SECONDS = 5 * 60
@@ -1225,6 +1228,7 @@ def build_diagnostics_report():
             "market_cache": MARKET_CACHE_PATH,
             "price_history": PRICE_HISTORY_PATH,
             "price_history_db": _price_history_db_path(),
+            "alert_log_db": _alert_log_db_path(),
             "log": APP_LOG_PATH,
         },
         "settings": diagnostic_settings_snapshot(),
@@ -1598,8 +1602,12 @@ def emit_alert(entry, title):
     entry["related_news"] = select_related_news(title)
     entry["timestamp"] = datetime.now().isoformat(timespec="seconds")
     alert_log.append(entry)
-    while len(alert_log) > 50:
+    while len(alert_log) > ALERT_LOG_MEMORY_LIMIT:
         alert_log.pop(0)
+    try:
+        save_alert_log_entry(entry)
+    except (OSError, sqlite3.Error) as exc:
+        logging.warning("告警记录保存失败: %s", exc)
     socketio.emit("alert", entry)
     history_state = build_price_history_state(limit=240)
     history_state["scope"] = "live"
@@ -3151,6 +3159,268 @@ def build_price_history_csv(minutes=None):
     return output.getvalue(), len(items)
 
 
+def _alert_log_db_path():
+    return os.path.join(APPDATA_DIR, "alert_log.sqlite3")
+
+
+def _generate_alert_log_id():
+    return "alert-" + secrets.token_hex(10)
+
+
+def _coerce_alert_log_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", ""}:
+        return False
+    return default
+
+
+def normalize_alert_log_entry(entry, default_read=False):
+    if not isinstance(entry, dict):
+        return None
+    normalized = dict(entry)
+    normalized["id"] = str(normalized.get("id") or normalized.get("alert_id") or _generate_alert_log_id())
+    timestamp = str(normalized.get("timestamp") or datetime.now().isoformat(timespec="seconds"))
+    parsed = _parse_iso_datetime(timestamp)
+    if parsed:
+        timestamp = parsed.isoformat(timespec="seconds")
+    normalized["timestamp"] = timestamp
+    normalized["time"] = str(normalized.get("time") or (parsed.strftime("%H:%M:%S") if parsed else ""))
+    normalized["type"] = str(normalized.get("type") or "warning")
+    normalized["mode"] = str(normalized.get("mode") or "")
+    normalized["message"] = str(normalized.get("message") or "")
+    normalized["read"] = _coerce_alert_log_bool(normalized.get("read"), default_read)
+    normalized["acknowledged"] = _coerce_alert_log_bool(normalized.get("acknowledged"), False)
+    if normalized["acknowledged"]:
+        normalized["read"] = True
+    normalized["read_at"] = str(normalized.get("read_at") or "")
+    normalized["acknowledged_at"] = str(normalized.get("acknowledged_at") or "")
+    return normalized
+
+
+def _connect_alert_log_db():
+    os.makedirs(APPDATA_DIR, exist_ok=True)
+    conn = sqlite3.connect(_alert_log_db_path(), timeout=5)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS alert_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            time TEXT,
+            alert_type TEXT,
+            mode TEXT,
+            message TEXT,
+            payload TEXT NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_alert_log_timestamp ON alert_log(timestamp)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_alert_log_type ON alert_log(alert_type)")
+    return conn
+
+
+def save_alert_log_entry(entry):
+    normalized = normalize_alert_log_entry(entry)
+    if not normalized:
+        return None
+    entry.update(normalized)
+    payload = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"), default=str)
+    with _connect_alert_log_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO alert_log(timestamp, time, alert_type, mode, message, payload)
+            VALUES(?, ?, ?, ?, ?, ?)
+            """,
+            (
+                normalized.get("timestamp", ""),
+                normalized.get("time", ""),
+                normalized.get("type", ""),
+                normalized.get("mode", ""),
+                normalized.get("message", ""),
+                payload,
+            ),
+        )
+        conn.execute(
+            """
+            DELETE FROM alert_log
+            WHERE id NOT IN (
+                SELECT id FROM alert_log ORDER BY id DESC LIMIT ?
+            )
+            """,
+            (ALERT_LOG_DB_LIMIT,),
+        )
+    return normalized
+
+
+def load_alert_log_archive(limit=ALERT_LOG_MEMORY_LIMIT):
+    try:
+        with _connect_alert_log_db() as conn:
+            rows = conn.execute(
+                "SELECT id, payload FROM alert_log ORDER BY id DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        items = []
+        for row_id, payload in reversed(rows):
+            try:
+                parsed = json.loads(payload)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(parsed, dict) and not (parsed.get("id") or parsed.get("alert_id")):
+                parsed["id"] = f"db-{row_id}"
+            normalized = normalize_alert_log_entry(parsed, default_read=True)
+            if normalized:
+                items.append(normalized)
+        return items
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        logging.warning("读取告警记录数据库失败: %s", exc)
+        return []
+
+
+def clear_alert_log_archive():
+    try:
+        with _connect_alert_log_db() as conn:
+            conn.execute("DELETE FROM alert_log")
+        return True
+    except (OSError, sqlite3.Error) as exc:
+        logging.warning("清空告警记录数据库失败: %s", exc)
+        return False
+
+
+def _apply_alert_log_status(entry, read=None, acknowledged=None):
+    now = datetime.now().isoformat(timespec="seconds")
+    if read is not None:
+        is_read = _coerce_alert_log_bool(read, entry.get("read", False))
+        entry["read"] = is_read
+        entry["read_at"] = now if is_read else ""
+    if acknowledged is not None:
+        is_acknowledged = _coerce_alert_log_bool(acknowledged, entry.get("acknowledged", False))
+        entry["acknowledged"] = is_acknowledged
+        entry["acknowledged_at"] = now if is_acknowledged else ""
+        if is_acknowledged:
+            entry["read"] = True
+            entry["read_at"] = entry.get("read_at") or now
+    return entry
+
+
+def _replace_alert_log_entry(updated):
+    target_id = updated.get("id")
+    if not target_id:
+        return
+    for index, entry in enumerate(alert_log):
+        if isinstance(entry, dict) and entry.get("id") == target_id:
+            alert_log[index] = updated
+            return
+
+
+def update_alert_log_status(alert_id, read=None, acknowledged=None):
+    target_id = str(alert_id or "").strip()
+    if not target_id:
+        return False, None
+
+    try:
+        with _connect_alert_log_db() as conn:
+            rows = conn.execute(
+                "SELECT id, payload FROM alert_log ORDER BY id DESC LIMIT ?",
+                (ALERT_LOG_DB_LIMIT,),
+            ).fetchall()
+            for row_id, payload in rows:
+                try:
+                    parsed = json.loads(payload)
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if isinstance(parsed, dict) and not (parsed.get("id") or parsed.get("alert_id")):
+                    parsed["id"] = f"db-{row_id}"
+                normalized = normalize_alert_log_entry(parsed, default_read=True)
+                if not normalized or normalized.get("id") != target_id:
+                    continue
+                updated = _apply_alert_log_status(normalized, read=read, acknowledged=acknowledged)
+                conn.execute(
+                    """
+                    UPDATE alert_log
+                    SET timestamp = ?, time = ?, alert_type = ?, mode = ?, message = ?, payload = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        updated.get("timestamp", ""),
+                        updated.get("time", ""),
+                        updated.get("type", ""),
+                        updated.get("mode", ""),
+                        updated.get("message", ""),
+                        json.dumps(updated, ensure_ascii=False, separators=(",", ":"), default=str),
+                        row_id,
+                    ),
+                )
+                _replace_alert_log_entry(updated)
+                return True, updated
+    except (OSError, sqlite3.Error) as exc:
+        logging.warning("更新告警记录状态失败: %s", exc)
+
+    for entry in alert_log:
+        if isinstance(entry, dict) and entry.get("id") == target_id:
+            updated = _apply_alert_log_status(normalize_alert_log_entry(entry) or entry, read=read, acknowledged=acknowledged)
+            entry.update(updated)
+            try:
+                save_alert_log_entry(entry)
+            except (OSError, sqlite3.Error) as exc:
+                logging.warning("保存告警记录状态失败: %s", exc)
+            return True, updated
+
+    return False, None
+
+
+def alert_log_export_entries(limit=ALERT_LOG_EXPORT_LIMIT):
+    persisted = load_alert_log_archive(limit=limit)
+    if persisted:
+        return persisted
+    return list(alert_log[-int(limit):])
+
+
+def _format_alert_notifications(entry):
+    items = entry.get("notifications")
+    if not isinstance(items, list):
+        return ""
+    parts = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        label = item.get("label") or item.get("channel") or "通知"
+        status = item.get("status") or ""
+        message = item.get("message") or ""
+        parts.append(f"{label}:{status}:{message}".strip(":"))
+    return "；".join(parts)
+
+
+def build_alert_log_csv():
+    items = alert_log_export_entries()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["timestamp", "time", "type", "mode", "message", "read", "acknowledged", "notifications", "related_news"])
+    for entry in items:
+        related = entry.get("related_news")
+        if isinstance(related, list):
+            news_text = "；".join(str(item.get("title") or "") for item in related if isinstance(item, dict))
+        else:
+            news_text = ""
+        writer.writerow([
+            entry.get("timestamp", ""),
+            entry.get("time", ""),
+            entry.get("type", ""),
+            entry.get("mode", ""),
+            entry.get("message", ""),
+            "yes" if entry.get("read") else "no",
+            "yes" if entry.get("acknowledged") else "no",
+            _format_alert_notifications(entry),
+            news_text,
+        ])
+    return output.getvalue(), len(items)
+
+
 def news_loop():
     while True:
         refresh_gold_news(emit_update=True)
@@ -3159,6 +3429,7 @@ def news_loop():
 
 news_items = load_news_cache()
 risk_analysis_history = load_risk_analysis_history()
+alert_log = load_alert_log_archive(limit=ALERT_LOG_MEMORY_LIMIT)
 price_archive = load_price_history_archive()
 if price_archive:
     price_history = list(price_archive[-360:])
@@ -4614,6 +4885,46 @@ def on_export_price_history(data=None):
         "content": content,
         "count": count,
     })
+
+
+@socketio.on("export_alert_log")
+def on_export_alert_log():
+    filename = f"GoldMonitor-alert-log-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv"
+    try:
+        content, count = build_alert_log_csv()
+        saved_path = save_export_file(filename, content)
+        emit("alert_log_exported", {
+            "ok": True,
+            "filename": filename,
+            "saved_path": saved_path,
+            "count": count,
+        })
+    except OSError as exc:
+        emit("alert_log_export_error", {"message": f"告警记录导出失败: {exc}"})
+
+
+@socketio.on("clear_alert_log")
+def on_clear_alert_log():
+    ok = clear_alert_log_archive()
+    if ok:
+        alert_log.clear()
+    socketio.emit("alert_log_cleared", {"ok": ok})
+
+
+@socketio.on("update_alert_log_status")
+def on_update_alert_log_status(data=None):
+    if not isinstance(data, dict):
+        emit("alert_log_status_error", {"message": "告警记录状态参数无效"})
+        return
+    ok, entry = update_alert_log_status(
+        data.get("id"),
+        read=data.get("read") if "read" in data else None,
+        acknowledged=data.get("acknowledged") if "acknowledged" in data else None,
+    )
+    if not ok:
+        emit("alert_log_status_error", {"message": "未找到对应告警记录"})
+        return
+    socketio.emit("alert_log_status_updated", {"ok": True, "entry": entry})
 
 
 @socketio.on("export_config")

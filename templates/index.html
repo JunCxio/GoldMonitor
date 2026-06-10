@@ -365,16 +365,49 @@
   .log-card { flex:0 0 auto; min-height:0; overflow:visible; }
   .log-card .card-inner { display:block; height:auto; min-height:0; }
   .log-card h3 { font-size:0.82rem; color:var(--text-dim); font-weight:500; margin-bottom:10px; letter-spacing:0.03em; }
+  .log-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:12px; margin-bottom:8px; }
+  .log-head h3 { margin-bottom:0; }
+  .log-count { display:inline-flex; align-items:center; min-height:20px; margin-left:6px; padding:2px 6px; border-radius:6px; border:1px solid rgba(232,184,48,0.22); color:var(--gold); background:rgba(232,184,48,0.08); font-size:0.62rem; font-weight:800; letter-spacing:0; vertical-align:middle; }
+  .log-count.empty { color:var(--text-dim); border-color:var(--hairline); background:rgba(255,255,255,0.025); }
+  .log-tools { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
+  .log-filter { min-height:28px; max-width:96px; padding:4px 7px; border-radius:8px; border:1px solid var(--control-border); background:var(--control-bg); color:var(--text); font-size:0.68rem; outline:none; }
+  .log-search { width:92px; min-height:28px; padding:4px 8px; border-radius:8px; border:1px solid var(--control-border); background:var(--control-bg); color:var(--text); font-size:0.68rem; outline:none; }
+  .log-search:focus, .log-filter:focus { border-color:var(--control-border-strong); box-shadow:var(--focus-ring); }
+  .log-status { min-height:16px; color:var(--text-dim); font-size:0.68rem; line-height:1.4; margin:-2px 0 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .log-status.ok { color:var(--down); }
+  .log-status.fail { color:var(--up); }
   .log-list { overflow-y:auto; max-height:220px; }
-  .log-item { padding:6px 0; font-size:0.76rem; border-bottom:1px solid var(--hairline); animation:fadeIn 0.4s cubic-bezier(0.16,1,0.3,1); }
+  .log-item { display:grid; grid-template-columns:8px minmax(0, 1fr) auto; gap:7px; align-items:start; width:100%; padding:7px 0; border:0; border-bottom:1px solid var(--hairline); background:transparent; color:inherit; text-align:left; font:inherit; cursor:pointer; animation:fadeIn 0.4s cubic-bezier(0.16,1,0.3,1); }
+  .log-item:hover { background:rgba(255,255,255,0.025); }
+  .log-item.active { background:rgba(232,184,48,0.055); border-color:rgba(232,184,48,0.18); }
+  .log-item.acknowledged { opacity:0.72; }
+  .log-unread-dot { width:7px; height:7px; margin-top:5px; border-radius:50%; background:var(--gold); box-shadow:0 0 0 3px rgba(232,184,48,0.1); }
+  .log-item.read .log-unread-dot { background:transparent; box-shadow:none; border:1px solid rgba(255,255,255,0.12); }
   @keyframes fadeIn { from{opacity:0;transform:translateY(-8px)} to{opacity:1;transform:translateY(0)} }
   .log-item:last-child { border-bottom:none; }
   .log-time { color:var(--text-dim); font-size:0.72rem; margin-bottom:2px; }
+  .log-meta { min-width:0; }
+  .log-state { display:flex; gap:4px; align-items:center; justify-content:flex-end; flex-wrap:wrap; }
+  .log-state-badge { min-height:20px; padding:2px 6px; border-radius:6px; border:1px solid var(--hairline); color:var(--text-dim); background:rgba(255,255,255,0.025); font-size:0.62rem; white-space:nowrap; }
+  .log-state-badge.unread { color:var(--gold); border-color:rgba(232,184,48,0.22); background:rgba(232,184,48,0.08); }
+  .log-state-badge.ack { color:var(--down); border-color:rgba(76,175,132,0.25); background:rgba(76,175,132,0.08); }
   .log-msg.warning { color:var(--warn); }
   .log-msg.critical,.log-msg.upper { color:var(--up); }
   .log-msg.lower { color:var(--down); }
   .log-msg.volatility { color:var(--blue); }
   .log-empty { color:var(--text-dim); font-size:0.8rem; text-align:center; padding:32px 0; }
+  .alert-detail { margin-top:10px; padding:10px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(0,0,0,0.12); }
+  .alert-detail-empty { color:var(--text-dim); font-size:0.76rem; text-align:center; padding:14px 0; }
+  .alert-detail-head { display:flex; justify-content:space-between; gap:8px; align-items:flex-start; margin-bottom:8px; }
+  .alert-detail-title { color:#f4f4f6; font-size:0.82rem; font-weight:800; line-height:1.35; }
+  .alert-detail-time { margin-top:3px; color:var(--text-dim); font-size:0.68rem; }
+  .alert-detail-message { color:var(--text); font-size:0.78rem; line-height:1.55; margin:8px 0; word-break:break-word; }
+  .alert-detail-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px; margin-top:8px; }
+  .alert-detail-cell { padding:7px; border:1px solid var(--hairline); border-radius:7px; background:rgba(255,255,255,0.02); min-width:0; }
+  .alert-detail-cell span { display:block; color:var(--text-dim); font-size:0.62rem; margin-bottom:3px; }
+  .alert-detail-cell strong { display:block; color:var(--text); font-size:0.72rem; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .alert-detail-actions { display:flex; justify-content:flex-end; gap:6px; flex-wrap:wrap; margin-top:10px; }
+  .alert-detail-actions button { min-height:30px; padding:5px 9px; font-size:0.66rem; }
 
   ::-webkit-scrollbar { width:4px; }
   ::-webkit-scrollbar-track { background:transparent; }
@@ -593,8 +626,27 @@
               </div>
               <div class="source-health-list"></div>
             </div>
-            <h3>警报记录</h3>
+            <div class="log-head">
+              <h3>警报记录 <span class="log-count" id="alertUnreadCount">0 未读</span></h3>
+              <div class="log-tools">
+                <select class="log-filter" id="alertLogFilter" onchange="setAlertLogFilter(this.value)" aria-label="筛选警报记录">
+                  <option value="all">全部</option>
+                  <option value="unread">未读</option>
+                  <option value="pending">未确认</option>
+                  <option value="warning">价格</option>
+                  <option value="critical">关键</option>
+                  <option value="volatility">波动</option>
+                </select>
+                <input class="log-search" id="alertLogSearch" type="search" placeholder="搜索" oninput="setAlertLogSearch(this.value)" aria-label="搜索警报记录">
+                <button class="btn-clear-sm" type="button" onclick="exportAlertLog()">导出</button>
+                <button class="btn-clear-sm" type="button" onclick="clearAlertLog()">清空</button>
+              </div>
+            </div>
+            <div class="log-status" id="alertLogStatus"></div>
             <div class="log-list" id="logList"><div class="log-empty">暂无警报</div></div>
+            <div class="alert-detail" id="alertDetail">
+              <div class="alert-detail-empty">选择一条警报查看详情</div>
+            </div>
           </div>
         </div>
 
@@ -1259,6 +1311,10 @@ const AUTO_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 function autoUpdateIntervalMs() {
   return AUTO_UPDATE_CHECK_INTERVAL_MS;
 }
+let alertEntries = [];
+let alertLogFilter = 'all';
+let alertLogSearch = '';
+let selectedAlertId = null;
 let activeAlert = null;
 let mergedAlertCount = 0;
 let riskAnalysisRunning = false;
@@ -1518,7 +1574,7 @@ socket.on('init_state', data => {
 
   if (data.fetch_status) applyFetchStatus(data.fetch_status);
   else if (!data.ok) applyFetchStatus({ ok:false, message:'行情数据获取失败', retryable:true });
-  if (data.alert_log && data.alert_log.length) data.alert_log.forEach(addLogEntry);
+  setAlertEntries(data.alert_log || []);
   socket.emit('get_settings');
 });
 
@@ -1561,6 +1617,42 @@ socket.on('alert', data => {
   });
   showAlertModal(data);
   flashTitle(data.type === 'critical' ? '警告' : data.type === 'warning' ? '关注' : '波动预警');
+});
+
+socket.on('alert_log_exported', data => {
+  const status = document.getElementById('alertLogStatus');
+  const count = data && Number.isFinite(Number(data.count)) ? Number(data.count) : alertEntries.length;
+  status.textContent = data && data.saved_path ? '已导出 ' + count + ' 条，保存至 ' + data.saved_path : '告警记录已导出。';
+  status.className = 'log-status ok';
+});
+
+socket.on('alert_log_export_error', data => {
+  const status = document.getElementById('alertLogStatus');
+  status.textContent = (data && data.message) || '告警记录导出失败。';
+  status.className = 'log-status fail';
+});
+
+socket.on('alert_log_cleared', data => {
+  const status = document.getElementById('alertLogStatus');
+  if (data && data.ok === false) {
+    status.textContent = '警报记录清空失败，请检查导出目录权限。';
+    status.className = 'log-status fail';
+    return;
+  }
+  setAlertEntries([]);
+  status.textContent = '警报记录已清空。';
+  status.className = 'log-status ok';
+});
+
+socket.on('alert_log_status_updated', data => {
+  if (!data || !data.entry) return;
+  mergeAlertLogEntry(data.entry);
+});
+
+socket.on('alert_log_status_error', data => {
+  const status = document.getElementById('alertLogStatus');
+  status.textContent = (data && data.message) || '警报记录状态更新失败。';
+  status.className = 'log-status fail';
 });
 
 socket.on('show_close_dialog', data => {
@@ -3139,28 +3231,218 @@ function checkThresholdProximity() {
 }
 
 // ========== 日志 ==========
+function normalizeAlertEntry(entry) {
+  const item = entry && typeof entry === 'object' ? { ...entry } : {};
+  item.id = item.id || 'local-' + (item.timestamp || Date.now()) + '-' + Math.random().toString(16).slice(2);
+  item.read = item.read === true;
+  item.acknowledged = item.acknowledged === true;
+  if (item.acknowledged) item.read = true;
+  return item;
+}
+
+function setAlertEntries(items) {
+  alertEntries = Array.isArray(items) ? items.slice(-50).map(normalizeAlertEntry) : [];
+  if (selectedAlertId && !alertEntries.some(entry => entry.id === selectedAlertId)) selectedAlertId = null;
+  updateAlertLogSummary();
+  renderAlertDetail();
+  renderAlertLog();
+}
+
+function setAlertLogFilter(value) {
+  alertLogFilter = value || 'all';
+  renderAlertLog();
+}
+
+function setAlertLogSearch(value) {
+  alertLogSearch = (value || '').trim().toLowerCase();
+  renderAlertLog();
+}
+
+function updateAlertLogSummary() {
+  const countEl = document.getElementById('alertUnreadCount');
+  const unread = alertEntries.filter(entry => !entry.read).length;
+  countEl.textContent = unread + ' 未读';
+  countEl.className = 'log-count' + (unread ? '' : ' empty');
+}
+
+function alertLogMatchesFilter(entry) {
+  if (alertLogFilter === 'unread') return !entry.read;
+  if (alertLogFilter === 'pending') return !entry.acknowledged;
+  if (alertLogFilter === 'all') return true;
+  return (entry.type || '') === alertLogFilter;
+}
+
+function alertLogMatchesSearch(entry) {
+  if (!alertLogSearch) return true;
+  const haystack = [
+    entry.time, entry.timestamp, entry.type, entry.mode, entry.message,
+    alertLevelLabel(entry.type), alertModeLabel(entry.mode),
+  ].join(' ').toLowerCase();
+  return haystack.includes(alertLogSearch);
+}
+
+function alertStatusLabel(entry) {
+  if (entry.acknowledged) return '已确认';
+  if (entry.read) return '已读';
+  return '未读';
+}
+
 function renderNotificationBadges(entry) {
   const items = Array.isArray(entry.notifications) ? entry.notifications : [];
   if (!items.length) return '';
-  return '<div class="log-notify">' + items.map(item => {
+  return '<span class="log-notify">' + items.map(item => {
     const status = item.status || '';
     const cls = status === 'queued' ? 'ok' : (status === 'skipped' ? 'fail' : (status === 'muted' ? 'muted' : ''));
     const label = item.label || item.channel || '通知';
     const message = item.message ? '：' + item.message : '';
     return '<span class="log-notify-badge ' + cls + '">' + escapeHtml(label + message) + '</span>';
-  }).join('') + '</div>';
+  }).join('') + '</span>';
+}
+
+function buildLogEntry(entry) {
+  const button = document.createElement('button');
+  const selected = selectedAlertId === entry.id;
+  button.type = 'button';
+  button.className = [
+    'log-item',
+    entry.read ? 'read' : 'unread',
+    entry.acknowledged ? 'acknowledged' : '',
+    selected ? 'active' : '',
+  ].filter(Boolean).join(' ');
+  button.onclick = () => selectAlertEntry(entry.id);
+  const stateBadge = entry.acknowledged
+    ? '<span class="log-state-badge ack">已确认</span>'
+    : (entry.read ? '<span class="log-state-badge">已读</span>' : '<span class="log-state-badge unread">未读</span>');
+  button.innerHTML = [
+    '<span class="log-unread-dot"></span>',
+    '<span class="log-meta">',
+    '<span class="log-time">' + escapeHtml(entry.time || '') + '</span>',
+    '<span class="log-msg ' + escapeHtml(entry.type || '') + '">' + escapeHtml(entry.message || '') + renderNotificationBadges(entry) + '</span>',
+    '</span>',
+    '<span class="log-state">' + stateBadge + '</span>',
+  ].join('');
+  return button;
+}
+
+function renderAlertLog() {
+  const list = document.getElementById('logList');
+  const items = alertEntries.filter(entry => alertLogMatchesFilter(entry) && alertLogMatchesSearch(entry));
+  list.innerHTML = '';
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.className = 'log-empty';
+    empty.textContent = alertEntries.length ? '当前条件暂无警报' : '暂无警报';
+    list.appendChild(empty);
+    return;
+  }
+  items.forEach(entry => list.appendChild(buildLogEntry(entry)));
+  list.scrollTop = list.scrollHeight;
 }
 
 function addLogEntry(entry) {
-  const list = document.getElementById('logList');
-  const empty = list.querySelector('.log-empty');
-  if (empty) empty.remove();
-  const div = document.createElement('div');
-  div.className = 'log-item';
-  div.innerHTML = '<div class="log-time">' + escapeHtml(entry.time || '') + '</div><div class="log-msg ' + escapeHtml(entry.type || '') + '">' + escapeHtml(entry.message || '') + renderNotificationBadges(entry) + '</div>';
-  list.appendChild(div);
-  while (list.children.length > 50) list.removeChild(list.firstChild);
-  list.scrollTop = list.scrollHeight;
+  const normalized = normalizeAlertEntry(entry);
+  alertEntries.push(normalized);
+  while (alertEntries.length > 50) alertEntries.shift();
+  selectedAlertId = normalized.id;
+  updateAlertLogSummary();
+  renderAlertDetail();
+  renderAlertLog();
+}
+
+function mergeAlertLogEntry(entry) {
+  const normalized = normalizeAlertEntry(entry);
+  const index = alertEntries.findIndex(item => item.id === normalized.id);
+  if (index >= 0) alertEntries[index] = normalized;
+  else alertEntries.push(normalized);
+  updateAlertLogSummary();
+  renderAlertDetail();
+  renderAlertLog();
+}
+
+function findSelectedAlert() {
+  return alertEntries.find(entry => entry.id === selectedAlertId) || null;
+}
+
+function selectAlertEntry(id) {
+  selectedAlertId = id;
+  const entry = findSelectedAlert();
+  if (entry && !entry.read) updateAlertStatus(entry.id, { read: true });
+  renderAlertDetail();
+  renderAlertLog();
+}
+
+function updateAlertStatus(id, patch) {
+  const entry = alertEntries.find(item => item.id === id);
+  if (entry) {
+    Object.assign(entry, patch || {});
+    if (entry.acknowledged) entry.read = true;
+    updateAlertLogSummary();
+    renderAlertDetail();
+    renderAlertLog();
+  }
+  socket.emit('update_alert_log_status', Object.assign({ id }, patch || {}));
+}
+
+function acknowledgeAlert(id) {
+  updateAlertStatus(id, { read: true, acknowledged: true });
+}
+
+function analyzeAlertFromDetail(id) {
+  const entry = alertEntries.find(item => item.id === id);
+  if (!entry) return;
+  activeAlert = entry;
+  analyzeActiveAlert();
+}
+
+function renderAlertDetail() {
+  const detail = document.getElementById('alertDetail');
+  if (!detail) return;
+  const entry = findSelectedAlert();
+  if (!entry) {
+    detail.innerHTML = '<div class="alert-detail-empty">选择一条警报查看详情</div>';
+    return;
+  }
+  const notifications = renderNotificationBadges(entry);
+  detail.innerHTML = [
+    '<div class="alert-detail-head">',
+    '<div>',
+    '<div class="alert-detail-title">' + escapeHtml(alertLevelLabel(entry.type)) + '</div>',
+    '<div class="alert-detail-time">' + escapeHtml(entry.timestamp || entry.time || '--') + '</div>',
+    '</div>',
+    '<span class="log-state-badge ' + (!entry.read ? 'unread' : (entry.acknowledged ? 'ack' : '')) + '">' + escapeHtml(alertStatusLabel(entry)) + '</span>',
+    '</div>',
+    '<div class="alert-detail-message">' + escapeHtml(entry.message || '达到预警条件') + '</div>',
+    notifications,
+    '<div class="alert-detail-grid">',
+    '<div class="alert-detail-cell"><span>类型</span><strong>' + escapeHtml(alertLevelLabel(entry.type)) + '</strong></div>',
+    '<div class="alert-detail-cell"><span>品种</span><strong>' + escapeHtml(alertModeLabel(entry.mode)) + '</strong></div>',
+    '<div class="alert-detail-cell"><span>读取状态</span><strong>' + escapeHtml(entry.read ? '已读' : '未读') + '</strong></div>',
+    '<div class="alert-detail-cell"><span>处理状态</span><strong>' + escapeHtml(entry.acknowledged ? '已确认' : '未确认') + '</strong></div>',
+    '</div>',
+    '<div class="alert-detail-actions">',
+    entry.read ? '' : '<button class="btn-clear-sm" type="button" onclick="updateAlertStatus(\'' + escapeHtml(entry.id) + '\', { read: true })">标为已读</button>',
+    entry.acknowledged ? '' : '<button class="btn-clear-sm" type="button" onclick="acknowledgeAlert(\'' + escapeHtml(entry.id) + '\')">确认</button>',
+    '<button class="btn-clear-sm" type="button" onclick="analyzeAlertFromDetail(\'' + escapeHtml(entry.id) + '\')">风险分析</button>',
+    '</div>',
+  ].join('');
+}
+
+function exportAlertLog() {
+  const status = document.getElementById('alertLogStatus');
+  status.textContent = '正在导出警报记录...';
+  status.className = 'log-status';
+  socket.emit('export_alert_log');
+}
+
+function clearAlertLog() {
+  if (!alertEntries.length) {
+    const status = document.getElementById('alertLogStatus');
+    status.textContent = '当前没有可清空的警报记录。';
+    status.className = 'log-status';
+    return;
+  }
+  if (!confirm('确定清空当前警报记录吗？')) return;
+  socket.emit('clear_alert_log');
 }
 
 // ========== 标题闪烁 ==========
