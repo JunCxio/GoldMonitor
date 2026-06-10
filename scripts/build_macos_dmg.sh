@@ -46,6 +46,9 @@ iconutil --convert icns --output "$ICON_FILE" "$ICONSET_DIR"
   --add-data "$ROOT_DIR/manifest.json:." \
   --add-data "$ROOT_DIR/sw.js:." \
   --hidden-import engineio.async_drivers.threading \
+  --hidden-import AppKit \
+  --hidden-import Foundation \
+  --hidden-import PyObjCTools.AppHelper \
   --hidden-import webview.platforms.cocoa \
   --exclude-module PIL \
   --exclude-module pystray \

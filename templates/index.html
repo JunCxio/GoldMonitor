@@ -122,6 +122,7 @@
   .inline-check input { width:14px; height:14px; accent-color:var(--gold); }
   .risk-provider-row.hidden { display:none; }
   .hidden-control { display:none; }
+  .platform-hidden { display:none !important; }
   .settings-foot { flex:0 0 auto; display:flex; justify-content:flex-end; gap:10px; padding:16px 20px 20px; border-top:1px solid var(--hairline); background:var(--surface-elevated); }
   .settings-save, .settings-cancel, .update-install, .dialog-danger, .btn-set, .btn-clear, .btn-clear-sm, .price-retry, .risk-open { min-height:var(--control-height); display:inline-flex; align-items:center; justify-content:center; gap:6px; max-width:100%; border-radius:8px; cursor:pointer; font-weight:700; line-height:1.2; white-space:nowrap; user-select:none; overflow:hidden; text-overflow:ellipsis; transition:transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease, filter 0.16s ease; }
   .settings-save, .update-install, .btn-set { border:1px solid rgba(232,184,48,0.66); background:linear-gradient(180deg, #f2ca58, #dca928); color:#111116; box-shadow:var(--shadow-control-strong); }
@@ -626,22 +627,22 @@
         </div>
         <div class="setting-row">
           <div>
-            <div class="setting-label">自启动时进入托盘</div>
-            <div class="setting-desc">开机启动后不弹出主窗口，可从右下角托盘打开。</div>
+            <div class="setting-label" id="startupTrayLabel">自启动时进入托盘</div>
+            <div class="setting-desc" id="startupTrayDesc">开机启动后不弹出主窗口，可从右下角托盘打开。</div>
           </div>
           <label class="switch"><input type="checkbox" id="setStartupTray"><span class="slider"></span></label>
         </div>
         <div class="setting-row">
           <div>
-            <div class="setting-label">桌面金价悬浮条</div>
-            <div class="setting-desc">主窗口隐藏时，仍在桌面右下角显示当前金价。</div>
+            <div class="setting-label" id="floatingPriceLabel">桌面金价悬浮条</div>
+            <div class="setting-desc" id="floatingPriceDesc">主窗口隐藏时，仍在桌面右下角显示当前金价。</div>
           </div>
           <label class="switch"><input type="checkbox" id="setFloatingPrice"><span class="slider"></span></label>
         </div>
         <div class="setting-row">
           <div>
             <div class="setting-label">悬浮条显示内容</div>
-            <div class="setting-desc">控制桌面悬浮条显示人民币、美元或组合内容。</div>
+            <div class="setting-desc" id="floatingDisplayDesc">控制桌面悬浮条显示人民币、美元或组合内容。</div>
           </div>
           <select class="settings-select" id="setFloatingDisplayMode">
             <option value="rmb_usd">人民币 + 美元</option>
@@ -649,7 +650,7 @@
             <option value="usd_only">仅美元</option>
           </select>
         </div>
-        <div class="setting-row">
+        <div class="setting-row" id="floatingPresetRow">
           <div>
             <div class="setting-label">悬浮条尺寸</div>
             <div class="setting-desc">极简适合长期贴边显示，标准模式保留更多状态信息。</div>
@@ -660,14 +661,14 @@
             <option value="standard">标准</option>
           </select>
         </div>
-        <div class="setting-row">
+        <div class="setting-row" id="floatingOpacityRow">
           <div>
             <div class="setting-label">悬浮条透明度</div>
             <div class="setting-desc">范围 50 到 100，数值越高越不透明。</div>
           </div>
           <input class="settings-input smtp-port" id="setFloatingOpacity" type="number" min="50" max="100" step="1" placeholder="94">
         </div>
-        <div class="setting-row">
+        <div class="setting-row" id="floatingSnapRow">
           <div>
             <div class="setting-label">悬浮条贴边吸附</div>
             <div class="setting-desc">拖动到屏幕边缘附近时自动贴齐。</div>
@@ -681,7 +682,7 @@
           </div>
           <select class="settings-select" id="setCloseBehavior">
             <option value="ask">每次询问</option>
-            <option value="minimize_to_tray">最小化到托盘</option>
+            <option value="minimize_to_tray" id="closeMinimizeOption">最小化到托盘</option>
             <option value="exit">退出程序</option>
           </select>
         </div>
@@ -1092,7 +1093,7 @@
       <button class="settings-close" onclick="submitCloseChoice('cancel')" aria-label="关闭确认窗口">×</button>
     </div>
     <div class="settings-body">
-      <div class="close-choice-copy">最小化到右下角托盘后，程序会继续监控金价并在触发条件时提醒。也可以直接退出程序。</div>
+      <div class="close-choice-copy" id="closeChoiceCopy">最小化到右下角托盘后，程序会继续监控金价并在触发条件时提醒。也可以直接退出程序。</div>
       <label class="dialog-check">
         <input type="checkbox" id="closeRemember">
         <span>不再提示，记住本次选择</span>
@@ -1100,7 +1101,7 @@
     </div>
     <div class="settings-foot">
       <button class="settings-cancel" onclick="submitCloseChoice('cancel')">取消</button>
-      <button class="settings-save" onclick="submitCloseChoice('minimize_to_tray')">最小化到托盘</button>
+      <button class="settings-save" id="closeMinimizeButton" onclick="submitCloseChoice('minimize_to_tray')">最小化到托盘</button>
       <button class="dialog-danger" onclick="submitCloseChoice('exit')">退出程序</button>
     </div>
   </div>
@@ -1207,6 +1208,8 @@ let allThresholds = {};
 let volConfig = { percent: null, minutes: 10, enabled: false };
 let activeAlertRule = null;
 let appSettings = {
+  platform: 'windows',
+  platform_capabilities: {},
   startup_enabled: false,
   startup_to_tray: true,
   floating_price_enabled: true,
@@ -1976,8 +1979,39 @@ function toggleSecretClear(inputId, statusId, buttonId, selectedStatus) {
 }
 
 // ========== 设置 ==========
+function setText(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+function setRowHidden(id, hidden) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle('platform-hidden', !!hidden);
+}
+
+function applyPlatformLabels() {
+  const platform = appSettings.platform || 'windows';
+  const capabilities = appSettings.platform_capabilities || {};
+  const isMac = platform === 'macos';
+  const menuBarMode = capabilities.floating_price_mode === 'menu_bar';
+
+  setText('startupTrayLabel', isMac ? '自启动时进入菜单栏' : '自启动时进入托盘');
+  setText('startupTrayDesc', isMac ? '开机启动后不弹出主窗口，可从菜单栏打开。' : '开机启动后不弹出主窗口，可从右下角托盘打开。');
+  setText('floatingPriceLabel', menuBarMode ? '菜单栏金价' : '桌面金价悬浮条');
+  setText('floatingPriceDesc', menuBarMode ? '在 macOS 菜单栏显示当前金价，并提供显示窗口、刷新和风险分析入口。' : '主窗口隐藏时，仍在桌面右下角显示当前金价。');
+  setText('floatingDisplayDesc', menuBarMode ? '控制菜单栏优先显示人民币、美元或组合价格。' : '控制桌面悬浮条显示人民币、美元或组合内容。');
+  setText('closeChoiceCopy', isMac ? '隐藏到菜单栏后，程序会继续监控金价并在触发条件时提醒。也可以直接退出程序。' : '最小化到右下角托盘后，程序会继续监控金价并在触发条件时提醒。也可以直接退出程序。');
+  setText('closeMinimizeOption', isMac ? '隐藏到菜单栏' : '最小化到托盘');
+  setText('closeMinimizeButton', isMac ? '隐藏到菜单栏' : '最小化到托盘');
+
+  setRowHidden('floatingPresetRow', menuBarMode);
+  setRowHidden('floatingOpacityRow', menuBarMode);
+  setRowHidden('floatingSnapRow', menuBarMode);
+}
+
 function applySettings(data) {
   appSettings = Object.assign({}, appSettings, data);
+  applyPlatformLabels();
   const closeBehavior = appSettings.close_behavior || 'ask';
   document.getElementById('setStartup').checked = !!appSettings.startup_enabled;
   document.getElementById('setStartupTray').checked = !!appSettings.startup_to_tray;

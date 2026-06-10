@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import os
+import plistlib
 import sqlite3
 import smtplib
 import subprocess
@@ -33,7 +34,7 @@ app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.3.9"
+APP_VERSION = "1.4.0"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 OFFICIAL_UPDATE_HOST = "github.com"
@@ -62,6 +63,8 @@ DEFAULT_PORT = 5000
 SOCKET_ACCESS_TOKEN = secrets.token_urlsafe(32)
 RUN_KEY_NAME = "GoldMonitor"
 RUN_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+MACOS_BUNDLE_IDENTIFIER = "com.juncxio.goldmonitor"
+MACOS_LAUNCH_AGENT_ID = MACOS_BUNDLE_IDENTIFIER
 
 
 def _default_appdata_root():
@@ -71,6 +74,50 @@ def _default_appdata_root():
     if sys.platform == "darwin":
         return os.path.join(os.path.expanduser("~"), "Library", "Application Support")
     return os.path.expanduser("~")
+
+
+def _runtime_platform():
+    if sys.platform == "darwin":
+        return "macos"
+    if os.name == "nt":
+        return "windows"
+    return "other"
+
+
+def platform_capabilities():
+    platform = _runtime_platform()
+    return {
+        "platform": platform,
+        "has_system_tray": platform == "windows",
+        "has_menu_bar_status": platform == "macos",
+        "floating_price_mode": "floating_window" if platform == "windows" else ("menu_bar" if platform == "macos" else "none"),
+        "can_start_hidden": platform in {"windows", "macos"},
+        "can_system_notify": platform in {"windows", "macos"},
+        "can_system_alert_dialog": platform in {"windows", "macos"},
+        "can_system_sound": platform in {"windows", "macos"},
+    }
+
+
+def _applescript_string(value):
+    text = str(value or "")
+    text = text.replace("\\", "\\\\").replace('"', '\\"').replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace("\n", "\\n")
+    return f'"{text}"'
+
+
+def _run_macos_osascript(script, wait=False, timeout=4):
+    if sys.platform != "darwin":
+        return False
+    try:
+        args = ["osascript", "-e", script]
+        if wait:
+            subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout, check=False)
+        else:
+            subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+        return True
+    except Exception:
+        logging.warning("执行 macOS AppleScript 失败", exc_info=True)
+        return False
 
 
 APPDATA_DIR = os.path.join(_default_appdata_root(), "GoldMonitor")
@@ -729,6 +776,8 @@ def mask_secret(value):
 
 def public_settings_snapshot(settings=None):
     snapshot = dict(settings or get_settings_snapshot())
+    snapshot["platform"] = _runtime_platform()
+    snapshot["platform_capabilities"] = platform_capabilities()
     api_key = snapshot.pop("deepseek_api_key", "")
     snapshot["deepseek_api_key_configured"] = bool(api_key)
     snapshot["deepseek_api_key_masked"] = mask_secret(api_key)
@@ -806,7 +855,48 @@ def _startup_command():
     return f'"{exe}" --startup'
 
 
+def _macos_launch_agent_path():
+    return os.path.join(os.path.expanduser("~"), "Library", "LaunchAgents", f"{MACOS_LAUNCH_AGENT_ID}.plist")
+
+
+def _macos_startup_arguments():
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--startup"]
+    return [sys.executable, os.path.abspath(sys.argv[0]), "--startup"]
+
+
+def _set_macos_startup_enabled(enabled):
+    path = _macos_launch_agent_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if enabled:
+            payload = {
+                "Label": MACOS_LAUNCH_AGENT_ID,
+                "ProgramArguments": _macos_startup_arguments(),
+                "RunAtLoad": True,
+                "KeepAlive": False,
+                "WorkingDirectory": os.path.dirname(_current_executable()) or os.path.expanduser("~"),
+            }
+            with open(path, "wb") as f:
+                plistlib.dump(payload, f, sort_keys=False)
+            subprocess.run(["launchctl", "unload", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3, check=False)
+            subprocess.run(["launchctl", "load", "-w", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3, check=False)
+        else:
+            subprocess.run(["launchctl", "unload", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3, check=False)
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
+
+
 def set_startup_enabled(enabled):
+    if sys.platform == "darwin":
+        return _set_macos_startup_enabled(enabled)
+    if os.name != "nt":
+        return (True, None) if not enabled else (False, "当前平台不支持开机自启动")
     try:
         import winreg
 
@@ -1161,12 +1251,22 @@ def show_alert_dialog(title, message):
     def _show():
         global _alert_dialog_active
         try:
-            import ctypes
-            MB_OK = 0x00000000
-            MB_ICONWARNING = 0x00000030
-            MB_TOPMOST = 0x00040000
-            MB_SETFOREGROUND = 0x00010000
-            ctypes.windll.user32.MessageBoxW(None, message, title, MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND)
+            if sys.platform == "darwin":
+                script = (
+                    "display alert "
+                    + _applescript_string(title)
+                    + " message "
+                    + _applescript_string(message)
+                    + ' as warning buttons {"知道了"} default button "知道了"'
+                )
+                _run_macos_osascript(script, wait=True, timeout=3600)
+            elif os.name == "nt":
+                import ctypes
+                MB_OK = 0x00000000
+                MB_ICONWARNING = 0x00000030
+                MB_TOPMOST = 0x00040000
+                MB_SETFOREGROUND = 0x00010000
+                ctypes.windll.user32.MessageBoxW(None, message, title, MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND)
         except Exception:
             pass
         finally:
@@ -1178,6 +1278,17 @@ def show_alert_dialog(title, message):
 
 def play_system_alert_sound(level):
     if not get_settings_snapshot().get("alert_sound_enabled", True):
+        return
+    if sys.platform == "darwin":
+        try:
+            sound = "Basso" if level == "critical" else "Glass"
+            path = f"/System/Library/Sounds/{sound}.aiff"
+            if os.path.exists(path):
+                subprocess.Popen(["afplay", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+            else:
+                _run_macos_osascript("beep", wait=False)
+        except Exception:
+            pass
         return
     try:
         import winsound
@@ -2372,6 +2483,15 @@ def fetch_market_data_result():
 
 # ---------- 桌面通知 ----------
 def send_desktop_notification(title, body):
+    if sys.platform == "darwin":
+        script = (
+            "display notification "
+            + _applescript_string(body)
+            + " with title "
+            + _applescript_string(title)
+        )
+        _run_macos_osascript(script, wait=False)
+        return
     try:
         from win11toast import notify
         notification_icon = os.path.join(_basedir, "static", "icon.ico")
@@ -4664,6 +4784,10 @@ def on_install_update(data=None):
 # ---------- 共享状态 (托盘与窗口通信) ----------
 _window_instance = None
 _tray_icon = None
+_macos_status_item = None
+_macos_status_delegate = None
+_macos_status_menu = None
+_macos_status_menu_items = {}
 _window_hwnd = None
 _last_desktop_title = APP_NAME
 _desktop_runtime_active = False
@@ -4696,10 +4820,117 @@ def format_price_title(rmb=None, usd=None):
     return APP_NAME
 
 
+def format_macos_status_title():
+    settings = get_settings_snapshot()
+    if not settings.get("floating_price_enabled", True):
+        return "金价"
+    with lock:
+        rmb = price_rmb
+        usd = price_usd
+    display_mode = settings.get("floating_price_display_mode", "rmb_usd")
+    if display_mode == "usd_only" and usd is not None:
+        return f"${usd:,.0f}"
+    if display_mode == "rmb_only" and rmb is not None:
+        return f"¥{rmb:,.2f}"
+    if rmb is not None and usd is not None:
+        return f"¥{rmb:,.2f} ${usd:,.0f}"
+    if rmb is not None:
+        return f"¥{rmb:,.2f}"
+    if usd is not None:
+        return f"${usd:,.0f}"
+    return "金价 --"
+
+
+def _call_macos_main(callback):
+    if sys.platform != "darwin":
+        return
+    try:
+        from PyObjCTools import AppHelper
+        AppHelper.callAfter(callback)
+    except Exception:
+        try:
+            callback()
+        except Exception:
+            pass
+
+
+def _refresh_macos_status_item():
+    if sys.platform != "darwin" or not _macos_status_item:
+        return
+
+    def _apply():
+        try:
+            button = _macos_status_item.button()
+            if button:
+                button.setTitle_(format_macos_status_title())
+                button.setToolTip_(format_price_title())
+            toggle_item = _macos_status_menu_items.get("toggle_price")
+            if toggle_item:
+                enabled = get_settings_snapshot().get("floating_price_enabled", True)
+                toggle_item.setTitle_("隐藏菜单栏金价" if enabled else "显示菜单栏金价")
+        except Exception:
+            pass
+
+    _call_macos_main(_apply)
+
+
+def create_macos_status_item():
+    global _macos_status_item, _macos_status_delegate, _macos_status_menu, _macos_status_menu_items
+    if sys.platform != "darwin" or _macos_status_item:
+        return
+    try:
+        from Foundation import NSObject
+        from AppKit import NSMenu, NSMenuItem, NSStatusBar, NSVariableStatusItemLength
+
+        class MacOSStatusDelegate(NSObject):
+            def showWindow_(self, sender):
+                show_main_window()
+
+            def refreshPrice_(self, sender):
+                _refresh_price_from_tray_menu()
+
+            def openRiskAnalysis_(self, sender):
+                _open_risk_analysis_from_tray_menu()
+
+            def toggleMenuBarPrice_(self, sender):
+                _toggle_floating_price_from_tray_menu()
+
+            def quitApp_(self, sender):
+                exit_app()
+
+        delegate = MacOSStatusDelegate.alloc().init()
+        menu = NSMenu.alloc().init()
+
+        def add_item(title, action):
+            item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, action, "")
+            item.setTarget_(delegate)
+            menu.addItem_(item)
+            return item
+
+        add_item("显示窗口", "showWindow:")
+        add_item("刷新行情", "refreshPrice:")
+        add_item("风险分析", "openRiskAnalysis:")
+        toggle_item = add_item("隐藏菜单栏金价", "toggleMenuBarPrice:")
+        menu.addItem_(NSMenuItem.separatorItem())
+        add_item("退出", "quitApp:")
+
+        status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
+        status_item.setMenu_(menu)
+
+        _macos_status_delegate = delegate
+        _macos_status_menu = menu
+        _macos_status_item = status_item
+        _macos_status_menu_items = {"toggle_price": toggle_item}
+        _refresh_macos_status_item()
+    except Exception:
+        logging.warning("macOS 菜单栏状态项启动失败", exc_info=True)
+
+
 def update_desktop_price_title(title=None):
     global _last_desktop_title
     title = title or format_price_title()
     if title == _last_desktop_title:
+        _refresh_macos_status_item()
         return
     _last_desktop_title = title
     window = _window_instance
@@ -4714,6 +4945,7 @@ def update_desktop_price_title(title=None):
             icon.title = title
         except Exception:
             pass
+    _refresh_macos_status_item()
 
 
 def format_floating_price_text(rmb=None, usd=None, pct=None):
@@ -5521,6 +5753,9 @@ def start_floating_price_window():
 
 
 def apply_floating_price_settings(settings=None):
+    if sys.platform == "darwin":
+        _refresh_macos_status_item()
+        return
     if not _is_floating_price_available():
         return
     settings = settings or get_settings_snapshot()
@@ -5810,6 +6045,8 @@ def start_desktop_window(start_hidden=False):
     global _window_instance, _window_hwnd
     try:
         import webview
+        if sys.platform == "darwin":
+            create_macos_status_item()
 
         def on_shown():
             global _window_hwnd
@@ -5838,6 +6075,30 @@ def start_desktop_window(start_hidden=False):
                 pass
 
         def on_closing():
+            if sys.platform == "darwin":
+                snapshot = get_settings_snapshot()
+                behavior = snapshot.get("close_behavior", "ask")
+                if snapshot.get("close_remembered") and behavior != "ask":
+                    if behavior == "exit":
+                        exit_app()
+                    else:
+                        hide_main_window()
+                    return False
+
+                if behavior == "exit":
+                    exit_app()
+                    return False
+
+                if behavior == "minimize_to_tray":
+                    hide_main_window()
+                    return False
+
+                socketio.emit("show_close_dialog", {
+                    "close_behavior": behavior,
+                    "close_remembered": bool(snapshot.get("close_remembered")),
+                })
+                return False
+
             if os.name != "nt":
                 exit_app()
                 return False
@@ -5919,7 +6180,7 @@ if __name__ == "__main__":
         update_floating_price()
         start_background_fetching()
         start_news_fetching()
-        start_hidden = os.name == "nt" and startup_mode and get_settings_snapshot().get("startup_to_tray", True)
+        start_hidden = (os.name == "nt" or sys.platform == "darwin") and startup_mode and get_settings_snapshot().get("startup_to_tray", True)
         start_desktop_window(start_hidden=start_hidden)
     else:
         # Web 模式 (--web): Flask 主线程 + 浏览器

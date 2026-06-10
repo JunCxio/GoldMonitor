@@ -10,6 +10,7 @@ GoldMonitor 是一个黄金价格监控工具，提供 Windows 桌面版和 macO
 - 支持提醒冷却时间、静默时段、邮件标题模板和正文模板。
 - 支持 Webhook 通知，可按预警级别控制是否发送。
 - 支持桌面金价悬浮条，显示涨跌颜色、更新时间和数据源状态，并提供右键菜单。
+- macOS 桌面版支持菜单栏金价、菜单栏打开主窗口、刷新行情、风险分析、通知中心提醒和系统提示音。
 - 支持风险分析助手，用户手动触发，避免后台自动消耗模型 token。
 - 风险分析支持 DeepSeek 和 OpenAI 兼容接口，支持模型列表下拉、连接测试、分析深度、缓存、历史、复制和导出报告。
 - 支持数据源健康面板，展示行情源、汇率源、缓存回退、失败原因和响应耗时。
@@ -27,7 +28,7 @@ https://github.com/JunCxio/GoldMonitor/releases/latest
 
 Windows 用户通常只需要下载 `GoldMonitorSetup.exe` 并运行安装。安装包是按用户目录安装，不需要管理员权限。
 
-macOS 用户可下载 `GoldMonitor-macOS.dmg`，打开后把 `GoldMonitor.app` 拖入“应用程序”目录即可安装。
+macOS 用户可下载 `GoldMonitor-macOS.dmg`，打开后把 `GoldMonitor.app` 拖入“应用程序”目录即可安装。macOS 版会在菜单栏显示状态项，关闭主窗口后仍可从菜单栏恢复。
 
 ## 更新源
 
