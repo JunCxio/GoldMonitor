@@ -703,6 +703,8 @@ original_source_price_samples = dict(app.source_price_samples)
 original_source_comparison_state = dict(app.source_comparison_state)
 original_alert_cooldown_state = dict(app.alert_cooldown_state)
 original_alert_log = list(app.alert_log)
+original_email_send = app.EmailNotifier.send
+original_webhook_send = app.WebhookNotifier.send
 
 try:
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -717,8 +719,27 @@ try:
         app.source_comparison_state = {}
         app.alert_cooldown_state = {}
         app.alert_log = []
+        resend_channels = []
+
+        def capture_resend_email(alert_type, title, message, **kwargs):
+            resend_channels.append(("email", alert_type, title, message))
+            return None
+
+        def capture_resend_webhook(alert_type, title, message, **kwargs):
+            resend_channels.append(("webhook", alert_type, title, message))
+            return None
+
+        app.EmailNotifier.send = capture_resend_email
+        app.WebhookNotifier.send = capture_resend_webhook
         app.app_settings = app._normalize_settings({
             "smtp_password": "smtp-secret",
+            "smtp_server": "smtp.example.com",
+            "smtp_sender": "sender@example.com",
+            "smtp_recipient": "receiver@example.com",
+            "email_warning_enabled": True,
+            "webhook_enabled": True,
+            "webhook_url": "https://notify.example/webhook",
+            "webhook_warning_enabled": True,
             "risk_assistant_depth": "deep",
             "floating_price_opacity": "88",
             "floating_price_display_mode": "usd_only",
@@ -777,6 +798,7 @@ try:
             "time": "12:00:00",
             "timestamp": "2026-06-08T12:00:00",
             "message": "测试价格预警",
+            "title": "测试告警标题",
         })
         app.save_alert_log_entry(app.alert_log[-1])
         loaded_alerts = app.load_alert_log_archive(limit=5)
@@ -791,6 +813,13 @@ try:
         reloaded_alert = app.load_alert_log_archive(limit=5)[-1]
         if not reloaded_alert.get("read") or not reloaded_alert.get("acknowledged"):
             raise SystemExit(f"alert log archive must keep read and acknowledged flags, got: {reloaded_alert}")
+        ok, resent_alert = app.resend_alert_notification(alert_id)
+        if not ok or not resent_alert or not resent_alert.get("last_notification_resend_at"):
+            raise SystemExit(f"alert notification resend must update alert record, got: {resent_alert}")
+        if [item[0] for item in resend_channels] != ["email", "webhook"]:
+            raise SystemExit(f"alert notification resend must dispatch enabled channels, got: {resend_channels}")
+        if [item.get("channel") for item in resent_alert.get("notifications", [])] != ["email", "webhook"]:
+            raise SystemExit(f"resent alert must persist latest notification states, got: {resent_alert}")
         history_with_events = app.build_price_history_state(limit=10)
         if not history_with_events.get("events") or history_with_events["events"][0].get("type") != "alert":
             raise SystemExit(f"price history state must expose chart events, got: {history_with_events}")
@@ -839,6 +868,10 @@ try:
             status_event = wait_for_event(client, "alert_log_status_updated")
             if not status_event.get("ok") or not status_event.get("entry", {}).get("acknowledged"):
                 raise SystemExit(f"alert log status socket event must return updated alert, got: {status_event}")
+            client.emit("resend_alert_notification", {"id": alert_id})
+            resend_event = wait_for_event(client, "alert_notification_resent")
+            if not resend_event.get("ok") or not resend_event.get("entry", {}).get("last_notification_resend_at"):
+                raise SystemExit(f"alert notification resend event must return updated alert, got: {resend_event}")
             client.emit("export_alert_log")
             alert_export = wait_for_event(client, "alert_log_exported")
             alert_saved_path = alert_export.get("saved_path", "")
@@ -868,6 +901,8 @@ finally:
     app.source_comparison_state = original_source_comparison_state
     app.alert_cooldown_state = original_alert_cooldown_state
     app.alert_log = original_alert_log
+    app.EmailNotifier.send = original_email_send
+    app.WebhookNotifier.send = original_webhook_send
 
 
 print("risk contract checks passed.")

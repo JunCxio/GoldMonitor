@@ -5,6 +5,7 @@
 .claude/
 .cursor/
 .codegraph/
+docs/
 
 __pycache__/
 *.py[cod]
@@ -18,5 +19,6 @@ release/
 .env.*
 *.log
 *.tmp
+.DS_Store
 
 *.spec.bak

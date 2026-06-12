@@ -246,6 +246,12 @@
   .source-health-meta { white-space:nowrap; }
 
   .history-modal { width:min(760px, 100%); }
+  .history-tabs { display:flex; gap:6px; margin-bottom:12px; padding:4px; border:1px solid var(--hairline); border-radius:10px; background:rgba(255,255,255,0.035); }
+  .history-tab { flex:1 1 0; min-height:36px; padding:8px 10px; border:1px solid transparent; border-radius:8px; background:transparent; color:var(--control-muted); cursor:pointer; font-size:0.78rem; font-weight:800; transition:all 0.16s ease; }
+  .history-tab:hover { color:var(--text); background:var(--control-bg-hover); border-color:var(--control-border); }
+  .history-tab.active { background:rgba(232,184,48,0.13); color:var(--gold); border-color:rgba(232,184,48,0.32); }
+  .history-panel { display:none; }
+  .history-panel.active { display:block; }
   .history-stats { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:8px; margin-bottom:12px; }
   .history-stat { border:1px solid var(--hairline); border-radius:10px; padding:10px; background:rgba(255,255,255,0.025); }
   .history-stat-label { color:var(--text-dim); font-size:0.7rem; margin-bottom:4px; }
@@ -255,6 +261,36 @@
   .history-row:first-child { color:var(--gold); font-weight:800; background:rgba(232,184,48,0.06); position:sticky; top:0; }
   .history-row:last-child { border-bottom:none; }
   .history-empty { color:var(--text-dim); font-size:0.82rem; padding:28px 12px; text-align:center; }
+  .timeline-toolbar { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+  .timeline-toolbar select { min-height:36px; padding:7px 9px; border:1px solid var(--control-border); border-radius:8px; background:#101020; color:var(--text); outline:none; }
+  .timeline-toolbar select:focus { border-color:var(--control-border-strong); box-shadow:var(--focus-ring); }
+  .timeline-filter { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+  .timeline-filter label { min-height:32px; display:inline-flex; align-items:center; gap:6px; padding:6px 8px; border:1px solid var(--hairline); border-radius:8px; background:rgba(255,255,255,0.025); color:var(--text-dim); font-size:0.7rem; cursor:pointer; }
+  .timeline-filter input { width:13px; height:13px; accent-color:var(--gold); }
+  .timeline-status { min-height:18px; margin-bottom:8px; color:var(--text-dim); font-size:0.74rem; line-height:1.45; }
+  .timeline-status.ok { color:var(--down); }
+  .timeline-status.fail { color:var(--up); }
+  .timeline-summary { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:8px; margin-bottom:10px; }
+  .timeline-layout { display:grid; grid-template-columns:minmax(0, 1fr) minmax(220px, 0.8fr); gap:10px; min-height:0; }
+  .timeline-list, .timeline-detail { max-height:42vh; overflow:auto; border:1px solid var(--hairline); border-radius:10px; background:rgba(255,255,255,0.018); }
+  .timeline-event { width:100%; display:grid; grid-template-columns:auto minmax(0, 1fr); gap:8px; text-align:left; padding:10px; border:0; border-bottom:1px solid rgba(255,255,255,0.045); background:transparent; color:var(--text); cursor:pointer; }
+  .timeline-event:last-child { border-bottom:none; }
+  .timeline-event:hover, .timeline-event.active { background:rgba(232,184,48,0.055); }
+  .timeline-event-time { color:var(--gold); font-size:0.68rem; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; white-space:nowrap; }
+  .timeline-event-main { min-width:0; }
+  .timeline-event-title { color:#f0f0f4; font-size:0.78rem; font-weight:800; line-height:1.35; overflow-wrap:anywhere; }
+  .timeline-event-summary { margin-top:4px; color:var(--text-dim); font-size:0.72rem; line-height:1.45; overflow-wrap:anywhere; }
+  .timeline-event-type { margin-top:6px; display:inline-flex; padding:3px 6px; border:1px solid var(--hairline); border-radius:6px; color:var(--text-dim); font-size:0.64rem; }
+  .timeline-detail { padding:12px; }
+  .timeline-detail-title { color:#f0f0f4; font-size:0.86rem; font-weight:800; line-height:1.4; overflow-wrap:anywhere; }
+  .timeline-detail-meta { margin-top:5px; color:var(--text-dim); font-size:0.7rem; line-height:1.45; overflow-wrap:anywhere; }
+  .timeline-detail-summary { margin-top:10px; color:var(--text); font-size:0.78rem; line-height:1.6; overflow-wrap:anywhere; }
+  .timeline-detail-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px; margin-top:10px; }
+  .timeline-detail-cell { min-width:0; padding:7px; border:1px solid var(--hairline); border-radius:8px; background:rgba(255,255,255,0.025); }
+  .timeline-detail-cell span { display:block; color:var(--text-dim); font-size:0.62rem; margin-bottom:3px; }
+  .timeline-detail-cell strong { display:block; color:var(--text); font-size:0.72rem; line-height:1.4; overflow-wrap:anywhere; }
+  .timeline-detail-news { display:grid; gap:6px; margin-top:10px; }
+  .timeline-detail-news a { color:var(--gold); font-size:0.72rem; line-height:1.45; text-decoration:none; overflow-wrap:anywhere; }
   .ops-status { color:var(--text-dim); font-size:0.76rem; line-height:1.5; min-height:18px; }
 
   /* ====== 模式切换 ====== */
@@ -490,8 +526,14 @@
     .risk-trend-list { grid-template-columns:1fr; }
     .risk-score-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
     .history-stats { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+    .timeline-summary { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+    .timeline-layout { grid-template-columns:1fr; }
+    .timeline-toolbar { align-items:stretch; }
+    .timeline-toolbar select { width:100%; }
+    .timeline-filter { justify-content:flex-start; }
     .history-row { grid-template-columns:1.1fr 0.9fr 0.9fr; }
     .history-row span:nth-child(4) { display:none; }
+    .timeline-detail-grid { grid-template-columns:1fr; }
   }
 
   @media (max-width:500px) {
@@ -1163,13 +1205,37 @@
       <button class="settings-close" onclick="closeHistory()" aria-label="关闭历史复盘">×</button>
     </div>
     <div class="settings-body">
-      <div class="history-stats" id="historyStats"></div>
-      <div class="history-list" id="historyList"><div class="history-empty">暂无历史数据</div></div>
+      <div class="history-tabs" role="tablist" aria-label="历史复盘视图">
+        <button class="history-tab active" id="historyTabPrices" type="button" role="tab" aria-selected="true" onclick="switchHistoryView('prices')">价格明细</button>
+        <button class="history-tab" id="historyTabTimeline" type="button" role="tab" aria-selected="false" onclick="switchHistoryView('timeline')">事件时间轴</button>
+      </div>
+      <div class="history-panel active" id="historyPanelPrices">
+        <div class="history-stats" id="historyStats"></div>
+        <div class="history-list" id="historyList"><div class="history-empty">暂无历史数据</div></div>
+      </div>
+      <div class="history-panel" id="historyPanelTimeline">
+        <div class="timeline-toolbar">
+          <select id="timelineRange" onchange="setTimelineRange(this.value)" aria-label="复盘时间范围">
+            <option value="60">最近 1 小时</option>
+            <option value="240">最近 4 小时</option>
+            <option value="1440">最近 24 小时</option>
+            <option value="10080">最近 7 天</option>
+          </select>
+          <div class="timeline-filter" id="timelineTypeFilters"></div>
+        </div>
+        <div class="timeline-status" id="timelineStatus"></div>
+        <div class="timeline-summary" id="timelineSummary"></div>
+        <div class="timeline-layout">
+          <div class="timeline-list" id="timelineList"><div class="history-empty">暂无事件</div></div>
+          <div class="timeline-detail" id="timelineDetail"><div class="history-empty">选择一条事件查看详情</div></div>
+        </div>
+      </div>
     </div>
     <div class="settings-foot">
       <button class="settings-cancel" onclick="closeHistory()">关闭</button>
-      <button class="settings-cancel" onclick="refreshHistory()">刷新</button>
-      <button class="settings-save" onclick="exportHistoryCsv()">导出 CSV</button>
+      <button class="settings-cancel" onclick="refreshHistoryCurrentView()">刷新</button>
+      <button class="settings-cancel" id="exportReviewReportButton" onclick="exportReviewReport()" style="display:none">导出复盘报告</button>
+      <button class="settings-save" id="exportHistoryCsvButton" onclick="exportHistoryCsv()">导出 CSV</button>
     </div>
   </div>
 </div>
@@ -1297,6 +1363,18 @@ let volConfig = { percent: null, minutes: 10, enabled: false };
 let activeAlertRule = null;
 let watchTargets = [];
 let activeWatchTargetId = null;
+let historyView = 'prices';
+let eventTimelineState = { events: [], summary: {}, filters: {}, range: {}, price_summary: {} };
+let eventTimelineRange = 60;
+let eventTimelineTypes = ['price_summary', 'alert', 'risk_analysis', 'news', 'data_status'];
+let selectedTimelineEventId = null;
+const EVENT_TIMELINE_TYPE_DEFS = [
+  { type: 'price_summary', label: '价格摘要' },
+  { type: 'alert', label: '预警' },
+  { type: 'risk_analysis', label: '风险分析' },
+  { type: 'news', label: '新闻' },
+  { type: 'data_status', label: '数据状态' },
+];
 let appSettings = {
   platform: 'windows',
   platform_capabilities: {},
@@ -1694,6 +1772,19 @@ socket.on('alert_log_status_error', data => {
   status.className = 'log-status fail';
 });
 
+socket.on('alert_notification_resent', data => {
+  const status = document.getElementById('alertLogStatus');
+  if (data && data.entry) mergeAlertLogEntry(data.entry);
+  status.textContent = '通知已重新提交。';
+  status.className = 'log-status ok';
+});
+
+socket.on('alert_notification_resend_error', data => {
+  const status = document.getElementById('alertLogStatus');
+  status.textContent = (data && data.message) || '通知重发失败。';
+  status.className = 'log-status fail';
+});
+
 socket.on('show_close_dialog', data => {
   openCloseDialog(data || {});
 });
@@ -1849,6 +1940,23 @@ socket.on('price_history_updated', data => {
 socket.on('price_history_export_ready', data => {
   if (!data || !data.content) return;
   downloadText(data.filename || 'GoldMonitor-price-history.csv', data.content, 'text/csv;charset=utf-8');
+});
+
+socket.on('event_timeline_updated', data => {
+  applyEventTimeline(data || {});
+});
+
+socket.on('event_timeline_error', data => {
+  setTimelineStatus((data && data.message) || '事件时间轴加载失败。', 'fail');
+});
+
+socket.on('review_report_exported', data => {
+  const count = data && Number.isFinite(Number(data.count)) ? Number(data.count) : 0;
+  setTimelineStatus(data && data.saved_path ? '已导出 ' + count + ' 条事件，保存至 ' + data.saved_path : '复盘报告已导出。', 'ok');
+});
+
+socket.on('review_report_error', data => {
+  setTimelineStatus((data && data.message) || '复盘报告导出失败。', 'fail');
 });
 
 socket.on('config_backup_ready', data => {
@@ -2030,6 +2138,8 @@ function renderHistory(data) {
 
 function openHistory() {
   document.getElementById('historyBackdrop').classList.add('show');
+  renderTimelineTypeFilters();
+  switchHistoryView(historyView || 'prices', true);
   refreshHistory();
 }
 
@@ -2043,6 +2153,229 @@ function onHistoryBackdrop(event) {
 
 function refreshHistory() {
   socket.emit('get_price_history', { limit: 600 });
+}
+
+function switchHistoryView(view, skipRefresh) {
+  historyView = view === 'timeline' ? 'timeline' : 'prices';
+  const isTimeline = historyView === 'timeline';
+  const priceTab = document.getElementById('historyTabPrices');
+  const timelineTab = document.getElementById('historyTabTimeline');
+  const pricePanel = document.getElementById('historyPanelPrices');
+  const timelinePanel = document.getElementById('historyPanelTimeline');
+  if (priceTab) {
+    priceTab.classList.toggle('active', !isTimeline);
+    priceTab.setAttribute('aria-selected', String(!isTimeline));
+  }
+  if (timelineTab) {
+    timelineTab.classList.toggle('active', isTimeline);
+    timelineTab.setAttribute('aria-selected', String(isTimeline));
+  }
+  if (pricePanel) pricePanel.classList.toggle('active', !isTimeline);
+  if (timelinePanel) timelinePanel.classList.toggle('active', isTimeline);
+  const csvBtn = document.getElementById('exportHistoryCsvButton');
+  const reportBtn = document.getElementById('exportReviewReportButton');
+  if (csvBtn) csvBtn.style.display = isTimeline ? 'none' : '';
+  if (reportBtn) reportBtn.style.display = isTimeline ? '' : 'none';
+  if (isTimeline && !skipRefresh) refreshEventTimeline();
+}
+
+function refreshHistoryCurrentView() {
+  if (historyView === 'timeline') {
+    refreshEventTimeline();
+    return;
+  }
+  refreshHistory();
+}
+
+function timelineTypeLabel(type) {
+  const found = EVENT_TIMELINE_TYPE_DEFS.find(item => item.type === type);
+  return found ? found.label : type;
+}
+
+function renderTimelineTypeFilters() {
+  const box = document.getElementById('timelineTypeFilters');
+  if (!box) return;
+  box.innerHTML = EVENT_TIMELINE_TYPE_DEFS.map(item => {
+    const checked = eventTimelineTypes.includes(item.type) ? ' checked' : '';
+    return [
+      '<label>',
+      '<input type="checkbox" value="' + escapeHtml(item.type) + '"' + checked + ' onchange="toggleTimelineType(\'' + escapeHtml(item.type) + '\', this.checked)">',
+      '<span>' + escapeHtml(item.label) + '</span>',
+      '</label>',
+    ].join('');
+  }).join('');
+}
+
+function setTimelineRange(value) {
+  const minutes = parseInt(value, 10);
+  eventTimelineRange = [60, 240, 1440, 10080].includes(minutes) ? minutes : 60;
+  refreshEventTimeline();
+}
+
+function toggleTimelineType(type, checked) {
+  if (checked) {
+    if (!eventTimelineTypes.includes(type)) eventTimelineTypes.push(type);
+  } else {
+    eventTimelineTypes = eventTimelineTypes.filter(item => item !== type);
+  }
+  if (!eventTimelineTypes.length) eventTimelineTypes = EVENT_TIMELINE_TYPE_DEFS.map(item => item.type);
+  renderTimelineTypeFilters();
+  refreshEventTimeline();
+}
+
+function setTimelineStatus(message, type) {
+  const el = document.getElementById('timelineStatus');
+  if (!el) return;
+  el.textContent = message || '';
+  el.className = 'timeline-status' + (type ? ' ' + type : '');
+}
+
+function refreshEventTimeline() {
+  setTimelineStatus('正在加载事件时间轴...', '');
+  socket.emit('get_event_timeline', {
+    minutes: eventTimelineRange,
+    limit: 300,
+    types: eventTimelineTypes,
+  });
+}
+
+function applyEventTimeline(data) {
+  eventTimelineState = Object.assign({ events: [], summary: {}, filters: {}, range: {}, price_summary: {} }, data || {});
+  const events = Array.isArray(eventTimelineState.events) ? eventTimelineState.events : [];
+  if (selectedTimelineEventId && !events.some(event => event.id === selectedTimelineEventId)) {
+    selectedTimelineEventId = null;
+  }
+  setTimelineStatus('', '');
+  renderEventTimeline();
+}
+
+function timelineEventTime(timestamp) {
+  const text = String(timestamp || '');
+  if (!text) return '--';
+  return text.replace('T', ' ').slice(0, 19);
+}
+
+function renderTimelineSummary() {
+  const box = document.getElementById('timelineSummary');
+  if (!box) return;
+  const summary = eventTimelineState.summary || {};
+  const byType = summary.by_type || {};
+  const range = eventTimelineState.range || {};
+  const statItems = [
+    ['事件', summary.total || 0],
+    ['跳过', summary.skipped || 0],
+    ['预警', byType.alert || 0],
+    ['范围', range.minutes ? Math.round(Number(range.minutes) / 60) + 'h' : '--'],
+  ];
+  box.innerHTML = statItems.map(item => (
+    '<div class="history-stat"><div class="history-stat-label">' + escapeHtml(item[0]) + '</div><div class="history-stat-value">' + escapeHtml(item[1]) + '</div></div>'
+  )).join('');
+}
+
+function renderTimelineList() {
+  const list = document.getElementById('timelineList');
+  if (!list) return;
+  const events = Array.isArray(eventTimelineState.events) ? eventTimelineState.events : [];
+  if (!events.length) {
+    list.innerHTML = '<div class="history-empty">暂无事件</div>';
+    return;
+  }
+  list.innerHTML = events.slice().reverse().map(event => [
+    '<button class="timeline-event' + (selectedTimelineEventId === event.id ? ' active' : '') + '" type="button" onclick="selectTimelineEvent(decodeURIComponent(\'' + encodeURIComponent(String(event.id || '')) + '\'))">',
+    '<span class="timeline-event-time">' + escapeHtml(timelineEventTime(event.timestamp).slice(11) || '--') + '</span>',
+    '<span class="timeline-event-main">',
+    '<span class="timeline-event-title">' + escapeHtml(event.title || timelineTypeLabel(event.type)) + '</span>',
+    '<span class="timeline-event-summary">' + escapeHtml(event.summary || '暂无详情') + '</span>',
+    '<span class="timeline-event-type">' + escapeHtml(timelineTypeLabel(event.type)) + '</span>',
+    '</span>',
+    '</button>',
+  ].join('')).join('');
+}
+
+function selectTimelineEvent(id) {
+  selectedTimelineEventId = id;
+  renderTimelineList();
+  renderTimelineDetail();
+}
+
+function detailCell(label, value) {
+  const text = value == null || value === '' ? '暂无详情' : String(value);
+  return '<div class="timeline-detail-cell"><span>' + escapeHtml(label) + '</span><strong>' + escapeHtml(text) + '</strong></div>';
+}
+
+function renderTimelineDetail() {
+  const detail = document.getElementById('timelineDetail');
+  if (!detail) return;
+  const events = Array.isArray(eventTimelineState.events) ? eventTimelineState.events : [];
+  const event = events.find(item => item.id === selectedTimelineEventId);
+  if (!event) {
+    detail.innerHTML = '<div class="history-empty">选择一条事件查看详情</div>';
+    return;
+  }
+  const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
+  const cells = [
+    detailCell('类型', timelineTypeLabel(event.type)),
+    detailCell('来源', event.source),
+    detailCell('时间', timelineEventTime(event.timestamp)),
+  ];
+  let extras = '';
+  if (event.type === 'alert') {
+    cells.push(detailCell('等级', alertLevelLabel(payload.level)));
+    cells.push(detailCell('品种', alertModeLabel(payload.mode)));
+    cells.push(detailCell('读取状态', payload.read ? '已读' : '未读'));
+    cells.push(detailCell('处理状态', payload.acknowledged ? '已确认' : '未确认'));
+    if (Array.isArray(payload.related_news) && payload.related_news.length) {
+      extras += '<div class="timeline-detail-news">' + payload.related_news.slice(0, 3).map(item => (
+        '<a href="' + escapeHtml(item.url || '#') + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(item.title || '相关新闻') + '</a>'
+      )).join('') + '</div>';
+    }
+  } else if (event.type === 'risk_analysis') {
+    const structured = payload.structured || {};
+    const quality = payload.data_quality || {};
+    cells.push(detailCell('模型', [payload.provider, payload.model].filter(Boolean).join(' / ')));
+    cells.push(detailCell('可信度', quality.score == null ? '' : quality.score + '分'));
+    cells.push(detailCell('风险等级', structured.risk_level || ''));
+    cells.push(detailCell('主要因素', structured.key_factors || structured.main_factors || ''));
+  } else if (event.type === 'news') {
+    cells.push(detailCell('来源', payload.source));
+    cells.push(detailCell('主题', payload.topic));
+    if (payload.url) {
+      extras += '<div class="timeline-detail-news"><a href="' + escapeHtml(payload.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(payload.url) + '</a></div>';
+    }
+  } else if (event.type === 'data_status') {
+    cells.push(detailCell('状态', payload.cached ? '缓存' : (payload.ok === false ? '异常' : payload.status)));
+    cells.push(detailCell('说明', payload.error || payload.message));
+    if (payload.summary) cells.push(detailCell('价差比例', payload.summary.spread_pct == null ? '' : payload.summary.spread_pct + '%'));
+  } else if (event.type === 'price_summary') {
+    const summary = payload.summary || {};
+    const usd = summary.usd || {};
+    const rmb = summary.rmb || {};
+    cells.push(detailCell('价格点', payload.points));
+    cells.push(detailCell('USD/oz', usd.start == null ? '' : usd.start + ' -> ' + usd.end));
+    cells.push(detailCell('RMB/克', rmb.start == null ? '' : rmb.start + ' -> ' + rmb.end));
+  }
+  detail.innerHTML = [
+    '<div class="timeline-detail-title">' + escapeHtml(event.title || timelineTypeLabel(event.type)) + '</div>',
+    '<div class="timeline-detail-meta">' + escapeHtml(timelineEventTime(event.timestamp)) + ' · ' + escapeHtml(event.source || '--') + '</div>',
+    '<div class="timeline-detail-summary">' + escapeHtml(payload.message || payload.content || event.summary || '暂无详情') + '</div>',
+    '<div class="timeline-detail-grid">' + cells.join('') + '</div>',
+    extras,
+  ].join('');
+}
+
+function renderEventTimeline() {
+  renderTimelineSummary();
+  renderTimelineList();
+  renderTimelineDetail();
+}
+
+function exportReviewReport() {
+  setTimelineStatus('正在导出复盘报告...', '');
+  socket.emit('export_review_report', {
+    minutes: eventTimelineRange,
+    limit: 300,
+    types: eventTimelineTypes,
+  });
 }
 
 function exportHistoryCsv() {
@@ -3635,6 +3968,13 @@ function analyzeAlertFromDetail(id) {
   analyzeActiveAlert();
 }
 
+function resendAlertNotification(id) {
+  const status = document.getElementById('alertLogStatus');
+  status.textContent = '正在重新提交通知...';
+  status.className = 'log-status';
+  socket.emit('resend_alert_notification', { id });
+}
+
 function renderAlertDetail() {
   const detail = document.getElementById('alertDetail');
   if (!detail) return;
@@ -3663,6 +4003,7 @@ function renderAlertDetail() {
     '<div class="alert-detail-actions">',
     entry.read ? '' : '<button class="btn-clear-sm" type="button" onclick="updateAlertStatus(\'' + escapeHtml(entry.id) + '\', { read: true })">标为已读</button>',
     entry.acknowledged ? '' : '<button class="btn-clear-sm" type="button" onclick="acknowledgeAlert(\'' + escapeHtml(entry.id) + '\')">确认</button>',
+    '<button class="btn-clear-sm" type="button" onclick="resendAlertNotification(\'' + escapeHtml(entry.id) + '\')">重发通知</button>',
     '<button class="btn-clear-sm" type="button" onclick="analyzeAlertFromDetail(\'' + escapeHtml(entry.id) + '\')">风险分析</button>',
     '</div>',
   ].join('');
