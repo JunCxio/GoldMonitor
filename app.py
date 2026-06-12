@@ -123,6 +123,7 @@ def _run_macos_osascript(script, wait=False, timeout=4):
 APPDATA_DIR = os.path.join(_default_appdata_root(), "GoldMonitor")
 SETTINGS_PATH = os.path.join(APPDATA_DIR, "settings.json")
 THRESHOLDS_PATH = os.path.join(APPDATA_DIR, "thresholds.json")
+WATCH_TARGETS_PATH = os.path.join(APPDATA_DIR, "watch_targets.json")
 MARKET_CACHE_PATH = os.path.join(APPDATA_DIR, "market_cache.json")
 UPDATE_DIR = os.path.join(APPDATA_DIR, "updates")
 EXPORT_DIR = os.path.join(APPDATA_DIR, "exports")
@@ -299,6 +300,8 @@ RISK_STRUCTURED_SECTION_LABELS = (
 )
 THRESHOLD_MODES = ("usd", "rmb")
 THRESHOLD_TYPES = ("upper_warning", "upper_critical", "lower_warning", "lower_critical")
+WATCH_TARGET_DIRECTIONS = ("rise_to", "fall_to")
+WATCH_TARGET_NOTE_LIMIT = 200
 
 # ---------- 全局状态 ----------
 lock = threading.RLock()
@@ -344,6 +347,7 @@ for m in THRESHOLD_MODES:
 # 波动率预警
 volatility_config = {"percent": None, "minutes": 10, "enabled": False}
 last_volatility_check = None
+watch_targets = []
 
 # 警报去重: 记录每个阈值是否已经触发过 (避免每10秒重复报警)
 alerted_flags = {}  # key: "upper_critical_rmb" -> True/False
@@ -853,6 +857,298 @@ def save_thresholds(data=None):
     return normalized
 
 
+def _coerce_watch_target_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", ""}:
+        return False
+    return default
+
+
+def _generate_watch_target_id():
+    return "target-" + secrets.token_hex(8)
+
+
+def normalize_watch_target(item, existing=None):
+    if not isinstance(item, dict):
+        raise ValueError("观察项格式无效")
+
+    existing = existing if isinstance(existing, dict) else {}
+    now = datetime.now().isoformat(timespec="seconds")
+    target_id = str(item.get("id") or existing.get("id") or _generate_watch_target_id()).strip()
+    if not target_id or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for ch in target_id):
+        target_id = _generate_watch_target_id()
+
+    mode = str(item.get("mode", existing.get("mode", "rmb")) or "").strip().lower()
+    if mode not in THRESHOLD_MODES:
+        raise ValueError("观察单位无效")
+
+    direction = str(item.get("direction", existing.get("direction", "fall_to")) or "").strip().lower()
+    if direction not in WATCH_TARGET_DIRECTIONS:
+        raise ValueError("观察方向无效")
+
+    raw_price = item.get("price", existing.get("price"))
+    try:
+        price = float(raw_price)
+    except (TypeError, ValueError):
+        raise ValueError("请输入有效的目标价格")
+    if not math.isfinite(price) or price <= 0:
+        raise ValueError("请输入有效的目标价格")
+
+    previous_price = existing.get("price")
+    try:
+        previous_price = float(previous_price)
+    except (TypeError, ValueError):
+        previous_price = None
+    target_changed = (
+        existing
+        and (
+            existing.get("mode") != mode
+            or existing.get("direction") != direction
+            or previous_price != price
+        )
+    )
+
+    note = str(item.get("note", existing.get("note", "")) or "").strip()
+    if len(note) > WATCH_TARGET_NOTE_LIMIT:
+        note = note[:WATCH_TARGET_NOTE_LIMIT]
+
+    triggered = _coerce_watch_target_bool(item.get("triggered", existing.get("triggered", False)), False)
+    triggered_at = str(item.get("triggered_at", existing.get("triggered_at", "")) or "").strip()
+    last_trigger_price = item.get("last_trigger_price", existing.get("last_trigger_price"))
+    if last_trigger_price in (None, ""):
+        last_trigger_price = None
+    else:
+        try:
+            last_trigger_price = float(last_trigger_price)
+        except (TypeError, ValueError):
+            last_trigger_price = None
+
+    if target_changed:
+        triggered = False
+        triggered_at = ""
+        last_trigger_price = None
+
+    created_at = str(item.get("created_at") or existing.get("created_at") or now)
+    updated_at = now if existing else str(item.get("updated_at") or now)
+
+    return {
+        "id": target_id,
+        "mode": mode,
+        "direction": direction,
+        "price": price,
+        "note": note,
+        "enabled": _coerce_watch_target_bool(item.get("enabled", existing.get("enabled", True)), True),
+        "triggered": triggered,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "triggered_at": triggered_at if triggered else "",
+        "last_trigger_price": last_trigger_price if triggered else None,
+    }
+
+
+def normalize_watch_targets(items):
+    if not isinstance(items, list):
+        return []
+    normalized = []
+    seen = set()
+    for item in items:
+        try:
+            target = normalize_watch_target(item)
+        except ValueError:
+            continue
+        target_id = target.get("id")
+        if target_id in seen:
+            continue
+        seen.add(target_id)
+        normalized.append(target)
+    return normalized
+
+
+def load_watch_targets():
+    if not os.path.exists(WATCH_TARGETS_PATH):
+        return []
+    try:
+        with open(WATCH_TARGETS_PATH, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        if isinstance(payload, dict):
+            payload = payload.get("items", [])
+        return normalize_watch_targets(payload)
+    except (OSError, json.JSONDecodeError) as exc:
+        logging.warning("观察清单读取失败: %s", exc)
+        return []
+
+
+def save_watch_targets(items=None):
+    items = watch_targets if items is None else items
+    normalized = normalize_watch_targets(items)
+    os.makedirs(os.path.dirname(WATCH_TARGETS_PATH) or ".", exist_ok=True)
+    payload = {
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "items": normalized,
+    }
+    tmp_path = WATCH_TARGETS_PATH + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, WATCH_TARGETS_PATH)
+    return normalized
+
+
+def get_watch_targets_state():
+    with lock:
+        items = [dict(item) for item in watch_targets]
+    return {
+        "items": items,
+        "total": len(items),
+        "enabled": sum(1 for item in items if item.get("enabled")),
+        "triggered": sum(1 for item in items if item.get("triggered")),
+    }
+
+
+def _find_watch_target_index(target_id):
+    target_id = str(target_id or "").strip()
+    if not target_id:
+        return -1
+    for index, item in enumerate(watch_targets):
+        if isinstance(item, dict) and item.get("id") == target_id:
+            return index
+    return -1
+
+
+def upsert_watch_target(data):
+    global watch_targets
+    target_id = str((data or {}).get("id") or "").strip() if isinstance(data, dict) else ""
+    with lock:
+        index = _find_watch_target_index(target_id)
+        existing = watch_targets[index] if index >= 0 else None
+        target = normalize_watch_target(data, existing=existing)
+        if index >= 0:
+            watch_targets[index] = target
+        else:
+            watch_targets.append(target)
+        watch_targets = save_watch_targets(watch_targets)
+        return get_watch_targets_state()
+
+
+def delete_watch_target(target_id):
+    global watch_targets
+    with lock:
+        index = _find_watch_target_index(target_id)
+        if index < 0:
+            return False, get_watch_targets_state()
+        watch_targets.pop(index)
+        watch_targets = save_watch_targets(watch_targets)
+        return True, get_watch_targets_state()
+
+
+def toggle_watch_target(target_id, enabled):
+    global watch_targets
+    with lock:
+        index = _find_watch_target_index(target_id)
+        if index < 0:
+            return False, get_watch_targets_state()
+        updated = dict(watch_targets[index])
+        updated["enabled"] = _coerce_watch_target_bool(enabled, updated.get("enabled", True))
+        updated["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        watch_targets[index] = normalize_watch_target(updated, existing=watch_targets[index])
+        watch_targets = save_watch_targets(watch_targets)
+        return True, get_watch_targets_state()
+
+
+def reset_watch_target(target_id):
+    global watch_targets
+    with lock:
+        index = _find_watch_target_index(target_id)
+        if index < 0:
+            return False, get_watch_targets_state()
+        updated = dict(watch_targets[index])
+        updated["triggered"] = False
+        updated["triggered_at"] = ""
+        updated["last_trigger_price"] = None
+        updated["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        watch_targets[index] = normalize_watch_target(updated, existing=watch_targets[index])
+        watch_targets = save_watch_targets(watch_targets)
+        return True, get_watch_targets_state()
+
+
+def _watch_target_price_for_mode(mode):
+    if mode == "usd":
+        return price_usd
+    if mode == "rmb":
+        return price_rmb
+    return None
+
+
+def _watch_target_triggered(target, current_price):
+    if current_price is None:
+        return False
+    direction = target.get("direction")
+    target_price = target.get("price")
+    if target_price is None:
+        return False
+    if direction == "rise_to":
+        return current_price >= target_price
+    if direction == "fall_to":
+        return current_price <= target_price
+    return False
+
+
+def _watch_target_alert_message(target, current_price):
+    mode = target.get("mode")
+    unit = "$" if mode == "usd" else "¥"
+    mode_label = "国际金价" if mode == "usd" else "国内金价"
+    direction_label = "上涨至" if target.get("direction") == "rise_to" else "下跌至"
+    note = str(target.get("note") or "").strip()
+    note_part = f"；备注：{note}" if note else ""
+    return (
+        f"[{mode_label}] 目标价观察: 当前 {unit}{current_price:,.2f}，"
+        f"已{direction_label}目标 {unit}{target.get('price', 0):,.2f}{note_part}"
+    )
+
+
+def check_watch_targets(now_str):
+    global watch_targets
+    triggered_entries = []
+    with lock:
+        for index, target in enumerate(list(watch_targets)):
+            if not target.get("enabled") or target.get("triggered"):
+                continue
+            current_price = _watch_target_price_for_mode(target.get("mode"))
+            if not _watch_target_triggered(target, current_price):
+                continue
+            updated = dict(target)
+            updated["triggered"] = True
+            updated["triggered_at"] = datetime.now().isoformat(timespec="seconds")
+            updated["last_trigger_price"] = current_price
+            updated["updated_at"] = updated["triggered_at"]
+            watch_targets[index] = normalize_watch_target(updated, existing=target)
+            triggered_entries.append((watch_targets[index], current_price))
+        if not triggered_entries:
+            return []
+        watch_targets = save_watch_targets(watch_targets)
+        state = get_watch_targets_state()
+
+    socketio.emit("watch_targets_updated", state)
+    for target, current_price in triggered_entries:
+        alert_entry = {
+            "time": now_str,
+            "type": "warning",
+            "mode": target.get("mode"),
+            "message": _watch_target_alert_message(target, current_price),
+            "source": "watch_target",
+            "watch_target_id": target.get("id"),
+        }
+        emit_alert(alert_entry, "目标价观察提醒")
+    return [target for target, _current_price in triggered_entries]
+
+
 def _startup_command():
     exe = _current_executable()
     return f'"{exe}" --startup'
@@ -1225,6 +1521,7 @@ def build_diagnostics_report():
             "appdata": APPDATA_DIR,
             "settings": SETTINGS_PATH,
             "thresholds": THRESHOLDS_PATH,
+            "watch_targets": WATCH_TARGETS_PATH,
             "market_cache": MARKET_CACHE_PATH,
             "price_history": PRICE_HISTORY_PATH,
             "price_history_db": _price_history_db_path(),
@@ -1235,6 +1532,7 @@ def build_diagnostics_report():
         "fetch_status": get_fetch_status(),
         "source_health": get_source_health_state(),
         "price_history": build_price_history_state(limit=120),
+        "watch_targets": get_watch_targets_state(),
         "risk_history_count": len(get_risk_analysis_history_state().get("items", [])),
         "recent_alerts": list(alert_log[-20:]),
         "logs": read_log_tail(),
@@ -1631,6 +1929,7 @@ def initialize_market_cache():
 
 app_settings = load_settings()
 apply_persisted_threshold_state(load_thresholds())
+watch_targets = load_watch_targets()
 
 
 def find_available_port(preferred=DEFAULT_PORT):
@@ -4277,6 +4576,7 @@ def fetch_price_once():
                 _check_thresholds("usd", price_usd, now_str)
                 if price_rmb is not None:
                     _check_thresholds("rmb", price_rmb, now_str)
+                check_watch_targets(now_str)
 
                 # --- 检查波动率 ---
                 _check_volatility(now_str)
@@ -4480,6 +4780,7 @@ def on_connect(auth=None):
             "klines_5min": klines_5min[-72:],
             "thresholds": dict(thresholds),
             "volatility_config": dict(volatility_config),
+            "watch_targets": get_watch_targets_state(),
             "settings": public_settings_snapshot(),
             "alert_log": alert_log[-20:],
             "ok": last_fetch_ok,
@@ -4599,6 +4900,63 @@ def on_set_volatility(data):
             return
         volatility_config = saved_thresholds["volatility_config"]
         socketio.emit("volatility_updated", volatility_config)
+
+
+@socketio.on("set_watch_target")
+def on_set_watch_target(data):
+    try:
+        state = upsert_watch_target(data)
+    except ValueError as exc:
+        emit("watch_target_error", {"message": str(exc)})
+        return
+    except OSError:
+        emit("watch_target_error", {"message": "观察清单保存失败，请检查配置目录权限。"})
+        return
+    socketio.emit("watch_targets_updated", state)
+
+
+@socketio.on("delete_watch_target")
+def on_delete_watch_target(data=None):
+    target_id = data.get("id") if isinstance(data, dict) else None
+    try:
+        ok, state = delete_watch_target(target_id)
+    except OSError:
+        emit("watch_target_error", {"message": "观察清单保存失败，请检查配置目录权限。"})
+        return
+    if not ok:
+        emit("watch_target_error", {"message": "未找到观察项"})
+        return
+    socketio.emit("watch_targets_updated", state)
+
+
+@socketio.on("toggle_watch_target")
+def on_toggle_watch_target(data=None):
+    if not isinstance(data, dict):
+        emit("watch_target_error", {"message": "观察项格式无效"})
+        return
+    try:
+        ok, state = toggle_watch_target(data.get("id"), data.get("enabled"))
+    except (ValueError, OSError):
+        emit("watch_target_error", {"message": "观察清单保存失败，请检查配置目录权限。"})
+        return
+    if not ok:
+        emit("watch_target_error", {"message": "未找到观察项"})
+        return
+    socketio.emit("watch_targets_updated", state)
+
+
+@socketio.on("reset_watch_target")
+def on_reset_watch_target(data=None):
+    target_id = data.get("id") if isinstance(data, dict) else None
+    try:
+        ok, state = reset_watch_target(target_id)
+    except (ValueError, OSError):
+        emit("watch_target_error", {"message": "观察清单保存失败，请检查配置目录权限。"})
+        return
+    if not ok:
+        emit("watch_target_error", {"message": "未找到观察项"})
+        return
+    socketio.emit("watch_targets_updated", state)
 
 
 @socketio.on("get_settings")
