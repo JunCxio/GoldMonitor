@@ -1,6 +1,7 @@
 flask>=2.3
 flask-socketio>=5.3
 requests>=2.31
+pytest>=8.0
 win11toast>=0.36; sys_platform == "win32"
 pystray>=0.19; sys_platform == "win32"
 Pillow>=10.0; sys_platform == "win32"

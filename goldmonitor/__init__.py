@@ -1,0 +1,2 @@
+"""GoldMonitor shared application helpers."""
+

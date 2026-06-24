@@ -1,6 +1,4 @@
-import csv
 import hashlib
-import io
 import json
 import logging
 import math
@@ -13,16 +11,29 @@ import socket
 import sys
 import threading
 import time
-import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
-from email.mime.text import MIMEText
-from email.utils import formatdate, parsedate_to_datetime
-from urllib.parse import urljoin, urlparse
 import secrets
 
 import requests
 from flask import Flask, jsonify, render_template, request, send_from_directory
 from flask_socketio import SocketIO, emit
+from goldmonitor import desktop_ui as desktop_ui_core
+from goldmonitor import event_timeline as event_timeline_core
+from goldmonitor import market_data as market_data_core
+from goldmonitor import news as news_core
+from goldmonitor import notifications as notifications_core
+from goldmonitor import platform as platform_core
+from goldmonitor import risk_analysis as risk_analysis_core
+from goldmonitor import settings_store as settings_store_core
+from goldmonitor import support_files as support_files_core
+from goldmonitor import targets as targets_core
+from goldmonitor import update_manager as update_manager_core
+from goldmonitor.alert_log import AlertLogStore
+from goldmonitor.data_contracts import item_payload_metadata, unwrap_item_payload, wrap_item_payload
+from goldmonitor.diagnostics import build_health_summary
+from goldmonitor.platform import platform_capabilities as build_platform_capabilities
+from goldmonitor.platform import runtime_platform as detect_runtime_platform
+from goldmonitor.price_history import PriceHistoryStore
 
 # PyInstaller 打包后路径适配
 if getattr(sys, "frozen", False):
@@ -34,7 +45,7 @@ app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.4.2"
+APP_VERSION = "1.4.3"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 OFFICIAL_UPDATE_HOST = "github.com"
@@ -77,25 +88,11 @@ def _default_appdata_root():
 
 
 def _runtime_platform():
-    if sys.platform == "darwin":
-        return "macos"
-    if os.name == "nt":
-        return "windows"
-    return "other"
+    return detect_runtime_platform(sys.platform, os.name)
 
 
 def platform_capabilities():
-    platform = _runtime_platform()
-    return {
-        "platform": platform,
-        "has_system_tray": platform == "windows",
-        "has_menu_bar_status": platform == "macos",
-        "floating_price_mode": "floating_window" if platform == "windows" else ("menu_bar" if platform == "macos" else "none"),
-        "can_start_hidden": platform in {"windows", "macos"},
-        "can_system_notify": platform in {"windows", "macos"},
-        "can_system_alert_dialog": platform in {"windows", "macos"},
-        "can_system_sound": platform in {"windows", "macos"},
-    }
+    return build_platform_capabilities(_runtime_platform())
 
 
 def _applescript_string(value):
@@ -200,11 +197,7 @@ def _configure_logging():
 
 
 _configure_logging()
-NEWS_KEYWORDS = (
-    "gold", "xau", "xauusd", "bullion", "precious metal", "fed", "fomc",
-    "interest rate", "inflation", "cpi", "jobs", "nonfarm", "payroll",
-    "dollar", "yield", "central bank", "黄金", "金价", "通胀", "美元",
-)
+NEWS_KEYWORDS = news_core.NEWS_KEYWORDS
 DEFAULT_SETTINGS = {
     "startup_enabled": False,
     "startup_to_tray": True,
@@ -262,39 +255,8 @@ VALID_CLOSE_BEHAVIORS = {"ask", "minimize_to_tray", "exit"}
 VALID_RISK_ASSISTANT_PROVIDERS = {"deepseek", "openai_compatible"}
 VALID_RISK_ASSISTANT_DEPTHS = {"quick", "standard", "deep"}
 VALID_FLOATING_DISPLAY_MODES = {"rmb_usd", "rmb_only", "usd_only"}
-VALID_FLOATING_PRESETS = {"minimal", "compact", "standard"}
-FLOATING_PRICE_PRESETS = {
-    "minimal": {
-        "size": (178, 40),
-        "radius": 10,
-        "title_font": -13,
-        "meta_font": -9,
-        "status_font": -8,
-        "title_rect": (8, 2, -8, 20),
-        "meta_rect": (8, 19, -8, -2),
-        "status_rect": None,
-    },
-    "compact": {
-        "size": (220, 52),
-        "radius": 14,
-        "title_font": -15,
-        "meta_font": -10,
-        "status_font": -9,
-        "title_rect": (10, 3, -9, 21),
-        "meta_rect": (10, 21, -9, 36),
-        "status_rect": (10, 36, -9, -3),
-    },
-    "standard": {
-        "size": (292, 78),
-        "radius": 18,
-        "title_font": -17,
-        "meta_font": -12,
-        "status_font": -11,
-        "title_rect": (14, 7, -14, 30),
-        "meta_rect": (14, 31, -14, 52),
-        "status_rect": (14, 54, -14, -6),
-    },
-}
+VALID_FLOATING_PRESETS = set(desktop_ui_core.FLOATING_PRICE_PRESETS)
+FLOATING_PRICE_PRESETS = desktop_ui_core.FLOATING_PRICE_PRESETS
 DEEPSEEK_FALLBACK_MODELS = ("deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner")
 RISK_STRUCTURED_SECTION_LABELS = (
     ("risk_level", "风险等级"),
@@ -380,9 +342,11 @@ _alert_dialog_active = False
 
 # ---------- 设置与系统集成 ----------
 def _current_executable():
-    if getattr(sys, "frozen", False):
-        return sys.executable
-    return os.path.abspath(sys.argv[0])
+    return platform_core.current_executable(
+        getattr(sys, "frozen", False),
+        sys.executable,
+        sys.argv[0],
+    )
 
 
 def _credential_target_name(key):
@@ -586,173 +550,56 @@ def write_credential_secret(key, value):
     return False
 
 
+def _settings_options():
+    return {
+        "valid_smtp_encryptions": VALID_SMTP_ENCRYPTIONS,
+        "valid_close_behaviors": VALID_CLOSE_BEHAVIORS,
+        "valid_risk_assistant_providers": VALID_RISK_ASSISTANT_PROVIDERS,
+        "valid_risk_assistant_depths": VALID_RISK_ASSISTANT_DEPTHS,
+        "valid_floating_display_modes": VALID_FLOATING_DISPLAY_MODES,
+        "valid_floating_presets": VALID_FLOATING_PRESETS,
+        "default_email_subject_template": DEFAULT_EMAIL_SUBJECT_TEMPLATE,
+        "default_email_body_template": DEFAULT_EMAIL_BODY_TEMPLATE,
+        "risk_assistant_max_tokens": RISK_ASSISTANT_MAX_TOKENS,
+    }
+
+
+def _settings_store():
+    return settings_store_core.SettingsFileStore(
+        SETTINGS_PATH,
+        defaults=DEFAULT_SETTINGS,
+        options=_settings_options(),
+        secret_keys=SECRET_SETTING_KEYS,
+        read_secret=read_credential_secret,
+        write_secret=write_credential_secret,
+        credentials_required=os.name == "nt" or sys.platform == "darwin",
+        logger=logging,
+    )
+
+
 def apply_stored_secrets(settings):
-    merged = dict(settings)
-    for key in SECRET_SETTING_KEYS:
-        if merged.get(key):
-            continue
-        stored = read_credential_secret(key)
-        if stored:
-            merged[key] = stored
-    return merged
+    return settings_store_core.apply_stored_secrets(settings, SECRET_SETTING_KEYS, read_credential_secret)
 
 
 def persistable_settings_snapshot(settings, previous_settings=None):
-    persisted = dict(settings)
-    previous_settings = previous_settings or {}
-    credential_failures = []
-    for key in SECRET_SETTING_KEYS:
-        secret = str(persisted.get(key) or "")
-        if not secret:
-            if previous_settings.get(key):
-                write_credential_secret(key, "")
-            persisted[key] = ""
-            continue
-        if write_credential_secret(key, secret):
-            persisted[key] = ""
-        elif os.name == "nt" or sys.platform == "darwin":
-            credential_failures.append(key)
-        else:
-            logging.warning("系统凭据不可用，保留兼容配置字段: %s", key)
-    if credential_failures:
-        raise OSError("系统凭据写入失败: " + ", ".join(credential_failures))
-    return persisted
+    return settings_store_core.persistable_settings_snapshot(
+        settings,
+        SECRET_SETTING_KEYS,
+        write_credential_secret,
+        previous_settings=previous_settings,
+        credentials_required=os.name == "nt" or sys.platform == "darwin",
+        logger=logging,
+    )
 
 
 def _normalize_settings(raw):
-    data = dict(DEFAULT_SETTINGS)
-    if isinstance(raw, dict):
-        data.update(raw)
-
-    def optional_int(value):
-        if value in (None, ""):
-            return None
-        try:
-            number = int(float(value))
-        except (TypeError, ValueError):
-            return None
-        return number if -100000 <= number <= 100000 else None
-
-    def bounded_int(value, default, minimum, maximum):
-        try:
-            number = int(float(value))
-        except (TypeError, ValueError):
-            number = default
-        return max(minimum, min(maximum, number))
-
-    def normalize_hhmm(value):
-        text = str(value or "").strip()
-        if not text:
-            return ""
-        parts = text.split(":")
-        if len(parts) != 2:
-            return ""
-        try:
-            hour = int(parts[0])
-            minute = int(parts[1])
-        except ValueError:
-            return ""
-        if 0 <= hour <= 23 and 0 <= minute <= 59:
-            return f"{hour:02d}:{minute:02d}"
-        return ""
-
-    data["startup_enabled"] = bool(data.get("startup_enabled"))
-    data["startup_to_tray"] = bool(data.get("startup_to_tray"))
-    data["floating_price_enabled"] = bool(data.get("floating_price_enabled", True))
-    data["floating_price_position_saved"] = bool(data.get("floating_price_position_saved", False))
-    data["floating_price_x"] = optional_int(data.get("floating_price_x"))
-    data["floating_price_y"] = optional_int(data.get("floating_price_y"))
-    if data["floating_price_x"] is None or data["floating_price_y"] is None:
-        data["floating_price_position_saved"] = False
-        data["floating_price_x"] = None
-        data["floating_price_y"] = None
-    elif not data["floating_price_position_saved"]:
-        data["floating_price_x"] = None
-        data["floating_price_y"] = None
-    data["floating_price_opacity"] = bounded_int(data.get("floating_price_opacity", 94), 94, 50, 100)
-    if data.get("floating_price_display_mode") not in VALID_FLOATING_DISPLAY_MODES:
-        data["floating_price_display_mode"] = "rmb_usd"
-    if data.get("floating_price_preset") not in VALID_FLOATING_PRESETS:
-        data["floating_price_preset"] = DEFAULT_SETTINGS["floating_price_preset"]
-    data["floating_price_snap_edge"] = bool(data.get("floating_price_snap_edge", True))
-    data["close_remembered"] = bool(data.get("close_remembered"))
-    data["alert_sound_enabled"] = bool(data.get("alert_sound_enabled"))
-    data["alert_dialog_enabled"] = bool(data.get("alert_dialog_enabled"))
-    data.pop("update_manifest_url", None)
-    data.pop("update_auto_check_interval_hours", None)
-    if data.get("close_behavior") not in VALID_CLOSE_BEHAVIORS:
-        data["close_behavior"] = DEFAULT_SETTINGS["close_behavior"]
-        data["close_remembered"] = False
-    # 邮件通知
-    data["smtp_server"] = str(data.get("smtp_server") or "").strip()
-    data["smtp_port"] = str(data.get("smtp_port") or "465").strip()
-    if data.get("smtp_encryption") not in VALID_SMTP_ENCRYPTIONS:
-        data["smtp_encryption"] = "ssl"
-    data["smtp_sender"] = str(data.get("smtp_sender") or "").strip()
-    data["smtp_password"] = str(data.get("smtp_password") or "")
-    data["smtp_recipient"] = str(data.get("smtp_recipient") or "").strip()
-    data["webhook_enabled"] = bool(data.get("webhook_enabled", False))
-    data["webhook_url"] = str(data.get("webhook_url") or "").strip()
-    data["webhook_warning_enabled"] = bool(data.get("webhook_warning_enabled", True))
-    data["webhook_critical_enabled"] = bool(data.get("webhook_critical_enabled", True))
-    data["webhook_volatility_enabled"] = bool(data.get("webhook_volatility_enabled", True))
-    data["email_warning_enabled"] = bool(data.get("email_warning_enabled", True))
-    data["email_critical_enabled"] = bool(data.get("email_critical_enabled", True))
-    data["email_volatility_enabled"] = bool(data.get("email_volatility_enabled", True))
-    data["alert_cooldown_minutes"] = bounded_int(data.get("alert_cooldown_minutes", 30), 30, 0, 240)
-    data["alert_quiet_start"] = normalize_hhmm(data.get("alert_quiet_start"))
-    data["alert_quiet_end"] = normalize_hhmm(data.get("alert_quiet_end"))
-    data["email_subject_template"] = str(data.get("email_subject_template") or DEFAULT_EMAIL_SUBJECT_TEMPLATE)
-    data["email_body_template"] = str(data.get("email_body_template") or DEFAULT_EMAIL_BODY_TEMPLATE)
-    # 风险分析助手
-    data["risk_assistant_enabled"] = bool(data.get("risk_assistant_enabled", True))
-    if data.get("risk_assistant_provider") not in VALID_RISK_ASSISTANT_PROVIDERS:
-        data["risk_assistant_provider"] = "deepseek"
-    if data.get("risk_assistant_depth") not in VALID_RISK_ASSISTANT_DEPTHS:
-        data["risk_assistant_depth"] = "standard"
-    data["deepseek_base_url"] = str(data.get("deepseek_base_url") or DEFAULT_SETTINGS["deepseek_base_url"]).strip().rstrip("/")
-    if not data["deepseek_base_url"]:
-        data["deepseek_base_url"] = DEFAULT_SETTINGS["deepseek_base_url"]
-    data["deepseek_model"] = str(data.get("deepseek_model") or DEFAULT_SETTINGS["deepseek_model"]).strip()
-    data["deepseek_api_key"] = str(data.get("deepseek_api_key") or "").strip()
-    data["openai_compatible_base_url"] = str(data.get("openai_compatible_base_url") or "").strip().rstrip("/")
-    data["openai_compatible_model"] = str(data.get("openai_compatible_model") or "").strip()
-    data["openai_compatible_api_key"] = str(data.get("openai_compatible_api_key") or "").strip()
-    try:
-        max_tokens = int(float(data.get("risk_assistant_max_tokens", RISK_ASSISTANT_MAX_TOKENS)))
-    except (TypeError, ValueError):
-        max_tokens = RISK_ASSISTANT_MAX_TOKENS
-    data["risk_assistant_max_tokens"] = max(300, min(4000, max_tokens))
-    try:
-        cooldown = int(float(data.get("risk_assistant_cooldown_seconds", 15)))
-    except (TypeError, ValueError):
-        cooldown = 15
-    data["risk_assistant_cooldown_seconds"] = max(0, min(300, cooldown))
-    try:
-        cache_minutes = int(float(data.get("risk_assistant_cache_minutes", 10)))
-    except (TypeError, ValueError):
-        cache_minutes = 10
-    data["risk_assistant_cache_minutes"] = max(0, min(60, cache_minutes))
-    return data
+    return settings_store_core.normalize_settings(raw, DEFAULT_SETTINGS, _settings_options())
 
 
 def load_settings():
     global last_settings_error
-    os.makedirs(APPDATA_DIR, exist_ok=True)
-    loaded = {}
-    if os.path.exists(SETTINGS_PATH):
-        try:
-            with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-        except (OSError, json.JSONDecodeError) as exc:
-            last_settings_error = str(exc)
-            loaded = {}
-
-    data = apply_stored_secrets(_normalize_settings(loaded))
-    try:
-        save_settings(data)
-    except OSError as exc:
-        last_settings_error = str(exc)
+    data, error = _settings_store().load()
+    last_settings_error = error or None
     return data
 
 
@@ -761,13 +608,7 @@ def save_settings(data=None):
     with settings_lock:
         if data is None:
             data = app_settings
-        normalized = _normalize_settings(data)
-        persisted = persistable_settings_snapshot(normalized, app_settings)
-        os.makedirs(APPDATA_DIR, exist_ok=True)
-        tmp_path = SETTINGS_PATH + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(persisted, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, SETTINGS_PATH)
+        normalized = _settings_store().save(data, previous_settings=app_settings)
         app_settings = normalized
         last_settings_error = None
         return dict(app_settings)
@@ -779,28 +620,17 @@ def get_settings_snapshot():
 
 
 def mask_secret(value):
-    value = str(value or "")
-    if not value:
-        return ""
-    if len(value) <= 8:
-        return "*" * len(value)
-    return f"{value[:4]}{'*' * 8}{value[-4:]}"
+    return settings_store_core.mask_secret(value)
 
 
 def public_settings_snapshot(settings=None):
     snapshot = dict(settings or get_settings_snapshot())
-    snapshot["platform"] = _runtime_platform()
-    snapshot["platform_capabilities"] = platform_capabilities()
-    api_key = snapshot.pop("deepseek_api_key", "")
-    snapshot["deepseek_api_key_configured"] = bool(api_key)
-    snapshot["deepseek_api_key_masked"] = mask_secret(api_key)
-    compatible_key = snapshot.pop("openai_compatible_api_key", "")
-    snapshot["openai_compatible_api_key_configured"] = bool(compatible_key)
-    snapshot["openai_compatible_api_key_masked"] = mask_secret(compatible_key)
-    smtp_password = snapshot.pop("smtp_password", "")
-    snapshot["smtp_password_configured"] = bool(smtp_password)
-    snapshot["smtp_password_masked"] = mask_secret(smtp_password)
-    return snapshot
+    return settings_store_core.build_public_settings_snapshot(
+        snapshot,
+        SECRET_SETTING_KEYS,
+        platform=_runtime_platform(),
+        platform_capabilities=platform_capabilities(),
+    )
 
 
 def diagnostic_settings_snapshot(settings=None):
@@ -808,224 +638,78 @@ def diagnostic_settings_snapshot(settings=None):
 
 
 def _normalize_volatility_config(raw):
-    data = {"percent": None, "minutes": 10, "enabled": False}
-    if isinstance(raw, dict):
-        try:
-            percent = float(raw["percent"]) if raw.get("percent") not in (None, "") else None
-            data["percent"] = percent if percent is not None and math.isfinite(percent) and percent > 0 else None
-        except (TypeError, ValueError):
-            data["percent"] = None
-        try:
-            data["minutes"] = max(1, int(raw.get("minutes", 10)))
-        except (TypeError, ValueError):
-            data["minutes"] = 10
-        data["enabled"] = bool(raw.get("enabled")) and data["percent"] is not None
-    return data
+    return targets_core.normalize_volatility_config(raw)
 
 
 def _normalize_thresholds(raw):
-    data = dict(thresholds)
-    if isinstance(raw, dict):
-        for key in data:
-            value = raw.get(key)
-            if value in (None, ""):
-                data[key] = None
-                continue
-            try:
-                data[key] = float(value)
-            except (TypeError, ValueError):
-                data[key] = None
-        data["volatility_config"] = _normalize_volatility_config(raw.get("volatility_config", volatility_config))
-    else:
-        data["volatility_config"] = _normalize_volatility_config(volatility_config)
-    return data
+    return targets_core.normalize_thresholds(raw, thresholds, volatility_config)
 
 
 def load_thresholds():
-    if not os.path.exists(THRESHOLDS_PATH):
-        return _normalize_thresholds({})
-    try:
-        with open(THRESHOLDS_PATH, "r", encoding="utf-8") as f:
-            return _normalize_thresholds(json.load(f))
-    except (OSError, json.JSONDecodeError):
-        return _normalize_thresholds({})
+    return targets_core.ThresholdStore(
+        THRESHOLDS_PATH,
+        thresholds,
+        current_volatility_config=volatility_config,
+    ).load()
 
 
 def save_thresholds(data=None):
     if data is None:
         data = thresholds
-    normalized = _normalize_thresholds(data)
-    os.makedirs(APPDATA_DIR, exist_ok=True)
-    tmp_path = THRESHOLDS_PATH + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(normalized, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, THRESHOLDS_PATH)
-    return normalized
+    return targets_core.ThresholdStore(
+        THRESHOLDS_PATH,
+        thresholds,
+        current_volatility_config=volatility_config,
+    ).save(data)
 
 
 def _coerce_watch_target_bool(value, default=False):
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return default
-    if isinstance(value, (int, float)):
-        return bool(value)
-    text = str(value).strip().lower()
-    if text in {"1", "true", "yes", "on"}:
-        return True
-    if text in {"0", "false", "no", "off", ""}:
-        return False
-    return default
+    return targets_core.coerce_watch_target_bool(value, default)
 
 
 def _generate_watch_target_id():
-    return "target-" + secrets.token_hex(8)
+    return targets_core.generate_watch_target_id()
 
 
 def normalize_watch_target(item, existing=None):
-    if not isinstance(item, dict):
-        raise ValueError("观察项格式无效")
-
-    existing = existing if isinstance(existing, dict) else {}
-    now = datetime.now().isoformat(timespec="seconds")
-    target_id = str(item.get("id") or existing.get("id") or _generate_watch_target_id()).strip()
-    if not target_id or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for ch in target_id):
-        target_id = _generate_watch_target_id()
-
-    mode = str(item.get("mode", existing.get("mode", "rmb")) or "").strip().lower()
-    if mode not in THRESHOLD_MODES:
-        raise ValueError("观察单位无效")
-
-    direction = str(item.get("direction", existing.get("direction", "fall_to")) or "").strip().lower()
-    if direction not in WATCH_TARGET_DIRECTIONS:
-        raise ValueError("观察方向无效")
-
-    raw_price = item.get("price", existing.get("price"))
-    try:
-        price = float(raw_price)
-    except (TypeError, ValueError):
-        raise ValueError("请输入有效的目标价格")
-    if not math.isfinite(price) or price <= 0:
-        raise ValueError("请输入有效的目标价格")
-
-    previous_price = existing.get("price")
-    try:
-        previous_price = float(previous_price)
-    except (TypeError, ValueError):
-        previous_price = None
-    target_changed = (
-        existing
-        and (
-            existing.get("mode") != mode
-            or existing.get("direction") != direction
-            or previous_price != price
-        )
+    return targets_core.normalize_watch_target(
+        item,
+        existing=existing,
+        now_factory=datetime.now,
+        id_factory=_generate_watch_target_id,
+        note_limit=WATCH_TARGET_NOTE_LIMIT,
     )
-
-    note = str(item.get("note", existing.get("note", "")) or "").strip()
-    if len(note) > WATCH_TARGET_NOTE_LIMIT:
-        note = note[:WATCH_TARGET_NOTE_LIMIT]
-
-    triggered = _coerce_watch_target_bool(item.get("triggered", existing.get("triggered", False)), False)
-    triggered_at = str(item.get("triggered_at", existing.get("triggered_at", "")) or "").strip()
-    last_trigger_price = item.get("last_trigger_price", existing.get("last_trigger_price"))
-    if last_trigger_price in (None, ""):
-        last_trigger_price = None
-    else:
-        try:
-            last_trigger_price = float(last_trigger_price)
-        except (TypeError, ValueError):
-            last_trigger_price = None
-
-    if target_changed:
-        triggered = False
-        triggered_at = ""
-        last_trigger_price = None
-
-    created_at = str(item.get("created_at") or existing.get("created_at") or now)
-    updated_at = now if existing else str(item.get("updated_at") or now)
-
-    return {
-        "id": target_id,
-        "mode": mode,
-        "direction": direction,
-        "price": price,
-        "note": note,
-        "enabled": _coerce_watch_target_bool(item.get("enabled", existing.get("enabled", True)), True),
-        "triggered": triggered,
-        "created_at": created_at,
-        "updated_at": updated_at,
-        "triggered_at": triggered_at if triggered else "",
-        "last_trigger_price": last_trigger_price if triggered else None,
-    }
 
 
 def normalize_watch_targets(items):
-    if not isinstance(items, list):
-        return []
-    normalized = []
-    seen = set()
-    for item in items:
-        try:
-            target = normalize_watch_target(item)
-        except ValueError:
-            continue
-        target_id = target.get("id")
-        if target_id in seen:
-            continue
-        seen.add(target_id)
-        normalized.append(target)
-    return normalized
+    return targets_core.normalize_watch_targets(items, now_factory=datetime.now, id_factory=_generate_watch_target_id)
 
 
 def load_watch_targets():
-    if not os.path.exists(WATCH_TARGETS_PATH):
-        return []
-    try:
-        with open(WATCH_TARGETS_PATH, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-        if isinstance(payload, dict):
-            payload = payload.get("items", [])
-        return normalize_watch_targets(payload)
-    except (OSError, json.JSONDecodeError) as exc:
-        logging.warning("观察清单读取失败: %s", exc)
-        return []
+    return targets_core.WatchTargetStore(
+        WATCH_TARGETS_PATH,
+        now_factory=datetime.now,
+        id_factory=_generate_watch_target_id,
+    ).load()
 
 
 def save_watch_targets(items=None):
     items = watch_targets if items is None else items
-    normalized = normalize_watch_targets(items)
-    os.makedirs(os.path.dirname(WATCH_TARGETS_PATH) or ".", exist_ok=True)
-    payload = {
-        "updated_at": datetime.now().isoformat(timespec="seconds"),
-        "items": normalized,
-    }
-    tmp_path = WATCH_TARGETS_PATH + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, WATCH_TARGETS_PATH)
-    return normalized
+    return targets_core.WatchTargetStore(
+        WATCH_TARGETS_PATH,
+        now_factory=datetime.now,
+        id_factory=_generate_watch_target_id,
+    ).save(items)
 
 
 def get_watch_targets_state():
     with lock:
         items = [dict(item) for item in watch_targets]
-    return {
-        "items": items,
-        "total": len(items),
-        "enabled": sum(1 for item in items if item.get("enabled")),
-        "triggered": sum(1 for item in items if item.get("triggered")),
-    }
+    return targets_core.watch_targets_state(items)
 
 
 def _find_watch_target_index(target_id):
-    target_id = str(target_id or "").strip()
-    if not target_id:
-        return -1
-    for index, item in enumerate(watch_targets):
-        if isinstance(item, dict) and item.get("id") == target_id:
-            return index
-    return -1
+    return targets_core.find_watch_target_index(watch_targets, target_id)
 
 
 def upsert_watch_target(data):
@@ -1093,56 +777,30 @@ def _watch_target_price_for_mode(mode):
 
 
 def _watch_target_triggered(target, current_price):
-    if current_price is None:
-        return False
-    direction = target.get("direction")
-    target_price = target.get("price")
-    if target_price is None:
-        return False
-    if direction == "rise_to":
-        return current_price >= target_price
-    if direction == "fall_to":
-        return current_price <= target_price
-    return False
+    return targets_core.watch_target_triggered(target, current_price)
 
 
 def _watch_target_alert_message(target, current_price):
-    mode = target.get("mode")
-    unit = "$" if mode == "usd" else "¥"
-    mode_label = "国际金价" if mode == "usd" else "国内金价"
-    direction_label = "上涨至" if target.get("direction") == "rise_to" else "下跌至"
-    note = str(target.get("note") or "").strip()
-    note_part = f"；备注：{note}" if note else ""
-    return (
-        f"[{mode_label}] 目标价观察: 当前 {unit}{current_price:,.2f}，"
-        f"已{direction_label}目标 {unit}{target.get('price', 0):,.2f}{note_part}"
-    )
+    return targets_core.build_watch_target_alert_message(target, current_price)
 
 
 def check_watch_targets(now_str):
     global watch_targets
-    triggered_entries = []
     with lock:
-        for index, target in enumerate(list(watch_targets)):
-            if not target.get("enabled") or target.get("triggered"):
-                continue
-            current_price = _watch_target_price_for_mode(target.get("mode"))
-            if not _watch_target_triggered(target, current_price):
-                continue
-            updated = dict(target)
-            updated["triggered"] = True
-            updated["triggered_at"] = datetime.now().isoformat(timespec="seconds")
-            updated["last_trigger_price"] = current_price
-            updated["updated_at"] = updated["triggered_at"]
-            watch_targets[index] = normalize_watch_target(updated, existing=target)
-            triggered_entries.append((watch_targets[index], current_price))
+        watch_targets, triggered_entries = targets_core.check_watch_targets(
+            watch_targets,
+            prices={"usd": price_usd, "rmb": price_rmb},
+            now_factory=datetime.now,
+        )
         if not triggered_entries:
             return []
         watch_targets = save_watch_targets(watch_targets)
         state = get_watch_targets_state()
 
     socketio.emit("watch_targets_updated", state)
-    for target, current_price in triggered_entries:
+    for item in triggered_entries:
+        target = item["target"]
+        current_price = item["current_price"]
         alert_entry = {
             "time": now_str,
             "type": "warning",
@@ -1152,22 +810,24 @@ def check_watch_targets(now_str):
             "watch_target_id": target.get("id"),
         }
         emit_alert(alert_entry, "目标价观察提醒")
-    return [target for target, _current_price in triggered_entries]
+    return [item["target"] for item in triggered_entries]
 
 
 def _startup_command():
     exe = _current_executable()
-    return f'"{exe}" --startup'
+    return platform_core.build_startup_command(exe)
 
 
 def _macos_launch_agent_path():
-    return os.path.join(os.path.expanduser("~"), "Library", "LaunchAgents", f"{MACOS_LAUNCH_AGENT_ID}.plist")
+    return platform_core.macos_launch_agent_path(os.path.expanduser("~"), MACOS_LAUNCH_AGENT_ID)
 
 
 def _macos_startup_arguments():
-    if getattr(sys, "frozen", False):
-        return [sys.executable, "--startup"]
-    return [sys.executable, os.path.abspath(sys.argv[0]), "--startup"]
+    return platform_core.build_macos_startup_arguments(
+        getattr(sys, "frozen", False),
+        sys.executable,
+        sys.argv[0],
+    )
 
 
 def _set_macos_startup_enabled(enabled):
@@ -1175,13 +835,12 @@ def _set_macos_startup_enabled(enabled):
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if enabled:
-            payload = {
-                "Label": MACOS_LAUNCH_AGENT_ID,
-                "ProgramArguments": _macos_startup_arguments(),
-                "RunAtLoad": True,
-                "KeepAlive": False,
-                "WorkingDirectory": os.path.dirname(_current_executable()) or os.path.expanduser("~"),
-            }
+            payload = platform_core.build_macos_launch_agent_payload(
+                MACOS_LAUNCH_AGENT_ID,
+                _macos_startup_arguments(),
+                _current_executable(),
+                os.path.expanduser("~"),
+            )
             with open(path, "wb") as f:
                 plistlib.dump(payload, f, sort_keys=False)
             subprocess.run(["launchctl", "unload", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3, check=False)
@@ -1200,8 +859,9 @@ def _set_macos_startup_enabled(enabled):
 def set_startup_enabled(enabled):
     if sys.platform == "darwin":
         return _set_macos_startup_enabled(enabled)
-    if os.name != "nt":
-        return (True, None) if not enabled else (False, "当前平台不支持开机自启动")
+    supported, error = platform_core.startup_support_result(enabled, sys.platform, os.name)
+    if supported is not None:
+        return supported, error
     try:
         import winreg
 
@@ -1230,13 +890,7 @@ def apply_settings(data):
 
 def settings_payload_for_import(settings_payload):
     current = get_settings_snapshot()
-    imported = dict(DEFAULT_SETTINGS)
-    if isinstance(settings_payload, dict):
-        imported.update({key: value for key, value in settings_payload.items() if key in DEFAULT_SETTINGS})
-    for key in SECRET_SETTING_KEYS:
-        if key not in settings_payload:
-            imported[key] = current.get(key, "")
-    return imported
+    return settings_store_core.settings_payload_for_import(settings_payload, current, DEFAULT_SETTINGS, SECRET_SETTING_KEYS)
 
 
 def apply_persisted_threshold_state(data):
@@ -1253,42 +907,21 @@ def is_socket_authorized(auth):
 
 
 def compare_versions(left, right):
-    def parts(value):
-        normalized = []
-        for part in str(value or "0").split("."):
-            digits = "".join(ch for ch in part if ch.isdigit())
-            normalized.append(int(digits or 0))
-        return normalized
-
-    left_parts = parts(left)
-    right_parts = parts(right)
-    max_len = max(len(left_parts), len(right_parts))
-    left_parts.extend([0] * (max_len - len(left_parts)))
-    right_parts.extend([0] * (max_len - len(right_parts)))
-    if left_parts > right_parts:
-        return 1
-    if left_parts < right_parts:
-        return -1
-    return 0
+    return update_manager_core.compare_versions(left, right)
 
 
 def _require_https_url(value, label):
-    parsed = urlparse(str(value or "").strip())
-    if parsed.scheme != "https" or not parsed.netloc:
-        raise ValueError(f"{label}必须使用 HTTPS 地址")
+    return update_manager_core.require_https_url(value, label)
 
 
 def _require_official_update_url(value, label, allowed_names=None):
-    _require_https_url(value, label)
-    parsed = urlparse(str(value or "").strip())
-    host = parsed.netloc.lower()
-    path = parsed.path
-    if host != OFFICIAL_UPDATE_HOST or not path.lower().startswith(OFFICIAL_UPDATE_PATH_PREFIX.lower()):
-        raise ValueError(f"{label}必须使用官方 GitHub Release 地址")
-    if allowed_names is not None:
-        name = path.rsplit("/", 1)[-1]
-        if name not in allowed_names:
-            raise ValueError(f"{label}文件名无效")
+    return update_manager_core.require_official_update_url(
+        value,
+        label,
+        allowed_names,
+        official_host=OFFICIAL_UPDATE_HOST,
+        official_path_prefix=OFFICIAL_UPDATE_PATH_PREFIX,
+    )
 
 
 def get_update_manifest_url():
@@ -1296,51 +929,18 @@ def get_update_manifest_url():
 
 
 def _platform_update_key():
-    if sys.platform == "darwin":
-        return "macos"
-    if os.name == "nt":
-        return "windows"
-    return ""
+    return update_manager_core.platform_update_key(sys_platform=sys.platform, os_name=os.name)
 
 
 def normalize_update_manifest(raw, base_url=None):
-    if not isinstance(raw, dict):
-        raise ValueError("更新清单格式无效")
-
-    version = str(raw.get("version") or "").strip()
-    notes = str(raw.get("notes") or "").strip()
-    download_url = str(raw.get("url") or raw.get("download_url") or "").strip()
-    sha256 = str(raw.get("sha256") or "").strip().lower()
-    downloads = raw.get("downloads")
-    platform_key = _platform_update_key()
-
-    if isinstance(downloads, dict) and platform_key:
-        platform_payload = downloads.get(platform_key)
-        if platform_payload is None and platform_key != "windows":
-            raise ValueError("当前平台暂无可用更新包")
-        if isinstance(platform_payload, dict):
-            download_url = str(platform_payload.get("url") or platform_payload.get("download_url") or "").strip()
-            sha256 = str(platform_payload.get("sha256") or "").strip().lower()
-
-    if base_url and download_url:
-        download_url = urljoin(base_url, download_url)
-
-    if not version:
-        raise ValueError("更新清单缺少版本号")
-    if not download_url:
-        raise ValueError("更新清单缺少安装包地址")
-    _require_official_update_url(download_url, "更新安装包", OFFICIAL_UPDATE_ASSET_NAMES)
-    if not sha256:
-        raise ValueError("更新清单缺少安装包 sha256")
-    if sha256 and (len(sha256) != 64 or any(ch not in "0123456789abcdef" for ch in sha256)):
-        raise ValueError("更新清单 sha256 格式无效")
-
-    return {
-        "version": version,
-        "url": download_url,
-        "notes": notes,
-        "sha256": sha256,
-    }
+    return update_manager_core.normalize_update_manifest(
+        raw,
+        base_url=base_url,
+        platform_key=_platform_update_key(),
+        official_host=OFFICIAL_UPDATE_HOST,
+        official_path_prefix=OFFICIAL_UPDATE_PATH_PREFIX,
+        asset_names=OFFICIAL_UPDATE_ASSET_NAMES,
+    )
 
 
 def fetch_update_manifest(manifest_url=None):
@@ -1355,25 +955,13 @@ def fetch_update_manifest(manifest_url=None):
 
 def get_update_status(expose_download=False):
     manifest_url = get_update_manifest_url()
-    status = {
-        "current_version": APP_VERSION,
-        "checked_at": datetime.now().isoformat(timespec="seconds"),
-    }
-
     manifest = fetch_update_manifest(manifest_url)
-    has_update = compare_versions(manifest["version"], APP_VERSION) > 0
-    status.update({
-        "state": "available" if has_update else "latest",
-        "latest_version": manifest["version"],
-        "notes": manifest["notes"],
-        "message": "发现新版本。" if has_update else "当前已是最新版本。",
-    })
-    if has_update and expose_download:
-        status.update({
-            "url": manifest["url"],
-            "sha256": manifest["sha256"],
-        })
-    return status
+    return update_manager_core.build_update_status(
+        manifest,
+        APP_VERSION,
+        now=datetime.now(),
+        expose_download=expose_download,
+    )
 
 
 def download_update_installer(update_info, progress_callback=None):
@@ -1414,73 +1002,47 @@ def download_update_installer(update_info, progress_callback=None):
 def launch_update_installer(installer_path):
     if not os.path.exists(installer_path):
         raise FileNotFoundError(installer_path)
-    if os.name == "nt":
-        args = [
-            installer_path,
-            "/CURRENTUSER",
-            "/CLOSEAPPLICATIONS",
-        ]
-        creationflags = (
-            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            | getattr(subprocess, "DETACHED_PROCESS", 0)
-        )
-        subprocess.Popen(
-            args,
-            close_fds=True,
-            cwd=os.path.dirname(installer_path) or None,
-            creationflags=creationflags,
-        )
-        return
-
-    if sys.platform == "darwin":
-        subprocess.Popen(["open", installer_path], close_fds=True)
-        return
-
-    subprocess.Popen([installer_path], close_fds=True)
+    plan = update_manager_core.build_installer_launch_plan(
+        installer_path,
+        os_name=os.name,
+        sys_platform=sys.platform,
+        create_new_process_group=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+        detached_process=getattr(subprocess, "DETACHED_PROCESS", 0),
+    )
+    subprocess.Popen(plan["args"], **plan["kwargs"])
 
 
 def read_log_tail(max_lines=120):
-    if not os.path.exists(APP_LOG_PATH):
-        return []
-    try:
-        with open(APP_LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
-        return [line.rstrip("\n") for line in lines[-max_lines:]]
-    except OSError:
-        return []
+    return support_files_core.read_log_tail(APP_LOG_PATH, max_lines=max_lines)
+
+
+def _json_payload_metadata(path):
+    return support_files_core.json_payload_metadata(path)
 
 
 def build_config_backup():
-    return {
-        "app": "GoldMonitor",
-        "version": APP_VERSION,
-        "exported_at": datetime.now().isoformat(timespec="seconds"),
-        "settings": public_settings_snapshot(),
-        "thresholds": {
+    return support_files_core.build_config_backup(
+        APP_VERSION,
+        public_settings_snapshot(),
+        {
             **{key: thresholds.get(key) for key in thresholds},
             "volatility_config": dict(volatility_config),
         },
-    }
+        now_factory=datetime.now,
+    )
 
 
 def save_export_file(filename, content):
-    os.makedirs(EXPORT_DIR, exist_ok=True)
-    safe_name = os.path.basename(filename)
-    path = os.path.join(EXPORT_DIR, safe_name)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
-    return path
+    return support_files_core.save_export_file(EXPORT_DIR, filename, content)
 
 
 def open_exports_folder():
     os.makedirs(EXPORT_DIR, exist_ok=True)
-    if os.name == "nt":
-        os.startfile(EXPORT_DIR)  # type: ignore[attr-defined]
+    plan = support_files_core.build_open_folder_plan(EXPORT_DIR, os_name=os.name, sys_platform=sys.platform)
+    if plan["kind"] == "startfile":
+        os.startfile(plan["path"])  # type: ignore[attr-defined]
         return
-    if sys.platform == "darwin":
-        subprocess.Popen(["open", EXPORT_DIR], close_fds=True)
-        return
-    subprocess.Popen(["xdg-open", EXPORT_DIR], close_fds=True)
+    subprocess.Popen(plan["args"], **plan["kwargs"])
 
 
 def restore_config_backup(payload):
@@ -1519,28 +1081,50 @@ def reset_to_default_settings():
 
 
 def build_diagnostics_report():
+    paths = {
+        "appdata": APPDATA_DIR,
+        "settings": SETTINGS_PATH,
+        "thresholds": THRESHOLDS_PATH,
+        "watch_targets": WATCH_TARGETS_PATH,
+        "market_cache": MARKET_CACHE_PATH,
+        "price_history": PRICE_HISTORY_PATH,
+        "price_history_db": _price_history_db_path(),
+        "alert_log_db": _alert_log_db_path(),
+        "log": APP_LOG_PATH,
+    }
+    fetch_status = get_fetch_status()
+    source_health_state = get_source_health_state()
+    price_history_state = build_price_history_state(limit=120)
+    watch_targets_state = get_watch_targets_state()
+    risk_history_count = len(get_risk_analysis_history_state().get("items", []))
+    recent_alerts = list(alert_log[-20:])
     report = {
         "app": APP_NAME,
         "version": APP_VERSION,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "paths": {
-            "appdata": APPDATA_DIR,
-            "settings": SETTINGS_PATH,
-            "thresholds": THRESHOLDS_PATH,
-            "watch_targets": WATCH_TARGETS_PATH,
-            "market_cache": MARKET_CACHE_PATH,
-            "price_history": PRICE_HISTORY_PATH,
-            "price_history_db": _price_history_db_path(),
-            "alert_log_db": _alert_log_db_path(),
-            "log": APP_LOG_PATH,
+        "paths": paths,
+        "health_summary": build_health_summary(
+            fetch_status=fetch_status,
+            source_health=source_health_state,
+            price_history=price_history_state,
+            watch_targets=watch_targets_state,
+            risk_history_count=risk_history_count,
+            recent_alerts=recent_alerts,
+            paths=paths,
+        ),
+        "data_schemas": {
+            "watch_targets": _json_payload_metadata(WATCH_TARGETS_PATH),
+            "news": _json_payload_metadata(NEWS_CACHE_PATH),
+            "risk_analysis_history": _json_payload_metadata(RISK_ANALYSIS_HISTORY_PATH),
+            "price_history": _json_payload_metadata(PRICE_HISTORY_PATH),
         },
         "settings": diagnostic_settings_snapshot(),
-        "fetch_status": get_fetch_status(),
-        "source_health": get_source_health_state(),
-        "price_history": build_price_history_state(limit=120),
-        "watch_targets": get_watch_targets_state(),
-        "risk_history_count": len(get_risk_analysis_history_state().get("items", [])),
-        "recent_alerts": list(alert_log[-20:]),
+        "fetch_status": fetch_status,
+        "source_health": source_health_state,
+        "price_history": price_history_state,
+        "watch_targets": watch_targets_state,
+        "risk_history_count": risk_history_count,
+        "recent_alerts": recent_alerts,
         "logs": read_log_tail(),
     }
     return json.dumps(report, ensure_ascii=False, indent=2)
@@ -1608,21 +1192,7 @@ def play_system_alert_sound(level):
 
 def select_related_news(title, items=None, limit=3):
     pool = items if items is not None else news_items
-    title_text = str(title or "")
-    preferred = []
-    fallback = []
-    for item in pool:
-        topic = item.get("topic", "")
-        haystack = f"{item.get('title', '')} {item.get('summary', '')}".lower()
-        if "利率" in title_text and topic == "利率":
-            preferred.append(item)
-        elif "波动" in title_text and topic in {"美元", "通胀", "利率"}:
-            preferred.append(item)
-        elif any(keyword in haystack for keyword in ("gold", "xau", "黄金", "金价")):
-            preferred.append(item)
-        else:
-            fallback.append(item)
-    return (preferred + fallback)[:limit]
+    return news_core.select_related_news(title, pool, limit=limit)
 
 
 # ---------- 通知渠道 ----------
@@ -1636,81 +1206,37 @@ class _SafeFormatDict(dict):
 
 
 def _format_template(template, values, fallback):
-    text = str(template or fallback)
-    try:
-        return text.format_map(_SafeFormatDict(values))
-    except Exception:
-        return str(fallback).format_map(_SafeFormatDict(values))
+    return notifications_core.format_template(template, values, fallback)
 
 
 def _time_to_minutes(value):
-    text = str(value or "").strip()
-    if not text:
-        return None
-    try:
-        hour_text, minute_text = text.split(":", 1)
-        hour = int(hour_text)
-        minute = int(minute_text)
-    except (ValueError, TypeError):
-        return None
-    if 0 <= hour <= 23 and 0 <= minute <= 59:
-        return hour * 60 + minute
-    return None
+    return notifications_core.time_to_minutes(value)
 
 
 def is_alert_quiet_time(settings=None, now=None):
     settings = settings or get_settings_snapshot()
-    start = _time_to_minutes(settings.get("alert_quiet_start"))
-    end = _time_to_minutes(settings.get("alert_quiet_end"))
-    if start is None or end is None or start == end:
-        return False
-    now = now or datetime.now()
-    current = now.hour * 60 + now.minute
-    if start < end:
-        return start <= current < end
-    return current >= start or current < end
+    return notifications_core.is_alert_quiet_time(settings, now=now)
 
 
 def _alert_cooldown_key(entry):
-    return ":".join([
-        str(entry.get("type") or "warning"),
-        str(entry.get("mode") or "all"),
-    ])
+    return notifications_core.alert_cooldown_key(entry)
 
 
 def evaluate_alert_delivery(entry, settings=None, now=None):
-    if entry.get("force_notify"):
-        return {"deliver": True, "reason": ""}
     settings = settings or get_settings_snapshot()
-    now = now or datetime.now()
-    if is_alert_quiet_time(settings, now):
-        return {"deliver": False, "reason": "quiet_time"}
-    cooldown_minutes = int(settings.get("alert_cooldown_minutes", 0) or 0)
-    if cooldown_minutes <= 0:
-        return {"deliver": True, "reason": ""}
-    key = _alert_cooldown_key(entry)
-    last_time = alert_cooldown_state.get(key)
-    if last_time and (now - last_time).total_seconds() < cooldown_minutes * 60:
-        remaining = int(cooldown_minutes * 60 - (now - last_time).total_seconds())
-        return {"deliver": False, "reason": "cooldown", "remaining_seconds": max(1, remaining)}
-    alert_cooldown_state[key] = now
-    return {"deliver": True, "reason": ""}
+    return notifications_core.evaluate_alert_delivery(entry, settings, alert_cooldown_state, now=now)
 
 
 def build_alert_template_values(alert_type, title, message):
     with lock:
-        values = {
-            "title": title,
-            "message": message,
-            "level": _alert_level_map.get(alert_type, alert_type),
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "price_usd": f"{price_usd:,.2f}" if price_usd is not None else "--",
-            "price_rmb": f"{price_rmb:,.2f}" if price_rmb is not None else "--",
-            "rate": f"{usdcny_rate:.4f}" if usdcny_rate is not None else "--",
-            "gold_source": gold_price_source or "--",
-            "rate_source": usdcny_rate_source or "--",
+        market = {
+            "price_usd": price_usd,
+            "price_rmb": price_rmb,
+            "usdcny_rate": usdcny_rate,
+            "gold_price_source": gold_price_source,
+            "usdcny_rate_source": usdcny_rate_source,
         }
-    return values
+    return notifications_core.build_alert_template_values(alert_type, title, message, market, _alert_level_map)
 
 
 class EmailNotifier:
@@ -1719,68 +1245,21 @@ class EmailNotifier:
     @staticmethod
     def send(alert_type, title, message, timeout=10, blocking=False):
         settings = get_settings_snapshot()
-        server = settings.get("smtp_server", "").strip()
-        port_str = settings.get("smtp_port", "465").strip()
-        encryption = settings.get("smtp_encryption", "ssl")
-        sender = settings.get("smtp_sender", "").strip()
-        password = settings.get("smtp_password", "")
-        recipient = settings.get("smtp_recipient", "").strip()
-
-        if not (server and port_str and sender and password and recipient):
-            return "SMTP 配置不完整，跳过邮件发送"
-
-        try:
-            port = int(port_str)
-        except ValueError:
-            return f"SMTP 端口格式无效: {port_str}"
-
         values = build_alert_template_values(alert_type, title, message)
-        level_label = values["level"]
-        subject = _format_template(
-            settings.get("email_subject_template"),
+        return notifications_core.send_email_notification(
+            settings,
+            alert_type,
+            title,
+            message,
             values,
-            DEFAULT_EMAIL_SUBJECT_TEMPLATE,
+            smtp_module=smtplib,
+            default_subject_template=DEFAULT_EMAIL_SUBJECT_TEMPLATE,
+            default_body_template=DEFAULT_EMAIL_BODY_TEMPLATE,
+            timeout=timeout,
+            blocking=blocking,
+            thread_factory=threading.Thread,
+            logger=logging,
         )
-        body = _format_template(
-            settings.get("email_body_template"),
-            values,
-            DEFAULT_EMAIL_BODY_TEMPLATE,
-        )
-
-        try:
-            msg = MIMEText(body, "plain", "utf-8")
-            msg["Subject"] = subject
-            msg["From"] = sender
-            msg["To"] = recipient
-            msg["Date"] = formatdate(localtime=True)
-        except Exception as exc:
-            return f"构建邮件失败: {exc}"
-
-        def _send():
-            try:
-                if encryption == "ssl":
-                    server_obj = smtplib.SMTP_SSL(server, port, timeout=timeout)
-                else:
-                    server_obj = smtplib.SMTP(server, port, timeout=timeout)
-                    server_obj.starttls()
-                server_obj.login(sender, password)
-                server_obj.sendmail(sender, [recipient], msg.as_string())
-                server_obj.quit()
-                return None
-            except Exception as exc:
-                return str(exc)
-
-        if blocking:
-            error = _send()
-            return error  # None on success, error string on failure
-
-        def _send_async():
-            error = _send()
-            if error:
-                logging.warning("邮件通知发送失败: %s", error)
-
-        threading.Thread(target=_send_async, daemon=True).start()
-        return None  # None 表示成功入队
 
 
 class WebhookNotifier:
@@ -1789,102 +1268,41 @@ class WebhookNotifier:
     @staticmethod
     def send(alert_type, title, message, timeout=8, blocking=False):
         settings = get_settings_snapshot()
-        if not settings.get("webhook_enabled", False):
-            return "Webhook 通知未启用"
-        url = settings.get("webhook_url", "").strip()
-        if not url:
-            return "Webhook 地址未配置，跳过发送"
-        try:
-            _require_https_url(url, "Webhook 地址")
-        except ValueError as exc:
-            return str(exc)
-
         values = build_alert_template_values(alert_type, title, message)
-        payload = {
-            "app": "GoldMonitor",
-            "version": APP_VERSION,
-            "type": alert_type,
-            "level": values["level"],
-            "title": title,
-            "message": message,
-            "time": values["time"],
-            "price_usd": values["price_usd"],
-            "price_rmb": values["price_rmb"],
-            "rate": values["rate"],
-            "gold_source": values["gold_source"],
-            "rate_source": values["rate_source"],
-        }
-
-        def _send():
-            try:
-                response = requests.post(
-                    url,
-                    json=payload,
-                    headers={"User-Agent": HTTP_USER_AGENT, "Content-Type": "application/json"},
-                    timeout=timeout,
-                    proxies=REQ_PROXY,
-                )
-                response.raise_for_status()
-                return None
-            except Exception as exc:
-                return str(exc)
-
-        if blocking:
-            return _send()
-
-        def _send_async():
-            error = _send()
-            if error:
-                logging.warning("Webhook 通知发送失败: %s", error)
-
-        threading.Thread(target=_send_async, daemon=True).start()
-        return None
+        return notifications_core.send_webhook_notification(
+            settings,
+            alert_type,
+            title,
+            message,
+            values,
+            post=requests.post,
+            require_https_url=_require_https_url,
+            app_name="GoldMonitor",
+            app_version=APP_VERSION,
+            user_agent=HTTP_USER_AGENT,
+            proxies=REQ_PROXY,
+            timeout=timeout,
+            blocking=blocking,
+            thread_factory=threading.Thread,
+            logger=logging,
+        )
 
 
 def _notification_status(channel, label, status, message):
-    return {
-        "channel": channel,
-        "label": label,
-        "status": status,
-        "message": message,
-    }
+    return notifications_core.notification_status(channel, label, status, message)
 
 
 def dispatch_alert(entry, title):
     """通知渠道分发: 根据设置决定哪些渠道发送"""
-    alert_type = entry.get("type", "warning")
     settings = get_settings_snapshot()
-    notifications = []
-
-    # 邮件通知 — 按级别独立开关
-    key_map = {"warning": "email_warning_enabled", "critical": "email_critical_enabled", "volatility": "email_volatility_enabled"}
-    key = key_map.get(alert_type, "email_warning_enabled")
-    if settings.get(key, True):
-        error = EmailNotifier.send(alert_type, title, entry["message"])
-        if error:
-            logging.warning("邮件通知跳过: %s", error)
-            notifications.append(_notification_status("email", "邮件", "skipped", error))
-        else:
-            notifications.append(_notification_status("email", "邮件", "queued", "已提交发送"))
-    else:
-        notifications.append(_notification_status("email", "邮件", "disabled", "未启用"))
-
-    webhook_key_map = {
-        "warning": "webhook_warning_enabled",
-        "critical": "webhook_critical_enabled",
-        "volatility": "webhook_volatility_enabled",
-    }
-    if settings.get("webhook_enabled", False) and settings.get(webhook_key_map.get(alert_type, "webhook_warning_enabled"), True):
-        error = WebhookNotifier.send(alert_type, title, entry["message"])
-        if error:
-            logging.warning("Webhook 通知跳过: %s", error)
-            notifications.append(_notification_status("webhook", "Webhook", "skipped", error))
-        else:
-            notifications.append(_notification_status("webhook", "Webhook", "queued", "已提交发送"))
-    else:
-        notifications.append(_notification_status("webhook", "Webhook", "disabled", "未启用"))
-
-    return notifications
+    return notifications_core.dispatch_alert(
+        entry,
+        title,
+        settings,
+        email_sender=EmailNotifier.send,
+        webhook_sender=WebhookNotifier.send,
+        logger=logging,
+    )
 
 
 def emit_alert(entry, title):
@@ -2004,54 +1422,27 @@ def get_fetch_status():
 def record_source_health(name, category, ok, error="", started_at=None, cached=False):
     if not name:
         return
-    elapsed_ms = None
-    if started_at is not None:
-        elapsed_ms = int(max(0, (time.monotonic() - started_at) * 1000))
     with lock:
-        current = source_health.get(name, {
-            "name": name,
-            "category": category,
-            "ok_count": 0,
-            "fail_count": 0,
-        })
-        current.update({
-            "name": name,
-            "category": category,
-            "ok": bool(ok),
-            "cached": bool(cached),
-            "error": str(error or ""),
-            "last_checked": datetime.now().isoformat(timespec="seconds"),
-            "elapsed_ms": elapsed_ms,
-        })
-        if ok:
-            current["ok_count"] = int(current.get("ok_count", 0)) + 1
-        else:
-            current["fail_count"] = int(current.get("fail_count", 0)) + 1
-        source_health[name] = current
-        if len(source_health) > SOURCE_HEALTH_LIMIT:
-            oldest = sorted(source_health.values(), key=lambda item: item.get("last_checked", ""))[0]
-            source_health.pop(oldest.get("name"), None)
+        market_data_core.record_source_health(
+            source_health,
+            name,
+            category,
+            ok,
+            error=error,
+            started_at=started_at,
+            cached=cached,
+            limit=SOURCE_HEALTH_LIMIT,
+        )
     socketio.emit("source_health_updated", get_source_health_state())
 
 
 def get_source_health_state():
     with lock:
-        items = sorted(
-            [dict(item) for item in source_health.values()],
-            key=lambda item: (item.get("category", ""), item.get("name", "")),
-        )
-    summary = {
-        "total": len(items),
-        "ok": sum(1 for item in items if item.get("ok")),
-        "failed": sum(1 for item in items if item.get("ok") is False),
-        "cached": sum(1 for item in items if item.get("cached")),
-    }
-    return {
-        "items": items,
-        "summary": summary,
-        "comparison": get_source_comparison_state(),
-        "updated_at": datetime.now().isoformat(timespec="seconds"),
-    }
+        health_snapshot = {name: dict(item) for name, item in source_health.items()}
+    return market_data_core.build_source_health_state(
+        health_snapshot,
+        comparison=get_source_comparison_state(),
+    )
 
 
 def record_source_price_sample(name, data, cached=False):
@@ -2080,53 +1471,11 @@ def build_source_comparison_state(samples=None):
     if samples is None:
         with lock:
             samples = [dict(item) for item in source_price_samples.values()]
-    now = datetime.now()
-    items = []
-    for sample in samples:
-        checked_at = _parse_iso_datetime(sample.get("checked_at"))
-        age_seconds = None
-        if checked_at:
-            age_seconds = max(0, int((now - checked_at).total_seconds()))
-        stale = age_seconds is None or age_seconds > SOURCE_COMPARISON_STALE_SECONDS
-        item = dict(sample)
-        item["age_seconds"] = age_seconds
-        item["stale"] = stale
-        item["available"] = bool(item.get("usd")) and not item.get("cached") and not stale
-        items.append(item)
-    items.sort(key=lambda item: item.get("name", ""))
-    comparable = [item for item in items if item.get("available")]
-    state = {
-        "items": items,
-        "summary": {
-            "total": len(items),
-            "compared": len(comparable),
-            "spread_usd": None,
-            "spread_pct": None,
-            "threshold_pct": SOURCE_COMPARISON_ANOMALY_PCT,
-        },
-        "status": "insufficient",
-        "message": "可对比数据源不足",
-        "updated_at": now.isoformat(timespec="seconds"),
-    }
-    if len(comparable) >= 2:
-        low = min(comparable, key=lambda item: item.get("usd"))
-        high = max(comparable, key=lambda item: item.get("usd"))
-        spread_usd = round(float(high["usd"]) - float(low["usd"]), 4)
-        midpoint = (float(high["usd"]) + float(low["usd"])) / 2
-        spread_pct = round(spread_usd / midpoint * 100, 4) if midpoint else 0
-        state["summary"].update({
-            "spread_usd": spread_usd,
-            "spread_pct": spread_pct,
-            "low_source": low.get("name"),
-            "high_source": high.get("name"),
-        })
-        if spread_pct >= SOURCE_COMPARISON_ANOMALY_PCT:
-            state["status"] = "anomaly"
-            state["message"] = f"数据源价差 {spread_pct:.2f}% ，建议核对行情源"
-        else:
-            state["status"] = "normal"
-            state["message"] = f"数据源价差 {spread_pct:.2f}% ，处于正常范围"
-    return state
+    return market_data_core.build_source_comparison_state(
+        samples,
+        stale_seconds=SOURCE_COMPARISON_STALE_SECONDS,
+        anomaly_pct=SOURCE_COMPARISON_ANOMALY_PCT,
+    )
 
 
 def get_source_comparison_state():
@@ -2179,27 +1528,12 @@ def fetch_gold_data_result(url, source_label="数据源"):
     try:
         resp = requests.get(url, timeout=REQUEST_TIMEOUT, proxies=REQ_PROXY)
         resp.raise_for_status()
-        reader = csv.reader(io.StringIO(resp.text))
-        rows = list(reader)
-        if len(rows) < 1:
-            error = f"{source_label}返回为空"
-            record_source_health(source_label, "gold" if "金价" in source_label else "forex", False, error, started_at)
-            return None, error
-        # 格式: Symbol,Date,Time,Open,High,Low,Close,,Name
-        r = rows[0]
-        if len(r) < 7:
-            error = f"{source_label}返回格式异常"
+        data, error = market_data_core.parse_stooq_ohlc_csv(resp.text, source_label)
+        if error:
             record_source_health(source_label, "gold" if "金价" in source_label else "forex", False, error, started_at)
             return None, error
         record_source_health(source_label, "gold" if "金价" in source_label else "forex", True, "", started_at)
-        return {
-            "date": r[1],
-            "time": r[2],
-            "open": float(r[3]),
-            "high": float(r[4]),
-            "low": float(r[5]),
-            "close": float(r[6]),
-        }, ""
+        return data, ""
     except requests.Timeout:
         error = f"{source_label}请求超时"
     except requests.ConnectionError:
@@ -2228,211 +1562,62 @@ def fetch_csv_price_result(url, source_label="数据源"):
 
 
 def _extract_quoted_payload(text):
-    raw = str(text or "")
-    try:
-        return raw.split('"', 2)[1]
-    except IndexError:
-        return ""
+    return market_data_core.extract_quoted_payload(text)
+
+
+def _market_cache_store():
+    return market_data_core.MarketCacheStore(
+        MARKET_CACHE_PATH,
+        max_age_seconds=CACHE_RATE_MAX_AGE_SECONDS,
+    )
 
 
 def _normalize_usdcny_cache(raw):
-    if not isinstance(raw, dict):
-        return None
-    try:
-        value = float(raw.get("value"))
-    except (TypeError, ValueError):
-        return None
-    if value <= 0:
-        return None
-    timestamp = str(raw.get("timestamp") or "").strip()
-    if not timestamp:
-        return None
-    return {
-        "value": value,
-        "source": str(raw.get("source") or "缓存汇率").strip(),
-        "timestamp": timestamp,
-        "cached": True,
-    }
+    return _market_cache_store().normalize_usdcny(raw)
 
 
 def _normalize_xauusd_cache(raw):
-    if not isinstance(raw, dict):
-        return None
-    try:
-        close = float(raw.get("close"))
-    except (TypeError, ValueError):
-        return None
-    if close <= 0:
-        return None
-    timestamp = str(raw.get("timestamp") or "").strip()
-    if not timestamp:
-        return None
-
-    def number_or_default(key, default):
-        try:
-            value = float(raw.get(key))
-        except (TypeError, ValueError):
-            return default
-        return value if value > 0 else default
-
-    return {
-        "date": str(raw.get("date") or datetime.now().strftime("%Y-%m-%d")),
-        "time": str(raw.get("time") or datetime.now().strftime("%H:%M:%S")),
-        "open": number_or_default("open", close),
-        "high": number_or_default("high", close),
-        "low": number_or_default("low", close),
-        "close": close,
-        "source": str(raw.get("source") or "缓存金价").strip(),
-        "timestamp": timestamp,
-        "cached": True,
-    }
+    return _market_cache_store().normalize_xauusd(raw)
 
 
 def _parse_iso_datetime(value):
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        if parsed.tzinfo:
-            parsed = parsed.replace(tzinfo=None)
-        return parsed
-    except ValueError:
-        return None
+    return market_data_core.parse_iso_datetime(value)
 
 
 def load_usdcny_cache():
-    if not os.path.exists(MARKET_CACHE_PATH):
-        return None
-    try:
-        with open(MARKET_CACHE_PATH, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-    cache = payload.get("usdcny") if isinstance(payload, dict) else None
-    return _normalize_usdcny_cache(cache)
+    return _market_cache_store().load_usdcny()
 
 
 def _load_market_cache_payload():
-    if not os.path.exists(MARKET_CACHE_PATH):
-        return {}
-    try:
-        with open(MARKET_CACHE_PATH, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+    return _market_cache_store().load_payload()
 
 
 def _write_market_cache_section(section, data):
-    os.makedirs(os.path.dirname(MARKET_CACHE_PATH), exist_ok=True)
-    payload = _load_market_cache_payload()
-    payload[section] = data
-    tmp_path = MARKET_CACHE_PATH + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, MARKET_CACHE_PATH)
+    _market_cache_store().write_section(section, data)
 
 
 def load_xauusd_cache():
-    payload = _load_market_cache_payload()
-    cache = payload.get("xauusd")
-    return _normalize_xauusd_cache(cache)
+    return _market_cache_store().load_xauusd()
 
 
 def load_valid_xauusd_cache(max_age_seconds=CACHE_RATE_MAX_AGE_SECONDS):
-    cached = load_xauusd_cache()
-    if not cached:
-        return None
-    parsed_time = _parse_iso_datetime(cached["timestamp"])
-    if not parsed_time:
-        return None
-    age = datetime.now() - parsed_time
-    if age.total_seconds() < 0 or age.total_seconds() > max_age_seconds:
-        return None
-    return cached
+    return _market_cache_store().load_valid_xauusd(max_age_seconds=max_age_seconds)
 
 
 def load_valid_usdcny_cache(max_age_seconds=CACHE_RATE_MAX_AGE_SECONDS):
-    cached = load_usdcny_cache()
-    if not cached:
-        return None
-    parsed_time = _parse_iso_datetime(cached["timestamp"])
-    if not parsed_time:
-        return None
-    age = datetime.now() - parsed_time
-    if age.total_seconds() < 0 or age.total_seconds() > max_age_seconds:
-        return None
-    return cached
+    return _market_cache_store().load_valid_usdcny(max_age_seconds=max_age_seconds)
 
 
 def save_usdcny_cache(value, source, timestamp=None):
-    rate = _normalize_usdcny_cache({
-        "value": value,
-        "source": source,
-        "timestamp": timestamp or datetime.now().isoformat(),
-    })
-    if not rate:
-        raise ValueError("invalid USD/CNY rate cache")
-    _write_market_cache_section("usdcny", {
-        "value": rate["value"],
-        "source": rate["source"],
-        "timestamp": rate["timestamp"],
-    })
-    return {
-        "value": rate["value"],
-        "source": rate["source"],
-        "timestamp": rate["timestamp"],
-        "cached": False,
-    }
+    return _market_cache_store().save_usdcny(value, source, timestamp=timestamp)
 
 
 def save_xauusd_cache(data, source, timestamp=None):
-    if not isinstance(data, dict):
-        raise ValueError("invalid XAU/USD cache")
-    now_iso = timestamp or datetime.now().isoformat()
-    cache = _normalize_xauusd_cache({
-        "date": data.get("date"),
-        "time": data.get("time"),
-        "open": data.get("open"),
-        "high": data.get("high"),
-        "low": data.get("low"),
-        "close": data.get("close"),
-        "source": source,
-        "timestamp": now_iso,
-    })
-    if not cache:
-        raise ValueError("invalid XAU/USD cache")
-    _write_market_cache_section("xauusd", {
-        "date": cache["date"],
-        "time": cache["time"],
-        "open": cache["open"],
-        "high": cache["high"],
-        "low": cache["low"],
-        "close": cache["close"],
-        "source": cache["source"],
-        "timestamp": cache["timestamp"],
-    })
-    return {
-        "date": cache["date"],
-        "time": cache["time"],
-        "open": cache["open"],
-        "high": cache["high"],
-        "low": cache["low"],
-        "close": cache["close"],
-        "source": cache["source"],
-        "timestamp": cache["timestamp"],
-        "cached": False,
-    }
+    return _market_cache_store().save_xauusd(data, source, timestamp=timestamp)
 
 
 def parse_sina_forex(text):
-    try:
-        quoted = _extract_quoted_payload(text)
-        parts = quoted.split(",")
-        if len(parts) < 2:
-            return None, "新浪汇率返回格式异常"
-        rate = float(parts[1])
-    except (IndexError, TypeError, ValueError):
-        return None, "新浪汇率返回格式异常"
-    return (rate, "") if rate > 0 else (None, "新浪汇率返回无效")
+    return market_data_core.parse_sina_forex(text)
 
 
 def fetch_sina_forex_result():
@@ -2465,11 +1650,7 @@ def fetch_sina_forex_result():
 
 
 def parse_frankfurter_forex(payload):
-    try:
-        rate = float(payload["rates"]["CNY"])
-    except (KeyError, TypeError, ValueError):
-        return None, "Frankfurter 返回格式异常"
-    return (rate, "") if rate > 0 else (None, "Frankfurter 返回无效汇率")
+    return market_data_core.parse_frankfurter_forex(payload)
 
 
 def fetch_frankfurter_forex_result():
@@ -2544,34 +1725,7 @@ def fetch_usdcny_rate_result():
 
 
 def parse_sina_gold(text):
-    quoted = _extract_quoted_payload(text)
-    parts = [part.strip() for part in quoted.split(",") if part.strip()]
-    numeric_values = []
-    for part in parts:
-        try:
-            value = float(part)
-        except ValueError:
-            continue
-        if value > 0:
-            numeric_values.append(value)
-
-    if not numeric_values:
-        return None, "新浪贵金属未返回金价"
-
-    close = numeric_values[0]
-    open_price = numeric_values[3] if len(numeric_values) > 3 else close
-    high_price = max(numeric_values[:6]) if len(numeric_values) >= 2 else close
-    low_price = min(numeric_values[:6]) if len(numeric_values) >= 2 else close
-    time_text = next((part for part in parts if ":" in part), datetime.now().strftime("%H:%M:%S"))
-    now = datetime.now()
-    return {
-        "date": now.strftime("%Y-%m-%d"),
-        "time": time_text,
-        "open": open_price,
-        "high": high_price,
-        "low": low_price,
-        "close": close,
-    }, ""
+    return market_data_core.parse_sina_gold(text)
 
 
 def fetch_sina_gold_result():
@@ -2605,36 +1759,7 @@ def fetch_sina_gold_result():
 
 def parse_eastmoney_gold(payload):
     """解析东方财富 XAU 行情，返回 XAU/USD OHLC。"""
-    data = payload.get("data") if isinstance(payload, dict) else None
-    if not isinstance(data, dict):
-        return None, "东方财富返回格式异常"
-
-    scale_power = data.get("f59", 2)
-    try:
-        scale = 10 ** int(scale_power)
-    except (TypeError, ValueError):
-        scale = 100
-
-    def field_value(key):
-        value = data.get(key)
-        if value in (None, "-", ""):
-            return None
-        return round(float(value) / scale, 4)
-
-    close = field_value("f43")
-    if close is None:
-        return None, "东方财富未返回金价"
-
-    now = datetime.now()
-    parsed = {
-        "date": now.strftime("%Y-%m-%d"),
-        "time": now.strftime("%H:%M:%S"),
-        "open": field_value("f46") or close,
-        "high": field_value("f44") or close,
-        "low": field_value("f45") or close,
-        "close": close,
-    }
-    return parsed, ""
+    return market_data_core.parse_eastmoney_gold(payload)
 
 
 def fetch_eastmoney_gold_result():
@@ -2671,38 +1796,7 @@ def fetch_eastmoney_gold_result():
 
 def parse_goldprice_rates(payload):
     """解析 GoldPrice.org 行情，返回 XAU/USD OHLC 和推导出的 USD/CNY 汇率。"""
-    items = payload.get("items") if isinstance(payload, dict) else None
-    if not isinstance(items, list):
-        return None, None, "GoldPrice 返回格式异常"
-
-    rates = {}
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        curr = str(item.get("curr") or "").upper()
-        try:
-            price = float(item.get("xauPrice"))
-        except (TypeError, ValueError):
-            continue
-        if curr:
-            rates[curr] = price
-
-    usd_price = rates.get("USD")
-    cny_price = rates.get("CNY")
-    if usd_price is None:
-        return None, None, "GoldPrice 未返回美元金价"
-
-    cny_rate = round(cny_price / usd_price, 6) if cny_price and usd_price else None
-    now = datetime.now()
-    data = {
-        "date": now.strftime("%Y-%m-%d"),
-        "time": now.strftime("%H:%M:%S"),
-        "open": usd_price,
-        "high": usd_price,
-        "low": usd_price,
-        "close": usd_price,
-    }
-    return data, cny_rate, ""
+    return market_data_core.parse_goldprice_rates(payload)
 
 
 def fetch_goldprice_data_result():
@@ -2818,158 +1912,43 @@ def send_desktop_notification(title, body):
 
 # ---------- 资讯 ----------
 def _is_relevant_news(text):
-    lowered = str(text or "").lower()
-    return any(keyword in lowered for keyword in NEWS_KEYWORDS)
+    return news_core.is_relevant_news(text, NEWS_KEYWORDS)
 
 
 def classify_news_topic(text, source_kind=""):
-    lowered = str(text or "").lower()
-    if any(word in lowered for word in ("fomc", "federal reserve", "fed", "interest rate", "rate decision", "利率")):
-        return "利率"
-    if any(word in lowered for word in ("cpi", "inflation", "通胀")):
-        return "通胀"
-    if any(word in lowered for word in ("dollar", "usd", "yield", "美元", "美债")):
-        return "美元"
-    if any(word in lowered for word in ("central bank", "reserve", "央行")):
-        return "央行"
-    if any(word in lowered for word in ("gold", "xau", "bullion", "黄金", "金价")):
-        return "黄金"
-    if source_kind in {"fed", "macro"}:
-        return "宏观"
-    return "市场"
+    return news_core.classify_news_topic(text, source_kind)
 
 
 def _parse_gdelt_time(value):
-    raw = str(value or "").strip()
-    if len(raw) >= 15 and raw[8] == "T":
-        try:
-            return datetime.strptime(raw[:15], "%Y%m%dT%H%M%S").isoformat()
-        except ValueError:
-            pass
-    return datetime.now().isoformat()
+    return news_core.parse_gdelt_time(value, now_factory=datetime.now)
 
 
 def _parse_rss_time(value):
-    try:
-        return parsedate_to_datetime(value).isoformat()
-    except Exception:
-        return datetime.now().isoformat()
+    return news_core.parse_rss_time(value, now_factory=datetime.now)
 
 
 def _news_key(item):
-    url = str(item.get("url") or "").strip().lower()
-    if url:
-        return url
-    return str(item.get("title") or "").strip().lower()
+    return news_core.news_key(item)
 
 
 def normalize_news_items(items, limit=NEWS_LIMIT):
-    seen = set()
-    normalized = []
-    for item in items:
-        title = str(item.get("title") or "").strip()
-        url = str(item.get("url") or "").strip()
-        if not title or not url:
-            continue
-        key = _news_key(item)
-        if key in seen:
-            continue
-        seen.add(key)
-        normalized.append({
-            "title": title[:180],
-            "url": url,
-            "source": str(item.get("source") or "Public Source").strip(),
-            "time": str(item.get("time") or datetime.now().isoformat()),
-            "topic": str(item.get("topic") or classify_news_topic(title)),
-            "summary": str(item.get("summary") or "").strip()[:260],
-        })
-
-    def sort_key(item):
-        try:
-            parsed = datetime.fromisoformat(item["time"].replace("Z", "+00:00"))
-            if parsed.tzinfo:
-                parsed = parsed.replace(tzinfo=None)
-            return parsed
-        except ValueError:
-            return datetime.min
-
-    normalized.sort(key=sort_key, reverse=True)
-    return normalized[:limit]
+    return news_core.normalize_news_items(items, limit=limit, now_factory=datetime.now)
 
 
 def parse_gdelt_articles(payload):
-    articles = payload.get("articles", []) if isinstance(payload, dict) else []
-    items = []
-    for article in articles:
-        if not isinstance(article, dict):
-            continue
-        title = str(article.get("title") or "").strip()
-        url = str(article.get("url") or "").strip()
-        source = str(article.get("domain") or article.get("sourceCountry") or "GDELT").strip()
-        text = f"{title} {source}"
-        if not _is_relevant_news(text):
-            continue
-        items.append({
-            "title": title,
-            "url": url,
-            "source": source,
-            "time": _parse_gdelt_time(article.get("seendate")),
-            "topic": classify_news_topic(text),
-            "summary": "",
-        })
-    return normalize_news_items(items)
+    return news_core.parse_gdelt_articles(payload, limit=NEWS_LIMIT, now_factory=datetime.now)
 
 
 def parse_rss_items(xml_text, source_name, source_kind):
-    items = []
-    try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError:
-        return items
-
-    for item in root.findall(".//item"):
-        title = (item.findtext("title") or "").strip()
-        link = (item.findtext("link") or "").strip()
-        description = (item.findtext("description") or "").strip()
-        text = f"{title} {description}"
-        if not _is_relevant_news(text):
-            continue
-        items.append({
-            "title": title,
-            "url": link,
-            "source": source_name,
-            "time": _parse_rss_time(item.findtext("pubDate")),
-            "topic": classify_news_topic(text, source_kind),
-            "summary": description,
-        })
-    return normalize_news_items(items)
+    return news_core.parse_rss_items(xml_text, source_name, source_kind, limit=NEWS_LIMIT, now_factory=datetime.now)
 
 
 def load_news_cache():
-    if not os.path.exists(NEWS_CACHE_PATH):
-        return []
-    try:
-        with open(NEWS_CACHE_PATH, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-        if isinstance(payload, dict):
-            return normalize_news_items(payload.get("items", []))
-        if isinstance(payload, list):
-            return normalize_news_items(payload)
-    except (OSError, json.JSONDecodeError):
-        return []
-    return []
+    return news_core.NewsCacheStore(NEWS_CACHE_PATH, limit=NEWS_LIMIT, now_factory=datetime.now).load()
 
 
 def save_news_cache(items):
-    os.makedirs(APPDATA_DIR, exist_ok=True)
-    payload = {
-        "updated_at": datetime.now().isoformat(),
-        "items": normalize_news_items(items),
-    }
-    tmp_path = NEWS_CACHE_PATH + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, NEWS_CACHE_PATH)
+    return news_core.NewsCacheStore(NEWS_CACHE_PATH, limit=NEWS_LIMIT, now_factory=datetime.now).save(items)
 
 
 def fetch_gold_news():
@@ -3020,83 +1999,42 @@ def get_news_state():
         }
 
 
+def _risk_history_store():
+    return risk_analysis_core.RiskAnalysisHistoryStore(
+        RISK_ANALYSIS_HISTORY_PATH,
+        history_limit=RISK_ANALYSIS_HISTORY_LIMIT,
+        logger=logging,
+    )
+
+
 def normalize_risk_analysis_history(items):
-    if not isinstance(items, list):
-        return []
-    normalized = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        content = str(item.get("content") or "").strip()
-        if not content:
-            continue
-        normalized.append({
-            "id": str(item.get("id") or item.get("analysis_time") or datetime.now().isoformat(timespec="seconds")),
-            "analysis_time": str(item.get("analysis_time") or ""),
-            "provider": str(item.get("provider") or ""),
-            "model": str(item.get("model") or ""),
-            "content": content,
-            "structured": item.get("structured") if isinstance(item.get("structured"), dict) else {},
-            "snapshot": item.get("snapshot") if isinstance(item.get("snapshot"), dict) else {},
-            "usage": item.get("usage") if isinstance(item.get("usage"), dict) else None,
-        })
-        if len(normalized) >= RISK_ANALYSIS_HISTORY_LIMIT:
-            break
-    return normalized
+    return _risk_history_store().normalize(items)
 
 
 def load_risk_analysis_history():
-    if not os.path.exists(RISK_ANALYSIS_HISTORY_PATH):
-        return []
-    try:
-        with open(RISK_ANALYSIS_HISTORY_PATH, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-        if isinstance(payload, dict):
-            return normalize_risk_analysis_history(payload.get("items", []))
-        return normalize_risk_analysis_history(payload)
-    except (OSError, json.JSONDecodeError):
-        return []
+    return _risk_history_store().load()
 
 
 def save_risk_analysis_history(items=None):
     items = risk_analysis_history if items is None else items
-    normalized = normalize_risk_analysis_history(items)
-    os.makedirs(APPDATA_DIR, exist_ok=True)
-    payload = {
-        "updated_at": datetime.now().isoformat(timespec="seconds"),
-        "items": normalized,
-    }
-    tmp_path = RISK_ANALYSIS_HISTORY_PATH + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, RISK_ANALYSIS_HISTORY_PATH)
-    return normalized
+    return _risk_history_store().save(items)
 
 
 def get_risk_analysis_history_state():
     with risk_history_lock:
-        return {"items": list(risk_analysis_history[:RISK_ANALYSIS_HISTORY_LIMIT])}
+        return _risk_history_store().build_state(risk_analysis_history)
 
 
 def add_risk_analysis_history_entry(result, snapshot):
     global risk_analysis_history
-    entry = {
-        "id": datetime.now().isoformat(timespec="seconds"),
-        "analysis_time": snapshot.get("analysis_time") or datetime.now().isoformat(timespec="seconds"),
-        "provider": result.get("provider", ""),
-        "model": result.get("model", ""),
-        "content": result.get("content", ""),
-        "structured": result.get("structured") if isinstance(result.get("structured"), dict) else {},
-        "snapshot": snapshot,
-        "usage": result.get("usage") if isinstance(result.get("usage"), dict) else None,
-    }
     with risk_history_lock:
-        risk_analysis_history = normalize_risk_analysis_history([entry] + risk_analysis_history)
+        store = _risk_history_store()
+        risk_analysis_history, entry = store.add_entry(risk_analysis_history, result, snapshot)
         try:
-            save_risk_analysis_history(risk_analysis_history)
+            store.save(risk_analysis_history)
         except OSError as exc:
             logging.warning("failed to save risk analysis history: %s", exc)
-        return dict(entry)
+        return entry
 
 
 def clear_risk_analysis_history_state():
@@ -3104,969 +2042,265 @@ def clear_risk_analysis_history_state():
     with risk_history_lock:
         risk_analysis_history = []
         try:
-            save_risk_analysis_history(risk_analysis_history)
+            _risk_history_store().clear()
         except OSError as exc:
             logging.warning("failed to clear risk analysis history: %s", exc)
-        return get_risk_analysis_history_state()
+        return _risk_history_store().build_state(risk_analysis_history)
+
+
+def _price_history_store():
+    return PriceHistoryStore(
+        PRICE_HISTORY_PATH,
+        archive_limit=PRICE_HISTORY_ARCHIVE_LIMIT,
+        export_limit=PRICE_HISTORY_EXPORT_LIMIT,
+        save_interval_seconds=PRICE_HISTORY_SAVE_INTERVAL_SECONDS,
+        logger=logging,
+    )
 
 
 def normalize_price_history(items):
-    if not isinstance(items, list):
-        return []
-    normalized = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        timestamp = str(item.get("timestamp") or "").strip()
-        if not timestamp:
-            continue
-        parsed = _parse_iso_datetime(timestamp)
-        if not parsed:
-            continue
-
-        def optional_float(key):
-            value = item.get(key)
-            if value in (None, ""):
-                return None
-            try:
-                number = float(value)
-            except (TypeError, ValueError):
-                return None
-            return number if math.isfinite(number) else None
-
-        normalized.append({
-            "usd": optional_float("usd"),
-            "rmb": optional_float("rmb"),
-            "rate": optional_float("rate"),
-            "time": str(item.get("time") or parsed.strftime("%H:%M:%S")),
-            "timestamp": parsed.isoformat(timespec="seconds"),
-        })
-    normalized.sort(key=lambda item: item.get("timestamp", ""))
-    return normalized[-PRICE_HISTORY_ARCHIVE_LIMIT:]
+    return _price_history_store().normalize(items)
 
 
 def _price_history_db_path():
-    base, _ext = os.path.splitext(PRICE_HISTORY_PATH)
-    return base + ".sqlite3"
+    return _price_history_store().db_path()
 
 
 def _connect_price_history_db():
-    path = _price_history_db_path()
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    conn = sqlite3.connect(path, timeout=5)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS price_history (
-            timestamp TEXT PRIMARY KEY,
-            time TEXT NOT NULL,
-            usd REAL,
-            rmb REAL,
-            rate REAL
-        )
-    """)
-    return conn
+    return _price_history_store().connect_db()
 
 
 def _upsert_price_history_points(items):
-    normalized = normalize_price_history(items)
-    if not normalized:
-        return []
-    with _connect_price_history_db() as conn:
-        conn.executemany(
-            """
-            INSERT OR REPLACE INTO price_history(timestamp, time, usd, rmb, rate)
-            VALUES(:timestamp, :time, :usd, :rmb, :rate)
-            """,
-            normalized,
-        )
-        conn.execute(
-            """
-            DELETE FROM price_history
-            WHERE timestamp NOT IN (
-                SELECT timestamp FROM price_history
-                ORDER BY timestamp DESC
-                LIMIT ?
-            )
-            """,
-            (PRICE_HISTORY_ARCHIVE_LIMIT,),
-        )
-    return normalized
+    return _price_history_store().upsert_points(items)
 
 
 def _load_price_history_from_db():
-    path = _price_history_db_path()
-    if not os.path.exists(path):
-        return []
-    with _connect_price_history_db() as conn:
-        rows = conn.execute(
-            """
-            SELECT usd, rmb, rate, time, timestamp
-            FROM price_history
-            ORDER BY timestamp ASC
-            LIMIT ?
-            """,
-            (PRICE_HISTORY_ARCHIVE_LIMIT,),
-        ).fetchall()
-    return normalize_price_history([
-        {"usd": row[0], "rmb": row[1], "rate": row[2], "time": row[3], "timestamp": row[4]}
-        for row in rows
-    ])
+    return _price_history_store().load_from_db()
 
 
 def _filter_price_history_from_db(minutes=None, limit=600):
-    path = _price_history_db_path()
-    if not os.path.exists(path):
-        return []
-    params = []
-    where = ""
-    if minutes:
-        latest_items = _load_price_history_from_db()
-        latest_time = _parse_iso_datetime(latest_items[-1].get("timestamp")) if latest_items else datetime.now()
-        cutoff = (latest_time or datetime.now()) - timedelta(minutes=int(minutes))
-        where = "WHERE timestamp >= ?"
-        params.append(cutoff.isoformat(timespec="seconds"))
-    params.append(int(limit or PRICE_HISTORY_EXPORT_LIMIT))
-    with _connect_price_history_db() as conn:
-        rows = conn.execute(
-            f"""
-            SELECT usd, rmb, rate, time, timestamp
-            FROM price_history
-            {where}
-            ORDER BY timestamp DESC
-            LIMIT ?
-            """,
-            params,
-        ).fetchall()
-    rows.reverse()
-    return normalize_price_history([
-        {"usd": row[0], "rmb": row[1], "rate": row[2], "time": row[3], "timestamp": row[4]}
-        for row in rows
-    ])
+    return _price_history_store().filter_from_db(minutes=minutes, limit=limit)
 
 
 def _load_price_history_json_archive():
-    if not os.path.exists(PRICE_HISTORY_PATH):
-        return []
-    try:
-        with open(PRICE_HISTORY_PATH, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-        if isinstance(payload, dict):
-            return normalize_price_history(payload.get("items", []))
-        return normalize_price_history(payload)
-    except (OSError, json.JSONDecodeError):
-        return []
+    return _price_history_store().load_json_archive()
 
 
 def load_price_history_archive():
-    try:
-        db_items = _load_price_history_from_db()
-        if db_items:
-            return db_items
-    except (OSError, sqlite3.Error) as exc:
-        logging.warning("价格历史数据库读取失败: %s", exc)
-
-    json_items = _load_price_history_json_archive()
-    if json_items:
-        try:
-            _upsert_price_history_points(json_items)
-        except (OSError, sqlite3.Error) as exc:
-            logging.warning("价格历史迁移到 SQLite 失败: %s", exc)
-    return json_items
+    return _price_history_store().load_archive()
 
 
 def _write_price_history_json_archive(items):
-    normalized = normalize_price_history(items)
-    os.makedirs(APPDATA_DIR, exist_ok=True)
-    payload = {
-        "updated_at": datetime.now().isoformat(timespec="seconds"),
-        "items": normalized,
-    }
-    tmp_path = PRICE_HISTORY_PATH + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, PRICE_HISTORY_PATH)
-    return normalized
+    return _price_history_store().write_json_archive(items)
 
 
 def save_price_history_archive(items=None):
     items = price_archive if items is None else items
-    normalized = normalize_price_history(items)
-    try:
-        _upsert_price_history_points(normalized)
-    except (OSError, sqlite3.Error) as exc:
-        logging.warning("价格历史写入 SQLite 失败: %s", exc)
-    _write_price_history_json_archive(normalized)
-    return normalized
+    return _price_history_store().save_archive(items)
 
 
 def add_price_history_entry(entry, force_save=False):
     global price_archive, last_price_history_save_at
-    normalized = normalize_price_history([entry])
-    if not normalized:
+    price_archive, last_price_history_save_at, point = _price_history_store().add_entry(
+        price_archive,
+        last_price_history_save_at,
+        entry,
+        force_save=force_save,
+    )
+    if point is None:
         return
-    point = normalized[0]
-    price_archive.append(point)
-    if len(price_archive) > PRICE_HISTORY_ARCHIVE_LIMIT:
-        price_archive = price_archive[-PRICE_HISTORY_ARCHIVE_LIMIT:]
-    try:
-        _upsert_price_history_points([point])
-    except (OSError, sqlite3.Error) as exc:
-        logging.warning("价格历史增量写入 SQLite 失败: %s", exc)
-    now_monotonic = time.monotonic()
-    if force_save or now_monotonic - last_price_history_save_at >= PRICE_HISTORY_SAVE_INTERVAL_SECONDS:
-        try:
-            price_archive = _write_price_history_json_archive(price_archive)
-            last_price_history_save_at = now_monotonic
-        except OSError as exc:
-            logging.warning("价格历史保存失败: %s", exc)
 
 
 def _filter_price_archive(minutes=None, limit=600):
     with lock:
         items = list(price_archive)
-    if len(items) < int(limit or 0):
-        try:
-            db_items = _filter_price_history_from_db(minutes=minutes, limit=limit)
-            if db_items:
-                return db_items
-        except (OSError, sqlite3.Error) as exc:
-            logging.warning("价格历史数据库查询失败: %s", exc)
-    if minutes:
-        latest_time = _parse_iso_datetime(items[-1].get("timestamp")) if items else datetime.now()
-        cutoff = (latest_time or datetime.now()) - timedelta(minutes=int(minutes))
-        items = [
-            item for item in items
-            if (_parse_iso_datetime(item.get("timestamp")) or cutoff) >= cutoff
-        ]
-    if limit:
-        items = items[-int(limit):]
-    return items
+    return _price_history_store().filter_archive(items, minutes=minutes, limit=limit)
 
 
 def _event_time_from_alert(entry):
-    timestamp = entry.get("timestamp")
-    parsed = _parse_iso_datetime(timestamp)
-    if parsed:
-        return parsed
-    raw_time = str(entry.get("time") or "").strip()
-    if raw_time and today_date:
-        parsed = _parse_iso_datetime(f"{today_date}T{raw_time}")
-        if parsed:
-            return parsed
-    return None
+    return event_timeline_core.event_time_from_alert(entry, today_date=today_date)
 
 
 def normalize_event_timeline_request(data=None):
-    if not isinstance(data, dict):
-        data = {}
-
-    try:
-        minutes = int(data.get("minutes") or EVENT_TIMELINE_DEFAULT_MINUTES)
-    except (TypeError, ValueError):
-        minutes = EVENT_TIMELINE_DEFAULT_MINUTES
-    if minutes not in EVENT_TIMELINE_ALLOWED_MINUTES:
-        minutes = EVENT_TIMELINE_DEFAULT_MINUTES
-
-    try:
-        limit = int(data.get("limit") or EVENT_TIMELINE_DEFAULT_LIMIT)
-    except (TypeError, ValueError):
-        limit = EVENT_TIMELINE_DEFAULT_LIMIT
-    limit = max(1, min(EVENT_TIMELINE_MAX_LIMIT, limit))
-
-    raw_types = data.get("types")
-    if isinstance(raw_types, str):
-        raw_types = [raw_types]
-    if isinstance(raw_types, list):
-        types = []
-        for item in raw_types:
-            event_type = str(item or "").strip()
-            if event_type in EVENT_TIMELINE_TYPES and event_type not in types:
-                types.append(event_type)
-    else:
-        types = list(EVENT_TIMELINE_TYPES)
-    if not types:
-        types = list(EVENT_TIMELINE_TYPES)
-
-    return {"minutes": minutes, "limit": limit, "types": types}
-
-
-def event_timeline_range(minutes):
-    now = datetime.now()
-    start = now - timedelta(minutes=int(minutes))
-    return start, now
-
-
-def make_timeline_event(event_type, timestamp, title, summary, source, payload=None, event_id=None):
-    parsed = _parse_iso_datetime(timestamp)
-    if not parsed:
-        return None
-    stable_id = event_id or f"{event_type}-{parsed.isoformat(timespec='seconds')}-{source}"
-    return {
-        "id": str(stable_id),
-        "type": str(event_type or ""),
-        "timestamp": parsed.isoformat(timespec="seconds"),
-        "title": str(title or ""),
-        "summary": str(summary or ""),
-        "source": str(source or ""),
-        "payload": payload if isinstance(payload, dict) else {},
-    }
-
-
-def build_event_price_summary(points):
-    return {
-        "usd": _summarize_price_series(points, "usd"),
-        "rmb": _summarize_price_series(points, "rmb"),
-    }
-
-
-def build_price_summary_timeline_event(points, start_time, end_time):
-    summary = build_event_price_summary(points)
-    total = len(points)
-    rmb = summary.get("rmb", {})
-    if total:
-        change_pct = rmb.get("change_pct")
-        change_text = "--" if change_pct is None else f"{change_pct}%"
-        text = f"范围内共有 {total} 个价格点，RMB/克变动 {change_text}。"
-    else:
-        text = "当前范围内暂无价格历史。"
-    return make_timeline_event(
-        "price_summary",
-        end_time.isoformat(timespec="seconds"),
-        "价格摘要",
-        text,
-        "price_history",
-        {
-            "points": total,
-            "summary": summary,
-            "range_start": start_time.isoformat(timespec="seconds"),
-            "range_end": end_time.isoformat(timespec="seconds"),
-        },
-        event_id=f"price-summary-{start_time.isoformat(timespec='seconds')}-{end_time.isoformat(timespec='seconds')}",
+    return event_timeline_core.normalize_event_timeline_request(
+        data,
+        event_types=EVENT_TIMELINE_TYPES,
+        allowed_minutes=EVENT_TIMELINE_ALLOWED_MINUTES,
+        default_minutes=EVENT_TIMELINE_DEFAULT_MINUTES,
+        default_limit=EVENT_TIMELINE_DEFAULT_LIMIT,
+        max_limit=EVENT_TIMELINE_MAX_LIMIT,
     )
 
 
+def event_timeline_range(minutes):
+    return event_timeline_core.event_timeline_range(minutes, now_factory=datetime.now)
+
+
+def make_timeline_event(event_type, timestamp, title, summary, source, payload=None, event_id=None):
+    return event_timeline_core.make_timeline_event(event_type, timestamp, title, summary, source, payload, event_id)
+
+
+def build_event_price_summary(points):
+    return event_timeline_core.build_event_price_summary(points)
+
+
+def build_price_summary_timeline_event(points, start_time, end_time):
+    return event_timeline_core.build_price_summary_timeline_event(points, start_time, end_time)
+
+
+def _event_timeline_sources():
+    with risk_history_lock:
+        risk_items = list(risk_analysis_history[:RISK_ANALYSIS_HISTORY_LIMIT])
+    with lock:
+        current_news_items = list(news_items[:NEWS_LIMIT])
+    return {
+        "alert_entries": alert_log_export_entries(limit=ALERT_LOG_EXPORT_LIMIT),
+        "risk_items": risk_items,
+        "news_items": current_news_items,
+        "fetch_status": get_fetch_status(),
+        "source_health_state": get_source_health_state(),
+        "source_comparison_state": get_source_comparison_state(),
+        "today_date": today_date,
+        "news_key": _news_key,
+        "now_factory": datetime.now,
+    }
+
+
 def build_alert_timeline_events(start_time, end_time):
-    events = []
-    skipped = 0
-    items = alert_log_export_entries(limit=ALERT_LOG_EXPORT_LIMIT)
-    for entry in items:
-        event_time = _event_time_from_alert(entry)
-        if not event_time:
-            skipped += 1
-            continue
-        if event_time < start_time or event_time > end_time:
-            continue
-        event = make_timeline_event(
-            "alert",
-            event_time.isoformat(timespec="seconds"),
-            alert_level_label(entry.get("type")),
-            str(entry.get("message") or "达到预警条件")[:180],
-            "alert_log",
-            {
-                "id": entry.get("id", ""),
-                "level": entry.get("type", ""),
-                "mode": entry.get("mode", ""),
-                "message": entry.get("message", ""),
-                "time": entry.get("time", event_time.strftime("%H:%M:%S")),
-                "title": entry.get("title", ""),
-                "read": bool(entry.get("read")),
-                "acknowledged": bool(entry.get("acknowledged")),
-                "notifications": entry.get("notifications") if isinstance(entry.get("notifications"), list) else [],
-                "related_news": entry.get("related_news") if isinstance(entry.get("related_news"), list) else [],
-                "source": entry.get("source", ""),
-                "watch_target_id": entry.get("watch_target_id", ""),
-            },
-            event_id=f"alert-{entry.get('id') or event_time.isoformat(timespec='seconds')}",
-        )
-        if event:
-            events.append(event)
-    return events, skipped
+    return event_timeline_core.build_alert_timeline_events(
+        start_time,
+        end_time,
+        alert_entries=alert_log_export_entries(limit=ALERT_LOG_EXPORT_LIMIT),
+        today_date=today_date,
+    )
 
 
 def build_risk_timeline_events(start_time, end_time):
-    events = []
-    skipped = 0
     with risk_history_lock:
         risk_items = list(risk_analysis_history[:RISK_ANALYSIS_HISTORY_LIMIT])
-    for entry in risk_items:
-        snapshot = entry.get("snapshot") if isinstance(entry.get("snapshot"), dict) else {}
-        event_time = _parse_iso_datetime(entry.get("analysis_time") or snapshot.get("analysis_time"))
-        if not event_time:
-            skipped += 1
-            continue
-        if event_time < start_time or event_time > end_time:
-            continue
-        structured = entry.get("structured") if isinstance(entry.get("structured"), dict) else {}
-        content = str(entry.get("content") or "")
-        content_lines = [line for line in content.splitlines() if line.strip()]
-        risk_level = structured.get("risk_level") or ""
-        title = f"风险分析：{risk_level}" if risk_level else "风险分析"
-        summary = structured.get("summary") or (content_lines[0] if content_lines else "已有风险分析记录")
-        event = make_timeline_event(
-            "risk_analysis",
-            event_time.isoformat(timespec="seconds"),
-            title[:80],
-            str(summary)[:180],
-            "risk_analysis_history",
-            {
-                "id": entry.get("id", ""),
-                "analysis_time": entry.get("analysis_time", ""),
-                "provider": entry.get("provider", ""),
-                "model": entry.get("model", ""),
-                "content": content,
-                "structured": structured,
-                "snapshot": snapshot,
-                "data_quality": snapshot.get("data_quality") if isinstance(snapshot.get("data_quality"), dict) else {},
-            },
-            event_id=f"risk-analysis-{entry.get('id') or event_time.isoformat(timespec='seconds')}",
-        )
-        if event:
-            events.append(event)
-    return events, skipped
+    return event_timeline_core.build_risk_timeline_events(start_time, end_time, risk_items=risk_items)
 
 
 def build_news_timeline_events(start_time, end_time):
-    events = []
-    skipped = 0
     with lock:
         items = list(news_items[:NEWS_LIMIT])
-    for index, item in enumerate(items):
-        event_time = _parse_iso_datetime(item.get("time"))
-        if not event_time:
-            skipped += 1
-            continue
-        if event_time < start_time or event_time > end_time:
-            continue
-        title = str(item.get("title") or "相关新闻")
-        summary = str(item.get("summary") or item.get("topic") or item.get("source") or "相关新闻")[:180]
-        event = make_timeline_event(
-            "news",
-            event_time.isoformat(timespec="seconds"),
-            title[:80],
-            summary,
-            "news_cache",
-            {
-                "title": title,
-                "url": item.get("url", ""),
-                "source": item.get("source", ""),
-                "topic": item.get("topic", ""),
-                "summary": item.get("summary", ""),
-            },
-            event_id=f"news-{_news_key(item) or index}",
-        )
-        if event:
-            events.append(event)
-    return events, skipped
+    return event_timeline_core.build_news_timeline_events(start_time, end_time, news_items=items, news_key=_news_key)
 
 
 def build_data_status_timeline_events(start_time, end_time):
-    events = []
-    skipped = 0
-    now = datetime.now()
-
-    fetch_status = get_fetch_status()
-    if fetch_status.get("ok") is False or fetch_status.get("error"):
-        event = make_timeline_event(
-            "data_status",
-            now.isoformat(timespec="seconds"),
-            "行情数据状态",
-            fetch_status.get("message") or "行情数据异常",
-            "fetch_status",
-            fetch_status,
-            event_id=f"data-status-fetch-{now.isoformat(timespec='seconds')}",
-        )
-        event_time = _parse_iso_datetime(event["timestamp"]) if event else None
-        if event and event_time and start_time <= event_time <= end_time:
-            events.append(event)
-
-    health = get_source_health_state()
-    for item in health.get("items", []):
-        event_time = _parse_iso_datetime(item.get("last_checked"))
-        if not event_time:
-            skipped += 1
-            continue
-        if event_time < start_time or event_time > end_time:
-            continue
-        if item.get("ok") is True and not item.get("cached"):
-            continue
-        title = "缓存行情" if item.get("cached") else "数据源异常"
-        summary = item.get("error") or item.get("name") or title
-        event = make_timeline_event(
-            "data_status",
-            event_time.isoformat(timespec="seconds"),
-            title,
-            summary,
-            "source_health",
-            dict(item),
-            event_id=f"data-status-source-{item.get('name', '')}-{event_time.isoformat(timespec='seconds')}",
-        )
-        if event:
-            events.append(event)
-
-    comparison = get_source_comparison_state()
-    if comparison.get("status") == "anomaly":
-        event_time = _parse_iso_datetime(comparison.get("updated_at"))
-        if not event_time:
-            skipped += 1
-        elif start_time <= event_time <= end_time:
-            event = make_timeline_event(
-                "data_status",
-                event_time.isoformat(timespec="seconds"),
-                "多源价差异常",
-                comparison.get("message") or "数据源价差异常",
-                "source_comparison",
-                comparison,
-                event_id=f"data-status-comparison-{event_time.isoformat(timespec='seconds')}",
-            )
-            if event:
-                events.append(event)
-
-    return events, skipped
+    return event_timeline_core.build_data_status_timeline_events(
+        start_time,
+        end_time,
+        fetch_status=get_fetch_status(),
+        source_health_state=get_source_health_state(),
+        source_comparison_state=get_source_comparison_state(),
+        now_factory=datetime.now,
+    )
 
 
 def build_event_timeline_events(start_time, end_time, types=None):
-    selected = set(types or EVENT_TIMELINE_TYPES)
-    events = []
-    skipped = 0
-
-    if "alert" in selected:
-        built, count = build_alert_timeline_events(start_time, end_time)
-        events.extend(built)
-        skipped += count
-    if "risk_analysis" in selected:
-        built, count = build_risk_timeline_events(start_time, end_time)
-        events.extend(built)
-        skipped += count
-    if "news" in selected:
-        built, count = build_news_timeline_events(start_time, end_time)
-        events.extend(built)
-        skipped += count
-    if "data_status" in selected:
-        built, count = build_data_status_timeline_events(start_time, end_time)
-        events.extend(built)
-        skipped += count
-
-    events.sort(key=lambda item: item.get("timestamp", ""))
-    return events, skipped
+    return event_timeline_core.build_event_timeline_events(start_time, end_time, types, **_event_timeline_sources())
 
 
 def build_event_timeline_state(minutes=None, limit=EVENT_TIMELINE_DEFAULT_LIMIT, types=None):
-    start_time, end_time = event_timeline_range(minutes or EVENT_TIMELINE_DEFAULT_MINUTES)
-    selected = list(types or EVENT_TIMELINE_TYPES)
     points = _filter_price_archive(minutes=minutes, limit=PRICE_HISTORY_EXPORT_LIMIT)
-    price_summary = build_event_price_summary(points)
-    events, skipped = build_event_timeline_events(start_time, end_time, selected)
-
-    if "price_summary" in selected:
-        price_event = build_price_summary_timeline_event(points, start_time, end_time)
-        if price_event:
-            events.insert(0, price_event)
-
-    events.sort(key=lambda item: (item.get("timestamp", ""), item.get("type", ""), item.get("id", "")))
-    if limit:
-        events = events[-int(limit):]
-
-    by_type = {event_type: 0 for event_type in EVENT_TIMELINE_TYPES}
-    for event in events:
-        event_type = event.get("type", "")
-        by_type[event_type] = by_type.get(event_type, 0) + 1
-
-    return {
-        "range": {
-            "start": start_time.isoformat(timespec="seconds"),
-            "end": end_time.isoformat(timespec="seconds"),
-            "minutes": int(minutes or EVENT_TIMELINE_DEFAULT_MINUTES),
-        },
-        "filters": {"types": selected},
-        "summary": {
-            "total": len(events),
-            "skipped": skipped,
-            "by_type": by_type,
-        },
-        "price_summary": price_summary,
-        "events": events,
-        "updated_at": datetime.now().isoformat(timespec="seconds"),
-    }
+    return event_timeline_core.build_event_timeline_state(
+        minutes=minutes,
+        limit=limit,
+        types=types,
+        price_points=points,
+        **_event_timeline_sources(),
+    )
 
 
 def _build_price_event_state(items):
-    if not items:
-        return []
-    parsed_points = [
-        _parse_iso_datetime(item.get("timestamp"))
-        for item in items
-    ]
-    parsed_points = [item for item in parsed_points if item]
-    if not parsed_points:
-        return []
-    events, _skipped = build_event_timeline_events(min(parsed_points), max(parsed_points), ["alert", "risk_analysis"])
-    chart_events = []
-    for event in events[-100:]:
-        payload = event.get("payload", {})
-        event_type = "risk" if event.get("type") == "risk_analysis" else event.get("type")
-        chart_events.append({
-            "type": event_type,
-            "level": payload.get("level", "analysis"),
-            "mode": payload.get("mode", ""),
-            "timestamp": event.get("timestamp", ""),
-            "time": payload.get("time", ""),
-            "label": event.get("title", ""),
-            "message": event.get("summary", ""),
-        })
-    return chart_events
+    return event_timeline_core.build_price_chart_events(items, build_event_timeline_events)
 
 
 def alert_level_label(alert_type):
-    if alert_type == "critical":
-        return "关键预警"
-    if alert_type == "volatility":
-        return "波动预警"
-    return "价格预警"
+    return event_timeline_core.alert_level_label(alert_type)
 
 
 def build_price_history_state(minutes=None, limit=600):
-    items = _filter_price_archive(minutes, limit)
-
-    def series_stats(field):
-        values = [item.get(field) for item in items if item.get(field) is not None]
-        if not values:
-            return {"points": 0, "start": None, "end": None, "high": None, "low": None, "change": None, "change_pct": None}
-        start = values[0]
-        end = values[-1]
-        change = end - start
-        return {
-            "points": len(values),
-            "start": _format_number(start),
-            "end": _format_number(end),
-            "high": _format_number(max(values)),
-            "low": _format_number(min(values)),
-            "change": _format_number(change),
-            "change_pct": _format_number(change / start * 100 if start else 0),
-        }
-
-    return {
-        "items": items,
-        "stats": {
-            "usd": series_stats("usd"),
-            "rmb": series_stats("rmb"),
-        },
-        "total": len(items),
-        "minutes": minutes,
-        "events": _build_price_event_state(items),
-        "updated_at": datetime.now().isoformat(timespec="seconds"),
-    }
+    with lock:
+        items = list(price_archive)
+    return _price_history_store().build_state(
+        items,
+        minutes=minutes,
+        limit=limit,
+        build_events=_build_price_event_state,
+        format_number=_format_number,
+    )
 
 
 def build_price_history_csv(minutes=None):
-    items = _filter_price_archive(minutes, PRICE_HISTORY_EXPORT_LIMIT)
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["timestamp", "time", "usd_per_oz", "rmb_per_gram", "usdcny_rate"])
-    for item in items:
-        writer.writerow([
-            item.get("timestamp", ""),
-            item.get("time", ""),
-            item.get("usd", ""),
-            item.get("rmb", ""),
-            item.get("rate", ""),
-        ])
-    return output.getvalue(), len(items)
+    with lock:
+        items = list(price_archive)
+    return _price_history_store().build_csv(items, minutes=minutes)
 
 
 def build_review_report(timeline_state):
-    range_info = timeline_state.get("range", {}) if isinstance(timeline_state, dict) else {}
-    summary = timeline_state.get("summary", {}) if isinstance(timeline_state, dict) else {}
-    price_summary = timeline_state.get("price_summary", {}) if isinstance(timeline_state, dict) else {}
-    events = timeline_state.get("events", []) if isinstance(timeline_state, dict) else []
-    if not isinstance(events, list):
-        events = []
-
-    lines = [
-        "# GoldMonitor 复盘报告",
-        "",
-        "## 时间范围",
-        f"- 开始：{range_info.get('start', '--')}",
-        f"- 结束：{range_info.get('end', '--')}",
-        f"- 范围：最近 {range_info.get('minutes', '--')} 分钟",
-        "",
-        "## 价格摘要",
-    ]
-
-    for label, key in (("USD/oz", "usd"), ("RMB/克", "rmb")):
-        item = price_summary.get(key, {}) if isinstance(price_summary, dict) else {}
-        lines.extend([
-            f"- {label} 样本：{item.get('points', 0)}",
-            f"- {label} 起止：{item.get('start', '--')} -> {item.get('end', '--')}",
-            f"- {label} 高低：{item.get('high', '--')} / {item.get('low', '--')}",
-            f"- {label} 变动：{item.get('change', '--')}（{item.get('change_pct', '--')}%）",
-        ])
-
-    by_type = summary.get("by_type", {}) if isinstance(summary, dict) else {}
-    lines.extend([
-        "",
-        "## 事件概览",
-        f"- 事件总数：{summary.get('total', 0)}",
-        f"- 跳过记录：{summary.get('skipped', 0)}",
-        f"- 价格摘要：{by_type.get('price_summary', 0)}",
-        f"- 预警：{by_type.get('alert', 0)}",
-        f"- 风险分析：{by_type.get('risk_analysis', 0)}",
-        f"- 新闻：{by_type.get('news', 0)}",
-        f"- 数据状态：{by_type.get('data_status', 0)}",
-        "",
-        "## 关键事件",
-    ])
-
-    visible_events = [event for event in events if isinstance(event, dict) and event.get("type") != "price_summary"]
-    if not visible_events:
-        lines.append("暂无事件。")
-    else:
-        for event in visible_events[:80]:
-            lines.append(
-                f"- {event.get('timestamp', '--')} [{event.get('type', '--')}] "
-                f"{event.get('title', '')}：{event.get('summary', '')}"
-            )
-
-    def add_section(title, event_type, empty_text):
-        lines.extend(["", f"## {title}"])
-        subset = [event for event in events if isinstance(event, dict) and event.get("type") == event_type]
-        if not subset:
-            lines.append(empty_text)
-            return
-        for event in subset:
-            lines.append(f"- {event.get('timestamp', '--')} {event.get('title', '')}：{event.get('summary', '')}")
-
-    add_section("预警回顾", "alert", "暂无预警。")
-    add_section("风险分析记录", "risk_analysis", "暂无风险分析记录。")
-    add_section("新闻回顾", "news", "暂无相关新闻。")
-    add_section("数据状态", "data_status", "暂无数据状态异常。")
-
-    return "\n".join(lines) + "\n"
+    return event_timeline_core.build_review_report(timeline_state)
 
 
 def save_review_report(content, filename=None):
     if not filename:
-        filename = f"{REVIEW_REPORT_EXPORT_PREFIX}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.md"
+        filename = event_timeline_core.review_report_filename(prefix=REVIEW_REPORT_EXPORT_PREFIX)
     return save_export_file(filename, content)
 
 
+def _alert_log_store():
+    return AlertLogStore(
+        APPDATA_DIR,
+        memory_limit=ALERT_LOG_MEMORY_LIMIT,
+        db_limit=ALERT_LOG_DB_LIMIT,
+        export_limit=ALERT_LOG_EXPORT_LIMIT,
+        logger=logging,
+    )
+
+
 def _alert_log_db_path():
-    return os.path.join(APPDATA_DIR, "alert_log.sqlite3")
+    return _alert_log_store().db_path()
 
 
 def _generate_alert_log_id():
-    return "alert-" + secrets.token_hex(10)
+    return AlertLogStore.generate_id()
 
 
 def _coerce_alert_log_bool(value, default=False):
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return default
-    if isinstance(value, (int, float)):
-        return bool(value)
-    text = str(value).strip().lower()
-    if text in {"1", "true", "yes", "on"}:
-        return True
-    if text in {"0", "false", "no", "off", ""}:
-        return False
-    return default
+    return AlertLogStore.coerce_bool(value, default)
 
 
 def normalize_alert_log_entry(entry, default_read=False):
-    if not isinstance(entry, dict):
-        return None
-    normalized = dict(entry)
-    normalized["id"] = str(normalized.get("id") or normalized.get("alert_id") or _generate_alert_log_id())
-    timestamp = str(normalized.get("timestamp") or datetime.now().isoformat(timespec="seconds"))
-    parsed = _parse_iso_datetime(timestamp)
-    if parsed:
-        timestamp = parsed.isoformat(timespec="seconds")
-    normalized["timestamp"] = timestamp
-    normalized["time"] = str(normalized.get("time") or (parsed.strftime("%H:%M:%S") if parsed else ""))
-    normalized["type"] = str(normalized.get("type") or "warning")
-    normalized["mode"] = str(normalized.get("mode") or "")
-    normalized["message"] = str(normalized.get("message") or "")
-    normalized["read"] = _coerce_alert_log_bool(normalized.get("read"), default_read)
-    normalized["acknowledged"] = _coerce_alert_log_bool(normalized.get("acknowledged"), False)
-    if normalized["acknowledged"]:
-        normalized["read"] = True
-    normalized["read_at"] = str(normalized.get("read_at") or "")
-    normalized["acknowledged_at"] = str(normalized.get("acknowledged_at") or "")
-    return normalized
+    return _alert_log_store().normalize_entry(entry, default_read=default_read)
 
 
 def _connect_alert_log_db():
-    os.makedirs(APPDATA_DIR, exist_ok=True)
-    conn = sqlite3.connect(_alert_log_db_path(), timeout=5)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS alert_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
-            time TEXT,
-            alert_type TEXT,
-            mode TEXT,
-            message TEXT,
-            payload TEXT NOT NULL
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_alert_log_timestamp ON alert_log(timestamp)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_alert_log_type ON alert_log(alert_type)")
-    return conn
+    return _alert_log_store().connect_db()
 
 
 def save_alert_log_entry(entry):
-    normalized = normalize_alert_log_entry(entry)
-    if not normalized:
-        return None
-    entry.update(normalized)
-    payload = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"), default=str)
-    with _connect_alert_log_db() as conn:
-        conn.execute(
-            """
-            INSERT INTO alert_log(timestamp, time, alert_type, mode, message, payload)
-            VALUES(?, ?, ?, ?, ?, ?)
-            """,
-            (
-                normalized.get("timestamp", ""),
-                normalized.get("time", ""),
-                normalized.get("type", ""),
-                normalized.get("mode", ""),
-                normalized.get("message", ""),
-                payload,
-            ),
-        )
-        conn.execute(
-            """
-            DELETE FROM alert_log
-            WHERE id NOT IN (
-                SELECT id FROM alert_log ORDER BY id DESC LIMIT ?
-            )
-            """,
-            (ALERT_LOG_DB_LIMIT,),
-        )
-    return normalized
+    return _alert_log_store().save_entry(entry)
 
 
 def load_alert_log_archive(limit=ALERT_LOG_MEMORY_LIMIT):
-    try:
-        with _connect_alert_log_db() as conn:
-            rows = conn.execute(
-                "SELECT id, payload FROM alert_log ORDER BY id DESC LIMIT ?",
-                (max(1, int(limit)),),
-            ).fetchall()
-        items = []
-        for row_id, payload in reversed(rows):
-            try:
-                parsed = json.loads(payload)
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if isinstance(parsed, dict) and not (parsed.get("id") or parsed.get("alert_id")):
-                parsed["id"] = f"db-{row_id}"
-            normalized = normalize_alert_log_entry(parsed, default_read=True)
-            if normalized:
-                items.append(normalized)
-        return items
-    except (OSError, sqlite3.Error, ValueError) as exc:
-        logging.warning("读取告警记录数据库失败: %s", exc)
-        return []
+    return _alert_log_store().load_archive(limit=limit)
 
 
 def clear_alert_log_archive():
-    try:
-        with _connect_alert_log_db() as conn:
-            conn.execute("DELETE FROM alert_log")
-        return True
-    except (OSError, sqlite3.Error) as exc:
-        logging.warning("清空告警记录数据库失败: %s", exc)
-        return False
+    return _alert_log_store().clear_archive()
 
 
 def _apply_alert_log_status(entry, read=None, acknowledged=None):
-    now = datetime.now().isoformat(timespec="seconds")
-    if read is not None:
-        is_read = _coerce_alert_log_bool(read, entry.get("read", False))
-        entry["read"] = is_read
-        entry["read_at"] = now if is_read else ""
-    if acknowledged is not None:
-        is_acknowledged = _coerce_alert_log_bool(acknowledged, entry.get("acknowledged", False))
-        entry["acknowledged"] = is_acknowledged
-        entry["acknowledged_at"] = now if is_acknowledged else ""
-        if is_acknowledged:
-            entry["read"] = True
-            entry["read_at"] = entry.get("read_at") or now
-    return entry
+    return _alert_log_store().apply_status(entry, read=read, acknowledged=acknowledged)
 
 
 def _replace_alert_log_entry(updated):
-    target_id = updated.get("id")
-    if not target_id:
-        return
-    for index, entry in enumerate(alert_log):
-        if isinstance(entry, dict) and entry.get("id") == target_id:
-            alert_log[index] = updated
-            return
+    return AlertLogStore.replace_memory_entry(alert_log, updated)
 
 
 def _update_alert_log_entry_payload(alert_id, updater):
-    target_id = str(alert_id or "").strip()
-    if not target_id:
-        return False, None
-
-    try:
-        with _connect_alert_log_db() as conn:
-            rows = conn.execute(
-                "SELECT id, payload FROM alert_log ORDER BY id DESC LIMIT ?",
-                (ALERT_LOG_DB_LIMIT,),
-            ).fetchall()
-            for row_id, payload in rows:
-                try:
-                    parsed = json.loads(payload)
-                except (TypeError, json.JSONDecodeError):
-                    continue
-                if isinstance(parsed, dict) and not (parsed.get("id") or parsed.get("alert_id")):
-                    parsed["id"] = f"db-{row_id}"
-                normalized = normalize_alert_log_entry(parsed, default_read=True)
-                if not normalized or normalized.get("id") != target_id:
-                    continue
-                updated = updater(normalized)
-                normalized_updated = normalize_alert_log_entry(updated, default_read=True)
-                if not normalized_updated:
-                    return False, None
-                conn.execute(
-                    """
-                    UPDATE alert_log
-                    SET timestamp = ?, time = ?, alert_type = ?, mode = ?, message = ?, payload = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        normalized_updated.get("timestamp", ""),
-                        normalized_updated.get("time", ""),
-                        normalized_updated.get("type", ""),
-                        normalized_updated.get("mode", ""),
-                        normalized_updated.get("message", ""),
-                        json.dumps(normalized_updated, ensure_ascii=False, separators=(",", ":"), default=str),
-                        row_id,
-                    ),
-                )
-                _replace_alert_log_entry(normalized_updated)
-                return True, normalized_updated
-    except (OSError, sqlite3.Error) as exc:
-        logging.warning("更新告警记录状态失败: %s", exc)
-
-    for entry in alert_log:
-        if isinstance(entry, dict) and entry.get("id") == target_id:
-            updated = normalize_alert_log_entry(updater(normalize_alert_log_entry(entry) or entry))
-            if not updated:
-                return False, None
-            entry.update(updated)
-            try:
-                save_alert_log_entry(entry)
-            except (OSError, sqlite3.Error) as exc:
-                logging.warning("保存告警记录状态失败: %s", exc)
-            return True, updated
-
-    return False, None
+    return _alert_log_store().update_entry_payload(alert_id, updater, memory_entries=alert_log)
 
 
 def update_alert_log_status(alert_id, read=None, acknowledged=None):
@@ -4094,50 +2328,15 @@ def resend_alert_notification(alert_id):
 
 
 def alert_log_export_entries(limit=ALERT_LOG_EXPORT_LIMIT):
-    persisted = load_alert_log_archive(limit=limit)
-    if persisted:
-        return persisted
-    return list(alert_log[-int(limit):])
+    return _alert_log_store().export_entries(alert_log, limit=limit)
 
 
 def _format_alert_notifications(entry):
-    items = entry.get("notifications")
-    if not isinstance(items, list):
-        return ""
-    parts = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        label = item.get("label") or item.get("channel") or "通知"
-        status = item.get("status") or ""
-        message = item.get("message") or ""
-        parts.append(f"{label}:{status}:{message}".strip(":"))
-    return "；".join(parts)
+    return AlertLogStore.format_notifications(entry)
 
 
 def build_alert_log_csv():
-    items = alert_log_export_entries()
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["timestamp", "time", "type", "mode", "message", "read", "acknowledged", "notifications", "related_news"])
-    for entry in items:
-        related = entry.get("related_news")
-        if isinstance(related, list):
-            news_text = "；".join(str(item.get("title") or "") for item in related if isinstance(item, dict))
-        else:
-            news_text = ""
-        writer.writerow([
-            entry.get("timestamp", ""),
-            entry.get("time", ""),
-            entry.get("type", ""),
-            entry.get("mode", ""),
-            entry.get("message", ""),
-            "yes" if entry.get("read") else "no",
-            "yes" if entry.get("acknowledged") else "no",
-            _format_alert_notifications(entry),
-            news_text,
-        ])
-    return output.getvalue(), len(items)
+    return _alert_log_store().build_csv(alert_log)
 
 
 def news_loop():
@@ -4481,337 +2680,76 @@ def build_risk_analysis_context(trigger=None, depth=None):
     return context
 
 
+def _risk_model_client():
+    return risk_analysis_core.RiskModelClient(
+        request_client=requests,
+        default_settings=DEFAULT_SETTINGS,
+        fallback_models=DEEPSEEK_FALLBACK_MODELS,
+        user_agent=HTTP_USER_AGENT,
+        request_timeout=REQUEST_TIMEOUT,
+        assistant_timeout=RISK_ASSISTANT_TIMEOUT,
+        max_tokens_default=RISK_ASSISTANT_MAX_TOKENS,
+        temperature=RISK_ASSISTANT_TEMPERATURE,
+        proxies=REQ_PROXY,
+        section_labels=RISK_STRUCTURED_SECTION_LABELS,
+    )
+
+
 def build_risk_analysis_snapshot(context):
-    market = context.get("market", {})
-    daily = context.get("daily", {})
-    history = context.get("history_summary", {})
-    return {
-        "analysis_time": context.get("analysis_time"),
-        "analysis_depth": context.get("analysis_depth", "standard"),
-        "price_usd": market.get("price_usd"),
-        "price_rmb": market.get("price_rmb"),
-        "usdcny_rate": market.get("usdcny_rate"),
-        "gold_source": market.get("gold_source"),
-        "gold_time": market.get("gold_time"),
-        "rate_source": market.get("rate_source"),
-        "rate_time": market.get("rate_time"),
-        "daily_pct_usd": daily.get("pct_usd"),
-        "daily_pct_rmb": daily.get("pct_rmb"),
-        "history_points": history.get("usd", {}).get("points", 0),
-        "kline_points": context.get("kline_summary", {}).get("usd", {}).get("points", 0),
-        "news_count": len(context.get("news", [])),
-        "sample_warning": context.get("sample_warning", ""),
-        "data_quality": context.get("data_quality", {}),
-        "multi_period_trends": context.get("multi_period_trends", []),
-        "risk_scorecard": context.get("risk_scorecard", {}),
-        "manual_trigger": context.get("manual_trigger", {}),
-    }
+    return risk_analysis_core.build_snapshot(context)
 
 
 def parse_risk_analysis_sections(content):
-    sections = {key: [] for key, _ in RISK_STRUCTURED_SECTION_LABELS}
-    current_key = None
-    for raw_line in str(content or "").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        clean = line.lstrip("#*-0123456789.、 ").strip()
-        matched = False
-        for key, label in RISK_STRUCTURED_SECTION_LABELS:
-            for separator in ("：", ":"):
-                prefix = label + separator
-                if clean.startswith(prefix):
-                    current_key = key
-                    value = clean[len(prefix):].strip()
-                    if value:
-                        sections[key].append(value)
-                    matched = True
-                    break
-            if matched:
-                break
-        if matched:
-            continue
-        if current_key:
-            sections[current_key].append(line)
-    return {
-        key: "\n".join(value).strip()
-        for key, value in sections.items()
-        if "\n".join(value).strip()
-    }
+    return risk_analysis_core.parse_sections(content, RISK_STRUCTURED_SECTION_LABELS)
 
 
 def build_risk_analysis_cache_key(snapshot):
-    data = {
-        "analysis_depth": snapshot.get("analysis_depth", "standard"),
-        "price_usd": snapshot.get("price_usd"),
-        "price_rmb": snapshot.get("price_rmb"),
-        "usdcny_rate": snapshot.get("usdcny_rate"),
-        "gold_time": snapshot.get("gold_time"),
-        "rate_time": snapshot.get("rate_time"),
-        "history_points": snapshot.get("history_points"),
-        "kline_points": snapshot.get("kline_points"),
-        "news_count": snapshot.get("news_count"),
-        "sample_warning": snapshot.get("sample_warning", ""),
-        "manual_trigger": snapshot.get("manual_trigger") or {},
-    }
-    return json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return risk_analysis_core.build_cache_key(snapshot)
 
 
 def find_recent_risk_analysis_cache(snapshot, cache_minutes):
-    if not cache_minutes:
-        return None
-    target_key = build_risk_analysis_cache_key(snapshot)
-    now = datetime.now()
     with risk_history_lock:
-        for item in risk_analysis_history:
-            item_snapshot = item.get("snapshot") if isinstance(item.get("snapshot"), dict) else {}
-            if build_risk_analysis_cache_key(item_snapshot) != target_key:
-                continue
-            item_time = _parse_iso_datetime(item.get("analysis_time"))
-            if not item_time:
-                continue
-            age_seconds = max(0, int((now - item_time).total_seconds()))
-            if age_seconds <= cache_minutes * 60:
-                cached = dict(item)
-                cached["cache_age_seconds"] = age_seconds
-                return cached
-    return None
+        return risk_analysis_core.find_recent_cache(risk_analysis_history, snapshot, cache_minutes)
 
 
 def selected_risk_model_config(settings, provider=None):
-    provider = provider or settings.get("risk_assistant_provider", "deepseek")
-    if provider == "deepseek":
-        return (
-            provider,
-            settings.get("deepseek_base_url") or DEFAULT_SETTINGS["deepseek_base_url"],
-            settings.get("deepseek_model") or DEFAULT_SETTINGS["deepseek_model"],
-            settings.get("deepseek_api_key") or "",
-        )
-    if provider == "openai_compatible":
-        return (
-            provider,
-            settings.get("openai_compatible_base_url") or "",
-            settings.get("openai_compatible_model") or "",
-            settings.get("openai_compatible_api_key") or "",
-        )
-    return provider, "", "", ""
+    return _risk_model_client().selected_model_config(settings, provider)
 
 
 def test_risk_model_availability(settings):
-    provider, base_url, model, api_key = selected_risk_model_config(settings)
-    if provider not in VALID_RISK_ASSISTANT_PROVIDERS:
-        return {"ok": False, "provider": provider, "model": model, "message": "当前模型提供商暂不支持。"}
-    if not base_url:
-        return {"ok": False, "provider": provider, "model": model, "message": "请先配置模型接口地址。"}
-    if not model:
-        return {"ok": False, "provider": provider, "model": model, "message": "请先选择或填写模型。"}
-    if not api_key:
-        return {"ok": False, "provider": provider, "model": model, "message": "请先配置当前模型提供商的 API Key。"}
-
-    options = fetch_risk_model_options(settings, provider)
-    models = options.get("models", [])
-    if options.get("source") == "api" and model in models:
-        return {
-            "ok": True,
-            "provider": provider,
-            "model": model,
-            "models": models,
-            "message": f"模型连接正常，接口已返回 {model}。",
-        }
-    if options.get("source") == "api":
-        return {
-            "ok": False,
-            "provider": provider,
-            "model": model,
-            "models": models,
-            "message": f"接口可访问，但模型列表未包含 {model}。",
-        }
-    return {
-        "ok": False,
-        "provider": provider,
-        "model": model,
-        "models": models,
-        "message": options.get("error") or "模型列表获取失败，无法确认当前模型是否可用。",
-    }
+    return _risk_model_client().test_availability(settings, VALID_RISK_ASSISTANT_PROVIDERS)
 
 
 def build_risk_analysis_messages(context):
-    depth = context.get("analysis_depth", "standard")
-    depth_label = {"quick": "快速", "standard": "标准", "deep": "深度"}.get(depth, "标准")
-    system_prompt = (
-        "你是金价监控工具中的风险分析助手。"
-        "请只做风险、趋势和观察依据分析，不提供交易动作、持有比例、收益承诺或保证性结论。"
-        "如果数据样本不足或来源为缓存，需要直接指出限制。"
-        "输出使用中文，结构包含：数据可信度、风险评分卡、多周期趋势、主要风险、观察依据、后续关注。"
-        "请使用固定字段输出：风险等级、趋势方向、数据可信度、主要影响因素、观察价格区间、后续关注。"
-    )
-    user_prompt = (
-        f"请基于以下实时上下文进行{depth_label}黄金价格风险与趋势分析。"
-        "请优先说明风险评分卡、多周期趋势是否一致，以及数据可信度对结论的影响。"
-        "仅输出风险研判，不输出具体操作指令。"
-        "请严格使用以下标签开头：风险等级：、趋势方向：、数据可信度：、主要影响因素：、观察价格区间：、后续关注：。\n\n"
-        f"{json.dumps(context, ensure_ascii=False, separators=(',', ':'))}"
-    )
-    return [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
+    return risk_analysis_core.build_messages(context)
 
 
 def _chat_completions_url(base_url):
-    base_url = (base_url or "").rstrip("/")
-    if base_url.endswith("/chat/completions"):
-        return base_url
-    return f"{base_url}/chat/completions"
+    return risk_analysis_core.chat_completions_url(base_url)
 
 
 def _models_url(base_url):
-    base_url = (base_url or "").rstrip("/")
-    if base_url.endswith("/chat/completions"):
-        base_url = base_url[: -len("/chat/completions")]
-    return f"{base_url}/models"
+    return risk_analysis_core.models_url(base_url)
 
 
 def fetch_risk_model_options(settings, provider=None):
-    provider = provider or settings.get("risk_assistant_provider", "deepseek")
-    if provider == "deepseek":
-        base_url = settings.get("deepseek_base_url") or DEFAULT_SETTINGS["deepseek_base_url"]
-        api_key = settings.get("deepseek_api_key") or ""
-        fallback = list(DEEPSEEK_FALLBACK_MODELS)
-    elif provider == "openai_compatible":
-        base_url = settings.get("openai_compatible_base_url") or ""
-        api_key = settings.get("openai_compatible_api_key") or ""
-        fallback = [settings.get("openai_compatible_model")] if settings.get("openai_compatible_model") else []
-    else:
-        return {"provider": provider, "models": [], "source": "unsupported", "error": "暂不支持当前模型提供商。"}
-
-    if not base_url:
-        return {"provider": provider, "models": fallback, "source": "fallback", "error": "请先配置模型接口地址。"}
-
-    headers = {"User-Agent": HTTP_USER_AGENT}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    try:
-        response = requests.get(
-            _models_url(base_url),
-            headers=headers,
-            timeout=REQUEST_TIMEOUT,
-            proxies=REQ_PROXY,
-        )
-        response.raise_for_status()
-        body = response.json()
-        raw_models = body.get("data", []) if isinstance(body, dict) else []
-        models = [
-            str(item.get("id") or item.get("model") or "").strip()
-            for item in raw_models
-            if isinstance(item, dict) and str(item.get("id") or item.get("model") or "").strip()
-        ]
-        if models:
-            return {"provider": provider, "models": models, "source": "api", "error": ""}
-        return {"provider": provider, "models": fallback, "source": "fallback", "error": ""}
-    except requests.RequestException as exc:
-        return {"provider": provider, "models": fallback, "source": "fallback", "error": f"模型列表获取失败：{exc}"}
-    except (ValueError, TypeError):
-        return {"provider": provider, "models": fallback, "source": "fallback", "error": "模型列表返回格式异常。"}
+    return _risk_model_client().fetch_model_options(settings, provider)
 
 
 def call_openai_chat_completion(settings, context, provider, base_url, model, api_key):
-    if not api_key:
-        return None, "请先配置当前模型提供商的 API Key。"
-    if not base_url:
-        return None, "请先配置当前模型提供商的接口地址。"
-    if not model:
-        return None, "请先选择或填写模型。"
-
-    max_tokens = settings.get("risk_assistant_max_tokens", RISK_ASSISTANT_MAX_TOKENS)
-    depth = context.get("analysis_depth", "standard")
-    if depth == "quick":
-        max_tokens = min(max_tokens, 900)
-    elif depth == "deep":
-        max_tokens = max(max_tokens, 1800)
-    payload = {
-        "model": model,
-        "messages": build_risk_analysis_messages(context),
-        "temperature": RISK_ASSISTANT_TEMPERATURE,
-        "max_tokens": max_tokens,
-        "stream": False,
-    }
-    if provider == "deepseek" and model == "deepseek-v4-pro":
-        payload["thinking"] = {"type": "enabled"}
-        payload["reasoning_effort"] = "medium"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "User-Agent": HTTP_USER_AGENT,
-    }
-    try:
-        response = requests.post(
-            _chat_completions_url(base_url),
-            headers=headers,
-            json=payload,
-            timeout=RISK_ASSISTANT_TIMEOUT,
-            proxies=REQ_PROXY,
-        )
-        if response.status_code in (401, 403):
-            return None, "模型服务认证失败，请检查 API Key。"
-        response.raise_for_status()
-        body = response.json()
-        choices = body.get("choices") if isinstance(body, dict) else None
-        if not choices:
-            return None, "模型服务返回内容为空。"
-        message = choices[0].get("message") if isinstance(choices[0], dict) else {}
-        content = str(message.get("content") or "").strip()
-        if not content:
-            return None, "模型服务返回内容为空。"
-        return {
-            "provider": provider,
-            "model": model,
-            "content": content,
-            "structured": parse_risk_analysis_sections(content),
-            "usage": body.get("usage") if isinstance(body, dict) else None,
-        }, None
-    except requests.Timeout:
-        return None, "模型服务请求超时，请稍后重试。"
-    except requests.ConnectionError:
-        return None, "无法连接模型服务，请检查网络。"
-    except requests.HTTPError as exc:
-        status = getattr(exc.response, "status_code", "")
-        return None, f"模型服务请求失败：HTTP {status}"
-    except requests.RequestException as exc:
-        return None, f"模型服务请求失败：{exc}"
-    except (ValueError, KeyError, TypeError):
-        return None, "模型服务返回格式异常。"
+    return _risk_model_client().call_chat_completion(settings, context, provider, base_url, model, api_key)
 
 
 def call_deepseek_risk_analysis(settings, context):
-    return call_openai_chat_completion(
-        settings,
-        context,
-        "deepseek",
-        settings.get("deepseek_base_url") or DEFAULT_SETTINGS["deepseek_base_url"],
-        settings.get("deepseek_model") or DEFAULT_SETTINGS["deepseek_model"],
-        settings.get("deepseek_api_key") or "",
-    )
+    return _risk_model_client().call_deepseek(settings, context)
 
 
 def call_openai_compatible_risk_analysis(settings, context):
-    return call_openai_chat_completion(
-        settings,
-        context,
-        "openai_compatible",
-        settings.get("openai_compatible_base_url") or "",
-        settings.get("openai_compatible_model") or "",
-        settings.get("openai_compatible_api_key") or "",
-    )
+    return _risk_model_client().call_openai_compatible(settings, context)
 
 
 def run_risk_analysis(settings, context):
-    provider = settings.get("risk_assistant_provider", "deepseek")
-    if provider == "deepseek":
-        return call_deepseek_risk_analysis(settings, context)
-    if provider == "openai_compatible":
-        return call_openai_compatible_risk_analysis(settings, context)
-    return None, "暂不支持当前风险分析模型提供商。"
+    return _risk_model_client().run(settings, context)
 
 
 # ---------- K线聚合 ----------
@@ -5051,85 +2989,32 @@ def background_loop():
 
 # ---------- 阈值检查 (多级) ----------
 def _check_thresholds(mode, price, now_str):
-    if price is None:
-        return
-
-    unit = "$" if mode == "usd" else "¥"
-    mode_label = "国际金价" if mode == "usd" else "国内金价"
-
-    levels = [
-        ("upper_warning", "warning", "上涨关注"),
-        ("upper_critical", "critical", "突破上限"),
-        ("lower_warning", "warning", "下跌关注"),
-        ("lower_critical", "critical", "跌破下限"),
-    ]
-
-    for key_suffix, level, label in levels:
-        key = f"{key_suffix}_{mode}"
-        val = thresholds.get(key)
-        if val is None:
-            continue
-
-        is_upper = "upper" in key_suffix
-        triggered = (is_upper and price >= val) or (not is_upper and price <= val)
-
-        if triggered:
-            if alerted_flags.get(key):
-                return
-            alerted_flags[key] = True
-
-            rate_note = ""
-            if mode == "rmb" and usdcny_rate:
-                rate_kind = "缓存汇率" if usdcny_rate_cached else "实时汇率"
-                rate_note = f"；{rate_kind} {usdcny_rate:.4f}"
-                if usdcny_rate_source:
-                    rate_note += f"（{usdcny_rate_source}）"
-            msg = f"[{mode_label}] {label}: {unit}{price:,.2f} (阈值 {unit}{val:,.2f}{rate_note})"
-            alert_entry = {
-                "time": now_str, "type": level, "mode": mode, "message": msg,
-            }
-            emit_alert(alert_entry, f"金价预警 - {label}")
-            return
-        else:
-            if alerted_flags.get(key):
-                alerted_flags[key] = False
+    plan = targets_core.build_threshold_alert(
+        mode,
+        price,
+        now_str,
+        thresholds,
+        alerted_flags,
+        usdcny_rate=usdcny_rate,
+        usdcny_rate_cached=usdcny_rate_cached,
+        usdcny_rate_source=usdcny_rate_source,
+    )
+    if plan:
+        emit_alert(plan["alert"], plan["title"])
 
 
 # ---------- 波动率检查 ----------
 def _check_volatility(now_str):
     global last_volatility_check
-    if not volatility_config.get("enabled") or volatility_config["percent"] is None:
-        return
-
-    pct = volatility_config["percent"]
-    minutes = volatility_config.get("minutes", 10)
-    points_needed = max(1, int(minutes * 60 / 10))  # 每 10 秒一个点
-
-    if len(price_history) < points_needed:
-        return
-
-    # 避免频繁检查
-    now = datetime.now()
-    if last_volatility_check and (now - last_volatility_check).seconds < 60:
-        return
-    last_volatility_check = now
-
-    window = price_history[-points_needed:]
-    usd_prices = [p["usd"] for p in window if p["usd"] is not None]
-    if len(usd_prices) < points_needed:
-        return
-
-    start_price = usd_prices[0]
-    end_price = usd_prices[-1]
-    if start_price == 0:
-        return
-
-    change_pct = abs((end_price - start_price) / start_price * 100)
-    if change_pct >= pct:
-        direction = "上涨" if end_price > start_price else "下跌"
-        msg = f"[波动预警] {minutes}分钟内{direction} {change_pct:.2f}% (${start_price:,.2f} → ${end_price:,.2f})"
-        alert_entry = {"time": now_str, "type": "volatility", "mode": "usd", "message": msg}
-        emit_alert(alert_entry, "金价波动预警")
+    plan, last_volatility_check = targets_core.build_volatility_alert(
+        price_history,
+        volatility_config,
+        now_str,
+        last_checked_at=last_volatility_check,
+        now_factory=datetime.now,
+    )
+    if plan:
+        emit_alert(plan["alert"], plan["title"])
 
 
 # ---------- Flask 路由 ----------
@@ -5391,24 +3276,17 @@ def on_update_settings(data):
         return
 
     current = get_settings_snapshot()
-    allowed = set(DEFAULT_SETTINGS)
-    incoming = {k: v for k, v in data.items() if k in allowed}
     secret_clear_flags = {
         "smtp_password": "smtp_password_clear",
         "deepseek_api_key": "deepseek_api_key_clear",
         "openai_compatible_api_key": "openai_compatible_api_key_clear",
     }
-    for secret_key, clear_flag in secret_clear_flags.items():
-        if secret_key not in incoming:
-            continue
-        key_value = str(incoming.get(secret_key) or "").strip()
-        if key_value:
-            incoming[secret_key] = key_value
-        elif data.get(clear_flag):
-            incoming[secret_key] = ""
-        else:
-            incoming.pop(secret_key, None)
-    current.update(incoming)
+    current = settings_store_core.merge_settings_update(
+        current,
+        data,
+        allowed_keys=set(DEFAULT_SETTINGS),
+        secret_clear_flags=secret_clear_flags,
+    )
     try:
         updated, startup_error = apply_settings(current)
     except OSError:
@@ -5666,7 +3544,7 @@ def on_export_review_report(data=None):
         request_args = normalize_event_timeline_request(data)
         state = build_event_timeline_state(**request_args)
         content = build_review_report(state)
-        filename = f"{REVIEW_REPORT_EXPORT_PREFIX}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.md"
+        filename = event_timeline_core.review_report_filename(prefix=REVIEW_REPORT_EXPORT_PREFIX)
         saved_path = save_review_report(content, filename)
         emit("review_report_exported", {
             "ok": True,
@@ -5944,34 +3822,15 @@ def format_price_title(rmb=None, usd=None):
         with lock:
             rmb = price_rmb
             usd = price_usd
-    if rmb is not None and usd is not None:
-        return f"{APP_NAME} ¥{rmb:,.2f}/克 | ${usd:,.2f}/oz"
-    if rmb is not None:
-        return f"{APP_NAME} ¥{rmb:,.2f}/克"
-    if usd is not None:
-        return f"{APP_NAME} ${usd:,.2f}/oz"
-    return APP_NAME
+    return desktop_ui_core.format_price_title(APP_NAME, rmb=rmb, usd=usd)
 
 
 def format_macos_status_title():
     settings = get_settings_snapshot()
-    if not settings.get("floating_price_enabled", True):
-        return "金价"
     with lock:
         rmb = price_rmb
         usd = price_usd
-    display_mode = settings.get("floating_price_display_mode", "rmb_usd")
-    if display_mode == "usd_only" and usd is not None:
-        return f"${usd:,.0f}"
-    if display_mode == "rmb_only" and rmb is not None:
-        return f"¥{rmb:,.2f}"
-    if rmb is not None and usd is not None:
-        return f"¥{rmb:,.2f} ${usd:,.0f}"
-    if rmb is not None:
-        return f"¥{rmb:,.2f}"
-    if usd is not None:
-        return f"${usd:,.0f}"
-    return "金价 --"
+    return desktop_ui_core.format_macos_status_title(settings, rmb, usd)
 
 
 def _call_macos_main(callback):
@@ -6082,7 +3941,7 @@ def update_desktop_price_title(title=None):
 
 
 def format_floating_price_text(rmb=None, usd=None, pct=None):
-    display_mode = get_settings_snapshot().get("floating_price_display_mode", "rmb_usd")
+    settings = get_settings_snapshot()
     if rmb is None and usd is None:
         with lock:
             rmb = price_rmb
@@ -6101,67 +3960,18 @@ def format_floating_price_text(rmb=None, usd=None, pct=None):
         fetch_ok = bool(last_fetch_ok)
         fetch_error = last_fetch_error or gold_price_error or usdcny_rate_error
 
-    trend = ""
-    trend_state = "neutral"
-    if pct is not None:
-        try:
-            pct_value = float(pct)
-            if math.isfinite(pct_value):
-                trend = f"{pct_value:+.2f}%"
-                if pct_value > 0:
-                    trend_state = "up"
-                elif pct_value < 0:
-                    trend_state = "down"
-        except (TypeError, ValueError):
-            trend = ""
-
-    time_label = "等待更新"
-    parsed_time = _parse_iso_datetime(fetch_time)
-    if parsed_time:
-        time_label = parsed_time.strftime("%H:%M")
-
-    if not fetch_ok and fetch_error:
-        source_state = "error"
-        source_label = "异常"
-    elif gold_cached or rate_cached:
-        source_state = "cached"
-        source_label = "缓存"
-    elif fetch_ok:
-        source_state = "live"
-        source_label = "实时"
-    else:
-        source_state = "waiting"
-        source_label = "等待"
-
-    status = f"{time_label} · {source_name} · {source_label}"
-    if rmb is None and usd is None:
-        return "黄金 --", "等待行情数据", status, "neutral", source_state
-
-    if display_mode == "usd_only" and usd is not None:
-        primary = f"黄金 ${usd:,.2f}/oz"
-        return primary, trend or "双击打开主窗口", status, trend_state, source_state
-
-    if rmb is not None:
-        primary = f"黄金 ¥{rmb:,.2f}/克"
-        if display_mode == "rmb_only" and trend:
-            secondary = trend
-        elif display_mode == "rmb_only":
-            secondary = "双击打开主窗口"
-        elif usd is not None and trend:
-            secondary = f"${usd:,.2f}/oz  {trend}"
-        elif usd is not None:
-            secondary = f"${usd:,.2f}/oz"
-        elif trend:
-            secondary = trend
-        else:
-            secondary = "双击打开主窗口"
-        return primary, secondary, status, trend_state, source_state
-
-    if usd is not None:
-        primary = f"黄金 ${usd:,.2f}/oz"
-        return primary, trend or "双击打开主窗口", status, trend_state, source_state
-
-    return "黄金 --", "等待行情数据", status, "neutral", source_state
+    return desktop_ui_core.format_floating_price_text(
+        settings,
+        rmb=rmb,
+        usd=usd,
+        pct=pct,
+        fetch_time=fetch_time,
+        source_name=source_name,
+        gold_cached=gold_cached,
+        rate_cached=rate_cached,
+        fetch_ok=fetch_ok,
+        fetch_error=fetch_error,
+    )
 
 
 def _is_floating_price_available():
@@ -6169,29 +3979,31 @@ def _is_floating_price_available():
 
 
 def _floating_window_metrics():
-    preset = get_settings_snapshot().get("floating_price_preset", DEFAULT_SETTINGS["floating_price_preset"])
-    if preset not in FLOATING_PRICE_PRESETS:
-        preset = DEFAULT_SETTINGS["floating_price_preset"]
-    return FLOATING_PRICE_PRESETS[preset]
+    return desktop_ui_core.floating_window_metrics(
+        get_settings_snapshot(),
+        default_preset=DEFAULT_SETTINGS["floating_price_preset"],
+        presets=FLOATING_PRICE_PRESETS,
+    )
 
 
 def _floating_rect(rect_config, width, height):
-    if not rect_config:
-        return None
-    left, top, right, bottom = rect_config
-    if right < 0:
-        right = width + right
-    if bottom < 0:
-        bottom = height + bottom
-    return left, top, right, bottom
+    return desktop_ui_core.floating_rect(rect_config, width, height)
 
 
 def _floating_window_size():
-    return _floating_window_metrics()["size"]
+    return desktop_ui_core.floating_window_size(
+        get_settings_snapshot(),
+        default_preset=DEFAULT_SETTINGS["floating_price_preset"],
+        presets=FLOATING_PRICE_PRESETS,
+    )
 
 
 def _floating_window_radius():
-    return _floating_window_metrics()["radius"]
+    return desktop_ui_core.floating_window_radius(
+        get_settings_snapshot(),
+        default_preset=DEFAULT_SETTINGS["floating_price_preset"],
+        presets=FLOATING_PRICE_PRESETS,
+    )
 
 
 def _apply_floating_window_corner_preference(hwnd):
@@ -6232,20 +4044,13 @@ def _clamp_floating_position(x, y, user32=None):
         import ctypes
 
         user32 = user32 or ctypes.windll.user32
-        width, height = _floating_window_size()
-        left, top, right, bottom = _get_work_area(user32)
-        min_x = left + 8
-        min_y = top + 8
-        max_x = max(min_x, right - width - 8)
-        max_y = max(min_y, bottom - height - 8)
-        return max(min_x, min(int(x), max_x)), max(min_y, min(int(y), max_y))
+        return desktop_ui_core.clamp_floating_position(x, y, _floating_window_size(), _get_work_area(user32))
     except Exception:
         return int(x), int(y)
 
 
 def _default_floating_position(user32, width, height):
-    left, top, right, bottom = _get_work_area(user32)
-    return right - width - 16, bottom - height - 16
+    return desktop_ui_core.default_floating_position(_get_work_area(user32), width, height)
 
 
 def _snap_floating_position(x, y, user32=None):
@@ -6256,29 +4061,24 @@ def _snap_floating_position(x, y, user32=None):
         import ctypes
 
         user32 = user32 or ctypes.windll.user32
-        width, height = _floating_window_size()
-        left, top, right, bottom = _get_work_area(user32)
-        distances = [
-            (abs(x - left), left + 8, y),
-            (abs((right - width) - x), right - width - 8, y),
-            (abs(y - top), x, top + 8),
-            (abs((bottom - height) - y), x, bottom - height - 8),
-        ]
-        distance, snap_x, snap_y = min(distances, key=lambda item: item[0])
-        if distance <= 28:
-            return _clamp_floating_position(snap_x, snap_y, user32)
+        return desktop_ui_core.snap_floating_position(
+            x,
+            y,
+            _floating_window_size(),
+            _get_work_area(user32),
+            enabled=True,
+        )
     except Exception:
         pass
     return x, y
 
 
 def _resolve_floating_position(user32, width, height):
-    settings = get_settings_snapshot()
-    x = settings.get("floating_price_x")
-    y = settings.get("floating_price_y")
-    if not settings.get("floating_price_position_saved") or x is None or y is None:
-        x, y = _default_floating_position(user32, width, height)
-    return _clamp_floating_position(x, y, user32)
+    return desktop_ui_core.resolve_floating_position(
+        get_settings_snapshot(),
+        (width, height),
+        _get_work_area(user32),
+    )
 
 
 def _save_floating_position(x, y):
@@ -7082,9 +4882,9 @@ def create_tray_icon():
 
 def ask_close_choice():
     snapshot = get_settings_snapshot()
-    behavior = snapshot.get("close_behavior", "ask")
-    if snapshot.get("close_remembered") and behavior != "ask":
-        return behavior
+    decision = platform_core.close_behavior_decision(snapshot, _runtime_platform())
+    if decision != "ask":
+        return decision
 
     try:
         import ctypes
@@ -7210,24 +5010,17 @@ def start_desktop_window(start_hidden=False):
         def on_closing():
             if sys.platform == "darwin":
                 snapshot = get_settings_snapshot()
-                behavior = snapshot.get("close_behavior", "ask")
-                if snapshot.get("close_remembered") and behavior != "ask":
-                    if behavior == "exit":
-                        exit_app()
-                    else:
-                        hide_main_window()
-                    return False
-
-                if behavior == "exit":
+                decision = platform_core.close_behavior_decision(snapshot, "macos")
+                if decision == "exit":
                     exit_app()
                     return False
 
-                if behavior == "minimize_to_tray":
+                if decision == "minimize_to_tray":
                     hide_main_window()
                     return False
 
                 socketio.emit("show_close_dialog", {
-                    "close_behavior": behavior,
+                    "close_behavior": snapshot.get("close_behavior", "ask"),
                     "close_remembered": bool(snapshot.get("close_remembered")),
                 })
                 return False
@@ -7237,24 +5030,17 @@ def start_desktop_window(start_hidden=False):
                 return False
 
             snapshot = get_settings_snapshot()
-            behavior = snapshot.get("close_behavior", "ask")
-            if snapshot.get("close_remembered") and behavior != "ask":
-                if behavior == "exit":
-                    exit_app()
-                else:
-                    hide_main_window()
-                return False
-
-            if behavior == "exit":
+            decision = platform_core.close_behavior_decision(snapshot, "windows")
+            if decision == "exit":
                 exit_app()
                 return False
 
-            if behavior == "minimize_to_tray":
+            if decision == "minimize_to_tray":
                 hide_main_window()
                 return False
 
             socketio.emit("show_close_dialog", {
-                "close_behavior": behavior,
+                "close_behavior": snapshot.get("close_behavior", "ask"),
                 "close_remembered": bool(snapshot.get("close_remembered")),
             })
             return False
