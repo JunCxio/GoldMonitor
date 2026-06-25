@@ -7,6 +7,7 @@ GoldMonitor 是一个黄金价格监控工具，提供 Windows 桌面版和 macO
 - 实时获取 XAU/USD、人民币克价和 USD/CNY 汇率，展示数据源、更新时间、缓存状态和日内统计。
 - 支持上涨、下跌、关键价位和短时波动提醒，可分别控制弹窗、声音和邮件通知。
 - 支持目标价观察清单，可维护多个人民币克价或国际金价目标，触发后进入现有警报记录和通知链路。
+- 支持持仓看板，可维护人民币克价和国际金价持仓，展示成本、市值、浮动盈亏，并导出 CSV。
 - 警报记录会显示邮件和 Webhook 的通知投递状态，便于排查通知是否触发。
 - 警报记录支持本地保存、未读计数、确认状态、通知重发、搜索筛选、CSV 导出到固定导出目录和一键清空。
 - 支持提醒冷却时间、静默时段、邮件标题模板和正文模板。
@@ -57,6 +58,7 @@ macOS 用户可下载 `GoldMonitor-macOS.dmg`，打开后把 `GoldMonitor.app` �
 - `settings.json`：通用设置、邮件通知、Webhook 通知和风险分析设置。
 - `thresholds.json`：价格阈值和波动提醒配置。
 - `watch_targets.json`：目标价观察清单。
+- `portfolio_positions.json`：本地持仓记录。
 - `market_cache.json`：最近可用金价与汇率缓存。
 - `price_history.json`：本地价格历史。
 - `price_history.sqlite3`：本地价格历史主存储。
@@ -97,11 +99,12 @@ python3 -m venv .venv
 运行静态与契约检查：
 
 ```powershell
-.\.venv\Scripts\python.exe -m py_compile app.py setup_gui.py tests\risk_contract_check.py tests\frontend_asset_check.py tests\test_risk_analysis_module.py tests\test_market_data_module.py tests\test_settings_store_module.py tests\test_notifications_module.py tests\test_event_timeline_module.py tests\test_update_manager_module.py tests\test_platform_module.py tests\test_news_module.py tests\test_targets_module.py tests\test_support_files_module.py tests\test_desktop_ui_module.py tests\test_verify_release_assets_script.py scripts\verify_release_assets.py
+.\.venv\Scripts\python.exe -m py_compile app.py setup_gui.py tests\risk_contract_check.py tests\frontend_asset_check.py tests\test_portfolio_module.py tests\test_risk_analysis_module.py tests\test_market_data_module.py tests\test_settings_store_module.py tests\test_notifications_module.py tests\test_event_timeline_module.py tests\test_update_manager_module.py tests\test_platform_module.py tests\test_news_module.py tests\test_targets_module.py tests\test_support_files_module.py tests\test_desktop_ui_module.py tests\test_verify_release_assets_script.py scripts\verify_release_assets.py
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\contract_checks.ps1
 .\.venv\Scripts\python.exe tests\risk_contract_check.py
 .\.venv\Scripts\python.exe tests\engineering_foundation_check.py
 .\.venv\Scripts\python.exe tests\test_storage_modules.py
+.\.venv\Scripts\python.exe tests\test_portfolio_module.py
 .\.venv\Scripts\python.exe tests\test_risk_analysis_module.py
 .\.venv\Scripts\python.exe tests\test_market_data_module.py
 .\.venv\Scripts\python.exe tests\test_settings_store_module.py
@@ -133,6 +136,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\contract_checks.ps1
 .\.venv\Scripts\python.exe tests\event_timeline_review_check.py
 .\.venv\Scripts\python.exe tests\engineering_foundation_check.py
 .\.venv\Scripts\python.exe tests\test_storage_modules.py
+.\.venv\Scripts\python.exe tests\test_portfolio_module.py
 .\.venv\Scripts\python.exe tests\test_risk_analysis_module.py
 .\.venv\Scripts\python.exe tests\test_market_data_module.py
 .\.venv\Scripts\python.exe tests\test_settings_store_module.py

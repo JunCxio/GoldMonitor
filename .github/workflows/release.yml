@@ -34,7 +34,7 @@ jobs:
       - name: Run checks
         shell: powershell
         run: |
-          python -m py_compile app.py setup_gui.py tests\risk_contract_check.py tests\update_logic_check.py tests\startup_contract_check.py tests\frontend_asset_check.py tests\test_risk_analysis_module.py tests\test_market_data_module.py tests\test_settings_store_module.py tests\test_notifications_module.py tests\test_event_timeline_module.py tests\test_update_manager_module.py tests\test_platform_module.py tests\test_news_module.py tests\test_targets_module.py tests\test_support_files_module.py tests\test_desktop_ui_module.py tests\test_verify_release_assets_script.py scripts\verify_release_assets.py
+          python -m py_compile app.py setup_gui.py tests\risk_contract_check.py tests\update_logic_check.py tests\startup_contract_check.py tests\frontend_asset_check.py tests\test_portfolio_module.py tests\test_risk_analysis_module.py tests\test_market_data_module.py tests\test_settings_store_module.py tests\test_notifications_module.py tests\test_event_timeline_module.py tests\test_update_manager_module.py tests\test_platform_module.py tests\test_news_module.py tests\test_targets_module.py tests\test_support_files_module.py tests\test_desktop_ui_module.py tests\test_verify_release_assets_script.py scripts\verify_release_assets.py
           powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\contract_checks.ps1
           python tests\risk_contract_check.py
           python tests\gold_cache_check.py
@@ -50,6 +50,7 @@ jobs:
           python tests\event_timeline_review_check.py
           python tests\engineering_foundation_check.py
           python tests\test_storage_modules.py
+          python tests\test_portfolio_module.py
           python tests\test_risk_analysis_module.py
           python tests\test_market_data_module.py
           python tests\test_settings_store_module.py
@@ -107,7 +108,7 @@ jobs:
 
       - name: Run checks
         run: |
-          python -m py_compile app.py setup_gui.py tests/risk_contract_check.py tests/update_logic_check.py tests/startup_contract_check.py tests/frontend_asset_check.py tests/test_risk_analysis_module.py tests/test_market_data_module.py tests/test_settings_store_module.py tests/test_notifications_module.py tests/test_event_timeline_module.py tests/test_update_manager_module.py tests/test_platform_module.py tests/test_news_module.py tests/test_targets_module.py tests/test_support_files_module.py tests/test_desktop_ui_module.py tests/test_verify_release_assets_script.py scripts/verify_release_assets.py
+          python -m py_compile app.py setup_gui.py tests/risk_contract_check.py tests/update_logic_check.py tests/startup_contract_check.py tests/frontend_asset_check.py tests/test_portfolio_module.py tests/test_risk_analysis_module.py tests/test_market_data_module.py tests/test_settings_store_module.py tests/test_notifications_module.py tests/test_event_timeline_module.py tests/test_update_manager_module.py tests/test_platform_module.py tests/test_news_module.py tests/test_targets_module.py tests/test_support_files_module.py tests/test_desktop_ui_module.py tests/test_verify_release_assets_script.py scripts/verify_release_assets.py
           python tests/risk_contract_check.py
           python tests/gold_cache_check.py
           python tests/price_fetch_with_cache_check.py
@@ -122,6 +123,7 @@ jobs:
           python tests/event_timeline_review_check.py
           python tests/engineering_foundation_check.py
           python tests/test_storage_modules.py
+          python tests/test_portfolio_module.py
           python tests/test_risk_analysis_module.py
           python tests/test_market_data_module.py
           python tests/test_settings_store_module.py
