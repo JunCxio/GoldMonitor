@@ -52,6 +52,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\contract_checks.ps1
 - Windows job 成功完成。
 - macOS job 成功完成。
 - publish-release job 成功完成。
+- verify-release job 成功完成。
 - Release 不是 draft，也不是 prerelease。
 
 ## 4. Release 资产检查
@@ -72,6 +73,12 @@ Release 必须包含以下资产：
 - `downloads.macos.url` 指向 `GoldMonitor-macOS.dmg`。
 - `downloads.macos.sha256` 与 macOS DMG 实际 SHA256 一致。
 - `notes` 与 `CHANGELOG.md` 当前版本内容一致或语义一致。
+
+可自动化部分由 Release workflow 的 verify-release job 执行，也可以手动运行：
+
+```bash
+python scripts/verify_release_assets.py --tag vX.Y.Z --repository JunCxio/GoldMonitor
+```
 
 ## 5. 下载与完整性检查
 

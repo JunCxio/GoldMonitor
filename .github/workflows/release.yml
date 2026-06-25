@@ -34,7 +34,7 @@ jobs:
       - name: Run checks
         shell: powershell
         run: |
-          python -m py_compile app.py setup_gui.py tests\risk_contract_check.py tests\update_logic_check.py tests\startup_contract_check.py tests\frontend_asset_check.py tests\test_risk_analysis_module.py tests\test_market_data_module.py tests\test_settings_store_module.py tests\test_notifications_module.py tests\test_event_timeline_module.py tests\test_update_manager_module.py tests\test_platform_module.py tests\test_news_module.py tests\test_targets_module.py tests\test_support_files_module.py tests\test_desktop_ui_module.py
+          python -m py_compile app.py setup_gui.py tests\risk_contract_check.py tests\update_logic_check.py tests\startup_contract_check.py tests\frontend_asset_check.py tests\test_risk_analysis_module.py tests\test_market_data_module.py tests\test_settings_store_module.py tests\test_notifications_module.py tests\test_event_timeline_module.py tests\test_update_manager_module.py tests\test_platform_module.py tests\test_news_module.py tests\test_targets_module.py tests\test_support_files_module.py tests\test_desktop_ui_module.py tests\test_verify_release_assets_script.py scripts\verify_release_assets.py
           powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\contract_checks.ps1
           python tests\risk_contract_check.py
           python tests\gold_cache_check.py
@@ -61,6 +61,7 @@ jobs:
           python tests\test_targets_module.py
           python tests\test_support_files_module.py
           python tests\test_desktop_ui_module.py
+          python -m pytest tests\test_verify_release_assets_script.py
           python tests\frontend_asset_check.py
 
       - name: Build Windows application
@@ -106,7 +107,7 @@ jobs:
 
       - name: Run checks
         run: |
-          python -m py_compile app.py setup_gui.py tests/risk_contract_check.py tests/update_logic_check.py tests/startup_contract_check.py tests/frontend_asset_check.py tests/test_risk_analysis_module.py tests/test_market_data_module.py tests/test_settings_store_module.py tests/test_notifications_module.py tests/test_event_timeline_module.py tests/test_update_manager_module.py tests/test_platform_module.py tests/test_news_module.py tests/test_targets_module.py tests/test_support_files_module.py tests/test_desktop_ui_module.py
+          python -m py_compile app.py setup_gui.py tests/risk_contract_check.py tests/update_logic_check.py tests/startup_contract_check.py tests/frontend_asset_check.py tests/test_risk_analysis_module.py tests/test_market_data_module.py tests/test_settings_store_module.py tests/test_notifications_module.py tests/test_event_timeline_module.py tests/test_update_manager_module.py tests/test_platform_module.py tests/test_news_module.py tests/test_targets_module.py tests/test_support_files_module.py tests/test_desktop_ui_module.py tests/test_verify_release_assets_script.py scripts/verify_release_assets.py
           python tests/risk_contract_check.py
           python tests/gold_cache_check.py
           python tests/price_fetch_with_cache_check.py
@@ -132,6 +133,7 @@ jobs:
           python tests/test_targets_module.py
           python tests/test_support_files_module.py
           python tests/test_desktop_ui_module.py
+          python -m pytest tests/test_verify_release_assets_script.py
           python tests/frontend_asset_check.py
 
       - name: Build macOS DMG
@@ -185,3 +187,23 @@ jobs:
             release/GoldMonitorSetup.exe
             release/GoldMonitor-macOS.dmg
             release/version.json
+
+  verify-release:
+    runs-on: ubuntu-latest
+    needs:
+      - publish-release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify published release assets
+        run: |
+          python scripts/verify_release_assets.py \
+            --tag "${{ github.ref_name }}" \
+            --repository "${{ github.repository }}"

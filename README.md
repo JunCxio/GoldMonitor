@@ -97,7 +97,7 @@ python3 -m venv .venv
 运行静态与契约检查：
 
 ```powershell
-.\.venv\Scripts\python.exe -m py_compile app.py setup_gui.py tests\risk_contract_check.py tests\frontend_asset_check.py tests\test_risk_analysis_module.py tests\test_market_data_module.py tests\test_settings_store_module.py tests\test_notifications_module.py tests\test_event_timeline_module.py tests\test_update_manager_module.py tests\test_platform_module.py tests\test_news_module.py tests\test_targets_module.py tests\test_support_files_module.py tests\test_desktop_ui_module.py
+.\.venv\Scripts\python.exe -m py_compile app.py setup_gui.py tests\risk_contract_check.py tests\frontend_asset_check.py tests\test_risk_analysis_module.py tests\test_market_data_module.py tests\test_settings_store_module.py tests\test_notifications_module.py tests\test_event_timeline_module.py tests\test_update_manager_module.py tests\test_platform_module.py tests\test_news_module.py tests\test_targets_module.py tests\test_support_files_module.py tests\test_desktop_ui_module.py tests\test_verify_release_assets_script.py scripts\verify_release_assets.py
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\contract_checks.ps1
 .\.venv\Scripts\python.exe tests\risk_contract_check.py
 .\.venv\Scripts\python.exe tests\engineering_foundation_check.py
@@ -113,6 +113,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\contract_checks.ps1
 .\.venv\Scripts\python.exe tests\test_targets_module.py
 .\.venv\Scripts\python.exe tests\test_support_files_module.py
 .\.venv\Scripts\python.exe tests\test_desktop_ui_module.py
+.\.venv\Scripts\python.exe -m pytest tests\test_verify_release_assets_script.py
 .\.venv\Scripts\python.exe tests\frontend_asset_check.py
 ```
 
@@ -143,6 +144,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\contract_checks.ps1
 .\.venv\Scripts\python.exe tests\test_targets_module.py
 .\.venv\Scripts\python.exe tests\test_support_files_module.py
 .\.venv\Scripts\python.exe tests\test_desktop_ui_module.py
+.\.venv\Scripts\python.exe -m pytest tests\test_verify_release_assets_script.py
 .\.venv\Scripts\python.exe tests\frontend_asset_check.py
 ```
 
@@ -180,5 +182,7 @@ git push origin v1.4.3
 ```
 
 GitHub Actions 会执行检查、构建 Windows EXE 和 macOS DMG、生成 `version.json`，并把 `GoldMonitorSetup.exe`、`GoldMonitor-macOS.dmg` 与 `version.json` 上传到对应 Release。
+
+发布完成后，GitHub Actions 会继续运行发布资产验收，自动下载 `version.json`、Windows 安装包和 macOS DMG，并校验版本、下载地址和 SHA256。
 
 如果 `CHANGELOG.md` 中缺少当前版本说明，发布流程会失败。
