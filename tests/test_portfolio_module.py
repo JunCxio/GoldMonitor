@@ -13,6 +13,10 @@ def fixed_now():
     return datetime(2026, 6, 25, 10, 0, 0)
 
 
+def later_now():
+    return datetime(2026, 6, 26, 11, 30, 0)
+
+
 def test_portfolio_positions_normalize_value_and_summarize_by_currency():
     from goldmonitor.portfolio import build_portfolio_state, normalize_portfolio_position
 
@@ -91,6 +95,7 @@ def test_portfolio_state_marks_waiting_price_and_invalid_position():
     positions = normalize_portfolio_positions(
         [
             {"id": "valid-usd", "name": "美元持仓", "mode": "usd", "entry_price": "2300", "quantity": "1"},
+            {"id": "valid-usd", "name": "重复美元持仓", "mode": "usd", "entry_price": "2400", "quantity": "2"},
             {"id": "bad-rmb", "name": "异常持仓", "mode": "rmb", "entry_price": "bad", "quantity": "5"},
             {"id": "skip", "name": "", "mode": "rmb", "entry_price": "680", "quantity": "1"},
         ],
@@ -111,12 +116,95 @@ def test_portfolio_state_marks_waiting_price_and_invalid_position():
     assert state["rmb_summary"]["valued"] == 0
 
 
+def test_portfolio_normalization_dates_and_timestamps():
+    from goldmonitor.portfolio import normalize_portfolio_position
+
+    invalid_date_position = normalize_portfolio_position(
+        {
+            "name": "日期异常",
+            "mode": "rmb",
+            "entry_price": "680",
+            "quantity": "1",
+            "entry_date": "2026-99-99",
+            "updated_at": "2000-01-01T00:00:00",
+        },
+        now_factory=fixed_now,
+        id_factory=lambda: "position-invalid-date",
+    )
+    valid_date_position = normalize_portfolio_position(
+        {
+            "name": "日期有效",
+            "mode": "rmb",
+            "entry_price": "680",
+            "quantity": "1",
+            "entry_date": "2026-06-25 10:00:00",
+        },
+        now_factory=fixed_now,
+        id_factory=lambda: "position-valid-date",
+    )
+    existing = normalize_portfolio_position(
+        {
+            "id": "position-existing",
+            "name": "原始持仓",
+            "mode": "rmb",
+            "entry_price": "680",
+            "quantity": "1",
+            "created_at": "2026-06-01T09:00:00",
+            "updated_at": "2026-06-01T09:00:00",
+        },
+        now_factory=fixed_now,
+        id_factory=lambda: "unused",
+    )
+    updated = normalize_portfolio_position(
+        {
+            "id": "position-existing",
+            "name": "更新持仓",
+            "mode": "rmb",
+            "entry_price": "690",
+            "quantity": "1",
+            "created_at": "2026-06-20T09:00:00",
+            "updated_at": "2026-06-20T09:00:00",
+        },
+        existing=existing,
+        now_factory=later_now,
+        id_factory=lambda: "unused",
+    )
+
+    assert invalid_date_position["entry_date"] == ""
+    assert invalid_date_position["updated_at"] == "2026-06-25T10:00:00"
+    assert valid_date_position["entry_date"] == "2026-06-25"
+    assert updated["created_at"] == "2026-06-01T09:00:00"
+    assert updated["updated_at"] == "2026-06-26T11:30:00"
+
+
+def test_portfolio_public_helpers_contracts():
+    from goldmonitor.portfolio import empty_portfolio_summary, find_portfolio_position_index
+
+    items = [{"id": "position-a"}, {"id": "position-b"}]
+    assert find_portfolio_position_index(items, "") == -1
+    assert find_portfolio_position_index(items, "missing") == -1
+    assert find_portfolio_position_index(items, "position-b") == 1
+    assert empty_portfolio_summary() == {
+        "count": 0,
+        "valued": 0,
+        "cost": 0.0,
+        "market_value": 0.0,
+        "pnl": 0.0,
+        "pnl_percent": 0.0,
+    }
+
+
 def test_portfolio_store_persists_versioned_json_and_csv_export():
     from goldmonitor.portfolio import PortfolioPositionStore, build_portfolio_csv
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = Path(tmp_dir) / "portfolio_positions.json"
-        store = PortfolioPositionStore(str(path), now_factory=fixed_now, id_factory=lambda: "position-store")
+        generated_ids = iter(["position-store-rmb", "position-store-usd"])
+        store = PortfolioPositionStore(
+            str(path),
+            now_factory=fixed_now,
+            id_factory=lambda: next(generated_ids),
+        )
         saved = store.save([
             {"name": "金条", "mode": "rmb", "entry_price": "680", "quantity": "3", "entry_date": "2026-06-01"},
             {"name": "XAU", "mode": "usd", "entry_price": "2300", "quantity": "1.5", "note": "账户持仓"},

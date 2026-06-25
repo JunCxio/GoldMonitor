@@ -12,7 +12,6 @@ from .data_contracts import unwrap_item_payload, wrap_item_payload
 PORTFOLIO_MODES = {"rmb", "usd"}
 PORTFOLIO_NAME_LIMIT = 60
 PORTFOLIO_NOTE_LIMIT = 200
-PORTFOLIO_ENTRY_DATE_LIMIT = 20
 PORTFOLIO_CSV_FIELDS = [
     "id",
     "name",
@@ -61,6 +60,16 @@ def _valid_position_id(value):
     return text
 
 
+def _normalize_entry_date(value):
+    text = _clean_text(value)
+    if len(text) < 10:
+        return ""
+    try:
+        return datetime.strptime(text[:10], "%Y-%m-%d").date().isoformat()
+    except ValueError:
+        return ""
+
+
 def _round_value(value, digits=4):
     if value is None:
         return None
@@ -90,10 +99,10 @@ def normalize_portfolio_position(item, existing=None, now_factory=None, id_facto
 
     entry_price = _positive_float_or_none(item.get("entry_price", existing.get("entry_price")))
     quantity = _positive_float_or_none(item.get("quantity", existing.get("quantity")))
-    entry_date = _clean_text(item.get("entry_date", existing.get("entry_date", "")), PORTFOLIO_ENTRY_DATE_LIMIT)
+    entry_date = _normalize_entry_date(item.get("entry_date", existing.get("entry_date", "")))
     note = _clean_text(item.get("note", existing.get("note", "")), PORTFOLIO_NOTE_LIMIT)
-    created_at = str(item.get("created_at") or existing.get("created_at") or now)
-    updated_at = now if existing else str(item.get("updated_at") or now)
+    created_at = str(existing.get("created_at") or item.get("created_at") or now)
+    updated_at = now
 
     return {
         "id": position_id,
@@ -112,13 +121,21 @@ def normalize_portfolio_positions(items, now_factory=None, id_factory=None):
     if not isinstance(items, list):
         return []
     normalized = []
+    seen = set()
     for item in items:
         try:
-            normalized.append(
-                normalize_portfolio_position(item, now_factory=now_factory, id_factory=id_factory)
+            position = normalize_portfolio_position(
+                item,
+                now_factory=now_factory,
+                id_factory=id_factory,
             )
         except ValueError:
             continue
+        position_id = position.get("id")
+        if position_id in seen:
+            continue
+        seen.add(position_id)
+        normalized.append(position)
     return normalized
 
 
