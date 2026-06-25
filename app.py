@@ -123,6 +123,7 @@ SETTINGS_PATH = os.path.join(APPDATA_DIR, "settings.json")
 THRESHOLDS_PATH = os.path.join(APPDATA_DIR, "thresholds.json")
 WATCH_TARGETS_PATH = os.path.join(APPDATA_DIR, "watch_targets.json")
 PORTFOLIO_POSITIONS_PATH = os.path.join(APPDATA_DIR, "portfolio_positions.json")
+PORTFOLIO_TRANSACTIONS_PATH = os.path.join(APPDATA_DIR, "portfolio_transactions.json")
 MARKET_CACHE_PATH = os.path.join(APPDATA_DIR, "market_cache.json")
 UPDATE_DIR = os.path.join(APPDATA_DIR, "updates")
 EXPORT_DIR = os.path.join(APPDATA_DIR, "exports")
@@ -319,6 +320,7 @@ volatility_config = {"percent": None, "minutes": 10, "enabled": False}
 last_volatility_check = None
 watch_targets = []
 portfolio_positions = []
+portfolio_transactions = []
 
 # 警报去重: 记录每个阈值是否已经触发过 (避免每10秒重复报警)
 alerted_flags = {}  # key: "upper_critical_rmb" -> True/False
@@ -824,8 +826,22 @@ def _portfolio_store():
     )
 
 
+def _portfolio_transaction_store():
+    return portfolio_core.PortfolioTransactionStore(
+        PORTFOLIO_TRANSACTIONS_PATH,
+        legacy_positions_path=PORTFOLIO_POSITIONS_PATH,
+        now_factory=datetime.now,
+        id_factory=portfolio_core.generate_portfolio_transaction_id,
+        position_id_factory=portfolio_core.generate_portfolio_position_id,
+    )
+
+
 def load_portfolio_positions():
     return _portfolio_store().load()
+
+
+def load_portfolio_transactions():
+    return _portfolio_transaction_store().load()
 
 
 def save_portfolio_positions(items=None):
@@ -833,25 +849,66 @@ def save_portfolio_positions(items=None):
     return _portfolio_store().save(items)
 
 
+def save_portfolio_transactions(items=None):
+    items = portfolio_transactions if items is None else items
+    return _portfolio_transaction_store().save(items)
+
+
 def _current_portfolio_prices():
     return {"rmb": price_rmb, "usd": price_usd}
 
 
+def _build_portfolio_state_from_snapshots(transactions, positions, prices):
+    if transactions:
+        return portfolio_core.build_portfolio_state_from_transactions(transactions, prices)
+    return portfolio_core.build_portfolio_state(positions, prices)
+
+
 def build_portfolio_state():
     with lock:
-        items = [dict(item) for item in portfolio_positions]
+        transactions = [dict(item) for item in portfolio_transactions]
+        positions = [dict(item) for item in portfolio_positions]
         prices = _current_portfolio_prices()
-    return portfolio_core.build_portfolio_state(items, prices)
+    return _build_portfolio_state_from_snapshots(transactions, positions, prices)
 
 
 def _find_portfolio_position_index(position_id):
     return portfolio_core.find_portfolio_position_index(portfolio_positions, position_id)
 
 
+def _find_portfolio_transaction_index(transaction_id):
+    return portfolio_core.find_portfolio_transaction_index(portfolio_transactions, transaction_id)
+
+
 def upsert_portfolio_position(data):
-    global portfolio_positions
+    global portfolio_positions, portfolio_transactions
     position_id = str((data or {}).get("id") or "").strip() if isinstance(data, dict) else ""
     with lock:
+        if portfolio_transactions:
+            position = portfolio_core.normalize_portfolio_position(data, now_factory=datetime.now)
+            transaction_data = {
+                "position_id": position["id"],
+                "name": position["name"],
+                "type": "buy",
+                "mode": position["mode"],
+                "price": position["entry_price"],
+                "quantity": position["quantity"],
+                "fee": 0,
+                "trade_date": position["entry_date"],
+                "note": position["note"],
+            }
+            existing_transactions = [item for item in portfolio_transactions if item.get("position_id") == position["id"]]
+            if existing_transactions:
+                transaction_data["id"] = existing_transactions[0].get("id")
+            transaction = portfolio_core.normalize_portfolio_transaction(transaction_data, now_factory=datetime.now)
+            next_transactions = [item for item in portfolio_transactions if item.get("position_id") != position["id"]]
+            next_transactions.append(transaction)
+            portfolio_core.validate_portfolio_transactions(next_transactions)
+            saved_transactions = save_portfolio_transactions(next_transactions)
+            portfolio_transactions = saved_transactions
+            prices = _current_portfolio_prices()
+            return portfolio_core.build_portfolio_state_from_transactions([dict(item) for item in saved_transactions], prices)
+
         index = _find_portfolio_position_index(position_id)
         existing = portfolio_positions[index] if index >= 0 else None
         position = portfolio_core.normalize_portfolio_position(data, existing=existing, now_factory=datetime.now)
@@ -865,8 +922,19 @@ def upsert_portfolio_position(data):
 
 
 def delete_portfolio_position(position_id):
-    global portfolio_positions
+    global portfolio_positions, portfolio_transactions
     with lock:
+        if portfolio_transactions:
+            position_id = str(position_id or "").strip()
+            next_transactions = [item for item in portfolio_transactions if item.get("position_id") != position_id]
+            if len(next_transactions) == len(portfolio_transactions):
+                return False, build_portfolio_state()
+            portfolio_core.validate_portfolio_transactions(next_transactions)
+            saved_transactions = save_portfolio_transactions(next_transactions)
+            portfolio_transactions = saved_transactions
+            prices = _current_portfolio_prices()
+            return True, portfolio_core.build_portfolio_state_from_transactions([dict(item) for item in saved_transactions], prices)
+
         index = _find_portfolio_position_index(position_id)
         if index < 0:
             return False, build_portfolio_state()
@@ -876,11 +944,53 @@ def delete_portfolio_position(position_id):
         return True, build_portfolio_state()
 
 
-def build_portfolio_csv():
+def upsert_portfolio_transaction(data):
+    global portfolio_transactions
+    transaction_id = str((data or {}).get("id") or "").strip() if isinstance(data, dict) else ""
     with lock:
-        items = [dict(item) for item in portfolio_positions]
+        index = _find_portfolio_transaction_index(transaction_id)
+        existing = portfolio_transactions[index] if index >= 0 else None
+        transaction = portfolio_core.normalize_portfolio_transaction(data, existing=existing, now_factory=datetime.now)
+        next_transactions = list(portfolio_transactions)
+        if index >= 0:
+            next_transactions[index] = transaction
+        else:
+            next_transactions.append(transaction)
+        portfolio_core.validate_portfolio_transactions(next_transactions)
+        saved_transactions = save_portfolio_transactions(next_transactions)
+        portfolio_transactions = saved_transactions
         prices = _current_portfolio_prices()
-    return portfolio_core.build_portfolio_csv(items, prices)
+        return portfolio_core.build_portfolio_state_from_transactions([dict(item) for item in saved_transactions], prices)
+
+
+def delete_portfolio_transaction(transaction_id):
+    global portfolio_transactions
+    with lock:
+        index = _find_portfolio_transaction_index(transaction_id)
+        if index < 0:
+            return False, build_portfolio_state()
+        next_transactions = list(portfolio_transactions)
+        next_transactions.pop(index)
+        portfolio_core.validate_portfolio_transactions(next_transactions)
+        saved_transactions = save_portfolio_transactions(next_transactions)
+        portfolio_transactions = saved_transactions
+        prices = _current_portfolio_prices()
+        return True, portfolio_core.build_portfolio_state_from_transactions([dict(item) for item in saved_transactions], prices)
+
+
+def build_portfolio_csv(kind="positions"):
+    with lock:
+        transactions = [dict(item) for item in portfolio_transactions]
+        positions = [dict(item) for item in portfolio_positions]
+        prices = _current_portfolio_prices()
+    if transactions:
+        if kind == "transactions":
+            return portfolio_core.build_portfolio_transactions_csv(transactions)
+        return portfolio_core.build_portfolio_positions_csv(transactions, prices)
+    if kind == "transactions":
+        legacy_transactions = portfolio_core.transactions_from_positions(positions, now_factory=datetime.now)
+        return portfolio_core.build_portfolio_transactions_csv(legacy_transactions)
+    return portfolio_core.build_portfolio_csv(positions, prices)
 
 
 def _startup_command():
@@ -1426,6 +1536,7 @@ app_settings = load_settings()
 apply_persisted_threshold_state(load_thresholds())
 watch_targets = load_watch_targets()
 portfolio_positions = load_portfolio_positions()
+portfolio_transactions = load_portfolio_transactions()
 
 
 def find_available_port(preferred=DEFAULT_PORT):
@@ -3339,14 +3450,50 @@ def on_delete_portfolio_position(data=None):
     socketio.emit("portfolio_updated", state)
 
 
-@socketio.on("export_portfolio")
-def on_export_portfolio():
-    filename = f"GoldMonitor-portfolio-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv"
+@socketio.on("save_portfolio_transaction")
+def on_save_portfolio_transaction(data):
     try:
-        content, count = build_portfolio_csv()
+        state = upsert_portfolio_transaction(data)
+    except ValueError as exc:
+        emit("portfolio_error", {"message": str(exc)})
+        return
+    except OSError:
+        emit("portfolio_error", {"message": "持仓流水保存失败，请检查配置目录权限。"})
+        return
+    socketio.emit("portfolio_updated", state)
+
+
+@socketio.on("delete_portfolio_transaction")
+def on_delete_portfolio_transaction(data=None):
+    transaction_id = data.get("id") if isinstance(data, dict) else None
+    try:
+        ok, state = delete_portfolio_transaction(transaction_id)
+    except ValueError as exc:
+        emit("portfolio_error", {"message": str(exc)})
+        return
+    except OSError:
+        emit("portfolio_error", {"message": "持仓流水保存失败，请检查配置目录权限。"})
+        return
+    if not ok:
+        emit("portfolio_error", {"message": "未找到持仓流水"})
+        emit("portfolio_updated", state)
+        return
+    socketio.emit("portfolio_updated", state)
+
+
+@socketio.on("export_portfolio")
+def on_export_portfolio(data=None):
+    kind = data.get("kind") if isinstance(data, dict) else "positions"
+    if kind not in {"positions", "transactions"}:
+        kind = "positions"
+    suffix = "transactions" if kind == "transactions" else "positions"
+    filename = f"GoldMonitor-portfolio-{suffix}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv"
+    try:
+        content, count = build_portfolio_csv(kind)
         saved_path = save_export_file(filename, content)
         emit("portfolio_exported", {
             "ok": True,
+            "kind": kind,
             "filename": filename,
             "saved_path": saved_path,
             "count": count,

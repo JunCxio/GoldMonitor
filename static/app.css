@@ -403,6 +403,9 @@
   .portfolio-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
   .portfolio-head h3 { font-size:0.82rem; color:var(--text-dim); font-weight:500; letter-spacing:0.03em; margin-bottom:0; }
   .portfolio-tools { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
+  .portfolio-tabs { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px; margin-bottom:8px; }
+  .portfolio-tab { min-height:32px; border:1px solid var(--control-border); border-radius:8px; background:rgba(255,255,255,0.026); color:var(--text-dim); font-size:0.72rem; font-weight:800; cursor:pointer; }
+  .portfolio-tab.active { color:#f0f0f4; border-color:rgba(232,184,48,0.26); background:rgba(232,184,48,0.075); }
   .portfolio-status { min-height:16px; color:var(--text-dim); font-size:0.68rem; line-height:1.4; margin-bottom:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .portfolio-status.ok { color:var(--down); }
   .portfolio-status.fail { color:var(--up); }
@@ -423,14 +426,19 @@
   .portfolio-actions { display:flex; gap:5px; align-items:center; justify-content:flex-end; flex-wrap:wrap; }
   .portfolio-editor { grid-column:1 / -1; display:grid; gap:10px; padding-top:10px; border-top:1px solid var(--hairline); }
   .portfolio-fields { display:grid; grid-template-columns:minmax(150px, 1.4fr) minmax(120px, 1fr); gap:9px; align-items:start; }
+  .portfolio-transaction-fields { grid-template-columns:minmax(140px, 1fr) minmax(140px, 1fr) minmax(150px, 1fr); }
   .portfolio-field { min-width:0; }
   .portfolio-field label { display:block; color:var(--text-dim); font-size:0.68rem; margin-bottom:4px; }
   .portfolio-field input, .portfolio-field select, .portfolio-field textarea { box-sizing:border-box; width:100%; min-height:36px; padding:8px 10px; border-radius:8px; border:1px solid var(--control-border); background:rgba(255,255,255,0.035); color:var(--text); font-size:0.8rem; line-height:1.35; outline:none; font-variant-numeric:tabular-nums; }
   .portfolio-field textarea { min-height:64px; resize:vertical; white-space:pre-wrap; }
   .portfolio-field input:focus, .portfolio-field select:focus, .portfolio-field textarea:focus { border-color:var(--control-border-strong); background:#121225; box-shadow:var(--focus-ring); }
   .portfolio-name, .portfolio-note { grid-column:span 2; }
+  .portfolio-transaction-fields .portfolio-name, .portfolio-transaction-fields .portfolio-note { grid-column:span 3; }
   .portfolio-editor-actions { display:flex; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
   .portfolio-editor-actions button { min-height:32px; padding:6px 10px; font-size:0.7rem; }
+  .portfolio-transaction-type { display:inline-flex; align-items:center; min-height:20px; padding:2px 7px; margin-right:4px; border-radius:999px; font-size:0.66rem; font-weight:900; border:1px solid rgba(255,255,255,0.08); }
+  .portfolio-transaction-type.buy { color:var(--down); background:rgba(49,208,170,0.08); }
+  .portfolio-transaction-type.sell { color:var(--up); background:rgba(255,91,111,0.08); }
   .section-label { font-size:0.68rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px; font-weight:600; }
   .level-badge.warn { background:rgba(224,160,64,0.15); color:var(--warn); }
   .level-badge.crit { background:rgba(224,85,106,0.15); color:var(--up); }
@@ -584,7 +592,9 @@
     .portfolio-item { grid-template-columns:1fr; }
     .portfolio-actions { justify-content:flex-start; }
     .portfolio-fields { grid-template-columns:1fr; }
+    .portfolio-transaction-fields { grid-template-columns:1fr; }
     .portfolio-name, .portfolio-note { grid-column:auto; }
+    .portfolio-transaction-fields .portfolio-name, .portfolio-transaction-fields .portfolio-note { grid-column:auto; }
     .settings-backdrop { padding:10px; }
     .settings-modal { max-height:calc(100vh - 20px); }
     .settings-tabs { padding:10px 14px 0; }

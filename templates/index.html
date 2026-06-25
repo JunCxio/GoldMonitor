@@ -117,9 +117,14 @@
             <div class="portfolio-head">
               <h3>持仓</h3>
               <div class="portfolio-tools">
-                <button class="btn-clear-sm" type="button" onclick="setActivePortfolioPosition('new')">新增</button>
-                <button class="btn-clear-sm" type="button" onclick="exportPortfolio()">导出</button>
+                <button class="btn-clear-sm" type="button" onclick="setActivePortfolioTransaction('new')">新增流水</button>
+                <button class="btn-clear-sm" type="button" onclick="exportPortfolio('positions')">导出持仓</button>
+                <button class="btn-clear-sm" type="button" onclick="exportPortfolio('transactions')">导出流水</button>
               </div>
+            </div>
+            <div class="portfolio-tabs" id="portfolioViewTabs">
+              <button class="portfolio-tab active" type="button" onclick="setPortfolioView('positions')">持仓</button>
+              <button class="portfolio-tab" type="button" onclick="setPortfolioView('transactions')">流水</button>
             </div>
             <div class="portfolio-status" id="portfolioStatus"></div>
             <div class="portfolio-summary" id="portfolioSummary"></div>

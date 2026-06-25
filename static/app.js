@@ -64,9 +64,13 @@ let allThresholds = {};
 let volConfig = { percent: null, minutes: 10, enabled: false };
 let activeAlertRule = null;
 let watchTargets = [];
-let portfolioState = { items: [], total: 0, rmb_summary: {}, usd_summary: {}, prices: {} };
+let portfolioState = { items: [], transactions: [], total: 0, rmb_summary: {}, usd_summary: {}, prices: {} };
+let portfolioView = 'positions';
 let activePortfolioPositionId = null;
 let portfolioDrafts = {};
+let activePortfolioTransactionId = null;
+let portfolioTransactionDrafts = {};
+let pendingPortfolioSave = null;
 let activeWatchTargetId = null;
 let historyView = 'prices';
 let eventTimelineState = { events: [], summary: {}, filters: {}, range: {}, price_summary: {} };
@@ -525,12 +529,14 @@ socket.on('portfolio_updated', data => {
 });
 
 socket.on('portfolio_error', data => {
+  pendingPortfolioSave = null;
   setPortfolioStatus((data && data.message) || '持仓更新失败。', 'fail');
 });
 
 socket.on('portfolio_exported', data => {
   const count = data && Number.isFinite(Number(data.count)) ? Number(data.count) : portfolioState.total;
-  setPortfolioStatus(data && data.saved_path ? '已导出 ' + count + ' 条，保存至 ' + data.saved_path : '持仓已导出。', 'ok');
+  const kindText = data && data.kind === 'transactions' ? '流水' : '持仓';
+  setPortfolioStatus(data && data.saved_path ? '已导出' + kindText + ' ' + count + ' 条，保存至 ' + data.saved_path : kindText + '已导出。', 'ok');
 });
 
 socket.on('portfolio_export_error', data => {
@@ -2530,7 +2536,21 @@ function resetWatchTarget(id) {
 }
 
 function normalizePortfolioSummary(summary) {
-  const base = { count: 0, valued: 0, cost: 0, market_value: 0, pnl: 0, pnl_percent: 0 };
+  const base = {
+    count: 0,
+    valued: 0,
+    cost: 0,
+    cost_basis: 0,
+    market_value: 0,
+    pnl: 0,
+    pnl_percent: 0,
+    unrealized_pnl: 0,
+    unrealized_pnl_percent: 0,
+    realized_pnl: 0,
+    total_pnl: 0,
+    fees: 0,
+    quantity: 0,
+  };
   const source = summary && typeof summary === 'object' ? summary : {};
   return Object.keys(base).reduce((acc, key) => {
     const value = source[key];
@@ -2544,8 +2564,12 @@ function normalizePortfolioState(data) {
   const items = Array.isArray(source.items)
     ? source.items.map(item => (item && typeof item === 'object') ? Object.assign({}, item) : null).filter(Boolean)
     : [];
+  const transactions = Array.isArray(source.transactions)
+    ? source.transactions.map(item => (item && typeof item === 'object') ? Object.assign({}, item) : null).filter(Boolean)
+    : [];
   return {
     items,
+    transactions,
     total: Number.isFinite(Number(source.total)) ? Number(source.total) : items.length,
     rmb_summary: normalizePortfolioSummary(source.rmb_summary),
     usd_summary: normalizePortfolioSummary(source.usd_summary),
@@ -2555,10 +2579,25 @@ function normalizePortfolioState(data) {
 
 function applyPortfolio(data) {
   captureActivePortfolioDraft();
+  captureActivePortfolioTransactionDraft();
   portfolioState = normalizePortfolioState(data);
   if (activePortfolioPositionId && activePortfolioPositionId !== 'new' && !portfolioState.items.some(item => item.id === activePortfolioPositionId)) {
     clearPortfolioDraft(activePortfolioPositionId);
     activePortfolioPositionId = null;
+  }
+  if (activePortfolioTransactionId && activePortfolioTransactionId !== 'new' && !portfolioState.transactions.some(item => item.id === activePortfolioTransactionId)) {
+    clearPortfolioTransactionDraft(activePortfolioTransactionId);
+    activePortfolioTransactionId = null;
+  }
+  if (pendingPortfolioSave) {
+    if (pendingPortfolioSave.kind === 'transaction') {
+      clearPortfolioTransactionDraft(pendingPortfolioSave.id);
+      if (activePortfolioTransactionId === pendingPortfolioSave.id) activePortfolioTransactionId = null;
+    } else if (pendingPortfolioSave.kind === 'position') {
+      clearPortfolioDraft(pendingPortfolioSave.id);
+      if (activePortfolioPositionId === pendingPortfolioSave.id) activePortfolioPositionId = null;
+    }
+    pendingPortfolioSave = null;
   }
   renderPortfolio();
 }
@@ -2609,8 +2648,11 @@ function portfolioPnlClass(value) {
 }
 
 function portfolioValuationLabel(item) {
-  if (!item || item.valuation_status === 'invalid_position' || item.entry_price == null || item.quantity == null) {
+  if (!item || item.valuation_status === 'invalid_position' || item.quantity == null) {
     return '持仓数据需修正';
+  }
+  if (item.valuation_status === 'closed') {
+    return '已清仓';
   }
   if (item.valuation_status === 'waiting_price' || item.current_price == null) {
     return '等待行情';
@@ -2670,19 +2712,76 @@ function clearPortfolioDraft(id) {
   delete portfolioDrafts[portfolioDraftKey(id)];
 }
 
+function portfolioTransactionDraftKey(id) {
+  return String(id || 'new');
+}
+
+function portfolioTransactionBaseDraft(item) {
+  const isNew = !item || item.id === 'new';
+  const source = item || {};
+  return {
+    id: isNew ? 'new' : source.id,
+    position_id: source.position_id || '',
+    name: source.name || '',
+    type: source.type || 'buy',
+    mode: source.mode || currentMode,
+    price: source.price == null ? '' : String(source.price),
+    quantity: source.quantity == null ? '' : String(source.quantity),
+    fee: source.fee == null ? '0' : String(source.fee),
+    trade_date: source.trade_date || '',
+    note: source.note || '',
+  };
+}
+
+function portfolioTransactionDraftFor(item) {
+  const base = portfolioTransactionBaseDraft(item);
+  const draft = portfolioTransactionDrafts[portfolioTransactionDraftKey(base.id)] || {};
+  return Object.assign({}, base, draft, { id: base.id });
+}
+
+function portfolioTransactionInputValue(id, field) {
+  const el = document.getElementById('portfolioTransaction' + field + '_' + id);
+  return el ? el.value : '';
+}
+
+function capturePortfolioTransactionDraft(id) {
+  const key = portfolioTransactionDraftKey(id);
+  if (!document.getElementById('portfolioTransactionName_' + key)) return;
+  portfolioTransactionDrafts[key] = {
+    position_id: portfolioTransactionInputValue(key, 'PositionId'),
+    name: portfolioTransactionInputValue(key, 'Name'),
+    type: portfolioTransactionInputValue(key, 'Type') || 'buy',
+    mode: portfolioTransactionInputValue(key, 'Mode') || currentMode,
+    price: portfolioTransactionInputValue(key, 'Price'),
+    quantity: portfolioTransactionInputValue(key, 'Quantity'),
+    fee: portfolioTransactionInputValue(key, 'Fee'),
+    trade_date: portfolioTransactionInputValue(key, 'TradeDate'),
+    note: portfolioTransactionInputValue(key, 'Note'),
+  };
+}
+
+function captureActivePortfolioTransactionDraft() {
+  if (!activePortfolioTransactionId) return;
+  capturePortfolioTransactionDraft(activePortfolioTransactionId);
+}
+
+function clearPortfolioTransactionDraft(id) {
+  delete portfolioTransactionDrafts[portfolioTransactionDraftKey(id)];
+}
+
 function renderPortfolioSummaryCard(title, mode, summary) {
   const state = normalizePortfolioSummary(summary);
-  const valueClass = portfolioPnlClass(state.pnl);
+  const valueClass = portfolioPnlClass(state.total_pnl || state.pnl);
   const titleText = title ? title + ' · ' + portfolioModeLabel(mode) : portfolioModeLabel(mode);
   const valueText = state.count === 0
     ? formatPortfolioMoney(0, mode)
-    : formatPortfolioMoney(state.pnl, mode);
+    : formatPortfolioMoney(state.total_pnl || state.pnl, mode);
   const costMeta = state.count === 0
     ? '暂无持仓'
     : state.valued === 0
       ? '等待行情'
-      : '市值 ' + formatPortfolioMoney(state.market_value, mode) + ' · 成本 ' + formatPortfolioMoney(state.cost, mode);
-  const countMeta = state.valued + '/' + state.count + ' 已估值 · ' + formatPortfolioPercent(state.pnl_percent);
+      : '市值 ' + formatPortfolioMoney(state.market_value, mode) + ' · 成本 ' + formatPortfolioMoney(state.cost_basis || state.cost, mode);
+  const countMeta = '未实现 ' + formatPortfolioMoney(state.unrealized_pnl, mode) + ' · 已实现 ' + formatPortfolioMoney(state.realized_pnl, mode);
   return [
     '<div class="portfolio-summary-card">',
     '<div class="portfolio-summary-title">' + escapeHtml(titleText) + '</div>',
@@ -2700,6 +2799,16 @@ function renderPortfolioSummary() {
     renderPortfolioSummaryCard('人民币持仓', 'rmb', portfolioState.rmb_summary),
     renderPortfolioSummaryCard('美元持仓', 'usd', portfolioState.usd_summary),
   ].join('');
+}
+
+function renderPortfolioTabs() {
+  const box = document.getElementById('portfolioViewTabs');
+  if (!box) return;
+  Array.from(box.querySelectorAll('.portfolio-tab')).forEach(button => {
+    const target = button.getAttribute('onclick') || '';
+    const isActive = target.indexOf("'" + portfolioView + "'") >= 0;
+    button.classList.toggle('active', isActive);
+  });
 }
 
 function buildPortfolioEditor(item) {
@@ -2756,8 +2865,17 @@ function buildPortfolioEditor(item) {
 
 function renderPortfolio() {
   renderPortfolioSummary();
+  renderPortfolioTabs();
   const box = document.getElementById('portfolioList');
   if (!box) return;
+  if (portfolioView === 'transactions') {
+    renderPortfolioTransactions(box);
+    return;
+  }
+  renderPortfolioPositions(box);
+}
+
+function renderPortfolioPositions(box) {
   const items = Array.isArray(portfolioState.items) ? portfolioState.items : [];
   const parts = [];
   if (activePortfolioPositionId === 'new') {
@@ -2783,16 +2901,16 @@ function renderPortfolio() {
     const mode = item.mode || 'rmb';
     const quantity = formatPortfolioNumber(item.quantity, 2);
     const unit = portfolioQuantityUnit(mode);
-    const entryPrice = formatPortfolioMoney(item.entry_price, mode);
+    const averageCost = formatPortfolioMoney(item.average_cost != null ? item.average_cost : item.entry_price, mode);
     const currentPrice = item.current_price == null ? '等待行情' : formatPortfolioMoney(item.current_price, mode);
     const valuationLabel = portfolioValuationLabel(item);
-    const pnlClass = portfolioPnlClass(item.pnl);
+    const pnlClass = portfolioPnlClass(item.total_pnl != null ? item.total_pnl : item.pnl);
     const metaParts = [
       portfolioModeLabel(mode),
       quantity === '--' ? '' : quantity + ' ' + unit,
-      entryPrice === '--' ? '' : '买入 ' + entryPrice,
+      averageCost === '--' ? '' : '均价 ' + averageCost,
       '当前价 ' + currentPrice,
-      item.entry_date ? '买入 ' + item.entry_date : '',
+      item.last_trade_date ? '最近 ' + item.last_trade_date : '',
       item.note || '',
     ].filter(Boolean);
     return [
@@ -2800,18 +2918,168 @@ function renderPortfolio() {
       '<div class="portfolio-main">',
       '<div class="portfolio-line">' + escapeHtml((item.name || '未命名持仓') + ' · ' + valuationLabel) + '</div>',
       '<div class="portfolio-meta">' + escapeHtml(metaParts.join(' · ')) + '</div>',
-      '<div class="portfolio-meta portfolio-pnl ' + pnlClass + '">浮动盈亏 ' + escapeHtml(formatPortfolioMoney(item.pnl, mode)) + ' · ' + escapeHtml(formatPortfolioPercent(item.pnl_percent)) + '</div>',
+      '<div class="portfolio-meta portfolio-pnl ' + pnlClass + '">未实现 ' + escapeHtml(formatPortfolioMoney(item.unrealized_pnl != null ? item.unrealized_pnl : item.pnl, mode)) + ' · 已实现 ' + escapeHtml(formatPortfolioMoney(item.realized_pnl, mode)) + ' · 合计 ' + escapeHtml(formatPortfolioMoney(item.total_pnl, mode)) + '</div>',
       '</div>',
       '<div class="portfolio-actions">',
-      '<span class="alert-rule-state ' + (item.valuation_status === 'valued' ? 'on' : 'off') + '">' + escapeHtml(item.valuation_status === 'valued' ? '已估值' : '等待') + '</span>',
-      '<button class="btn-clear-sm alert-rule-edit" type="button" onclick="setActivePortfolioPosition(\'' + escapeHtml(item.id) + '\')">编辑</button>',
-      '<button class="btn-clear-sm alert-rule-edit" type="button" onclick="deletePortfolioPosition(\'' + escapeHtml(item.id) + '\')">删除</button>',
+      '<span class="alert-rule-state ' + (item.valuation_status === 'valued' ? 'on' : 'off') + '">' + escapeHtml(item.valuation_status === 'valued' ? '已估值' : item.valuation_status === 'closed' ? '清仓' : '等待') + '</span>',
+      '<button class="btn-clear-sm alert-rule-edit" type="button" onclick="startPortfolioTransactionForPosition(\'' + escapeHtml(item.id) + '\', \'buy\')">买入</button>',
+      '<button class="btn-clear-sm alert-rule-edit" type="button" onclick="startPortfolioTransactionForPosition(\'' + escapeHtml(item.id) + '\', \'sell\')">卖出</button>',
       '</div>',
       activePortfolioPositionId === item.id ? buildPortfolioEditor(item) : '',
       '</div>',
     ].join('');
   }));
   box.innerHTML = parts.join('');
+}
+
+function renderPortfolioTransactions(box) {
+  const transactions = Array.isArray(portfolioState.transactions) ? portfolioState.transactions : [];
+  const parts = [];
+  if (activePortfolioTransactionId === 'new') {
+    parts.push([
+      '<div class="portfolio-item expanded">',
+      '<div class="portfolio-main">',
+      '<div class="portfolio-line">新增流水</div>',
+      '<div class="portfolio-meta">买入会更新平均成本，卖出会计算已实现盈亏</div>',
+      '</div>',
+      '<div class="portfolio-actions"><span class="alert-rule-state off">新建</span></div>',
+      buildPortfolioTransactionEditor({ id: 'new', type: 'buy', mode: currentMode, fee: '0' }),
+      '</div>',
+    ].join(''));
+  }
+  if (!transactions.length && activePortfolioTransactionId !== 'new') {
+    parts.push('<div class="portfolio-empty">暂无流水</div>');
+  }
+  parts.push(...transactions.map(item => {
+    const cls = [
+      'portfolio-item',
+      activePortfolioTransactionId === item.id ? 'expanded' : '',
+    ].filter(Boolean).join(' ');
+    const mode = item.mode || 'rmb';
+    const typeText = item.type === 'sell' ? '卖出' : '买入';
+    const typeClass = item.type === 'sell' ? 'sell' : 'buy';
+    const realizedText = item.type === 'sell' ? ' · 已实现 ' + formatPortfolioMoney(item.realized_pnl, mode) : '';
+    const metaParts = [
+      portfolioModeLabel(mode),
+      formatPortfolioMoney(item.price, mode),
+      formatPortfolioNumber(item.quantity, 4) + ' ' + portfolioQuantityUnit(mode),
+      Number(item.fee) > 0 ? '手续费 ' + formatPortfolioMoney(item.fee, mode) : '',
+      item.trade_date || '',
+      item.note || '',
+    ].filter(Boolean);
+    return [
+      '<div class="' + cls + '">',
+      '<div class="portfolio-main">',
+      '<div class="portfolio-line"><span class="portfolio-transaction-type ' + typeClass + '">' + escapeHtml(typeText) + '</span> ' + escapeHtml(item.name || '未命名流水') + escapeHtml(realizedText) + '</div>',
+      '<div class="portfolio-meta">' + escapeHtml(metaParts.join(' · ')) + '</div>',
+      '</div>',
+      '<div class="portfolio-actions">',
+      '<button class="btn-clear-sm alert-rule-edit" type="button" onclick="setActivePortfolioTransaction(\'' + escapeHtml(item.id) + '\')">编辑</button>',
+      '<button class="btn-clear-sm alert-rule-edit" type="button" onclick="deletePortfolioTransaction(\'' + escapeHtml(item.id) + '\')">删除</button>',
+      '</div>',
+      activePortfolioTransactionId === item.id ? buildPortfolioTransactionEditor(item) : '',
+      '</div>',
+    ].join('');
+  }));
+  box.innerHTML = parts.join('');
+}
+
+function buildPortfolioTransactionEditor(item) {
+  const target = portfolioTransactionDraftFor(item);
+  const id = target.id;
+  const escapedId = escapeHtml(id);
+  const draftInputAttr = ' oninput="capturePortfolioTransactionDraft(\'' + escapedId + '\')"';
+  const draftChangeAttr = ' onchange="capturePortfolioTransactionDraft(\'' + escapedId + '\')"';
+  const modeChangeAttr = ' onchange="capturePortfolioTransactionDraft(\'' + escapedId + '\'); renderPortfolio()"';
+  const positionChangeAttr = ' onchange="syncPortfolioTransactionPosition(\'' + escapedId + '\'); capturePortfolioTransactionDraft(\'' + escapedId + '\')"';
+  const type = target.type || 'buy';
+  const mode = target.mode || currentMode;
+  const positionOptions = buildPortfolioPositionOptions(target.position_id);
+  return [
+    '<div class="portfolio-editor portfolio-transaction-editor">',
+    '<div class="portfolio-fields portfolio-transaction-fields">',
+    '<div class="portfolio-field">',
+    '<label for="portfolioTransactionType_' + escapedId + '">类型</label>',
+    '<select id="portfolioTransactionType_' + escapedId + '"' + draftChangeAttr + '>',
+    '<option value="buy"' + (type === 'buy' ? ' selected' : '') + '>买入</option>',
+    '<option value="sell"' + (type === 'sell' ? ' selected' : '') + '>卖出</option>',
+    '</select>',
+    '</div>',
+    '<div class="portfolio-field">',
+    '<label for="portfolioTransactionPositionId_' + escapedId + '">关联持仓</label>',
+    '<select id="portfolioTransactionPositionId_' + escapedId + '"' + positionChangeAttr + '>',
+    '<option value="">新持仓</option>',
+    positionOptions,
+    '</select>',
+    '</div>',
+    '<div class="portfolio-field portfolio-name">',
+    '<label for="portfolioTransactionName_' + escapedId + '">名称</label>',
+    '<input id="portfolioTransactionName_' + escapedId + '" type="text" maxlength="60" value="' + escapeHtml(target.name || '') + '" placeholder="例如 金条"' + draftInputAttr + '>',
+    '</div>',
+    '<div class="portfolio-field">',
+    '<label for="portfolioTransactionMode_' + escapedId + '">单位</label>',
+    '<select id="portfolioTransactionMode_' + escapedId + '"' + modeChangeAttr + '>',
+    '<option value="rmb"' + (mode === 'rmb' ? ' selected' : '') + '>RMB/克</option>',
+    '<option value="usd"' + (mode === 'usd' ? ' selected' : '') + '>USD/oz</option>',
+    '</select>',
+    '</div>',
+    '<div class="portfolio-field">',
+    '<label for="portfolioTransactionPrice_' + escapedId + '">成交价</label>',
+    '<input id="portfolioTransactionPrice_' + escapedId + '" type="number" step="0.01" value="' + escapeHtml(target.price || '') + '" placeholder="输入价格"' + draftInputAttr + '>',
+    '</div>',
+    '<div class="portfolio-field">',
+    '<label for="portfolioTransactionQuantity_' + escapedId + '">数量（' + escapeHtml(portfolioQuantityUnit(mode)) + '）</label>',
+    '<input id="portfolioTransactionQuantity_' + escapedId + '" type="number" step="0.0001" value="' + escapeHtml(target.quantity || '') + '" placeholder="输入数量"' + draftInputAttr + '>',
+    '</div>',
+    '<div class="portfolio-field">',
+    '<label for="portfolioTransactionFee_' + escapedId + '">手续费</label>',
+    '<input id="portfolioTransactionFee_' + escapedId + '" type="number" step="0.01" value="' + escapeHtml(target.fee == null ? '0' : target.fee) + '" placeholder="0"' + draftInputAttr + '>',
+    '</div>',
+    '<div class="portfolio-field">',
+    '<label for="portfolioTransactionTradeDate_' + escapedId + '">交易日期</label>',
+    '<input id="portfolioTransactionTradeDate_' + escapedId + '" type="date" value="' + escapeHtml(target.trade_date || '') + '"' + draftChangeAttr + '>',
+    '</div>',
+    '<div class="portfolio-field portfolio-note">',
+    '<label for="portfolioTransactionNote_' + escapedId + '">备注</label>',
+    '<textarea id="portfolioTransactionNote_' + escapedId + '" maxlength="200" rows="2" placeholder="例如 账户或来源"' + draftInputAttr + '>' + escapeHtml(target.note || '') + '</textarea>',
+    '</div>',
+    '</div>',
+    '<div class="portfolio-editor-actions">',
+    '<button class="btn-set" type="button" onclick="savePortfolioTransaction(\'' + escapedId + '\')">保存</button>',
+    '<button class="btn-clear-sm" type="button" onclick="setActivePortfolioTransaction(\'' + escapedId + '\')">取消</button>',
+    '</div>',
+    '</div>',
+  ].join('');
+}
+
+function buildPortfolioPositionOptions(selectedId) {
+  const items = Array.isArray(portfolioState.items) ? portfolioState.items : [];
+  return items.map(item => {
+    const selected = item.id === selectedId ? ' selected' : '';
+    return '<option value="' + escapeHtml(item.id) + '"' + selected + '>' + escapeHtml((item.name || '未命名持仓') + ' · ' + portfolioModeLabel(item.mode)) + '</option>';
+  }).join('');
+}
+
+function syncPortfolioTransactionPosition(id) {
+  const key = portfolioTransactionDraftKey(id);
+  const selectedId = portfolioTransactionInputValue(key, 'PositionId');
+  const item = (portfolioState.items || []).find(entry => entry.id === selectedId);
+  if (!item) {
+    capturePortfolioTransactionDraft(id);
+    return;
+  }
+  const nameInput = document.getElementById('portfolioTransactionName_' + key);
+  const modeInput = document.getElementById('portfolioTransactionMode_' + key);
+  if (nameInput && !nameInput.value) nameInput.value = item.name || '';
+  if (modeInput) modeInput.value = item.mode || currentMode;
+  capturePortfolioTransactionDraft(id);
+}
+
+function setPortfolioView(view) {
+  captureActivePortfolioDraft();
+  captureActivePortfolioTransactionDraft();
+  portfolioView = view === 'transactions' ? 'transactions' : 'positions';
+  renderPortfolio();
 }
 
 function setActivePortfolioPosition(id) {
@@ -2823,6 +3091,37 @@ function setActivePortfolioPosition(id) {
     activePortfolioPositionId = id;
   }
   renderPortfolio();
+}
+
+function setActivePortfolioTransaction(id, defaults) {
+  captureActivePortfolioTransactionDraft();
+  if (activePortfolioTransactionId === id && !defaults) {
+    clearPortfolioTransactionDraft(id);
+    activePortfolioTransactionId = null;
+  } else {
+    activePortfolioTransactionId = id;
+    if (defaults && typeof defaults === 'object') {
+      portfolioTransactionDrafts[portfolioTransactionDraftKey(id)] = Object.assign({}, defaults);
+    }
+  }
+  portfolioView = 'transactions';
+  renderPortfolio();
+}
+
+function startPortfolioTransactionForPosition(positionId, type) {
+  const item = (portfolioState.items || []).find(entry => entry.id === positionId);
+  const defaults = item ? {
+    position_id: item.id,
+    name: item.name || '',
+    type: type === 'sell' ? 'sell' : 'buy',
+    mode: item.mode || currentMode,
+    price: '',
+    quantity: '',
+    fee: '0',
+    trade_date: '',
+    note: '',
+  } : { type: type === 'sell' ? 'sell' : 'buy', mode: currentMode, fee: '0' };
+  setActivePortfolioTransaction('new', defaults);
 }
 
 function portfolioInputValue(id, field) {
@@ -2862,9 +3161,8 @@ function savePortfolioPosition(id) {
   payload.entry_price = entryPrice;
   payload.quantity = quantity;
   setPortfolioStatus('正在保存持仓...', '');
+  pendingPortfolioSave = { kind: 'position', id };
   socket.emit('save_portfolio_position', payload);
-  clearPortfolioDraft(id);
-  activePortfolioPositionId = null;
 }
 
 function deletePortfolioPosition(id) {
@@ -2874,9 +3172,71 @@ function deletePortfolioPosition(id) {
   if (activePortfolioPositionId === id) activePortfolioPositionId = null;
 }
 
-function exportPortfolio() {
-  setPortfolioStatus('正在导出持仓...', '');
-  socket.emit('export_portfolio');
+function savePortfolioTransaction(id) {
+  const isNew = id === 'new';
+  const payload = {
+    position_id: portfolioTransactionInputValue(id, 'PositionId').trim(),
+    name: portfolioTransactionInputValue(id, 'Name').trim(),
+    type: portfolioTransactionInputValue(id, 'Type').trim(),
+    mode: portfolioTransactionInputValue(id, 'Mode').trim(),
+    price: portfolioTransactionInputValue(id, 'Price').trim(),
+    quantity: portfolioTransactionInputValue(id, 'Quantity').trim(),
+    fee: portfolioTransactionInputValue(id, 'Fee').trim() || '0',
+    trade_date: portfolioTransactionInputValue(id, 'TradeDate').trim(),
+    note: portfolioTransactionInputValue(id, 'Note').trim(),
+  };
+  if (!payload.name) {
+    setPortfolioStatus('请输入流水名称。', 'fail');
+    return;
+  }
+  if (payload.type !== 'buy' && payload.type !== 'sell') {
+    setPortfolioStatus('流水类型无效。', 'fail');
+    return;
+  }
+  if (payload.type === 'sell' && !payload.position_id) {
+    setPortfolioStatus('请选择要卖出的持仓。', 'fail');
+    return;
+  }
+  if (payload.mode !== 'rmb' && payload.mode !== 'usd') {
+    setPortfolioStatus('持仓单位无效。', 'fail');
+    return;
+  }
+  const price = Number(payload.price);
+  if (!Number.isFinite(price) || price <= 0) {
+    setPortfolioStatus('请输入有效的成交价格。', 'fail');
+    return;
+  }
+  const quantity = Number(payload.quantity);
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    setPortfolioStatus('请输入有效的成交数量。', 'fail');
+    return;
+  }
+  const fee = Number(payload.fee);
+  if (!Number.isFinite(fee) || fee < 0) {
+    setPortfolioStatus('请输入有效的手续费。', 'fail');
+    return;
+  }
+  if (!isNew) payload.id = id;
+  if (!payload.position_id) delete payload.position_id;
+  payload.price = price;
+  payload.quantity = quantity;
+  payload.fee = fee;
+  setPortfolioStatus('正在保存流水...', '');
+  pendingPortfolioSave = { kind: 'transaction', id };
+  socket.emit('save_portfolio_transaction', payload);
+}
+
+function deletePortfolioTransaction(id) {
+  setPortfolioStatus('正在删除流水...', '');
+  socket.emit('delete_portfolio_transaction', { id });
+  clearPortfolioTransactionDraft(id);
+  if (activePortfolioTransactionId === id) activePortfolioTransactionId = null;
+}
+
+function exportPortfolio(kind) {
+  const exportKind = kind === 'transactions' ? 'transactions' : 'positions';
+  setPortfolioStatus(exportKind === 'transactions' ? '正在导出流水...' : '正在导出持仓...', '');
+  socket.emit('export_portfolio', { kind: exportKind });
 }
 
 // ========== 日志 ==========

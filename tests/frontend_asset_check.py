@@ -25,10 +25,14 @@ if '<script src="/static/app.js"></script>' not in template:
 
 for required in (
     'id="portfolioStatus"',
+    'id="portfolioViewTabs"',
     'id="portfolioSummary"',
     'id="portfolioList"',
-    'onclick="setActivePortfolioPosition(\'new\')"',
-    'onclick="exportPortfolio()"',
+    'onclick="setPortfolioView(\'positions\')"',
+    'onclick="setPortfolioView(\'transactions\')"',
+    'onclick="setActivePortfolioTransaction(\'new\')"',
+    'onclick="exportPortfolio(\'positions\')"',
+    'onclick="exportPortfolio(\'transactions\')"',
 ):
     if required not in template:
         raise SystemExit(f"template missing portfolio anchor: {required}")
@@ -56,7 +60,15 @@ for required in (":root", ".container", ".settings-modal", ".price-card"):
     if required not in css:
         raise SystemExit(f"static/app.css missing expected selector: {required}")
 
-for required in (".portfolio-card", ".portfolio-head h3", ".portfolio-summary", ".portfolio-item", ".portfolio-editor"):
+for required in (
+    ".portfolio-card",
+    ".portfolio-head h3",
+    ".portfolio-tabs",
+    ".portfolio-summary",
+    ".portfolio-item",
+    ".portfolio-editor",
+    ".portfolio-transaction-type",
+):
     if required not in css:
         raise SystemExit(f"static/app.css missing portfolio selector: {required}")
 
@@ -69,21 +81,33 @@ for required in (
     "function capturePortfolioDraft",
     "function portfolioDraftFor",
     "function clearPortfolioDraft",
+    "function capturePortfolioTransactionDraft",
+    "function portfolioTransactionDraftFor",
+    "function clearPortfolioTransactionDraft",
     "function renderPortfolio",
+    "function setPortfolioView",
     "function setActivePortfolioPosition",
+    "function setActivePortfolioTransaction",
     "function savePortfolioPosition",
+    "function savePortfolioTransaction",
     "function deletePortfolioPosition",
+    "function deletePortfolioTransaction",
     "function exportPortfolio",
     "portfolioDrafts",
+    "portfolioTransactionDrafts",
     "oninput=\"capturePortfolioDraft",
+    "oninput=\"capturePortfolioTransactionDraft",
     "onchange=\"capturePortfolioDraft",
+    "onchange=\"capturePortfolioTransactionDraft",
     "portfolio_updated",
     "portfolio_error",
     "portfolio_exported",
     "portfolio_export_error",
     "get_portfolio",
     "save_portfolio_position",
+    "save_portfolio_transaction",
     "delete_portfolio_position",
+    "delete_portfolio_transaction",
     "export_portfolio",
 ):
     if required not in js:

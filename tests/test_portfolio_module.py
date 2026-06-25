@@ -243,6 +243,188 @@ def test_portfolio_store_persists_versioned_json_and_csv_export():
         assert rows[1]["valuation_status"] == "valued"
 
 
+def test_portfolio_transactions_migrate_and_calculate_realized_pnl():
+    from goldmonitor.portfolio import (
+        build_portfolio_state_from_transactions,
+        normalize_portfolio_transaction,
+        transactions_from_positions,
+        validate_portfolio_transactions,
+    )
+
+    migrated = transactions_from_positions(
+        [{
+            "id": "position-rmb",
+            "name": "旧金条",
+            "mode": "rmb",
+            "entry_price": "680",
+            "quantity": "10",
+            "entry_date": "2026-06-01",
+            "note": "旧持仓",
+            "created_at": "2026-06-01T09:00:00",
+            "updated_at": "2026-06-01T09:00:00",
+        }],
+        now_factory=fixed_now,
+    )
+    assert migrated == [{
+        "id": "transaction-position-rmb",
+        "position_id": "position-rmb",
+        "name": "旧金条",
+        "type": "buy",
+        "mode": "rmb",
+        "price": 680.0,
+        "quantity": 10.0,
+        "fee": 0.0,
+        "trade_date": "2026-06-01",
+        "note": "旧持仓",
+        "created_at": "2026-06-01T09:00:00",
+        "updated_at": "2026-06-01T09:00:00",
+    }]
+
+    second_buy = normalize_portfolio_transaction(
+        {
+            "position_id": "position-rmb",
+            "name": "旧金条",
+            "type": "buy",
+            "mode": "rmb",
+            "price": "700",
+            "quantity": "10",
+            "fee": "20",
+            "trade_date": "2026-06-10",
+        },
+        now_factory=fixed_now,
+        id_factory=lambda: "transaction-buy-2",
+    )
+    sell = normalize_portfolio_transaction(
+        {
+            "position_id": "position-rmb",
+            "name": "旧金条",
+            "type": "sell",
+            "mode": "rmb",
+            "price": "730",
+            "quantity": "5",
+            "fee": "5",
+            "trade_date": "2026-06-20",
+        },
+        now_factory=fixed_now,
+        id_factory=lambda: "transaction-sell-1",
+    )
+    transactions = migrated + [second_buy, sell]
+
+    validate_portfolio_transactions(transactions)
+    state = build_portfolio_state_from_transactions(transactions, {"rmb": 740.0, "usd": 2350.0})
+    item = state["items"][0]
+    assert state["total"] == 1
+    assert len(state["transactions"]) == 3
+    assert item["id"] == "position-rmb"
+    assert item["quantity"] == 15.0
+    assert item["average_cost"] == 691.0
+    assert item["cost_basis"] == 10365.0
+    assert item["market_value"] == 11100.0
+    assert item["unrealized_pnl"] == 735.0
+    assert item["realized_pnl"] == 190.0
+    assert item["total_pnl"] == 925.0
+    assert item["fees"] == 25.0
+    assert item["pnl"] == 735.0
+    assert state["transactions"][2]["realized_pnl"] == 190.0
+    assert state["rmb_summary"]["cost"] == 10365.0
+    assert state["rmb_summary"]["unrealized_pnl"] == 735.0
+    assert state["rmb_summary"]["realized_pnl"] == 190.0
+    assert state["rmb_summary"]["total_pnl"] == 925.0
+    assert state["rmb_summary"]["pnl"] == 925.0
+
+
+def test_portfolio_transactions_reject_invalid_oversell_and_mode_mismatch():
+    from goldmonitor.portfolio import normalize_portfolio_transaction, validate_portfolio_transactions
+
+    buy = normalize_portfolio_transaction(
+        {"position_id": "position-rmb", "name": "金条", "type": "buy", "mode": "rmb", "price": "680", "quantity": "2"},
+        now_factory=fixed_now,
+        id_factory=lambda: "transaction-buy",
+    )
+    oversell = normalize_portfolio_transaction(
+        {"position_id": "position-rmb", "name": "金条", "type": "sell", "mode": "rmb", "price": "700", "quantity": "3"},
+        now_factory=fixed_now,
+        id_factory=lambda: "transaction-sell",
+    )
+    usd_buy = normalize_portfolio_transaction(
+        {"position_id": "position-rmb", "name": "金条", "type": "buy", "mode": "usd", "price": "2300", "quantity": "1"},
+        now_factory=fixed_now,
+        id_factory=lambda: "transaction-usd",
+    )
+
+    with pytest.raises(ValueError, match="卖出数量不能超过当前持仓"):
+        validate_portfolio_transactions([buy, oversell])
+
+    with pytest.raises(ValueError, match="同一持仓单位必须一致"):
+        validate_portfolio_transactions([buy, usd_buy])
+
+
+def test_portfolio_transaction_store_migrates_legacy_positions_and_exports_csv():
+    from goldmonitor.portfolio import (
+        PortfolioTransactionStore,
+        build_portfolio_positions_csv,
+        build_portfolio_transactions_csv,
+    )
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        legacy_path = Path(tmp_dir) / "portfolio_positions.json"
+        transaction_path = Path(tmp_dir) / "portfolio_transactions.json"
+        legacy_path.write_text(json.dumps({
+            "schema_version": 1,
+            "items": [{
+                "id": "position-rmb",
+                "name": "旧金条",
+                "mode": "rmb",
+                "entry_price": 680.0,
+                "quantity": 2.0,
+                "entry_date": "2026-06-01",
+                "note": "迁移",
+                "created_at": "2026-06-01T09:00:00",
+                "updated_at": "2026-06-01T09:00:00",
+            }],
+        }, ensure_ascii=False), encoding="utf-8")
+        transaction_path.write_text(json.dumps({"schema_version": 1, "items": []}), encoding="utf-8")
+
+        store = PortfolioTransactionStore(
+            str(transaction_path),
+            legacy_positions_path=str(legacy_path),
+            now_factory=fixed_now,
+        )
+        loaded = store.load()
+
+        assert transaction_path.exists()
+        assert loaded[0]["id"] == "transaction-position-rmb"
+        assert loaded[0]["position_id"] == "position-rmb"
+        assert store.load() == loaded
+
+        positions_csv, position_count = build_portfolio_positions_csv(loaded, {"rmb": 700.0, "usd": 2350.0})
+        transactions_csv, transaction_count = build_portfolio_transactions_csv(loaded)
+
+        assert position_count == 1
+        assert transaction_count == 1
+        position_header = next(csv.reader(StringIO(positions_csv)))
+        assert "average_cost" in position_header
+        assert "realized_pnl" in position_header
+        transaction_header = next(csv.reader(StringIO(transactions_csv)))
+        assert transaction_header == [
+            "id",
+            "position_id",
+            "name",
+            "type",
+            "mode",
+            "price",
+            "quantity",
+            "fee",
+            "trade_date",
+            "realized_pnl",
+            "note",
+            "created_at",
+            "updated_at",
+        ]
+        assert "旧金条" in positions_csv
+        assert "transaction-position-rmb" in transactions_csv
+
+
 def test_app_portfolio_wrappers_upsert_delete_and_export(monkeypatch):
     import app
 
@@ -276,6 +458,61 @@ def test_app_portfolio_wrappers_upsert_delete_and_export(monkeypatch):
     assert deleted_state["total"] == 0
 
 
+def test_app_portfolio_transaction_wrappers_save_delete_and_validate(monkeypatch):
+    import app
+
+    saved_transactions = []
+    monkeypatch.setattr(app, "portfolio_transactions", [])
+    monkeypatch.setattr(app, "price_rmb", 740.0)
+    monkeypatch.setattr(app, "price_usd", 2350.0)
+
+    def fake_save(items=None):
+        saved_transactions[:] = list(app.portfolio_transactions if items is None else items)
+        return list(saved_transactions)
+
+    monkeypatch.setattr(app, "save_portfolio_transactions", fake_save)
+
+    buy_state = app.upsert_portfolio_transaction({
+        "name": "金条",
+        "type": "buy",
+        "mode": "rmb",
+        "price": "680",
+        "quantity": "10",
+        "fee": "0",
+        "trade_date": "2026-06-01",
+    })
+    position_id = buy_state["items"][0]["id"]
+    sell_state = app.upsert_portfolio_transaction({
+        "position_id": position_id,
+        "name": "金条",
+        "type": "sell",
+        "mode": "rmb",
+        "price": "730",
+        "quantity": "2",
+        "fee": "4",
+        "trade_date": "2026-06-20",
+    })
+
+    assert sell_state["items"][0]["quantity"] == 8.0
+    assert sell_state["items"][0]["realized_pnl"] == 96.0
+    assert len(sell_state["transactions"]) == 2
+
+    with pytest.raises(ValueError, match="卖出数量不能超过当前持仓"):
+        app.upsert_portfolio_transaction({
+            "position_id": position_id,
+            "name": "金条",
+            "type": "sell",
+            "mode": "rmb",
+            "price": "720",
+            "quantity": "20",
+        })
+    assert len(app.portfolio_transactions) == 2
+
+    ok, deleted_state = app.delete_portfolio_transaction(sell_state["transactions"][1]["id"])
+    assert ok is True
+    assert deleted_state["items"][0]["quantity"] == 10.0
+
+
 def test_app_portfolio_upsert_does_not_mutate_memory_when_save_fails(monkeypatch):
     import app
 
@@ -304,6 +541,39 @@ def test_app_portfolio_upsert_does_not_mutate_memory_when_save_fails(monkeypatch
     assert app.portfolio_positions == existing
 
 
+def test_app_portfolio_transaction_upsert_does_not_mutate_memory_when_save_fails(monkeypatch):
+    import app
+
+    existing = [{
+        "id": "transaction-existing",
+        "position_id": "position-existing",
+        "name": "原流水",
+        "type": "buy",
+        "mode": "rmb",
+        "price": 680.0,
+        "quantity": 1.0,
+        "fee": 0.0,
+        "trade_date": "",
+        "note": "",
+        "created_at": "2026-06-25T10:00:00",
+        "updated_at": "2026-06-25T10:00:00",
+    }]
+    monkeypatch.setattr(app, "portfolio_transactions", [dict(item) for item in existing])
+    monkeypatch.setattr(app, "save_portfolio_transactions", lambda items=None: (_ for _ in ()).throw(OSError("disk full")))
+
+    with pytest.raises(OSError):
+        app.upsert_portfolio_transaction({
+            "position_id": "position-existing",
+            "name": "新增流水",
+            "type": "buy",
+            "mode": "rmb",
+            "price": "700",
+            "quantity": "2",
+        })
+
+    assert app.portfolio_transactions == existing
+
+
 def test_app_portfolio_delete_does_not_mutate_memory_when_save_fails(monkeypatch):
     import app
 
@@ -325,6 +595,32 @@ def test_app_portfolio_delete_does_not_mutate_memory_when_save_fails(monkeypatch
         app.delete_portfolio_position("position-existing")
 
     assert app.portfolio_positions == existing
+
+
+def test_app_portfolio_transaction_delete_does_not_mutate_memory_when_save_fails(monkeypatch):
+    import app
+
+    existing = [{
+        "id": "transaction-existing",
+        "position_id": "position-existing",
+        "name": "原流水",
+        "type": "buy",
+        "mode": "rmb",
+        "price": 680.0,
+        "quantity": 1.0,
+        "fee": 0.0,
+        "trade_date": "",
+        "note": "",
+        "created_at": "2026-06-25T10:00:00",
+        "updated_at": "2026-06-25T10:00:00",
+    }]
+    monkeypatch.setattr(app, "portfolio_transactions", [dict(item) for item in existing])
+    monkeypatch.setattr(app, "save_portfolio_transactions", lambda items=None: (_ for _ in ()).throw(OSError("disk full")))
+
+    with pytest.raises(OSError):
+        app.delete_portfolio_transaction("transaction-existing")
+
+    assert app.portfolio_transactions == existing
 
 
 def test_export_portfolio_socket_event_emits_saved_file_details(monkeypatch):
@@ -366,6 +662,51 @@ def test_export_portfolio_socket_event_emits_saved_file_details(monkeypatch):
     assert payload["saved_path"] == f"/tmp/{payload['filename']}"
     assert saved["filename"] == payload["filename"]
     assert "金条" in saved["content"]
+    client.disconnect()
+
+
+def test_export_portfolio_transactions_socket_event_emits_saved_file_details(monkeypatch):
+    import app
+
+    saved = {}
+    monkeypatch.setattr(app, "portfolio_transactions", [{
+        "id": "transaction-rmb",
+        "position_id": "position-rmb",
+        "name": "金条",
+        "type": "buy",
+        "mode": "rmb",
+        "price": 680.0,
+        "quantity": 2.0,
+        "fee": 0.0,
+        "trade_date": "2026-06-01",
+        "note": "",
+        "created_at": "2026-06-25T10:00:00",
+        "updated_at": "2026-06-25T10:00:00",
+    }])
+    monkeypatch.setattr(app, "price_rmb", 700.0)
+    monkeypatch.setattr(app, "price_usd", 2350.0)
+
+    def fake_save_export_file(filename, content):
+        saved["filename"] = filename
+        saved["content"] = content
+        return f"/tmp/{filename}"
+
+    monkeypatch.setattr(app, "save_export_file", fake_save_export_file)
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+    client.emit("export_portfolio", {"kind": "transactions"})
+    events = client.get_received()
+
+    exported = next(event for event in events if event["name"] == "portfolio_exported")
+    payload = exported["args"][0]
+    assert payload["ok"] is True
+    assert payload["kind"] == "transactions"
+    assert payload["count"] == 1
+    assert payload["filename"].startswith("GoldMonitor-portfolio-transactions-")
+    assert payload["filename"].endswith(".csv")
+    assert payload["saved_path"] == f"/tmp/{payload['filename']}"
+    assert "transaction-rmb" in saved["content"]
     client.disconnect()
 
 
