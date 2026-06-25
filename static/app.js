@@ -2576,7 +2576,7 @@ function portfolioCurrency(mode) {
 }
 
 function portfolioQuantityUnit(mode) {
-  return mode === 'usd' ? '盎司' : '克';
+  return mode === 'usd' ? 'oz' : '克';
 }
 
 function formatPortfolioNumber(value, digits) {
@@ -2613,7 +2613,7 @@ function portfolioValuationLabel(item) {
     return '等待行情';
   }
   const mode = item.mode || currentMode;
-  return '现价 ' + formatPortfolioMoney(item.current_price, mode) + ' · 盈亏 ' + formatPortfolioMoney(item.pnl, mode) + '（' + formatPortfolioPercent(item.pnl_percent) + '）';
+  return formatPortfolioMoney(item.market_value, mode);
 }
 
 function requestPortfolioRefresh() {
@@ -2625,17 +2625,21 @@ function renderPortfolioSummaryCard(title, mode, summary) {
   const state = normalizePortfolioSummary(summary);
   const valueClass = portfolioPnlClass(state.pnl);
   const titleText = title ? title + ' · ' + portfolioModeLabel(mode) : portfolioModeLabel(mode);
-  const countText = state.count + ' 笔 · ' + state.valued + ' 笔已估值';
-  const meta = state.count === 0
+  const valueText = state.count === 0
+    ? formatPortfolioMoney(0, mode)
+    : formatPortfolioMoney(state.pnl, mode);
+  const costMeta = state.count === 0
     ? '暂无持仓'
     : state.valued === 0
       ? '等待行情'
-      : '成本 ' + formatPortfolioMoney(state.cost, mode) + ' · 现值 ' + formatPortfolioMoney(state.market_value, mode) + ' · 盈亏 ' + formatPortfolioMoney(state.pnl, mode) + '（' + formatPortfolioPercent(state.pnl_percent) + '）';
+      : '市值 ' + formatPortfolioMoney(state.market_value, mode) + ' · 成本 ' + formatPortfolioMoney(state.cost, mode);
+  const countMeta = state.valued + '/' + state.count + ' 已估值 · ' + formatPortfolioPercent(state.pnl_percent);
   return [
     '<div class="portfolio-summary-card">',
     '<div class="portfolio-summary-title">' + escapeHtml(titleText) + '</div>',
-    '<div class="portfolio-summary-value ' + valueClass + '">' + escapeHtml(countText) + '</div>',
-    '<div class="portfolio-summary-meta ' + valueClass + '">' + escapeHtml(meta) + '</div>',
+    '<div class="portfolio-summary-value ' + valueClass + '">' + escapeHtml(valueText) + '</div>',
+    '<div class="portfolio-summary-meta">' + escapeHtml(costMeta) + '</div>',
+    '<div class="portfolio-summary-meta ' + valueClass + '">' + escapeHtml(countMeta) + '</div>',
     '</div>',
   ].join('');
 }
@@ -2674,20 +2678,20 @@ function buildPortfolioEditor(item) {
     '</select>',
     '</div>',
     '<div class="portfolio-field">',
-    '<label for="portfolioEntryPrice_' + escapeHtml(id) + '">入场价</label>',
+    '<label for="portfolioEntryPrice_' + escapeHtml(id) + '">买入价</label>',
     '<input id="portfolioEntryPrice_' + escapeHtml(id) + '" type="number" step="0.01" value="' + escapeHtml(entryPrice) + '" placeholder="输入价格">',
     '</div>',
     '<div class="portfolio-field">',
     '<label for="portfolioQuantity_' + escapeHtml(id) + '">数量（' + escapeHtml(portfolioQuantityUnit(mode)) + '）</label>',
-    '<input id="portfolioQuantity_' + escapeHtml(id) + '" type="number" step="0.01" value="' + escapeHtml(quantity) + '" placeholder="输入数量">',
+    '<input id="portfolioQuantity_' + escapeHtml(id) + '" type="number" step="0.0001" value="' + escapeHtml(quantity) + '" placeholder="输入数量">',
     '</div>',
     '<div class="portfolio-field">',
-    '<label for="portfolioEntryDate_' + escapeHtml(id) + '">建仓日期</label>',
+    '<label for="portfolioEntryDate_' + escapeHtml(id) + '">买入日期</label>',
     '<input id="portfolioEntryDate_' + escapeHtml(id) + '" type="date" value="' + escapeHtml(entryDate) + '">',
     '</div>',
     '<div class="portfolio-field portfolio-note">',
     '<label for="portfolioNote_' + escapeHtml(id) + '">备注</label>',
-    '<input id="portfolioNote_' + escapeHtml(id) + '" type="text" maxlength="200" value="' + escapeHtml(note) + '" placeholder="例如 纸面持仓">',
+    '<input id="portfolioNote_' + escapeHtml(id) + '" type="text" maxlength="200" value="' + escapeHtml(note) + '" placeholder="例如 账户或来源">',
     '</div>',
     '</div>',
     '<div class="portfolio-editor-actions">',
@@ -2709,7 +2713,7 @@ function renderPortfolio() {
       '<div class="portfolio-item expanded">',
       '<div class="portfolio-main">',
       '<div class="portfolio-line">新增持仓</div>',
-      '<div class="portfolio-meta">保存后纳入估值</div>',
+      '<div class="portfolio-meta">保存后按当前行情估值</div>',
       '</div>',
       '<div class="portfolio-actions"><span class="alert-rule-state off">新建</span></div>',
       buildPortfolioEditor({ id: 'new', name: '', mode: currentMode, entry_price: '', quantity: '', entry_date: '', note: '' }),
@@ -2724,27 +2728,30 @@ function renderPortfolio() {
       'portfolio-item',
       activePortfolioPositionId === item.id ? 'expanded' : '',
     ].filter(Boolean).join(' ');
+    const mode = item.mode || 'rmb';
     const quantity = formatPortfolioNumber(item.quantity, 2);
-    const unit = portfolioQuantityUnit(item.mode);
-    const entryPrice = formatPortfolioMoney(item.entry_price, item.mode);
-    const currentPrice = formatPortfolioMoney(item.current_price, item.mode);
+    const unit = portfolioQuantityUnit(mode);
+    const entryPrice = formatPortfolioMoney(item.entry_price, mode);
+    const currentPrice = item.current_price == null ? '等待行情' : formatPortfolioMoney(item.current_price, mode);
     const valuationLabel = portfolioValuationLabel(item);
+    const pnlClass = portfolioPnlClass(item.pnl);
     const metaParts = [
-      portfolioModeLabel(item.mode),
+      portfolioModeLabel(mode),
       quantity === '--' ? '' : quantity + ' ' + unit,
-      entryPrice === '--' ? '' : '入场 ' + entryPrice,
-      currentPrice === '--' ? '' : '现价 ' + currentPrice,
-      item.entry_date ? '建仓 ' + item.entry_date : '',
+      entryPrice === '--' ? '' : '买入 ' + entryPrice,
+      '当前价 ' + currentPrice,
+      item.entry_date ? '买入 ' + item.entry_date : '',
       item.note || '',
     ].filter(Boolean);
     return [
       '<div class="' + cls + '">',
       '<div class="portfolio-main">',
-      '<div class="portfolio-line">' + escapeHtml(item.name || '--') + '</div>',
-      '<div class="portfolio-meta">' + escapeHtml(metaParts.join(' · ') + ' · ' + valuationLabel) + '</div>',
+      '<div class="portfolio-line">' + escapeHtml((item.name || '未命名持仓') + ' · ' + valuationLabel) + '</div>',
+      '<div class="portfolio-meta">' + escapeHtml(metaParts.join(' · ')) + '</div>',
+      '<div class="portfolio-meta portfolio-pnl ' + pnlClass + '">浮动盈亏 ' + escapeHtml(formatPortfolioMoney(item.pnl, mode)) + ' · ' + escapeHtml(formatPortfolioPercent(item.pnl_percent)) + '</div>',
       '</div>',
       '<div class="portfolio-actions">',
-      '<span class="portfolio-pnl ' + portfolioPnlClass(item.pnl) + '">' + escapeHtml(valuationLabel) + '</span>',
+      '<span class="alert-rule-state ' + (item.valuation_status === 'valued' ? 'on' : 'off') + '">' + escapeHtml(item.valuation_status === 'valued' ? '已估值' : '等待') + '</span>',
       '<button class="btn-clear-sm alert-rule-edit" type="button" onclick="setActivePortfolioPosition(\'' + escapeHtml(item.id) + '\')">编辑</button>',
       '<button class="btn-clear-sm alert-rule-edit" type="button" onclick="deletePortfolioPosition(\'' + escapeHtml(item.id) + '\')">删除</button>',
       '</div>',
