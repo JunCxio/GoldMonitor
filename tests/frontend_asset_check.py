@@ -30,6 +30,7 @@ for required in (
     'id="portfolioList"',
     'onclick="setPortfolioView(\'positions\')"',
     'onclick="setPortfolioView(\'transactions\')"',
+    'onclick="setPortfolioView(\'review\')"',
     'onclick="setActivePortfolioTransaction(\'new\')"',
     'onclick="exportPortfolio(\'positions\')"',
     'onclick="exportPortfolio(\'transactions\')"',
@@ -68,6 +69,9 @@ for required in (
     ".portfolio-item",
     ".portfolio-editor",
     ".portfolio-transaction-type",
+    ".portfolio-review",
+    ".portfolio-review-card",
+    ".portfolio-review-track",
 ):
     if required not in css:
         raise SystemExit(f"static/app.css missing portfolio selector: {required}")
@@ -85,6 +89,9 @@ for required in (
     "function portfolioTransactionDraftFor",
     "function clearPortfolioTransactionDraft",
     "function renderPortfolio",
+    "function renderPortfolioReview",
+    "function renderPortfolioReviewCard",
+    "function renderPortfolioReviewPoint",
     "function setPortfolioView",
     "function setActivePortfolioPosition",
     "function setActivePortfolioTransaction",

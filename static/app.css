@@ -403,7 +403,7 @@
   .portfolio-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
   .portfolio-head h3 { font-size:0.82rem; color:var(--text-dim); font-weight:500; letter-spacing:0.03em; margin-bottom:0; }
   .portfolio-tools { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
-  .portfolio-tabs { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px; margin-bottom:8px; }
+  .portfolio-tabs { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:6px; margin-bottom:8px; }
   .portfolio-tab { min-height:32px; border:1px solid var(--control-border); border-radius:8px; background:rgba(255,255,255,0.026); color:var(--text-dim); font-size:0.72rem; font-weight:800; cursor:pointer; }
   .portfolio-tab.active { color:#f0f0f4; border-color:rgba(232,184,48,0.26); background:rgba(232,184,48,0.075); }
   .portfolio-status { min-height:16px; color:var(--text-dim); font-size:0.68rem; line-height:1.4; margin-bottom:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -439,6 +439,27 @@
   .portfolio-transaction-type { display:inline-flex; align-items:center; min-height:20px; padding:2px 7px; margin-right:4px; border-radius:999px; font-size:0.66rem; font-weight:900; border:1px solid rgba(255,255,255,0.08); }
   .portfolio-transaction-type.buy { color:var(--down); background:rgba(49,208,170,0.08); }
   .portfolio-transaction-type.sell { color:var(--up); background:rgba(255,91,111,0.08); }
+  .portfolio-review { display:grid; gap:8px; min-width:0; }
+  .portfolio-review-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(180px, 100%), 1fr)); gap:6px; min-width:0; }
+  .portfolio-review-card { min-width:0; padding:9px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(255,255,255,0.022); }
+  .portfolio-review-title { color:var(--text-dim); font-size:0.66rem; font-weight:800; margin-bottom:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-review-value { color:#f0f0f4; font-size:0.9rem; font-weight:900; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-review-meta { margin-top:4px; color:var(--text-dim); font-size:0.64rem; line-height:1.35; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-review-metrics { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px; margin-top:8px; min-width:0; }
+  .portfolio-review-metric { min-width:0; padding-top:6px; border-top:1px solid rgba(255,255,255,0.055); }
+  .portfolio-review-metric-label { color:var(--text-dim); font-size:0.6rem; margin-bottom:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-review-metric-value { color:#f0f0f4; font-size:0.72rem; font-weight:800; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-review-metric-value.up, .portfolio-review-point-meta .up { color:var(--up); }
+  .portfolio-review-metric-value.down, .portfolio-review-point-meta .down { color:var(--down); }
+  .portfolio-review-section { display:grid; gap:6px; min-width:0; }
+  .portfolio-review-section-title { color:var(--text-dim); font-size:0.68rem; font-weight:900; letter-spacing:0.03em; }
+  .portfolio-review-points { display:grid; gap:6px; min-width:0; }
+  .portfolio-review-point { display:grid; grid-template-columns:minmax(0, 0.8fr) minmax(0, 1fr); gap:8px; align-items:center; min-width:0; padding:9px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(255,255,255,0.018); }
+  .portfolio-review-point-main, .portfolio-review-point-side { min-width:0; }
+  .portfolio-review-point-date { color:#f0f0f4; font-size:0.74rem; font-weight:900; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-review-point-meta { margin-top:3px; color:var(--text-dim); font-size:0.63rem; line-height:1.35; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-review-track { height:5px; overflow:hidden; border-radius:999px; background:rgba(255,255,255,0.055); }
+  .portfolio-review-track span { display:block; height:100%; min-width:3px; border-radius:inherit; background:linear-gradient(90deg, rgba(232,184,48,0.5), rgba(49,208,170,0.6)); }
   .section-label { font-size:0.68rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px; font-weight:600; }
   .level-badge.warn { background:rgba(224,160,64,0.15); color:var(--warn); }
   .level-badge.crit { background:rgba(224,85,106,0.15); color:var(--up); }
@@ -595,6 +616,8 @@
     .portfolio-transaction-fields { grid-template-columns:1fr; }
     .portfolio-name, .portfolio-note { grid-column:auto; }
     .portfolio-transaction-fields .portfolio-name, .portfolio-transaction-fields .portfolio-note { grid-column:auto; }
+    .portfolio-review-point { grid-template-columns:1fr; }
+    .portfolio-review-metrics { grid-template-columns:1fr 1fr; }
     .settings-backdrop { padding:10px; }
     .settings-modal { max-height:calc(100vh - 20px); }
     .settings-tabs { padding:10px 14px 0; }

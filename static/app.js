@@ -64,7 +64,7 @@ let allThresholds = {};
 let volConfig = { percent: null, minutes: 10, enabled: false };
 let activeAlertRule = null;
 let watchTargets = [];
-let portfolioState = { items: [], transactions: [], total: 0, rmb_summary: {}, usd_summary: {}, prices: {} };
+let portfolioState = { items: [], transactions: [], total: 0, rmb_summary: {}, usd_summary: {}, prices: {}, review: { rmb: {}, usd: {} } };
 let portfolioView = 'positions';
 let activePortfolioPositionId = null;
 let portfolioDrafts = {};
@@ -2559,6 +2559,70 @@ function normalizePortfolioSummary(summary) {
   }, {});
 }
 
+function normalizePortfolioReviewPoint(point) {
+  const base = {
+    trade_count: 0,
+    buy_amount: 0,
+    sell_amount: 0,
+    fee: 0,
+    realized_pnl: 0,
+    cumulative_buy_amount: 0,
+    cumulative_sell_amount: 0,
+    cumulative_fee: 0,
+    cumulative_realized_pnl: 0,
+    net_invested: 0,
+    quantity: 0,
+    cost_basis: 0,
+  };
+  const source = point && typeof point === 'object' ? point : {};
+  const normalized = Object.keys(base).reduce((acc, key) => {
+    const value = source[key];
+    acc[key] = value == null || value === '' || !Number.isFinite(Number(value)) ? base[key] : Number(value);
+    return acc;
+  }, {});
+  normalized.date = source.date || '';
+  return normalized;
+}
+
+function normalizePortfolioReviewSummary(summary, mode) {
+  const base = {
+    mode,
+    trade_count: 0,
+    buy_count: 0,
+    sell_count: 0,
+    buy_amount: 0,
+    sell_amount: 0,
+    fee_total: 0,
+    realized_pnl: 0,
+    net_invested: 0,
+    current_quantity: 0,
+    cost_basis: 0,
+    average_cost: null,
+  };
+  const source = summary && typeof summary === 'object' ? summary : {};
+  const normalized = Object.keys(base).reduce((acc, key) => {
+    if (key === 'mode') {
+      acc.mode = source.mode === 'usd' ? 'usd' : mode;
+      return acc;
+    }
+    const value = source[key];
+    acc[key] = value == null || value === '' || !Number.isFinite(Number(value)) ? base[key] : Number(value);
+    return acc;
+  }, {});
+  normalized.first_trade_date = source.first_trade_date || '';
+  normalized.last_trade_date = source.last_trade_date || '';
+  normalized.points = Array.isArray(source.points) ? source.points.map(normalizePortfolioReviewPoint) : [];
+  return normalized;
+}
+
+function normalizePortfolioReview(review) {
+  const source = review && typeof review === 'object' && !Array.isArray(review) ? review : {};
+  return {
+    rmb: normalizePortfolioReviewSummary(source.rmb, 'rmb'),
+    usd: normalizePortfolioReviewSummary(source.usd, 'usd'),
+  };
+}
+
 function normalizePortfolioState(data) {
   const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
   const items = Array.isArray(source.items)
@@ -2574,6 +2638,7 @@ function normalizePortfolioState(data) {
     rmb_summary: normalizePortfolioSummary(source.rmb_summary),
     usd_summary: normalizePortfolioSummary(source.usd_summary),
     prices: source.prices && typeof source.prices === 'object' && !Array.isArray(source.prices) ? Object.assign({}, source.prices) : {},
+    review: normalizePortfolioReview(source.review),
   };
 }
 
@@ -2632,6 +2697,13 @@ function formatPortfolioMoney(value, mode) {
   const number = Number(value);
   if (!Number.isFinite(number)) return '--';
   return portfolioCurrency(mode) + formatPortfolioNumber(number, 2);
+}
+
+function formatPortfolioSignedMoney(value, mode) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '--';
+  const prefix = number > 0 ? '+' : number < 0 ? '-' : '';
+  return prefix + portfolioCurrency(mode) + formatPortfolioNumber(Math.abs(number), 2);
 }
 
 function formatPortfolioPercent(value) {
@@ -2868,11 +2940,108 @@ function renderPortfolio() {
   renderPortfolioTabs();
   const box = document.getElementById('portfolioList');
   if (!box) return;
+  if (portfolioView === 'review') {
+    renderPortfolioReview(box);
+    return;
+  }
   if (portfolioView === 'transactions') {
     renderPortfolioTransactions(box);
     return;
   }
   renderPortfolioPositions(box);
+}
+
+function portfolioReviewDateLabel(value) {
+  return value && value !== '未标日期' ? value : '未标日期';
+}
+
+function renderPortfolioReviewMetric(label, value, extraClass) {
+  return [
+    '<div class="portfolio-review-metric">',
+    '<div class="portfolio-review-metric-label">' + escapeHtml(label) + '</div>',
+    '<div class="portfolio-review-metric-value ' + (extraClass || '') + '">' + escapeHtml(value) + '</div>',
+    '</div>',
+  ].join('');
+}
+
+function renderPortfolioReviewCard(mode, summary) {
+  const state = normalizePortfolioReviewSummary(summary, mode);
+  const pnlClass = portfolioPnlClass(state.realized_pnl);
+  const title = mode === 'usd' ? '美元复盘' : '人民币复盘';
+  const dateText = state.trade_count ? '最近 ' + portfolioReviewDateLabel(state.last_trade_date) : '暂无交易';
+  const quantityText = formatPortfolioNumber(state.current_quantity, mode === 'usd' ? 4 : 2) + ' ' + portfolioQuantityUnit(mode);
+  const meta = state.trade_count
+    ? state.trade_count + ' 笔 · 买入 ' + formatPortfolioMoney(state.buy_amount, mode) + ' · 卖出 ' + formatPortfolioMoney(state.sell_amount, mode)
+    : '暂无流水';
+  return [
+    '<div class="portfolio-review-card">',
+    '<div class="portfolio-review-title">' + escapeHtml(title + ' · ' + portfolioModeLabel(mode)) + '</div>',
+    '<div class="portfolio-review-value">' + escapeHtml(formatPortfolioMoney(state.net_invested, mode)) + '</div>',
+    '<div class="portfolio-review-meta">' + escapeHtml(meta) + '</div>',
+    '<div class="portfolio-review-meta">' + escapeHtml(dateText) + '</div>',
+    '<div class="portfolio-review-metrics">',
+    renderPortfolioReviewMetric('已实现', formatPortfolioSignedMoney(state.realized_pnl, mode), pnlClass),
+    renderPortfolioReviewMetric('手续费', formatPortfolioMoney(state.fee_total, mode), ''),
+    renderPortfolioReviewMetric('持有数量', quantityText, ''),
+    renderPortfolioReviewMetric('剩余成本', formatPortfolioMoney(state.cost_basis, mode), ''),
+    '</div>',
+    '</div>',
+  ].join('');
+}
+
+function renderPortfolioReviewPoint(mode, point, maxNetInvested) {
+  const item = normalizePortfolioReviewPoint(point);
+  const ratio = maxNetInvested > 0 ? Math.min(100, Math.max(0, Math.abs(item.net_invested) / maxNetInvested * 100)) : 0;
+  const pnlClass = portfolioPnlClass(item.cumulative_realized_pnl);
+  return [
+    '<div class="portfolio-review-point">',
+    '<div class="portfolio-review-point-main">',
+    '<div class="portfolio-review-point-date">' + escapeHtml(portfolioReviewDateLabel(item.date)) + '</div>',
+    '<div class="portfolio-review-point-meta">' + escapeHtml(item.trade_count + ' 笔 · 当日买入 ' + formatPortfolioMoney(item.buy_amount, mode) + ' · 当日卖出 ' + formatPortfolioMoney(item.sell_amount, mode)) + '</div>',
+    '</div>',
+    '<div class="portfolio-review-point-side">',
+    '<div class="portfolio-review-track"><span style="width:' + ratio.toFixed(2) + '%"></span></div>',
+    '<div class="portfolio-review-point-meta">净投入 ' + escapeHtml(formatPortfolioMoney(item.net_invested, mode)) + ' · 已实现 <span class="' + pnlClass + '">' + escapeHtml(formatPortfolioSignedMoney(item.cumulative_realized_pnl, mode)) + '</span></div>',
+    '<div class="portfolio-review-point-meta">持有 ' + escapeHtml(formatPortfolioNumber(item.quantity, mode === 'usd' ? 4 : 2) + ' ' + portfolioQuantityUnit(mode)) + ' · 成本 ' + escapeHtml(formatPortfolioMoney(item.cost_basis, mode)) + '</div>',
+    '</div>',
+    '</div>',
+  ].join('');
+}
+
+function renderPortfolioReviewSection(mode, summary, maxNetInvested) {
+  const state = normalizePortfolioReviewSummary(summary, mode);
+  if (!state.points.length) return '';
+  return [
+    '<div class="portfolio-review-section">',
+    '<div class="portfolio-review-section-title">' + escapeHtml((mode === 'usd' ? '美元' : '人民币') + '趋势') + '</div>',
+    '<div class="portfolio-review-points">',
+    state.points.map(point => renderPortfolioReviewPoint(mode, point, maxNetInvested)).join(''),
+    '</div>',
+    '</div>',
+  ].join('');
+}
+
+function renderPortfolioReview(box) {
+  const review = normalizePortfolioReview(portfolioState.review);
+  const totalTrades = review.rmb.trade_count + review.usd.trade_count;
+  if (!totalTrades) {
+    box.innerHTML = '<div class="portfolio-empty">暂无复盘数据</div>';
+    return;
+  }
+  const maxNetInvested = Math.max(
+    1,
+    ...review.rmb.points.concat(review.usd.points).map(point => Math.abs(Number(point.net_invested) || 0))
+  );
+  box.innerHTML = [
+    '<div class="portfolio-review">',
+    '<div class="portfolio-review-grid">',
+    renderPortfolioReviewCard('rmb', review.rmb),
+    renderPortfolioReviewCard('usd', review.usd),
+    '</div>',
+    renderPortfolioReviewSection('rmb', review.rmb, maxNetInvested),
+    renderPortfolioReviewSection('usd', review.usd, maxNetInvested),
+    '</div>',
+  ].join('');
 }
 
 function renderPortfolioPositions(box) {
@@ -3078,7 +3247,7 @@ function syncPortfolioTransactionPosition(id) {
 function setPortfolioView(view) {
   captureActivePortfolioDraft();
   captureActivePortfolioTransactionDraft();
-  portfolioView = view === 'transactions' ? 'transactions' : 'positions';
+  portfolioView = ['positions', 'transactions', 'review'].includes(view) ? view : 'positions';
   renderPortfolio();
 }
 

@@ -505,6 +505,193 @@ def validate_portfolio_transactions(items):
     return True
 
 
+def empty_portfolio_review_summary(mode):
+    return {
+        "mode": mode,
+        "trade_count": 0,
+        "buy_count": 0,
+        "sell_count": 0,
+        "buy_amount": 0.0,
+        "sell_amount": 0.0,
+        "fee_total": 0.0,
+        "realized_pnl": 0.0,
+        "net_invested": 0.0,
+        "current_quantity": 0.0,
+        "cost_basis": 0.0,
+        "average_cost": None,
+        "first_trade_date": "",
+        "last_trade_date": "",
+        "points": [],
+    }
+
+
+def empty_portfolio_review():
+    return {
+        "rmb": empty_portfolio_review_summary("rmb"),
+        "usd": empty_portfolio_review_summary("usd"),
+    }
+
+
+def _portfolio_review_trade_date(item):
+    trade_date = _normalize_entry_date(item.get("trade_date", ""))
+    if trade_date:
+        return trade_date
+    created_date = _normalize_entry_date(str(item.get("created_at") or "")[:10])
+    return created_date or "未标日期"
+
+
+def _empty_portfolio_review_point(date):
+    return {
+        "date": date,
+        "trade_count": 0,
+        "buy_amount": 0.0,
+        "sell_amount": 0.0,
+        "fee": 0.0,
+        "realized_pnl": 0.0,
+        "cumulative_buy_amount": 0.0,
+        "cumulative_sell_amount": 0.0,
+        "cumulative_fee": 0.0,
+        "cumulative_realized_pnl": 0.0,
+        "net_invested": 0.0,
+        "quantity": 0.0,
+        "cost_basis": 0.0,
+    }
+
+
+def _empty_portfolio_review_mode_state():
+    return {
+        "positions": {},
+        "point_by_date": {},
+        "point_dates": [],
+        "cumulative_buy_amount": 0.0,
+        "cumulative_sell_amount": 0.0,
+        "cumulative_fee": 0.0,
+        "cumulative_realized_pnl": 0.0,
+        "quantity": 0.0,
+        "cost_basis": 0.0,
+    }
+
+
+def _finalize_portfolio_review_summary(summary, mode_state):
+    summary["buy_amount"] = _round_value(mode_state["cumulative_buy_amount"])
+    summary["sell_amount"] = _round_value(mode_state["cumulative_sell_amount"])
+    summary["fee_total"] = _round_value(mode_state["cumulative_fee"])
+    summary["realized_pnl"] = _round_value(mode_state["cumulative_realized_pnl"])
+    summary["net_invested"] = _round_value(summary["buy_amount"] - summary["sell_amount"])
+    summary["current_quantity"] = _round_value(mode_state["quantity"])
+    summary["cost_basis"] = _round_value(mode_state["cost_basis"])
+    summary["average_cost"] = (
+        _round_value(mode_state["cost_basis"] / mode_state["quantity"])
+        if mode_state["quantity"] else None
+    )
+    summary["points"] = [
+        {
+            "date": point["date"],
+            "trade_count": int(point["trade_count"]),
+            "buy_amount": _round_value(point["buy_amount"]),
+            "sell_amount": _round_value(point["sell_amount"]),
+            "fee": _round_value(point["fee"]),
+            "realized_pnl": _round_value(point["realized_pnl"]),
+            "cumulative_buy_amount": _round_value(point["cumulative_buy_amount"]),
+            "cumulative_sell_amount": _round_value(point["cumulative_sell_amount"]),
+            "cumulative_fee": _round_value(point["cumulative_fee"]),
+            "cumulative_realized_pnl": _round_value(point["cumulative_realized_pnl"]),
+            "net_invested": _round_value(point["net_invested"]),
+            "quantity": _round_value(point["quantity"]),
+            "cost_basis": _round_value(point["cost_basis"]),
+        }
+        for point in (mode_state["point_by_date"][date] for date in mode_state["point_dates"])
+    ]
+    return summary
+
+
+def _apply_portfolio_review_transaction(summary, mode_state, item):
+    price = float(item.get("price") or 0.0)
+    quantity = float(item.get("quantity") or 0.0)
+    fee = float(item.get("fee") or 0.0)
+    realized_pnl = float(item.get("realized_pnl") or 0.0)
+    position_id = item.get("position_id") or ""
+    position = mode_state["positions"].setdefault(position_id, {"quantity": 0.0, "cost_basis": 0.0})
+    buy_amount = 0.0
+    sell_amount = 0.0
+
+    summary["trade_count"] += 1
+    if item.get("type") == "buy":
+        buy_amount = price * quantity + fee
+        position["quantity"] += quantity
+        position["cost_basis"] += buy_amount
+        mode_state["quantity"] += quantity
+        mode_state["cost_basis"] += buy_amount
+        summary["buy_count"] += 1
+    else:
+        sell_amount = price * quantity - fee
+        current_quantity = float(position.get("quantity") or 0.0)
+        average_cost = position["cost_basis"] / current_quantity if current_quantity else 0.0
+        cost_removed = average_cost * quantity
+        position["quantity"] -= quantity
+        position["cost_basis"] -= cost_removed
+        mode_state["quantity"] -= quantity
+        mode_state["cost_basis"] -= cost_removed
+        summary["sell_count"] += 1
+        if abs(position["quantity"]) < 1e-9:
+            position["quantity"] = 0.0
+            position["cost_basis"] = 0.0
+
+    if abs(mode_state["quantity"]) < 1e-9:
+        mode_state["quantity"] = 0.0
+        mode_state["cost_basis"] = 0.0
+
+    mode_state["cumulative_buy_amount"] += buy_amount
+    mode_state["cumulative_sell_amount"] += sell_amount
+    mode_state["cumulative_fee"] += fee
+    mode_state["cumulative_realized_pnl"] += realized_pnl
+
+    date = _portfolio_review_trade_date(item)
+    if date not in mode_state["point_by_date"]:
+        mode_state["point_by_date"][date] = _empty_portfolio_review_point(date)
+        mode_state["point_dates"].append(date)
+    point = mode_state["point_by_date"][date]
+    point["trade_count"] += 1
+    point["buy_amount"] += buy_amount
+    point["sell_amount"] += sell_amount
+    point["fee"] += fee
+    point["realized_pnl"] += realized_pnl
+    point["cumulative_buy_amount"] = mode_state["cumulative_buy_amount"]
+    point["cumulative_sell_amount"] = mode_state["cumulative_sell_amount"]
+    point["cumulative_fee"] = mode_state["cumulative_fee"]
+    point["cumulative_realized_pnl"] = mode_state["cumulative_realized_pnl"]
+    point["net_invested"] = mode_state["cumulative_buy_amount"] - mode_state["cumulative_sell_amount"]
+    point["quantity"] = mode_state["quantity"]
+    point["cost_basis"] = mode_state["cost_basis"]
+
+    if date != "未标日期":
+        if not summary["first_trade_date"]:
+            summary["first_trade_date"] = date
+        summary["last_trade_date"] = date
+
+
+def _build_portfolio_review_from_replay(enriched_transactions):
+    review = empty_portfolio_review()
+    mode_states = {
+        "rmb": _empty_portfolio_review_mode_state(),
+        "usd": _empty_portfolio_review_mode_state(),
+    }
+    for item in _sorted_portfolio_transactions(enriched_transactions):
+        mode = item.get("mode")
+        if mode not in PORTFOLIO_MODES:
+            continue
+        _apply_portfolio_review_transaction(review[mode], mode_states[mode], item)
+    for mode in PORTFOLIO_MODES:
+        _finalize_portfolio_review_summary(review[mode], mode_states[mode])
+    return review
+
+
+def build_portfolio_review_from_transactions(items):
+    normalized = normalize_portfolio_transactions(items)
+    _states, enriched_transactions = replay_portfolio_transactions(normalized)
+    return _build_portfolio_review_from_replay(enriched_transactions)
+
+
 def _value_transaction_position(position, prices):
     item = dict(position)
     mode = item.get("mode")
@@ -592,6 +779,7 @@ def _add_transaction_position_to_summary(summary, item):
 def build_portfolio_state_from_transactions(items, prices):
     normalized = normalize_portfolio_transactions(items)
     states, enriched_transactions = replay_portfolio_transactions(normalized)
+    review = _build_portfolio_review_from_replay(enriched_transactions)
     valued_items = [
         _value_transaction_position(position, prices)
         for position in states.values()
@@ -612,6 +800,7 @@ def build_portfolio_state_from_transactions(items, prices):
         "rmb_summary": rmb_summary,
         "usd_summary": usd_summary,
         "prices": dict(prices or {}),
+        "review": review,
     }
 
 

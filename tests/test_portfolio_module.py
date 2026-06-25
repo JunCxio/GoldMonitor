@@ -333,6 +333,129 @@ def test_portfolio_transactions_migrate_and_calculate_realized_pnl():
     assert state["rmb_summary"]["pnl"] == 925.0
 
 
+def test_portfolio_review_tracks_cash_flow_and_realized_pnl():
+    from goldmonitor.portfolio import build_portfolio_state_from_transactions, normalize_portfolio_transaction
+
+    transactions = [
+        normalize_portfolio_transaction(
+            {
+                "position_id": "position-rmb",
+                "name": "金条",
+                "type": "buy",
+                "mode": "rmb",
+                "price": "680",
+                "quantity": "10",
+                "fee": "5",
+                "trade_date": "2026-06-01",
+            },
+            now_factory=fixed_now,
+            id_factory=lambda: "transaction-buy-rmb-1",
+        ),
+        normalize_portfolio_transaction(
+            {
+                "position_id": "position-usd",
+                "name": "XAU",
+                "type": "buy",
+                "mode": "usd",
+                "price": "2300",
+                "quantity": "1",
+                "fee": "2",
+                "trade_date": "2026-06-03",
+            },
+            now_factory=fixed_now,
+            id_factory=lambda: "transaction-buy-usd-1",
+        ),
+        normalize_portfolio_transaction(
+            {
+                "position_id": "position-rmb",
+                "name": "金条",
+                "type": "buy",
+                "mode": "rmb",
+                "price": "700",
+                "quantity": "5",
+                "fee": "10",
+                "trade_date": "2026-06-10",
+            },
+            now_factory=fixed_now,
+            id_factory=lambda: "transaction-buy-rmb-2",
+        ),
+        normalize_portfolio_transaction(
+            {
+                "position_id": "position-rmb",
+                "name": "金条",
+                "type": "sell",
+                "mode": "rmb",
+                "price": "740",
+                "quantity": "6",
+                "fee": "6",
+                "trade_date": "2026-06-10",
+            },
+            now_factory=fixed_now,
+            id_factory=lambda: "transaction-sell-rmb-1",
+        ),
+    ]
+
+    state = build_portfolio_state_from_transactions(transactions, {"rmb": 750.0, "usd": 2350.0})
+
+    assert state["review"]["rmb"] == {
+        "mode": "rmb",
+        "trade_count": 3,
+        "buy_count": 2,
+        "sell_count": 1,
+        "buy_amount": 10315.0,
+        "sell_amount": 4434.0,
+        "fee_total": 21.0,
+        "realized_pnl": 308.0,
+        "net_invested": 5881.0,
+        "current_quantity": 9.0,
+        "cost_basis": 6189.0,
+        "average_cost": 687.6667,
+        "first_trade_date": "2026-06-01",
+        "last_trade_date": "2026-06-10",
+        "points": [
+            {
+                "date": "2026-06-01",
+                "trade_count": 1,
+                "buy_amount": 6805.0,
+                "sell_amount": 0.0,
+                "fee": 5.0,
+                "realized_pnl": 0.0,
+                "cumulative_buy_amount": 6805.0,
+                "cumulative_sell_amount": 0.0,
+                "cumulative_fee": 5.0,
+                "cumulative_realized_pnl": 0.0,
+                "net_invested": 6805.0,
+                "quantity": 10.0,
+                "cost_basis": 6805.0,
+            },
+            {
+                "date": "2026-06-10",
+                "trade_count": 2,
+                "buy_amount": 3510.0,
+                "sell_amount": 4434.0,
+                "fee": 16.0,
+                "realized_pnl": 308.0,
+                "cumulative_buy_amount": 10315.0,
+                "cumulative_sell_amount": 4434.0,
+                "cumulative_fee": 21.0,
+                "cumulative_realized_pnl": 308.0,
+                "net_invested": 5881.0,
+                "quantity": 9.0,
+                "cost_basis": 6189.0,
+            },
+        ],
+    }
+    assert state["review"]["usd"]["trade_count"] == 1
+    assert state["review"]["usd"]["buy_amount"] == 2302.0
+    assert state["review"]["usd"]["sell_amount"] == 0.0
+    assert state["review"]["usd"]["net_invested"] == 2302.0
+    assert state["review"]["usd"]["current_quantity"] == 1.0
+
+    empty_review = build_portfolio_state_from_transactions([], {})["review"]
+    assert empty_review["rmb"]["points"] == []
+    assert empty_review["usd"]["trade_count"] == 0
+
+
 def test_portfolio_transactions_reject_invalid_oversell_and_mode_mismatch():
     from goldmonitor.portfolio import normalize_portfolio_transaction, validate_portfolio_transactions
 
