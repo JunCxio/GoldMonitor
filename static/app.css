@@ -401,6 +401,7 @@
   .watch-target-editor-actions button { min-height:32px; padding:6px 10px; font-size:0.7rem; }
   .portfolio-card { flex:0 0 auto; min-height:0; overflow:visible; }
   .portfolio-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
+  .portfolio-head h3 { font-size:0.82rem; color:var(--text-dim); font-weight:500; letter-spacing:0.03em; margin-bottom:0; }
   .portfolio-tools { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
   .portfolio-status { min-height:16px; color:var(--text-dim); font-size:0.68rem; line-height:1.4; margin-bottom:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .portfolio-status.ok { color:var(--down); }

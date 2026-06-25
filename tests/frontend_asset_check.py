@@ -23,9 +23,21 @@ if '<meta name="goldmonitor-socket-token" content="{{ socket_access_token }}">' 
 if '<script src="/static/app.js"></script>' not in template:
     raise SystemExit("template must reference /static/app.js")
 
-for required in ('id="portfolioStatus"', 'id="portfolioSummary"', 'id="portfolioList"', 'onclick="setActivePortfolioPosition(\'new\')"', 'onclick="exportPortfolio()"'):
+for required in (
+    'id="portfolioStatus"',
+    'id="portfolioSummary"',
+    'id="portfolioList"',
+    'onclick="setActivePortfolioPosition(\'new\')"',
+    'onclick="exportPortfolio()"',
+):
     if required not in template:
         raise SystemExit(f"template missing portfolio anchor: {required}")
+
+threshold_pos = template.find("threshold-card")
+portfolio_pos = template.find("portfolio-card")
+log_pos = template.find("log-card")
+if not (threshold_pos < portfolio_pos < log_pos):
+    raise SystemExit("template portfolio-card must appear after threshold-card and before log-card")
 
 if re.search(r"<style\b", template, flags=re.IGNORECASE):
     raise SystemExit("template must not contain inline style blocks")
@@ -44,7 +56,7 @@ for required in (":root", ".container", ".settings-modal", ".price-card"):
     if required not in css:
         raise SystemExit(f"static/app.css missing expected selector: {required}")
 
-for required in (".portfolio-card", ".portfolio-summary", ".portfolio-item", ".portfolio-editor"):
+for required in (".portfolio-card", ".portfolio-head h3", ".portfolio-summary", ".portfolio-item", ".portfolio-editor"):
     if required not in css:
         raise SystemExit(f"static/app.css missing portfolio selector: {required}")
 
@@ -55,9 +67,15 @@ for required in ("const socket = io", "function switchMode", "function renderAle
 for required in (
     "function applyPortfolio",
     "function renderPortfolio",
+    "function setActivePortfolioPosition",
     "function savePortfolioPosition",
     "function deletePortfolioPosition",
     "function exportPortfolio",
+    "portfolio_updated",
+    "portfolio_error",
+    "portfolio_exported",
+    "portfolio_export_error",
+    "get_portfolio",
     "save_portfolio_position",
     "delete_portfolio_position",
     "export_portfolio",
