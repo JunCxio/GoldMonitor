@@ -403,15 +403,4 @@ def test_delete_missing_portfolio_socket_event_emits_error_and_current_state(mon
 
 
 if __name__ == "__main__":
-    failures = []
-    for name, value in sorted(globals().items()):
-        if name.startswith("test_") and callable(value):
-            try:
-                value()
-            except Exception as exc:
-                failures.append((name, exc))
-    if failures:
-        for name, exc in failures:
-            print(f"{name}: {type(exc).__name__}: {exc}")
-        raise SystemExit(1)
-    print("portfolio module checks passed.")
+    raise SystemExit(pytest.main([__file__]))
