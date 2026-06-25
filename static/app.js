@@ -66,6 +66,7 @@ let activeAlertRule = null;
 let watchTargets = [];
 let portfolioState = { items: [], total: 0, rmb_summary: {}, usd_summary: {}, prices: {} };
 let activePortfolioPositionId = null;
+let portfolioDrafts = {};
 let activeWatchTargetId = null;
 let historyView = 'prices';
 let eventTimelineState = { events: [], summary: {}, filters: {}, range: {}, price_summary: {} };
@@ -2553,8 +2554,10 @@ function normalizePortfolioState(data) {
 }
 
 function applyPortfolio(data) {
+  captureActivePortfolioDraft();
   portfolioState = normalizePortfolioState(data);
   if (activePortfolioPositionId && activePortfolioPositionId !== 'new' && !portfolioState.items.some(item => item.id === activePortfolioPositionId)) {
+    clearPortfolioDraft(activePortfolioPositionId);
     activePortfolioPositionId = null;
   }
   renderPortfolio();
@@ -2621,6 +2624,52 @@ function requestPortfolioRefresh() {
   socket.emit('get_portfolio');
 }
 
+function portfolioDraftKey(id) {
+  return String(id || 'new');
+}
+
+function portfolioBaseDraft(item) {
+  const isNew = !item || item.id === 'new';
+  const source = item || {};
+  return {
+    id: isNew ? 'new' : source.id,
+    name: source.name || '',
+    mode: source.mode || currentMode,
+    entry_price: source.entry_price == null ? '' : String(source.entry_price),
+    quantity: source.quantity == null ? '' : String(source.quantity),
+    entry_date: source.entry_date || '',
+    note: source.note || '',
+  };
+}
+
+function portfolioDraftFor(item) {
+  const base = portfolioBaseDraft(item);
+  const draft = portfolioDrafts[portfolioDraftKey(base.id)] || {};
+  return Object.assign({}, base, draft, { id: base.id });
+}
+
+function capturePortfolioDraft(id) {
+  const key = portfolioDraftKey(id);
+  if (!document.getElementById('portfolioName_' + key)) return;
+  portfolioDrafts[key] = {
+    name: portfolioInputValue(key, 'Name'),
+    mode: portfolioInputValue(key, 'Mode') || currentMode,
+    entry_price: portfolioInputValue(key, 'EntryPrice'),
+    quantity: portfolioInputValue(key, 'Quantity'),
+    entry_date: portfolioInputValue(key, 'EntryDate'),
+    note: portfolioInputValue(key, 'Note'),
+  };
+}
+
+function captureActivePortfolioDraft() {
+  if (!activePortfolioPositionId) return;
+  capturePortfolioDraft(activePortfolioPositionId);
+}
+
+function clearPortfolioDraft(id) {
+  delete portfolioDrafts[portfolioDraftKey(id)];
+}
+
 function renderPortfolioSummaryCard(title, mode, summary) {
   const state = normalizePortfolioSummary(summary);
   const valueClass = portfolioPnlClass(state.pnl);
@@ -2654,9 +2703,12 @@ function renderPortfolioSummary() {
 }
 
 function buildPortfolioEditor(item) {
-  const isNew = !item || item.id === 'new';
-  const target = item || { id: 'new', name: '', mode: currentMode, entry_price: '', quantity: '', entry_date: '', note: '' };
-  const id = isNew ? 'new' : target.id;
+  const target = portfolioDraftFor(item);
+  const id = target.id;
+  const escapedId = escapeHtml(id);
+  const draftInputAttr = ' oninput="capturePortfolioDraft(\'' + escapedId + '\')"';
+  const draftChangeAttr = ' onchange="capturePortfolioDraft(\'' + escapedId + '\')"';
+  const modeChangeAttr = ' onchange="capturePortfolioDraft(\'' + escapedId + '\'); renderPortfolio()"';
   const mode = target.mode || currentMode;
   const name = target.name || '';
   const entryPrice = target.entry_price == null ? '' : String(target.entry_price);
@@ -2666,37 +2718,37 @@ function buildPortfolioEditor(item) {
   return [
     '<div class="portfolio-editor">',
     '<div class="portfolio-fields">',
-    '<div class="portfolio-field">',
-    '<label for="portfolioName_' + escapeHtml(id) + '">名称</label>',
-    '<input id="portfolioName_' + escapeHtml(id) + '" type="text" maxlength="60" value="' + escapeHtml(name) + '" placeholder="例如 金条">',
+    '<div class="portfolio-field portfolio-name">',
+    '<label for="portfolioName_' + escapedId + '">名称</label>',
+    '<input id="portfolioName_' + escapedId + '" type="text" maxlength="60" value="' + escapeHtml(name) + '" placeholder="例如 金条"' + draftInputAttr + '>',
     '</div>',
     '<div class="portfolio-field">',
-    '<label for="portfolioMode_' + escapeHtml(id) + '">单位</label>',
-    '<select id="portfolioMode_' + escapeHtml(id) + '">',
+    '<label for="portfolioMode_' + escapedId + '">单位</label>',
+    '<select id="portfolioMode_' + escapedId + '"' + modeChangeAttr + '>',
     '<option value="rmb"' + (mode === 'rmb' ? ' selected' : '') + '>RMB/克</option>',
     '<option value="usd"' + (mode === 'usd' ? ' selected' : '') + '>USD/oz</option>',
     '</select>',
     '</div>',
     '<div class="portfolio-field">',
-    '<label for="portfolioEntryPrice_' + escapeHtml(id) + '">买入价</label>',
-    '<input id="portfolioEntryPrice_' + escapeHtml(id) + '" type="number" step="0.01" value="' + escapeHtml(entryPrice) + '" placeholder="输入价格">',
+    '<label for="portfolioEntryPrice_' + escapedId + '">买入价</label>',
+    '<input id="portfolioEntryPrice_' + escapedId + '" type="number" step="0.01" value="' + escapeHtml(entryPrice) + '" placeholder="输入价格"' + draftInputAttr + '>',
     '</div>',
     '<div class="portfolio-field">',
-    '<label for="portfolioQuantity_' + escapeHtml(id) + '">数量（' + escapeHtml(portfolioQuantityUnit(mode)) + '）</label>',
-    '<input id="portfolioQuantity_' + escapeHtml(id) + '" type="number" step="0.0001" value="' + escapeHtml(quantity) + '" placeholder="输入数量">',
+    '<label for="portfolioQuantity_' + escapedId + '">数量（' + escapeHtml(portfolioQuantityUnit(mode)) + '）</label>',
+    '<input id="portfolioQuantity_' + escapedId + '" type="number" step="0.0001" value="' + escapeHtml(quantity) + '" placeholder="输入数量"' + draftInputAttr + '>',
     '</div>',
     '<div class="portfolio-field">',
-    '<label for="portfolioEntryDate_' + escapeHtml(id) + '">买入日期</label>',
-    '<input id="portfolioEntryDate_' + escapeHtml(id) + '" type="date" value="' + escapeHtml(entryDate) + '">',
+    '<label for="portfolioEntryDate_' + escapedId + '">买入日期</label>',
+    '<input id="portfolioEntryDate_' + escapedId + '" type="date" value="' + escapeHtml(entryDate) + '"' + draftChangeAttr + '>',
     '</div>',
     '<div class="portfolio-field portfolio-note">',
-    '<label for="portfolioNote_' + escapeHtml(id) + '">备注</label>',
-    '<input id="portfolioNote_' + escapeHtml(id) + '" type="text" maxlength="200" value="' + escapeHtml(note) + '" placeholder="例如 账户或来源">',
+    '<label for="portfolioNote_' + escapedId + '">备注</label>',
+    '<textarea id="portfolioNote_' + escapedId + '" maxlength="200" rows="2" placeholder="例如 账户或来源"' + draftInputAttr + '>' + escapeHtml(note) + '</textarea>',
     '</div>',
     '</div>',
     '<div class="portfolio-editor-actions">',
-    '<button class="btn-set" type="button" onclick="savePortfolioPosition(\'' + escapeHtml(id) + '\')">保存</button>',
-    '<button class="btn-clear-sm" type="button" onclick="setActivePortfolioPosition(\'' + escapeHtml(id) + '\')">取消</button>',
+    '<button class="btn-set" type="button" onclick="savePortfolioPosition(\'' + escapedId + '\')">保存</button>',
+    '<button class="btn-clear-sm" type="button" onclick="setActivePortfolioPosition(\'' + escapedId + '\')">取消</button>',
     '</div>',
     '</div>',
   ].join('');
@@ -2763,7 +2815,13 @@ function renderPortfolio() {
 }
 
 function setActivePortfolioPosition(id) {
-  activePortfolioPositionId = activePortfolioPositionId === id ? null : id;
+  captureActivePortfolioDraft();
+  if (activePortfolioPositionId === id) {
+    clearPortfolioDraft(id);
+    activePortfolioPositionId = null;
+  } else {
+    activePortfolioPositionId = id;
+  }
   renderPortfolio();
 }
 
@@ -2805,12 +2863,14 @@ function savePortfolioPosition(id) {
   payload.quantity = quantity;
   setPortfolioStatus('正在保存持仓...', '');
   socket.emit('save_portfolio_position', payload);
+  clearPortfolioDraft(id);
   activePortfolioPositionId = null;
 }
 
 function deletePortfolioPosition(id) {
   setPortfolioStatus('正在删除持仓...', '');
   socket.emit('delete_portfolio_position', { id });
+  clearPortfolioDraft(id);
   if (activePortfolioPositionId === id) activePortfolioPositionId = null;
 }
 

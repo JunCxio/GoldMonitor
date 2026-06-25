@@ -180,9 +180,9 @@ PYTHON_BIN=.venv/bin/python ./scripts/build_macos_dmg.sh
 推送版本标签会触发 GitHub Actions 自动发布：
 
 ```powershell
-git tag v1.4.4
+git tag v1.4.5
 git push origin main
-git push origin v1.4.4
+git push origin v1.4.5
 ```
 
 GitHub Actions 会执行检查、构建 Windows EXE 和 macOS DMG、生成 `version.json`，并把 `GoldMonitorSetup.exe`、`GoldMonitor-macOS.dmg` 与 `version.json` 上传到对应 Release。

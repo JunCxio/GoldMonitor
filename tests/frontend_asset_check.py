@@ -66,11 +66,17 @@ for required in ("const socket = io", "function switchMode", "function renderAle
 
 for required in (
     "function applyPortfolio",
+    "function capturePortfolioDraft",
+    "function portfolioDraftFor",
+    "function clearPortfolioDraft",
     "function renderPortfolio",
     "function setActivePortfolioPosition",
     "function savePortfolioPosition",
     "function deletePortfolioPosition",
     "function exportPortfolio",
+    "portfolioDrafts",
+    "oninput=\"capturePortfolioDraft",
+    "onchange=\"capturePortfolioDraft",
     "portfolio_updated",
     "portfolio_error",
     "portfolio_exported",
@@ -82,5 +88,14 @@ for required in (
 ):
     if required not in js:
         raise SystemExit(f"static/app.js missing portfolio frontend contract: {required}")
+
+for required in (
+    "minmax(150px, 1.4fr)",
+    "minmax(120px, 1fr)",
+    "grid-column:span 2",
+    "box-sizing:border-box",
+):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing portfolio editor sizing contract: {required}")
 
 print("frontend asset checks passed.")

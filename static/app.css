@@ -421,13 +421,14 @@
   .portfolio-line { color:#f0f0f4; font-size:0.76rem; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .portfolio-meta { margin-top:3px; color:var(--text-dim); font-size:0.68rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .portfolio-actions { display:flex; gap:5px; align-items:center; justify-content:flex-end; flex-wrap:wrap; }
-  .portfolio-editor { grid-column:1 / -1; display:grid; gap:8px; padding-top:8px; border-top:1px solid var(--hairline); }
-  .portfolio-fields { display:grid; grid-template-columns:1fr 0.78fr 1fr 1fr; gap:8px; }
+  .portfolio-editor { grid-column:1 / -1; display:grid; gap:10px; padding-top:10px; border-top:1px solid var(--hairline); }
+  .portfolio-fields { display:grid; grid-template-columns:minmax(150px, 1.4fr) minmax(120px, 1fr); gap:9px; align-items:start; }
   .portfolio-field { min-width:0; }
   .portfolio-field label { display:block; color:var(--text-dim); font-size:0.68rem; margin-bottom:4px; }
-  .portfolio-field input, .portfolio-field select { width:100%; min-height:34px; padding:7px 9px; border-radius:8px; border:1px solid var(--control-border); background:rgba(255,255,255,0.035); color:var(--text); font-size:0.8rem; outline:none; font-variant-numeric:tabular-nums; }
-  .portfolio-field input:focus, .portfolio-field select:focus { border-color:var(--control-border-strong); background:#121225; box-shadow:var(--focus-ring); }
-  .portfolio-note { grid-column:1 / -1; }
+  .portfolio-field input, .portfolio-field select, .portfolio-field textarea { box-sizing:border-box; width:100%; min-height:36px; padding:8px 10px; border-radius:8px; border:1px solid var(--control-border); background:rgba(255,255,255,0.035); color:var(--text); font-size:0.8rem; line-height:1.35; outline:none; font-variant-numeric:tabular-nums; }
+  .portfolio-field textarea { min-height:64px; resize:vertical; white-space:pre-wrap; }
+  .portfolio-field input:focus, .portfolio-field select:focus, .portfolio-field textarea:focus { border-color:var(--control-border-strong); background:#121225; box-shadow:var(--focus-ring); }
+  .portfolio-name, .portfolio-note { grid-column:span 2; }
   .portfolio-editor-actions { display:flex; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
   .portfolio-editor-actions button { min-height:32px; padding:6px 10px; font-size:0.7rem; }
   .section-label { font-size:0.68rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px; font-weight:600; }
@@ -583,6 +584,7 @@
     .portfolio-item { grid-template-columns:1fr; }
     .portfolio-actions { justify-content:flex-start; }
     .portfolio-fields { grid-template-columns:1fr; }
+    .portfolio-name, .portfolio-note { grid-column:auto; }
     .settings-backdrop { padding:10px; }
     .settings-modal { max-height:calc(100vh - 20px); }
     .settings-tabs { padding:10px 14px 0; }
