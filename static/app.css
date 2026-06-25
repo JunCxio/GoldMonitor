@@ -439,6 +439,21 @@
   .portfolio-transaction-type { display:inline-flex; align-items:center; min-height:20px; padding:2px 7px; margin-right:4px; border-radius:999px; font-size:0.66rem; font-weight:900; border:1px solid rgba(255,255,255,0.08); }
   .portfolio-transaction-type.buy { color:var(--down); background:rgba(49,208,170,0.08); }
   .portfolio-transaction-type.sell { color:var(--up); background:rgba(255,91,111,0.08); }
+  .portfolio-detail { grid-column:1 / -1; display:grid; gap:9px; min-width:0; padding-top:10px; border-top:1px solid var(--hairline); }
+  .portfolio-detail-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(118px, 100%), 1fr)); gap:6px; min-width:0; }
+  .portfolio-detail-metric { min-width:0; padding:8px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(0,0,0,0.12); }
+  .portfolio-detail-label { color:var(--text-dim); font-size:0.6rem; margin-bottom:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-detail-value { color:#f0f0f4; font-size:0.72rem; font-weight:800; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-detail-value.up, .portfolio-detail-transaction-value.up { color:var(--up); }
+  .portfolio-detail-value.down, .portfolio-detail-transaction-value.down { color:var(--down); }
+  .portfolio-detail-transactions { display:grid; gap:6px; min-width:0; }
+  .portfolio-detail-section-title { color:var(--text-dim); font-size:0.66rem; font-weight:900; letter-spacing:0.03em; }
+  .portfolio-detail-transaction { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px; align-items:center; min-width:0; padding:8px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(255,255,255,0.018); }
+  .portfolio-detail-transaction-main { min-width:0; }
+  .portfolio-detail-transaction-title { color:#f0f0f4; font-size:0.7rem; font-weight:800; line-height:1.35; overflow-wrap:anywhere; }
+  .portfolio-detail-transaction-meta { margin-top:3px; color:var(--text-dim); font-size:0.64rem; line-height:1.35; overflow-wrap:anywhere; }
+  .portfolio-detail-transaction-value { color:#f0f0f4; font-size:0.68rem; font-weight:800; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .portfolio-detail-empty { color:var(--text-dim); font-size:0.7rem; padding:10px 8px; text-align:center; border:1px dashed rgba(255,255,255,0.08); border-radius:8px; background:rgba(255,255,255,0.014); }
   .portfolio-review { display:grid; gap:8px; min-width:0; }
   .portfolio-review-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(180px, 100%), 1fr)); gap:6px; min-width:0; }
   .portfolio-review-card { min-width:0; padding:9px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(255,255,255,0.022); }
@@ -616,6 +631,8 @@
     .portfolio-transaction-fields { grid-template-columns:1fr; }
     .portfolio-name, .portfolio-note { grid-column:auto; }
     .portfolio-transaction-fields .portfolio-name, .portfolio-transaction-fields .portfolio-note { grid-column:auto; }
+    .portfolio-detail-transaction { grid-template-columns:1fr; }
+    .portfolio-detail-transaction-value { white-space:normal; }
     .portfolio-review-point { grid-template-columns:1fr; }
     .portfolio-review-metrics { grid-template-columns:1fr 1fr; }
     .settings-backdrop { padding:10px; }

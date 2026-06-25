@@ -456,6 +456,56 @@ def test_portfolio_review_tracks_cash_flow_and_realized_pnl():
     assert empty_review["usd"]["trade_count"] == 0
 
 
+def test_portfolio_review_markdown_export_includes_summary_positions_and_transactions():
+    from goldmonitor import portfolio as portfolio_core
+
+    transactions = [
+        portfolio_core.normalize_portfolio_transaction(
+            {
+                "position_id": "position-rmb",
+                "name": "金条",
+                "type": "buy",
+                "mode": "rmb",
+                "price": "680",
+                "quantity": "10",
+                "fee": "5",
+                "trade_date": "2026-06-01",
+            },
+            now_factory=fixed_now,
+            id_factory=lambda: "transaction-buy-rmb",
+        ),
+        portfolio_core.normalize_portfolio_transaction(
+            {
+                "position_id": "position-rmb",
+                "name": "金条",
+                "type": "sell",
+                "mode": "rmb",
+                "price": "730",
+                "quantity": "2",
+                "fee": "4",
+                "trade_date": "2026-06-10",
+            },
+            now_factory=fixed_now,
+            id_factory=lambda: "transaction-sell-rmb",
+        ),
+    ]
+
+    markdown, count = portfolio_core.build_portfolio_review_markdown(
+        transactions,
+        {"rmb": 740.0, "usd": 2350.0},
+        generated_at=fixed_now(),
+    )
+
+    assert count == 2
+    assert "# 持仓复盘" in markdown
+    assert "导出时间：2026-06-25 10:00:00" in markdown
+    assert "人民币复盘" in markdown
+    assert "金条" in markdown
+    assert "已实现" in markdown
+    assert "2026-06-10" in markdown
+    assert "transaction-sell-rmb" in markdown
+
+
 def test_portfolio_transactions_reject_invalid_oversell_and_mode_mismatch():
     from goldmonitor.portfolio import normalize_portfolio_transaction, validate_portfolio_transactions
 
@@ -830,6 +880,52 @@ def test_export_portfolio_transactions_socket_event_emits_saved_file_details(mon
     assert payload["filename"].endswith(".csv")
     assert payload["saved_path"] == f"/tmp/{payload['filename']}"
     assert "transaction-rmb" in saved["content"]
+    client.disconnect()
+
+
+def test_export_portfolio_review_socket_event_emits_markdown_details(monkeypatch):
+    import app
+
+    saved = {}
+    monkeypatch.setattr(app, "portfolio_transactions", [{
+        "id": "transaction-rmb",
+        "position_id": "position-rmb",
+        "name": "金条",
+        "type": "buy",
+        "mode": "rmb",
+        "price": 680.0,
+        "quantity": 2.0,
+        "fee": 0.0,
+        "trade_date": "2026-06-01",
+        "note": "",
+        "created_at": "2026-06-25T10:00:00",
+        "updated_at": "2026-06-25T10:00:00",
+    }])
+    monkeypatch.setattr(app, "price_rmb", 700.0)
+    monkeypatch.setattr(app, "price_usd", 2350.0)
+
+    def fake_save_export_file(filename, content):
+        saved["filename"] = filename
+        saved["content"] = content
+        return f"/tmp/{filename}"
+
+    monkeypatch.setattr(app, "save_export_file", fake_save_export_file)
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+    client.emit("export_portfolio", {"kind": "review"})
+    events = client.get_received()
+
+    exported = next(event for event in events if event["name"] == "portfolio_exported")
+    payload = exported["args"][0]
+    assert payload["ok"] is True
+    assert payload["kind"] == "review"
+    assert payload["count"] == 1
+    assert payload["filename"].startswith("GoldMonitor-portfolio-review-")
+    assert payload["filename"].endswith(".md")
+    assert payload["saved_path"] == f"/tmp/{payload['filename']}"
+    assert "# 持仓复盘" in saved["content"]
+    assert "金条" in saved["content"]
     client.disconnect()
 
 

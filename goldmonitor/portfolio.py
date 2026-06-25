@@ -804,6 +804,150 @@ def build_portfolio_state_from_transactions(items, prices):
     }
 
 
+def _portfolio_markdown_generated_at(generated_at=None):
+    if generated_at is None:
+        generated_at = datetime.now()
+    if hasattr(generated_at, "strftime"):
+        return generated_at.strftime("%Y-%m-%d %H:%M:%S")
+    text = _clean_text(generated_at)
+    return text.replace("T", " ")[:19] if text else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _portfolio_markdown_cell(value):
+    text = "--" if value is None or value == "" else str(value)
+    return text.replace("\n", " ").replace("|", "\\|")
+
+
+def _portfolio_markdown_number(value, digits=4):
+    if value is None or value == "":
+        return "--"
+    try:
+        number = _round_value(value, digits)
+    except (TypeError, ValueError):
+        return _portfolio_markdown_cell(value)
+    if number is None:
+        return "--"
+    if abs(number) < 1e-9:
+        number = 0.0
+    text = f"{number:.{digits}f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _portfolio_markdown_mode_title(mode):
+    return "美元" if mode == "usd" else "人民币"
+
+
+def _portfolio_markdown_type_label(item):
+    return "卖出" if item.get("type") == "sell" else "买入"
+
+
+def _append_portfolio_review_summary(lines, mode, summary):
+    title = _portfolio_markdown_mode_title(mode)
+    lines.extend([
+        f"### {title}复盘",
+        "",
+        "| 指标 | 数值 |",
+        "| --- | --- |",
+        f"| 流水数量 | {_portfolio_markdown_number(summary.get('trade_count'), 0)} |",
+        f"| 买入金额 | {_portfolio_markdown_number(summary.get('buy_amount'))} |",
+        f"| 卖出金额 | {_portfolio_markdown_number(summary.get('sell_amount'))} |",
+        f"| 手续费 | {_portfolio_markdown_number(summary.get('fee_total'))} |",
+        f"| 已实现 | {_portfolio_markdown_number(summary.get('realized_pnl'))} |",
+        f"| 净投入 | {_portfolio_markdown_number(summary.get('net_invested'))} |",
+        f"| 当前数量 | {_portfolio_markdown_number(summary.get('current_quantity'))} |",
+        f"| 剩余成本 | {_portfolio_markdown_number(summary.get('cost_basis'))} |",
+        f"| 平均成本 | {_portfolio_markdown_number(summary.get('average_cost'))} |",
+        f"| 首笔日期 | {_portfolio_markdown_cell(summary.get('first_trade_date'))} |",
+        f"| 最近日期 | {_portfolio_markdown_cell(summary.get('last_trade_date'))} |",
+        "",
+    ])
+
+
+def _append_portfolio_positions_table(lines, items):
+    lines.extend([
+        "## 当前持仓",
+        "",
+        "| 名称 | 单位 | 数量 | 平均成本 | 剩余成本 | 市值 | 未实现 | 已实现 | 合计 | 手续费 | 最近交易 | 状态 |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+    ])
+    if not items:
+        lines.extend(["| -- | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- |", ""])
+        return
+    for item in items:
+        mode = item.get("mode") or "rmb"
+        lines.append(
+            "| "
+            + " | ".join([
+                _portfolio_markdown_cell(item.get("name") or "未命名持仓"),
+                _portfolio_markdown_mode_title(mode),
+                _portfolio_markdown_number(item.get("quantity")),
+                _portfolio_markdown_number(item.get("average_cost")),
+                _portfolio_markdown_number(item.get("cost_basis")),
+                _portfolio_markdown_number(item.get("market_value")),
+                _portfolio_markdown_number(item.get("unrealized_pnl")),
+                _portfolio_markdown_number(item.get("realized_pnl")),
+                _portfolio_markdown_number(item.get("total_pnl")),
+                _portfolio_markdown_number(item.get("fees")),
+                _portfolio_markdown_cell(item.get("last_trade_date")),
+                _portfolio_markdown_cell(item.get("valuation_status")),
+            ])
+            + " |"
+        )
+    lines.append("")
+
+
+def _append_portfolio_transactions_table(lines, transactions):
+    lines.extend([
+        "## 流水明细",
+        "",
+        "| 日期 | 类型 | 名称 | 单位 | 成交价 | 数量 | 手续费 | 已实现 | 持仓 ID | 流水 ID | 备注 |",
+        "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- |",
+    ])
+    if not transactions:
+        lines.extend(["| -- | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- |", ""])
+        return
+    for item in transactions:
+        mode = item.get("mode") or "rmb"
+        lines.append(
+            "| "
+            + " | ".join([
+                _portfolio_markdown_cell(item.get("trade_date")),
+                _portfolio_markdown_type_label(item),
+                _portfolio_markdown_cell(item.get("name") or "未命名流水"),
+                _portfolio_markdown_mode_title(mode),
+                _portfolio_markdown_number(item.get("price")),
+                _portfolio_markdown_number(item.get("quantity")),
+                _portfolio_markdown_number(item.get("fee")),
+                _portfolio_markdown_number(item.get("realized_pnl")),
+                _portfolio_markdown_cell(item.get("position_id")),
+                _portfolio_markdown_cell(item.get("id")),
+                _portfolio_markdown_cell(item.get("note")),
+            ])
+            + " |"
+        )
+    lines.append("")
+
+
+def build_portfolio_review_markdown(items, prices, generated_at=None):
+    state = build_portfolio_state_from_transactions(items, prices)
+    transactions = state["transactions"]
+    lines = [
+        "# 持仓复盘",
+        "",
+        f"导出时间：{_portfolio_markdown_generated_at(generated_at)}",
+        f"持仓数量：{state['total']}",
+        f"流水数量：{len(transactions)}",
+        "",
+        "## 复盘总览",
+        "",
+    ]
+    _append_portfolio_review_summary(lines, "rmb", state["review"]["rmb"])
+    _append_portfolio_review_summary(lines, "usd", state["review"]["usd"])
+    _append_portfolio_positions_table(lines, state["items"])
+    _append_portfolio_transactions_table(lines, transactions)
+    return "\n".join(lines).rstrip() + "\n", len(transactions)
+
+
 class PortfolioPositionStore:
     def __init__(self, json_path, now_factory=None, id_factory=None):
         self.json_path = json_path

@@ -986,10 +986,15 @@ def build_portfolio_csv(kind="positions"):
     if transactions:
         if kind == "transactions":
             return portfolio_core.build_portfolio_transactions_csv(transactions)
+        if kind == "review":
+            return portfolio_core.build_portfolio_review_markdown(transactions, prices)
         return portfolio_core.build_portfolio_positions_csv(transactions, prices)
     if kind == "transactions":
         legacy_transactions = portfolio_core.transactions_from_positions(positions, now_factory=datetime.now)
         return portfolio_core.build_portfolio_transactions_csv(legacy_transactions)
+    if kind == "review":
+        legacy_transactions = portfolio_core.transactions_from_positions(positions, now_factory=datetime.now)
+        return portfolio_core.build_portfolio_review_markdown(legacy_transactions, prices)
     return portfolio_core.build_portfolio_csv(positions, prices)
 
 
@@ -3484,10 +3489,11 @@ def on_delete_portfolio_transaction(data=None):
 @socketio.on("export_portfolio")
 def on_export_portfolio(data=None):
     kind = data.get("kind") if isinstance(data, dict) else "positions"
-    if kind not in {"positions", "transactions"}:
+    if kind not in {"positions", "transactions", "review"}:
         kind = "positions"
-    suffix = "transactions" if kind == "transactions" else "positions"
-    filename = f"GoldMonitor-portfolio-{suffix}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv"
+    suffix = kind if kind in {"transactions", "review"} else "positions"
+    extension = "md" if kind == "review" else "csv"
+    filename = f"GoldMonitor-portfolio-{suffix}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.{extension}"
     try:
         content, count = build_portfolio_csv(kind)
         saved_path = save_export_file(filename, content)

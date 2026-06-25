@@ -34,6 +34,7 @@ for required in (
     'onclick="setActivePortfolioTransaction(\'new\')"',
     'onclick="exportPortfolio(\'positions\')"',
     'onclick="exportPortfolio(\'transactions\')"',
+    'onclick="exportPortfolio(\'review\')"',
 ):
     if required not in template:
         raise SystemExit(f"template missing portfolio anchor: {required}")
@@ -72,6 +73,9 @@ for required in (
     ".portfolio-review",
     ".portfolio-review-card",
     ".portfolio-review-track",
+    ".portfolio-detail",
+    ".portfolio-detail-grid",
+    ".portfolio-detail-transactions",
 ):
     if required not in css:
         raise SystemExit(f"static/app.css missing portfolio selector: {required}")
@@ -92,7 +96,9 @@ for required in (
     "function renderPortfolioReview",
     "function renderPortfolioReviewCard",
     "function renderPortfolioReviewPoint",
+    "function renderPortfolioPositionDetail",
     "function setPortfolioView",
+    "function setActivePortfolioDetail",
     "function setActivePortfolioPosition",
     "function setActivePortfolioTransaction",
     "function savePortfolioPosition",
@@ -102,6 +108,7 @@ for required in (
     "function exportPortfolio",
     "portfolioDrafts",
     "portfolioTransactionDrafts",
+    "activePortfolioDetailId",
     "oninput=\"capturePortfolioDraft",
     "oninput=\"capturePortfolioTransactionDraft",
     "onchange=\"capturePortfolioDraft",
