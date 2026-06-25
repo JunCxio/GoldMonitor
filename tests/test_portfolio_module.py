@@ -46,6 +46,17 @@ def test_portfolio_positions_normalize_value_and_summarize_by_currency():
     assert rmb_position["quantity"] == 10.0
     assert rmb_position["created_at"] == "2026-06-25T10:00:00"
     assert len(rmb_position["note"]) == 200
+    long_name_position = normalize_portfolio_position(
+        {
+            "name": "金" * 70,
+            "mode": "rmb",
+            "entry_price": "680",
+            "quantity": "1",
+        },
+        now_factory=fixed_now,
+        id_factory=lambda: "position-long-name",
+    )
+    assert long_name_position["name"] == "金" * 60
 
     state = build_portfolio_state([rmb_position, usd_position], {"rmb": 700.0, "usd": 2350.0})
     assert state["total"] == 2
@@ -118,6 +129,22 @@ def test_portfolio_store_persists_versioned_json_and_csv_export():
 
         csv_text, count = build_portfolio_csv(saved, {"rmb": 700.0, "usd": 2350.0})
         assert count == 2
+        header = next(csv.reader(StringIO(csv_text)))
+        assert header == [
+            "id",
+            "name",
+            "mode",
+            "entry_price",
+            "quantity",
+            "entry_date",
+            "current_price",
+            "cost",
+            "market_value",
+            "pnl",
+            "pnl_percent",
+            "valuation_status",
+            "note",
+        ]
         rows = list(csv.DictReader(StringIO(csv_text)))
         assert rows[0]["name"] == "金条"
         assert rows[0]["current_price"] == "700.0"

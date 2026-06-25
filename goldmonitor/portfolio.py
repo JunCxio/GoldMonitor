@@ -10,7 +10,7 @@ from .data_contracts import unwrap_item_payload, wrap_item_payload
 
 
 PORTFOLIO_MODES = {"rmb", "usd"}
-PORTFOLIO_NAME_LIMIT = 80
+PORTFOLIO_NAME_LIMIT = 60
 PORTFOLIO_NOTE_LIMIT = 200
 PORTFOLIO_ENTRY_DATE_LIMIT = 20
 PORTFOLIO_CSV_FIELDS = [
@@ -20,15 +20,13 @@ PORTFOLIO_CSV_FIELDS = [
     "entry_price",
     "quantity",
     "entry_date",
-    "note",
-    "created_at",
-    "updated_at",
     "current_price",
     "cost",
     "market_value",
     "pnl",
     "pnl_percent",
     "valuation_status",
+    "note",
 ]
 
 
