@@ -114,12 +114,20 @@ for required in (
         raise SystemExit(f"static/app.js missing portfolio frontend contract: {required}")
 
 for required in (
-    "minmax(150px, 1.4fr)",
-    "minmax(120px, 1fr)",
-    "grid-column:span 2",
+    "repeat(auto-fit, minmax(min(150px, 100%), 1fr))",
+    "repeat(auto-fit, minmax(min(140px, 100%), 1fr))",
+    ".portfolio-name, .portfolio-note { grid-column:1 / -1; }",
+    ".portfolio-transaction-fields .portfolio-name, .portfolio-transaction-fields .portfolio-note { grid-column:1 / -1; }",
     "box-sizing:border-box",
 ):
     if required not in css:
         raise SystemExit(f"static/app.css missing portfolio editor sizing contract: {required}")
+
+for forbidden in (
+    "grid-template-columns:minmax(140px, 1fr) minmax(140px, 1fr) minmax(150px, 1fr)",
+    "grid-column:span 3",
+):
+    if forbidden in css:
+        raise SystemExit(f"static/app.css keeps a fixed portfolio grid that can overflow: {forbidden}")
 
 print("frontend asset checks passed.")
