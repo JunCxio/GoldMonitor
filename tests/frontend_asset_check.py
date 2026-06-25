@@ -23,6 +23,10 @@ if '<meta name="goldmonitor-socket-token" content="{{ socket_access_token }}">' 
 if '<script src="/static/app.js"></script>' not in template:
     raise SystemExit("template must reference /static/app.js")
 
+for required in ('id="portfolioStatus"', 'id="portfolioSummary"', 'id="portfolioList"', 'onclick="setActivePortfolioPosition(\'new\')"', 'onclick="exportPortfolio()"'):
+    if required not in template:
+        raise SystemExit(f"template missing portfolio anchor: {required}")
+
 if re.search(r"<style\b", template, flags=re.IGNORECASE):
     raise SystemExit("template must not contain inline style blocks")
 
@@ -40,8 +44,25 @@ for required in (":root", ".container", ".settings-modal", ".price-card"):
     if required not in css:
         raise SystemExit(f"static/app.css missing expected selector: {required}")
 
+for required in (".portfolio-card", ".portfolio-summary", ".portfolio-item", ".portfolio-editor"):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing portfolio selector: {required}")
+
 for required in ("const socket = io", "function switchMode", "function renderAlertLog", "function flashTitle"):
     if required not in js:
         raise SystemExit(f"static/app.js missing expected frontend function: {required}")
+
+for required in (
+    "function applyPortfolio",
+    "function renderPortfolio",
+    "function savePortfolioPosition",
+    "function deletePortfolioPosition",
+    "function exportPortfolio",
+    "save_portfolio_position",
+    "delete_portfolio_position",
+    "export_portfolio",
+):
+    if required not in js:
+        raise SystemExit(f"static/app.js missing portfolio frontend contract: {required}")
 
 print("frontend asset checks passed.")

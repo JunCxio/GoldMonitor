@@ -112,6 +112,21 @@
           </div>
         </div>
 
+        <div class="card-outer portfolio-card">
+          <div class="card-inner">
+            <div class="portfolio-head">
+              <h3>持仓</h3>
+              <div class="portfolio-tools">
+                <button class="btn-clear-sm" type="button" onclick="setActivePortfolioPosition('new')">新增</button>
+                <button class="btn-clear-sm" type="button" onclick="exportPortfolio()">导出</button>
+              </div>
+            </div>
+            <div class="portfolio-status" id="portfolioStatus"></div>
+            <div class="portfolio-summary" id="portfolioSummary"></div>
+            <div class="portfolio-list" id="portfolioList"></div>
+          </div>
+        </div>
+
         <div class="card-outer log-card">
           <div class="card-inner">
             <h3>数据状态</h3>
