@@ -23,6 +23,7 @@ from goldmonitor import market_data as market_data_core
 from goldmonitor import news as news_core
 from goldmonitor import notifications as notifications_core
 from goldmonitor import platform as platform_core
+from goldmonitor import portfolio as portfolio_core
 from goldmonitor import risk_analysis as risk_analysis_core
 from goldmonitor import settings_store as settings_store_core
 from goldmonitor import support_files as support_files_core
@@ -121,6 +122,7 @@ APPDATA_DIR = os.path.join(_default_appdata_root(), "GoldMonitor")
 SETTINGS_PATH = os.path.join(APPDATA_DIR, "settings.json")
 THRESHOLDS_PATH = os.path.join(APPDATA_DIR, "thresholds.json")
 WATCH_TARGETS_PATH = os.path.join(APPDATA_DIR, "watch_targets.json")
+PORTFOLIO_POSITIONS_PATH = os.path.join(APPDATA_DIR, "portfolio_positions.json")
 MARKET_CACHE_PATH = os.path.join(APPDATA_DIR, "market_cache.json")
 UPDATE_DIR = os.path.join(APPDATA_DIR, "updates")
 EXPORT_DIR = os.path.join(APPDATA_DIR, "exports")
@@ -316,6 +318,7 @@ for m in THRESHOLD_MODES:
 volatility_config = {"percent": None, "minutes": 10, "enabled": False}
 last_volatility_check = None
 watch_targets = []
+portfolio_positions = []
 
 # 警报去重: 记录每个阈值是否已经触发过 (避免每10秒重复报警)
 alerted_flags = {}  # key: "upper_critical_rmb" -> True/False
@@ -811,6 +814,71 @@ def check_watch_targets(now_str):
         }
         emit_alert(alert_entry, "目标价观察提醒")
     return [item["target"] for item in triggered_entries]
+
+
+def _portfolio_store():
+    return portfolio_core.PortfolioPositionStore(
+        PORTFOLIO_POSITIONS_PATH,
+        now_factory=datetime.now,
+        id_factory=portfolio_core.generate_portfolio_position_id,
+    )
+
+
+def load_portfolio_positions():
+    return _portfolio_store().load()
+
+
+def save_portfolio_positions(items=None):
+    items = portfolio_positions if items is None else items
+    return _portfolio_store().save(items)
+
+
+def _current_portfolio_prices():
+    return {"rmb": price_rmb, "usd": price_usd}
+
+
+def build_portfolio_state():
+    with lock:
+        items = [dict(item) for item in portfolio_positions]
+        prices = _current_portfolio_prices()
+    return portfolio_core.build_portfolio_state(items, prices)
+
+
+def _find_portfolio_position_index(position_id):
+    return portfolio_core.find_portfolio_position_index(portfolio_positions, position_id)
+
+
+def upsert_portfolio_position(data):
+    global portfolio_positions
+    position_id = str((data or {}).get("id") or "").strip() if isinstance(data, dict) else ""
+    with lock:
+        index = _find_portfolio_position_index(position_id)
+        existing = portfolio_positions[index] if index >= 0 else None
+        position = portfolio_core.normalize_portfolio_position(data, existing=existing, now_factory=datetime.now)
+        if index >= 0:
+            portfolio_positions[index] = position
+        else:
+            portfolio_positions.append(position)
+        portfolio_positions = save_portfolio_positions(portfolio_positions)
+    return build_portfolio_state()
+
+
+def delete_portfolio_position(position_id):
+    global portfolio_positions
+    with lock:
+        index = _find_portfolio_position_index(position_id)
+        if index < 0:
+            return False, build_portfolio_state()
+        portfolio_positions.pop(index)
+        portfolio_positions = save_portfolio_positions(portfolio_positions)
+    return True, build_portfolio_state()
+
+
+def build_portfolio_csv():
+    with lock:
+        items = [dict(item) for item in portfolio_positions]
+        prices = _current_portfolio_prices()
+    return portfolio_core.build_portfolio_csv(items, prices)
 
 
 def _startup_command():
@@ -1355,6 +1423,7 @@ def initialize_market_cache():
 app_settings = load_settings()
 apply_persisted_threshold_state(load_thresholds())
 watch_targets = load_watch_targets()
+portfolio_positions = load_portfolio_positions()
 
 
 def find_available_port(preferred=DEFAULT_PORT):
@@ -3086,6 +3155,7 @@ def on_connect(auth=None):
             "thresholds": dict(thresholds),
             "volatility_config": dict(volatility_config),
             "watch_targets": get_watch_targets_state(),
+            "portfolio": build_portfolio_state(),
             "settings": public_settings_snapshot(),
             "alert_log": alert_log[-20:],
             "ok": last_fetch_ok,
@@ -3232,6 +3302,55 @@ def on_delete_watch_target(data=None):
         emit("watch_target_error", {"message": "未找到观察项"})
         return
     socketio.emit("watch_targets_updated", state)
+
+
+@socketio.on("get_portfolio")
+def on_get_portfolio():
+    emit("portfolio_updated", build_portfolio_state())
+
+
+@socketio.on("save_portfolio_position")
+def on_save_portfolio_position(data):
+    try:
+        state = upsert_portfolio_position(data)
+    except ValueError as exc:
+        emit("portfolio_error", {"message": str(exc)})
+        return
+    except OSError:
+        emit("portfolio_error", {"message": "持仓保存失败，请检查配置目录权限。"})
+        return
+    socketio.emit("portfolio_updated", state)
+
+
+@socketio.on("delete_portfolio_position")
+def on_delete_portfolio_position(data=None):
+    position_id = data.get("id") if isinstance(data, dict) else None
+    try:
+        ok, state = delete_portfolio_position(position_id)
+    except OSError:
+        emit("portfolio_error", {"message": "持仓保存失败，请检查配置目录权限。"})
+        return
+    if not ok:
+        emit("portfolio_error", {"message": "未找到持仓记录"})
+        emit("portfolio_updated", state)
+        return
+    socketio.emit("portfolio_updated", state)
+
+
+@socketio.on("export_portfolio")
+def on_export_portfolio():
+    filename = f"GoldMonitor-portfolio-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv"
+    try:
+        content, count = build_portfolio_csv()
+        saved_path = save_export_file(filename, content)
+        emit("portfolio_exported", {
+            "ok": True,
+            "filename": filename,
+            "saved_path": saved_path,
+            "count": count,
+        })
+    except OSError as exc:
+        emit("portfolio_export_error", {"message": f"持仓导出失败: {exc}"})
 
 
 @socketio.on("toggle_watch_target")

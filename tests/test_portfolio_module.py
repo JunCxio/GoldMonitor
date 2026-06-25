@@ -241,6 +241,40 @@ def test_portfolio_store_persists_versioned_json_and_csv_export():
         assert rows[1]["valuation_status"] == "valued"
 
 
+def test_app_portfolio_wrappers_upsert_delete_and_export(monkeypatch):
+    import app
+
+    saved_positions = []
+    monkeypatch.setattr(app, "portfolio_positions", [])
+    monkeypatch.setattr(app, "price_rmb", 700.0)
+    monkeypatch.setattr(app, "price_usd", 2350.0)
+    monkeypatch.setattr(app, "save_portfolio_positions", lambda items=None: list(items or saved_positions))
+
+    def fake_save(items=None):
+        saved_positions[:] = list(items or app.portfolio_positions)
+        return list(saved_positions)
+
+    monkeypatch.setattr(app, "save_portfolio_positions", fake_save)
+
+    state = app.upsert_portfolio_position({
+        "name": "金条",
+        "mode": "rmb",
+        "entry_price": "680",
+        "quantity": "2",
+    })
+    assert state["total"] == 1
+    assert state["items"][0]["valuation_status"] == "valued"
+    assert state["items"][0]["pnl"] == 40.0
+
+    csv_text, count = app.build_portfolio_csv()
+    assert count == 1
+    assert "金条" in csv_text
+
+    ok, deleted_state = app.delete_portfolio_position(state["items"][0]["id"])
+    assert ok is True
+    assert deleted_state["total"] == 0
+
+
 if __name__ == "__main__":
     failures = []
     for name, value in sorted(globals().items()):
