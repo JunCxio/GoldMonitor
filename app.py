@@ -855,12 +855,13 @@ def upsert_portfolio_position(data):
         index = _find_portfolio_position_index(position_id)
         existing = portfolio_positions[index] if index >= 0 else None
         position = portfolio_core.normalize_portfolio_position(data, existing=existing, now_factory=datetime.now)
+        next_positions = list(portfolio_positions)
         if index >= 0:
-            portfolio_positions[index] = position
+            next_positions[index] = position
         else:
-            portfolio_positions.append(position)
-        portfolio_positions = save_portfolio_positions(portfolio_positions)
-    return build_portfolio_state()
+            next_positions.append(position)
+        portfolio_positions = save_portfolio_positions(next_positions)
+        return build_portfolio_state()
 
 
 def delete_portfolio_position(position_id):
@@ -869,9 +870,10 @@ def delete_portfolio_position(position_id):
         index = _find_portfolio_position_index(position_id)
         if index < 0:
             return False, build_portfolio_state()
-        portfolio_positions.pop(index)
-        portfolio_positions = save_portfolio_positions(portfolio_positions)
-    return True, build_portfolio_state()
+        next_positions = list(portfolio_positions)
+        next_positions.pop(index)
+        portfolio_positions = save_portfolio_positions(next_positions)
+        return True, build_portfolio_state()
 
 
 def build_portfolio_csv():

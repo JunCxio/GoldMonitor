@@ -6,6 +6,8 @@ from datetime import datetime
 from io import StringIO
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
@@ -248,10 +250,9 @@ def test_app_portfolio_wrappers_upsert_delete_and_export(monkeypatch):
     monkeypatch.setattr(app, "portfolio_positions", [])
     monkeypatch.setattr(app, "price_rmb", 700.0)
     monkeypatch.setattr(app, "price_usd", 2350.0)
-    monkeypatch.setattr(app, "save_portfolio_positions", lambda items=None: list(items or saved_positions))
 
     def fake_save(items=None):
-        saved_positions[:] = list(items or app.portfolio_positions)
+        saved_positions[:] = list(app.portfolio_positions if items is None else items)
         return list(saved_positions)
 
     monkeypatch.setattr(app, "save_portfolio_positions", fake_save)
@@ -273,6 +274,132 @@ def test_app_portfolio_wrappers_upsert_delete_and_export(monkeypatch):
     ok, deleted_state = app.delete_portfolio_position(state["items"][0]["id"])
     assert ok is True
     assert deleted_state["total"] == 0
+
+
+def test_app_portfolio_upsert_does_not_mutate_memory_when_save_fails(monkeypatch):
+    import app
+
+    existing = [{
+        "id": "position-existing",
+        "name": "原持仓",
+        "mode": "rmb",
+        "entry_price": 680.0,
+        "quantity": 1.0,
+        "entry_date": "",
+        "note": "",
+        "created_at": "2026-06-25T10:00:00",
+        "updated_at": "2026-06-25T10:00:00",
+    }]
+    monkeypatch.setattr(app, "portfolio_positions", [dict(item) for item in existing])
+    monkeypatch.setattr(app, "save_portfolio_positions", lambda items=None: (_ for _ in ()).throw(OSError("disk full")))
+
+    with pytest.raises(OSError):
+        app.upsert_portfolio_position({
+            "name": "新持仓",
+            "mode": "rmb",
+            "entry_price": "700",
+            "quantity": "2",
+        })
+
+    assert app.portfolio_positions == existing
+
+
+def test_app_portfolio_delete_does_not_mutate_memory_when_save_fails(monkeypatch):
+    import app
+
+    existing = [{
+        "id": "position-existing",
+        "name": "原持仓",
+        "mode": "rmb",
+        "entry_price": 680.0,
+        "quantity": 1.0,
+        "entry_date": "",
+        "note": "",
+        "created_at": "2026-06-25T10:00:00",
+        "updated_at": "2026-06-25T10:00:00",
+    }]
+    monkeypatch.setattr(app, "portfolio_positions", [dict(item) for item in existing])
+    monkeypatch.setattr(app, "save_portfolio_positions", lambda items=None: (_ for _ in ()).throw(OSError("disk full")))
+
+    with pytest.raises(OSError):
+        app.delete_portfolio_position("position-existing")
+
+    assert app.portfolio_positions == existing
+
+
+def test_export_portfolio_socket_event_emits_saved_file_details(monkeypatch):
+    import app
+
+    saved = {}
+    monkeypatch.setattr(app, "portfolio_positions", [{
+        "id": "position-rmb",
+        "name": "金条",
+        "mode": "rmb",
+        "entry_price": 680.0,
+        "quantity": 2.0,
+        "entry_date": "",
+        "note": "",
+        "created_at": "2026-06-25T10:00:00",
+        "updated_at": "2026-06-25T10:00:00",
+    }])
+    monkeypatch.setattr(app, "price_rmb", 700.0)
+    monkeypatch.setattr(app, "price_usd", 2350.0)
+
+    def fake_save_export_file(filename, content):
+        saved["filename"] = filename
+        saved["content"] = content
+        return f"/tmp/{filename}"
+
+    monkeypatch.setattr(app, "save_export_file", fake_save_export_file)
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+    client.emit("export_portfolio")
+    events = client.get_received()
+
+    exported = next(event for event in events if event["name"] == "portfolio_exported")
+    payload = exported["args"][0]
+    assert payload["ok"] is True
+    assert payload["count"] == 1
+    assert payload["filename"].startswith("GoldMonitor-portfolio-")
+    assert payload["filename"].endswith(".csv")
+    assert payload["saved_path"] == f"/tmp/{payload['filename']}"
+    assert saved["filename"] == payload["filename"]
+    assert "金条" in saved["content"]
+    client.disconnect()
+
+
+def test_delete_missing_portfolio_socket_event_emits_error_and_current_state(monkeypatch):
+    import app
+
+    monkeypatch.setattr(app, "portfolio_positions", [{
+        "id": "position-rmb",
+        "name": "金条",
+        "mode": "rmb",
+        "entry_price": 680.0,
+        "quantity": 2.0,
+        "entry_date": "",
+        "note": "",
+        "created_at": "2026-06-25T10:00:00",
+        "updated_at": "2026-06-25T10:00:00",
+    }])
+    monkeypatch.setattr(app, "price_rmb", 700.0)
+    monkeypatch.setattr(app, "price_usd", 2350.0)
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+    client.emit("delete_portfolio_position", {"id": "missing"})
+    events = client.get_received()
+
+    event_names = [event["name"] for event in events]
+    assert "portfolio_error" in event_names
+    assert "portfolio_updated" in event_names
+    error_payload = next(event["args"][0] for event in events if event["name"] == "portfolio_error")
+    updated_payload = next(event["args"][0] for event in events if event["name"] == "portfolio_updated")
+    assert error_payload == {"message": "未找到持仓记录"}
+    assert updated_payload["total"] == 1
+    assert updated_payload["items"][0]["id"] == "position-rmb"
+    client.disconnect()
 
 
 if __name__ == "__main__":
