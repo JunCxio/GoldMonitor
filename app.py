@@ -24,6 +24,7 @@ from goldmonitor import news as news_core
 from goldmonitor import notifications as notifications_core
 from goldmonitor import platform as platform_core
 from goldmonitor import portfolio as portfolio_core
+from goldmonitor import portfolio_alerts as portfolio_alerts_core
 from goldmonitor import risk_analysis as risk_analysis_core
 from goldmonitor import settings_store as settings_store_core
 from goldmonitor import support_files as support_files_core
@@ -124,6 +125,7 @@ THRESHOLDS_PATH = os.path.join(APPDATA_DIR, "thresholds.json")
 WATCH_TARGETS_PATH = os.path.join(APPDATA_DIR, "watch_targets.json")
 PORTFOLIO_POSITIONS_PATH = os.path.join(APPDATA_DIR, "portfolio_positions.json")
 PORTFOLIO_TRANSACTIONS_PATH = os.path.join(APPDATA_DIR, "portfolio_transactions.json")
+PORTFOLIO_ALERTS_PATH = os.path.join(APPDATA_DIR, "portfolio_alerts.json")
 MARKET_CACHE_PATH = os.path.join(APPDATA_DIR, "market_cache.json")
 UPDATE_DIR = os.path.join(APPDATA_DIR, "updates")
 EXPORT_DIR = os.path.join(APPDATA_DIR, "exports")
@@ -321,6 +323,7 @@ last_volatility_check = None
 watch_targets = []
 portfolio_positions = []
 portfolio_transactions = []
+portfolio_alerts = []
 
 # 警报去重: 记录每个阈值是否已经触发过 (避免每10秒重复报警)
 alerted_flags = {}  # key: "upper_critical_rmb" -> True/False
@@ -836,12 +839,24 @@ def _portfolio_transaction_store():
     )
 
 
+def _portfolio_alert_store():
+    return portfolio_alerts_core.PortfolioAlertStore(
+        PORTFOLIO_ALERTS_PATH,
+        now_factory=datetime.now,
+        id_factory=portfolio_alerts_core.generate_portfolio_alert_id,
+    )
+
+
 def load_portfolio_positions():
     return _portfolio_store().load()
 
 
 def load_portfolio_transactions():
     return _portfolio_transaction_store().load()
+
+
+def load_portfolio_alerts():
+    return _portfolio_alert_store().load()
 
 
 def save_portfolio_positions(items=None):
@@ -854,22 +869,54 @@ def save_portfolio_transactions(items=None):
     return _portfolio_transaction_store().save(items)
 
 
+def save_portfolio_alerts(items=None):
+    items = portfolio_alerts if items is None else items
+    return _portfolio_alert_store().save(items)
+
+
 def _current_portfolio_prices():
     return {"rmb": price_rmb, "usd": price_usd}
 
 
-def _build_portfolio_state_from_snapshots(transactions, positions, prices):
+def _enrich_portfolio_alert(alert):
+    item = dict(alert or {})
+    item["status"] = portfolio_alerts_core.portfolio_alert_status(item)
+    return item
+
+
+def _attach_portfolio_alerts_to_state(state, alerts):
+    alerts = [_enrich_portfolio_alert(item) for item in list(alerts or [])]
+    by_position = {item.get("position_id"): item for item in alerts if item.get("position_id")}
+    state = dict(state)
+    state["alerts"] = {
+        **portfolio_alerts_core.portfolio_alerts_state(alerts),
+        "items": alerts,
+    }
+    state["items"] = [
+        {**item, "alert": by_position.get(item.get("id"))}
+        for item in list(state.get("items") or [])
+    ]
+    return state
+
+
+def _build_portfolio_state_from_snapshots(transactions, positions, prices, alerts=None):
     if transactions:
-        return portfolio_core.build_portfolio_state_from_transactions(transactions, prices)
-    return portfolio_core.build_portfolio_state(positions, prices)
+        state = portfolio_core.build_portfolio_state_from_transactions(transactions, prices)
+    else:
+        state = portfolio_core.build_portfolio_state(positions, prices)
+    if alerts is None:
+        with lock:
+            alerts = [dict(item) for item in portfolio_alerts]
+    return _attach_portfolio_alerts_to_state(state, alerts)
 
 
 def build_portfolio_state():
     with lock:
         transactions = [dict(item) for item in portfolio_transactions]
         positions = [dict(item) for item in portfolio_positions]
+        alerts = [dict(item) for item in portfolio_alerts]
         prices = _current_portfolio_prices()
-    return _build_portfolio_state_from_snapshots(transactions, positions, prices)
+    return _build_portfolio_state_from_snapshots(transactions, positions, prices, alerts)
 
 
 def _find_portfolio_position_index(position_id):
@@ -878,6 +925,115 @@ def _find_portfolio_position_index(position_id):
 
 def _find_portfolio_transaction_index(transaction_id):
     return portfolio_core.find_portfolio_transaction_index(portfolio_transactions, transaction_id)
+
+
+def _find_portfolio_alert_index(alert_id):
+    alert_id = str(alert_id or "").strip()
+    if not alert_id:
+        return -1
+    for index, item in enumerate(list(portfolio_alerts or [])):
+        if isinstance(item, dict) and item.get("id") == alert_id:
+            return index
+    return -1
+
+
+def _find_portfolio_alert_index_by_position(position_id):
+    position_id = str(position_id or "").strip()
+    if not position_id:
+        return -1
+    for index, item in enumerate(list(portfolio_alerts or [])):
+        if isinstance(item, dict) and item.get("position_id") == position_id:
+            return index
+    return -1
+
+
+def upsert_portfolio_alert(data):
+    global portfolio_alerts
+    alert_id = str((data or {}).get("id") or "").strip() if isinstance(data, dict) else ""
+    position_id = str((data or {}).get("position_id") or "").strip() if isinstance(data, dict) else ""
+    with lock:
+        index = _find_portfolio_alert_index(alert_id)
+        if index < 0:
+            index = _find_portfolio_alert_index_by_position(position_id)
+        existing = portfolio_alerts[index] if index >= 0 else None
+        alert = portfolio_alerts_core.normalize_portfolio_alert(data, existing=existing, now_factory=datetime.now)
+        next_alerts = list(portfolio_alerts)
+        if index >= 0:
+            next_alerts[index] = alert
+        else:
+            next_alerts.append(alert)
+        portfolio_alerts = save_portfolio_alerts(next_alerts)
+    return build_portfolio_state()
+
+
+def reset_portfolio_alert(alert_id):
+    global portfolio_alerts
+    with lock:
+        index = _find_portfolio_alert_index(alert_id)
+        if index < 0:
+            return False, build_portfolio_state()
+        updated = dict(portfolio_alerts[index])
+        updated["triggered"] = portfolio_alerts_core.empty_portfolio_alert_triggered()
+        updated["last_triggered_at"] = ""
+        updated["last_trigger_price"] = None
+        updated["last_trigger_condition"] = ""
+        updated["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        next_alerts = list(portfolio_alerts)
+        next_alerts[index] = portfolio_alerts_core.normalize_portfolio_alert(
+            updated,
+            existing=portfolio_alerts[index],
+            now_factory=datetime.now,
+        )
+        portfolio_alerts = save_portfolio_alerts(next_alerts)
+    return True, build_portfolio_state()
+
+
+def delete_portfolio_alert(alert_id):
+    global portfolio_alerts
+    with lock:
+        index = _find_portfolio_alert_index(alert_id)
+        if index < 0:
+            return False, build_portfolio_state()
+        next_alerts = list(portfolio_alerts)
+        next_alerts.pop(index)
+        portfolio_alerts = save_portfolio_alerts(next_alerts)
+    return True, build_portfolio_state()
+
+
+def check_portfolio_alerts(now_str):
+    global portfolio_alerts
+    with lock:
+        transactions = [dict(item) for item in portfolio_transactions]
+        positions = [dict(item) for item in portfolio_positions]
+        alerts = [dict(item) for item in portfolio_alerts]
+        prices = _current_portfolio_prices()
+        state = _build_portfolio_state_from_snapshots(transactions, positions, prices, alerts)
+        next_alerts, triggered_entries = portfolio_alerts_core.check_portfolio_alerts(
+            alerts,
+            state.get("items", []),
+            now_factory=datetime.now,
+        )
+        if not triggered_entries:
+            return []
+        portfolio_alerts = save_portfolio_alerts(next_alerts)
+        state = _build_portfolio_state_from_snapshots(transactions, positions, prices, portfolio_alerts)
+
+    socketio.emit("portfolio_updated", state)
+    for trigger in triggered_entries:
+        alert = trigger.get("alert") or {}
+        position = trigger.get("position") or {}
+        alert_entry = {
+            "time": now_str,
+            "type": "warning",
+            "mode": trigger.get("mode"),
+            "message": portfolio_alerts_core.build_portfolio_alert_message(trigger),
+            "source": "portfolio_alert",
+            "portfolio_alert_id": alert.get("id"),
+            "portfolio_position_id": position.get("id"),
+            "portfolio_alert_condition": trigger.get("condition"),
+        }
+        emit_alert(alert_entry, "持仓提醒")
+    return triggered_entries
 
 
 def upsert_portfolio_position(data):
@@ -907,7 +1063,7 @@ def upsert_portfolio_position(data):
             saved_transactions = save_portfolio_transactions(next_transactions)
             portfolio_transactions = saved_transactions
             prices = _current_portfolio_prices()
-            return portfolio_core.build_portfolio_state_from_transactions([dict(item) for item in saved_transactions], prices)
+            return _build_portfolio_state_from_snapshots([dict(item) for item in saved_transactions], [], prices)
 
         index = _find_portfolio_position_index(position_id)
         existing = portfolio_positions[index] if index >= 0 else None
@@ -922,7 +1078,7 @@ def upsert_portfolio_position(data):
 
 
 def delete_portfolio_position(position_id):
-    global portfolio_positions, portfolio_transactions
+    global portfolio_positions, portfolio_transactions, portfolio_alerts
     with lock:
         if portfolio_transactions:
             position_id = str(position_id or "").strip()
@@ -932,8 +1088,11 @@ def delete_portfolio_position(position_id):
             portfolio_core.validate_portfolio_transactions(next_transactions)
             saved_transactions = save_portfolio_transactions(next_transactions)
             portfolio_transactions = saved_transactions
+            next_alerts = [item for item in portfolio_alerts if item.get("position_id") != position_id]
+            if len(next_alerts) != len(portfolio_alerts):
+                portfolio_alerts = save_portfolio_alerts(next_alerts)
             prices = _current_portfolio_prices()
-            return True, portfolio_core.build_portfolio_state_from_transactions([dict(item) for item in saved_transactions], prices)
+            return True, _build_portfolio_state_from_snapshots([dict(item) for item in saved_transactions], [], prices)
 
         index = _find_portfolio_position_index(position_id)
         if index < 0:
@@ -941,6 +1100,9 @@ def delete_portfolio_position(position_id):
         next_positions = list(portfolio_positions)
         next_positions.pop(index)
         portfolio_positions = save_portfolio_positions(next_positions)
+        next_alerts = [item for item in portfolio_alerts if item.get("position_id") != position_id]
+        if len(next_alerts) != len(portfolio_alerts):
+            portfolio_alerts = save_portfolio_alerts(next_alerts)
         return True, build_portfolio_state()
 
 
@@ -960,7 +1122,7 @@ def upsert_portfolio_transaction(data):
         saved_transactions = save_portfolio_transactions(next_transactions)
         portfolio_transactions = saved_transactions
         prices = _current_portfolio_prices()
-        return portfolio_core.build_portfolio_state_from_transactions([dict(item) for item in saved_transactions], prices)
+        return _build_portfolio_state_from_snapshots([dict(item) for item in saved_transactions], [], prices)
 
 
 def delete_portfolio_transaction(transaction_id):
@@ -975,7 +1137,7 @@ def delete_portfolio_transaction(transaction_id):
         saved_transactions = save_portfolio_transactions(next_transactions)
         portfolio_transactions = saved_transactions
         prices = _current_portfolio_prices()
-        return True, portfolio_core.build_portfolio_state_from_transactions([dict(item) for item in saved_transactions], prices)
+        return True, _build_portfolio_state_from_snapshots([dict(item) for item in saved_transactions], [], prices)
 
 
 def build_portfolio_csv(kind="positions"):
@@ -1542,6 +1704,7 @@ apply_persisted_threshold_state(load_thresholds())
 watch_targets = load_watch_targets()
 portfolio_positions = load_portfolio_positions()
 portfolio_transactions = load_portfolio_transactions()
+portfolio_alerts = load_portfolio_alerts()
 
 
 def find_available_port(preferred=DEFAULT_PORT):
@@ -3122,6 +3285,7 @@ def fetch_price_once():
                 if price_rmb is not None:
                     _check_thresholds("rmb", price_rmb, now_str)
                 check_watch_targets(now_str)
+                check_portfolio_alerts(now_str)
 
                 # --- 检查波动率 ---
                 _check_volatility(now_str)
@@ -3481,6 +3645,49 @@ def on_delete_portfolio_transaction(data=None):
         return
     if not ok:
         emit("portfolio_error", {"message": "未找到持仓流水"})
+        emit("portfolio_updated", state)
+        return
+    socketio.emit("portfolio_updated", state)
+
+
+@socketio.on("save_portfolio_alert")
+def on_save_portfolio_alert(data):
+    try:
+        state = upsert_portfolio_alert(data)
+    except ValueError as exc:
+        emit("portfolio_error", {"message": str(exc)})
+        return
+    except OSError:
+        emit("portfolio_error", {"message": "持仓提醒保存失败，请检查配置目录权限。"})
+        return
+    socketio.emit("portfolio_updated", state)
+
+
+@socketio.on("reset_portfolio_alert")
+def on_reset_portfolio_alert(data=None):
+    alert_id = data.get("id") if isinstance(data, dict) else None
+    try:
+        ok, state = reset_portfolio_alert(alert_id)
+    except (ValueError, OSError):
+        emit("portfolio_error", {"message": "持仓提醒保存失败，请检查配置目录权限。"})
+        return
+    if not ok:
+        emit("portfolio_error", {"message": "未找到持仓提醒"})
+        emit("portfolio_updated", state)
+        return
+    socketio.emit("portfolio_updated", state)
+
+
+@socketio.on("delete_portfolio_alert")
+def on_delete_portfolio_alert(data=None):
+    alert_id = data.get("id") if isinstance(data, dict) else None
+    try:
+        ok, state = delete_portfolio_alert(alert_id)
+    except OSError:
+        emit("portfolio_error", {"message": "持仓提醒保存失败，请检查配置目录权限。"})
+        return
+    if not ok:
+        emit("portfolio_error", {"message": "未找到持仓提醒"})
         emit("portfolio_updated", state)
         return
     socketio.emit("portfolio_updated", state)

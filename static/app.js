@@ -64,13 +64,14 @@ let allThresholds = {};
 let volConfig = { percent: null, minutes: 10, enabled: false };
 let activeAlertRule = null;
 let watchTargets = [];
-let portfolioState = { items: [], transactions: [], total: 0, rmb_summary: {}, usd_summary: {}, prices: {}, review: { rmb: {}, usd: {} } };
+let portfolioState = { items: [], transactions: [], total: 0, rmb_summary: {}, usd_summary: {}, prices: {}, review: { rmb: {}, usd: {} }, alerts: { items: [], total: 0, enabled: 0, triggered: 0 } };
 let portfolioView = 'positions';
 let activePortfolioPositionId = null;
 let activePortfolioDetailId = null;
 let portfolioDrafts = {};
 let activePortfolioTransactionId = null;
 let portfolioTransactionDrafts = {};
+let portfolioAlertDrafts = {};
 let pendingPortfolioSave = null;
 let activeWatchTargetId = null;
 let historyView = 'prices';
@@ -2624,6 +2625,44 @@ function normalizePortfolioReview(review) {
   };
 }
 
+function normalizePortfolioAlert(alert) {
+  const source = alert && typeof alert === 'object' && !Array.isArray(alert) ? alert : {};
+  const triggered = source.triggered && typeof source.triggered === 'object' && !Array.isArray(source.triggered) ? source.triggered : {};
+  return {
+    id: source.id || '',
+    position_id: source.position_id || '',
+    enabled: source.enabled !== false,
+    take_profit_price: source.take_profit_price == null ? '' : String(source.take_profit_price),
+    stop_loss_price: source.stop_loss_price == null ? '' : String(source.stop_loss_price),
+    profit_percent: source.profit_percent == null ? '' : String(source.profit_percent),
+    loss_percent: source.loss_percent == null ? '' : String(source.loss_percent),
+    near_cost_percent: source.near_cost_percent == null ? '' : String(source.near_cost_percent),
+    note: source.note || '',
+    status: source.status || '',
+    triggered: {
+      take_profit: !!triggered.take_profit,
+      stop_loss: !!triggered.stop_loss,
+      profit_percent: !!triggered.profit_percent,
+      loss_percent: !!triggered.loss_percent,
+      near_cost: !!triggered.near_cost,
+    },
+    last_triggered_at: source.last_triggered_at || '',
+    last_trigger_price: source.last_trigger_price == null ? '' : String(source.last_trigger_price),
+    last_trigger_condition: source.last_trigger_condition || '',
+  };
+}
+
+function normalizePortfolioAlertsState(alerts) {
+  const source = alerts && typeof alerts === 'object' && !Array.isArray(alerts) ? alerts : {};
+  const items = Array.isArray(source.items) ? source.items.map(normalizePortfolioAlert).filter(item => item.position_id) : [];
+  return {
+    items,
+    total: Number.isFinite(Number(source.total)) ? Number(source.total) : items.length,
+    enabled: Number.isFinite(Number(source.enabled)) ? Number(source.enabled) : 0,
+    triggered: Number.isFinite(Number(source.triggered)) ? Number(source.triggered) : 0,
+  };
+}
+
 function normalizePortfolioState(data) {
   const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
   const items = Array.isArray(source.items)
@@ -2640,12 +2679,14 @@ function normalizePortfolioState(data) {
     usd_summary: normalizePortfolioSummary(source.usd_summary),
     prices: source.prices && typeof source.prices === 'object' && !Array.isArray(source.prices) ? Object.assign({}, source.prices) : {},
     review: normalizePortfolioReview(source.review),
+    alerts: normalizePortfolioAlertsState(source.alerts),
   };
 }
 
 function applyPortfolio(data) {
   captureActivePortfolioDraft();
   captureActivePortfolioTransactionDraft();
+  captureActivePortfolioAlertDraft();
   portfolioState = normalizePortfolioState(data);
   if (activePortfolioPositionId && activePortfolioPositionId !== 'new' && !portfolioState.items.some(item => item.id === activePortfolioPositionId)) {
     clearPortfolioDraft(activePortfolioPositionId);
@@ -2662,6 +2703,8 @@ function applyPortfolio(data) {
     if (pendingPortfolioSave.kind === 'transaction') {
       clearPortfolioTransactionDraft(pendingPortfolioSave.id);
       if (activePortfolioTransactionId === pendingPortfolioSave.id) activePortfolioTransactionId = null;
+    } else if (pendingPortfolioSave.kind === 'alert') {
+      clearPortfolioAlertDraft(pendingPortfolioSave.id);
     } else if (pendingPortfolioSave.kind === 'position') {
       clearPortfolioDraft(pendingPortfolioSave.id);
       if (activePortfolioPositionId === pendingPortfolioSave.id) activePortfolioPositionId = null;
@@ -2843,6 +2886,68 @@ function captureActivePortfolioTransactionDraft() {
 
 function clearPortfolioTransactionDraft(id) {
   delete portfolioTransactionDrafts[portfolioTransactionDraftKey(id)];
+}
+
+function portfolioAlertForPosition(positionId) {
+  const alerts = portfolioState.alerts && Array.isArray(portfolioState.alerts.items) ? portfolioState.alerts.items : [];
+  return alerts.find(item => item.position_id === positionId) || null;
+}
+
+function portfolioAlertDraftKey(positionId) {
+  return String(positionId || '');
+}
+
+function portfolioAlertBaseDraft(position, alert) {
+  const source = alert || {};
+  return {
+    id: source.id || '',
+    position_id: position && position.id ? position.id : source.position_id || '',
+    enabled: source.enabled !== false,
+    take_profit_price: source.take_profit_price == null ? '' : String(source.take_profit_price || ''),
+    stop_loss_price: source.stop_loss_price == null ? '' : String(source.stop_loss_price || ''),
+    profit_percent: source.profit_percent == null ? '' : String(source.profit_percent || ''),
+    loss_percent: source.loss_percent == null ? '' : String(source.loss_percent || ''),
+    near_cost_percent: source.near_cost_percent == null ? '' : String(source.near_cost_percent || ''),
+    note: source.note || '',
+    status: source.status || 'empty',
+  };
+}
+
+function portfolioAlertDraftFor(position, alert) {
+  const base = portfolioAlertBaseDraft(position, alert);
+  const draft = portfolioAlertDrafts[portfolioAlertDraftKey(base.position_id)] || {};
+  return Object.assign({}, base, draft, { id: base.id, position_id: base.position_id, status: alert ? alert.status : base.status });
+}
+
+function portfolioAlertInputValue(positionId, field) {
+  const el = document.getElementById('portfolioAlert' + field + '_' + positionId);
+  return el ? el.value : '';
+}
+
+function capturePortfolioAlertDraft(positionId) {
+  const key = portfolioAlertDraftKey(positionId);
+  if (!key || !document.getElementById('portfolioAlertTakeProfit_' + key)) return;
+  const existing = portfolioAlertForPosition(key);
+  portfolioAlertDrafts[key] = {
+    id: existing ? existing.id : '',
+    position_id: key,
+    enabled: portfolioAlertInputValue(key, 'Enabled') !== 'false',
+    take_profit_price: portfolioAlertInputValue(key, 'TakeProfit'),
+    stop_loss_price: portfolioAlertInputValue(key, 'StopLoss'),
+    profit_percent: portfolioAlertInputValue(key, 'ProfitPercent'),
+    loss_percent: portfolioAlertInputValue(key, 'LossPercent'),
+    near_cost_percent: portfolioAlertInputValue(key, 'NearCostPercent'),
+    note: portfolioAlertInputValue(key, 'Note'),
+  };
+}
+
+function captureActivePortfolioAlertDraft() {
+  if (!activePortfolioDetailId) return;
+  capturePortfolioAlertDraft(activePortfolioDetailId);
+}
+
+function clearPortfolioAlertDraft(positionId) {
+  delete portfolioAlertDrafts[portfolioAlertDraftKey(positionId)];
 }
 
 function renderPortfolioSummaryCard(title, mode, summary) {
@@ -3062,6 +3167,81 @@ function renderPortfolioDetailMetric(label, value, extraClass) {
   ].join('');
 }
 
+function portfolioAlertStatusLabel(alert) {
+  const status = alert && alert.status ? alert.status : 'empty';
+  if (status === 'triggered') return '已触发';
+  if (status === 'watching') return '监控中';
+  if (status === 'disabled') return '已停用';
+  return '未设置';
+}
+
+function portfolioAlertStatusClass(alert) {
+  const status = alert && alert.status ? alert.status : 'empty';
+  if (status === 'triggered') return 'on';
+  if (status === 'watching') return 'on';
+  return 'off';
+}
+
+function buildPortfolioAlertEditor(item) {
+  const alert = portfolioAlertForPosition(item.id);
+  const target = portfolioAlertDraftFor(item, alert);
+  const positionId = escapeHtml(target.position_id);
+  const inputAttr = ' oninput="capturePortfolioAlertDraft(\'' + positionId + '\')"';
+  const changeAttr = ' onchange="capturePortfolioAlertDraft(\'' + positionId + '\')"';
+  const resetButton = alert && alert.id
+    ? '<button class="btn-clear-sm" type="button" onclick="resetPortfolioAlert(\'' + escapeHtml(alert.id) + '\')">重置</button>'
+    : '';
+  const deleteButton = alert && alert.id
+    ? '<button class="btn-clear-sm" type="button" onclick="deletePortfolioAlert(\'' + escapeHtml(alert.id) + '\', \'' + positionId + '\')">清空</button>'
+    : '';
+  return [
+    '<div class="portfolio-alert-editor">',
+    '<div class="portfolio-alert-head">',
+    '<div class="portfolio-detail-section-title">提醒设置</div>',
+    '<span class="portfolio-alert-state ' + portfolioAlertStatusClass(alert) + '">' + escapeHtml(portfolioAlertStatusLabel(alert)) + '</span>',
+    '</div>',
+    '<div class="portfolio-alert-fields">',
+    '<div class="portfolio-field">',
+    '<label for="portfolioAlertEnabled_' + positionId + '">状态</label>',
+    '<select id="portfolioAlertEnabled_' + positionId + '"' + changeAttr + '>',
+    '<option value="true"' + (target.enabled !== false ? ' selected' : '') + '>监控</option>',
+    '<option value="false"' + (target.enabled === false ? ' selected' : '') + '>停用</option>',
+    '</select>',
+    '</div>',
+    '<div class="portfolio-field">',
+    '<label for="portfolioAlertTakeProfit_' + positionId + '">止盈价</label>',
+    '<input id="portfolioAlertTakeProfit_' + positionId + '" type="number" step="0.01" value="' + escapeHtml(target.take_profit_price) + '" placeholder="例如 760"' + inputAttr + '>',
+    '</div>',
+    '<div class="portfolio-field">',
+    '<label for="portfolioAlertStopLoss_' + positionId + '">止损价</label>',
+    '<input id="portfolioAlertStopLoss_' + positionId + '" type="number" step="0.01" value="' + escapeHtml(target.stop_loss_price) + '" placeholder="例如 680"' + inputAttr + '>',
+    '</div>',
+    '<div class="portfolio-field">',
+    '<label for="portfolioAlertProfitPercent_' + positionId + '">浮盈比例（%）</label>',
+    '<input id="portfolioAlertProfitPercent_' + positionId + '" type="number" step="0.01" value="' + escapeHtml(target.profit_percent) + '" placeholder="例如 8"' + inputAttr + '>',
+    '</div>',
+    '<div class="portfolio-field">',
+    '<label for="portfolioAlertLossPercent_' + positionId + '">浮亏比例（%）</label>',
+    '<input id="portfolioAlertLossPercent_' + positionId + '" type="number" step="0.01" value="' + escapeHtml(target.loss_percent) + '" placeholder="例如 3"' + inputAttr + '>',
+    '</div>',
+    '<div class="portfolio-field">',
+    '<label for="portfolioAlertNearCostPercent_' + positionId + '">近成本（%）</label>',
+    '<input id="portfolioAlertNearCostPercent_' + positionId + '" type="number" step="0.01" value="' + escapeHtml(target.near_cost_percent) + '" placeholder="例如 1"' + inputAttr + '>',
+    '</div>',
+    '<div class="portfolio-field portfolio-note">',
+    '<label for="portfolioAlertNote_' + positionId + '">备注</label>',
+    '<textarea id="portfolioAlertNote_' + positionId + '" maxlength="120" rows="2" placeholder="例如 止盈后分批卖出"' + inputAttr + '>' + escapeHtml(target.note) + '</textarea>',
+    '</div>',
+    '</div>',
+    '<div class="portfolio-alert-actions">',
+    '<button class="btn-set" type="button" onclick="savePortfolioAlert(\'' + positionId + '\')">保存提醒</button>',
+    resetButton,
+    deleteButton,
+    '</div>',
+    '</div>',
+  ].join('');
+}
+
 function renderPortfolioPositionDetail(item) {
   const mode = item.mode || 'rmb';
   const quantityDigits = mode === 'usd' ? 4 : 2;
@@ -3110,6 +3290,7 @@ function renderPortfolioPositionDetail(item) {
     renderPortfolioDetailMetric('手续费', formatPortfolioMoney(item.fees, mode), ''),
     renderPortfolioDetailMetric('最近交易', item.last_trade_date || item.entry_date || '未标日期', ''),
     '</div>',
+    buildPortfolioAlertEditor(item),
     '<div class="portfolio-detail-transactions">',
     '<div class="portfolio-detail-section-title">流水明细</div>',
     transactionHtml,
@@ -3419,8 +3600,40 @@ function deletePortfolioPosition(id) {
   setPortfolioStatus('正在删除持仓...', '');
   socket.emit('delete_portfolio_position', { id });
   clearPortfolioDraft(id);
+  clearPortfolioAlertDraft(id);
   if (activePortfolioPositionId === id) activePortfolioPositionId = null;
   if (activePortfolioDetailId === id) activePortfolioDetailId = null;
+}
+
+function savePortfolioAlert(positionId) {
+  capturePortfolioAlertDraft(positionId);
+  const draft = portfolioAlertDrafts[portfolioAlertDraftKey(positionId)] || {};
+  const payload = {
+    position_id: positionId,
+    enabled: draft.enabled !== false,
+    take_profit_price: draft.take_profit_price,
+    stop_loss_price: draft.stop_loss_price,
+    profit_percent: draft.profit_percent,
+    loss_percent: draft.loss_percent,
+    near_cost_percent: draft.near_cost_percent,
+    note: draft.note,
+  };
+  const existing = portfolioAlertForPosition(positionId);
+  if (existing && existing.id) payload.id = existing.id;
+  setPortfolioStatus('正在保存持仓提醒...', '');
+  pendingPortfolioSave = { kind: 'alert', id: positionId };
+  socket.emit('save_portfolio_alert', payload);
+}
+
+function resetPortfolioAlert(alertId) {
+  setPortfolioStatus('正在重置持仓提醒...', '');
+  socket.emit('reset_portfolio_alert', { id: alertId });
+}
+
+function deletePortfolioAlert(alertId, positionId) {
+  setPortfolioStatus('正在清空持仓提醒...', '');
+  socket.emit('delete_portfolio_alert', { id: alertId });
+  clearPortfolioAlertDraft(positionId);
 }
 
 function savePortfolioTransaction(id) {

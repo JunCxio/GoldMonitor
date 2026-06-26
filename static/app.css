@@ -454,6 +454,13 @@
   .portfolio-detail-transaction-meta { margin-top:3px; color:var(--text-dim); font-size:0.64rem; line-height:1.35; overflow-wrap:anywhere; }
   .portfolio-detail-transaction-value { color:#f0f0f4; font-size:0.68rem; font-weight:800; font-variant-numeric:tabular-nums; white-space:nowrap; }
   .portfolio-detail-empty { color:var(--text-dim); font-size:0.7rem; padding:10px 8px; text-align:center; border:1px dashed rgba(255,255,255,0.08); border-radius:8px; background:rgba(255,255,255,0.014); }
+  .portfolio-alert-editor { display:grid; gap:8px; min-width:0; padding:9px; border:1px solid rgba(232,184,48,0.14); border-radius:8px; background:rgba(232,184,48,0.035); }
+  .portfolio-alert-head { display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:0; }
+  .portfolio-alert-fields { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(120px, 100%), 1fr)); gap:8px; min-width:0; }
+  .portfolio-alert-state { flex:0 0 auto; min-width:46px; padding:3px 7px; border-radius:6px; text-align:center; font-size:0.62rem; font-weight:900; border:1px solid var(--hairline); color:var(--text-dim); background:rgba(255,255,255,0.02); white-space:nowrap; }
+  .portfolio-alert-state.on { color:var(--gold); border-color:rgba(232,184,48,0.3); background:rgba(232,184,48,0.08); }
+  .portfolio-alert-actions { display:flex; justify-content:flex-end; gap:6px; flex-wrap:wrap; min-width:0; }
+  .portfolio-alert-actions button { min-height:32px; padding:6px 10px; font-size:0.7rem; }
   .portfolio-review { display:grid; gap:8px; min-width:0; }
   .portfolio-review-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(180px, 100%), 1fr)); gap:6px; min-width:0; }
   .portfolio-review-card { min-width:0; padding:9px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(255,255,255,0.022); }
