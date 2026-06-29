@@ -39,6 +39,7 @@ for required in (
     'onclick="importPortfolioTransactions()"',
     'id="portfolioImportFile"',
     'id="portfolioImportPreview"',
+    'id="portfolioImportBackup"',
 ):
     if required not in template:
         raise SystemExit(f"template missing portfolio anchor: {required}")
@@ -89,6 +90,8 @@ for required in (
     ".portfolio-import-preview-table",
     ".portfolio-import-error",
     ".portfolio-import-actions",
+    ".portfolio-import-backup",
+    ".portfolio-import-backup-head",
     ".portfolio-detail",
     ".portfolio-detail-grid",
     ".portfolio-detail-transactions",
@@ -134,6 +137,9 @@ for required in (
     "function confirmPortfolioImport",
     "function cancelPortfolioImport",
     "function portfolioImportSummary",
+    "function normalizePortfolioImportBackup",
+    "function renderPortfolioImportBackup",
+    "function undoPortfolioImport",
     "function renderPortfolioReviewCurve",
     "function renderPortfolioReview",
     "function renderPortfolioReviewCard",
@@ -175,6 +181,7 @@ for required in (
     "portfolio_export_error",
     "portfolio_imported",
     "portfolio_import_previewed",
+    "portfolio_import_undone",
     "get_portfolio",
     "save_portfolio_position",
     "save_portfolio_transaction",
@@ -186,6 +193,7 @@ for required in (
     "export_portfolio",
     "import_portfolio_transactions",
     "preview_import_portfolio_transactions",
+    "undo_portfolio_import",
 ):
     if required not in js:
         raise SystemExit(f"static/app.js missing portfolio frontend contract: {required}")

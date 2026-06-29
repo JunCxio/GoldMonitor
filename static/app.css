@@ -441,6 +441,12 @@
   .portfolio-import-preview-empty { color:var(--text-dim); font-size:0.66rem; text-align:center; padding:10px 6px; border:1px dashed rgba(255,255,255,0.08); border-radius:8px; }
   .portfolio-import-actions { display:flex; justify-content:flex-end; gap:6px; flex-wrap:wrap; min-width:0; }
   .portfolio-import-actions button { min-height:32px; padding:6px 10px; font-size:0.7rem; }
+  .portfolio-import-backup { display:none; min-width:0; margin-bottom:8px; padding:9px; border:1px solid rgba(255,255,255,0.06); border-radius:8px; background:rgba(255,255,255,0.018); overflow:hidden; }
+  .portfolio-import-backup.show { display:grid; gap:8px; }
+  .portfolio-import-backup-head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; min-width:0; }
+  .portfolio-import-backup-head div { min-width:0; display:grid; gap:2px; }
+  .portfolio-import-backup-head strong { color:#f0f0f4; font-size:0.74rem; line-height:1.3; }
+  .portfolio-import-backup-head span { color:var(--text-dim); font-size:0.62rem; line-height:1.35; overflow-wrap:anywhere; }
   .portfolio-summary { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px; margin-bottom:8px; }
   .portfolio-summary-card { padding:8px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(255,255,255,0.022); }
   .portfolio-summary-title { color:var(--text-dim); font-size:0.66rem; font-weight:800; margin-bottom:5px; }
@@ -678,7 +684,8 @@
     .portfolio-search { grid-column:auto; }
     .portfolio-controls-note, .portfolio-review-curve-meta { white-space:normal; overflow-wrap:anywhere; }
     .portfolio-import-preview-head { flex-direction:column; align-items:stretch; }
-    .portfolio-import-preview-head button, .portfolio-import-actions button { width:100%; }
+    .portfolio-import-preview-head button, .portfolio-import-actions button, .portfolio-import-backup-head button { width:100%; }
+    .portfolio-import-backup-head { flex-direction:column; align-items:stretch; }
     .portfolio-import-preview-grid { grid-template-columns:1fr 1fr 1fr; }
     .portfolio-import-preview-row { grid-template-columns:minmax(0, 1fr) minmax(42px, 0.5fr); }
     .portfolio-import-preview-row span { white-space:normal; overflow-wrap:anywhere; }

@@ -125,6 +125,7 @@ THRESHOLDS_PATH = os.path.join(APPDATA_DIR, "thresholds.json")
 WATCH_TARGETS_PATH = os.path.join(APPDATA_DIR, "watch_targets.json")
 PORTFOLIO_POSITIONS_PATH = os.path.join(APPDATA_DIR, "portfolio_positions.json")
 PORTFOLIO_TRANSACTIONS_PATH = os.path.join(APPDATA_DIR, "portfolio_transactions.json")
+PORTFOLIO_IMPORT_BACKUP_PATH = os.path.join(APPDATA_DIR, "portfolio_import_backup.json")
 PORTFOLIO_ALERTS_PATH = os.path.join(APPDATA_DIR, "portfolio_alerts.json")
 MARKET_CACHE_PATH = os.path.join(APPDATA_DIR, "market_cache.json")
 UPDATE_DIR = os.path.join(APPDATA_DIR, "updates")
@@ -869,6 +870,93 @@ def save_portfolio_transactions(items=None):
     return _portfolio_transaction_store().save(items)
 
 
+def empty_portfolio_import_backup():
+    return {
+        "available": False,
+        "kind": "transactions",
+        "batch_id": "",
+        "imported_at": "",
+        "count": 0,
+        "create": 0,
+        "overwrite": 0,
+        "snapshot": [],
+    }
+
+
+def portfolio_import_backup_state(backup):
+    source = backup if isinstance(backup, dict) else {}
+    if not source.get("available"):
+        return {key: value for key, value in empty_portfolio_import_backup().items() if key != "snapshot"}
+    return {
+        "available": True,
+        "kind": source.get("kind") or "transactions",
+        "batch_id": source.get("batch_id") or "",
+        "imported_at": source.get("imported_at") or "",
+        "count": int(source.get("count") or 0),
+        "create": int(source.get("create") or 0),
+        "overwrite": int(source.get("overwrite") or 0),
+    }
+
+
+def load_portfolio_import_backup():
+    if not os.path.exists(PORTFOLIO_IMPORT_BACKUP_PATH):
+        return empty_portfolio_import_backup()
+    try:
+        with open(PORTFOLIO_IMPORT_BACKUP_PATH, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return empty_portfolio_import_backup()
+    if not isinstance(payload, dict) or not payload.get("available"):
+        return empty_portfolio_import_backup()
+    snapshot = payload.get("snapshot")
+    if not isinstance(snapshot, list):
+        return empty_portfolio_import_backup()
+    return {
+        "available": True,
+        "kind": payload.get("kind") or "transactions",
+        "batch_id": payload.get("batch_id") or "",
+        "imported_at": payload.get("imported_at") or "",
+        "count": int(payload.get("count") or 0),
+        "create": int(payload.get("create") or 0),
+        "overwrite": int(payload.get("overwrite") or 0),
+        "snapshot": [dict(item) for item in snapshot if isinstance(item, dict)],
+    }
+
+
+def save_portfolio_import_backup(snapshot, summary=None):
+    summary = summary if isinstance(summary, dict) else {}
+    now = datetime.now().isoformat(timespec="seconds")
+    payload = {
+        "schema_version": 1,
+        "available": True,
+        "kind": "transactions",
+        "batch_id": "import-" + now.replace(":", "").replace("-", "").replace("T", "-") + "-" + secrets.token_hex(4),
+        "imported_at": now,
+        "count": int(summary.get("count") or 0),
+        "create": int(summary.get("create") or 0),
+        "overwrite": int(summary.get("overwrite") or 0),
+        "snapshot": [dict(item) for item in list(snapshot or [])],
+    }
+    os.makedirs(os.path.dirname(PORTFOLIO_IMPORT_BACKUP_PATH) or ".", exist_ok=True)
+    tmp_path = PORTFOLIO_IMPORT_BACKUP_PATH + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, PORTFOLIO_IMPORT_BACKUP_PATH)
+    return payload
+
+
+def clear_portfolio_import_backup():
+    payload = empty_portfolio_import_backup()
+    payload["schema_version"] = 1
+    payload["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    os.makedirs(os.path.dirname(PORTFOLIO_IMPORT_BACKUP_PATH) or ".", exist_ok=True)
+    tmp_path = PORTFOLIO_IMPORT_BACKUP_PATH + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, PORTFOLIO_IMPORT_BACKUP_PATH)
+    return empty_portfolio_import_backup()
+
+
 def save_portfolio_alerts(items=None):
     items = portfolio_alerts if items is None else items
     return _portfolio_alert_store().save(items)
@@ -916,7 +1004,10 @@ def build_portfolio_state():
         positions = [dict(item) for item in portfolio_positions]
         alerts = [dict(item) for item in portfolio_alerts]
         prices = _current_portfolio_prices()
-    return _build_portfolio_state_from_snapshots(transactions, positions, prices, alerts)
+        import_backup = dict(portfolio_import_backup)
+    state = _build_portfolio_state_from_snapshots(transactions, positions, prices, alerts)
+    state["import_backup"] = portfolio_import_backup_state(import_backup)
+    return state
 
 
 def _find_portfolio_position_index(position_id):
@@ -1141,9 +1232,16 @@ def delete_portfolio_transaction(transaction_id):
 
 
 def import_portfolio_transactions_csv(content):
-    global portfolio_transactions
+    global portfolio_transactions, portfolio_import_backup
     with lock:
         transactions = [dict(item) for item in portfolio_transactions]
+        preview_summary = portfolio_core.preview_portfolio_transactions_csv(
+            transactions,
+            content,
+            now_factory=datetime.now,
+            id_factory=portfolio_core.generate_portfolio_transaction_id,
+            position_id_factory=portfolio_core.generate_portfolio_position_id,
+        )
         imported_transactions, imported_count = portfolio_core.import_portfolio_transactions_csv(
             transactions,
             content,
@@ -1151,11 +1249,30 @@ def import_portfolio_transactions_csv(content):
             id_factory=portfolio_core.generate_portfolio_transaction_id,
             position_id_factory=portfolio_core.generate_portfolio_position_id,
         )
+        preview_summary["count"] = imported_count
+        portfolio_import_backup = save_portfolio_import_backup(transactions, preview_summary)
         saved_transactions = save_portfolio_transactions(imported_transactions)
         portfolio_transactions = saved_transactions
         prices = _current_portfolio_prices()
         state = _build_portfolio_state_from_snapshots([dict(item) for item in saved_transactions], [], prices)
+        state["import_backup"] = portfolio_import_backup_state(portfolio_import_backup)
         return state, imported_count
+
+
+def undo_portfolio_import():
+    global portfolio_transactions, portfolio_import_backup
+    with lock:
+        backup = dict(portfolio_import_backup)
+        snapshot = backup.get("snapshot") if isinstance(backup, dict) else None
+        if not backup.get("available") or not isinstance(snapshot, list):
+            return False, build_portfolio_state()
+        saved_transactions = save_portfolio_transactions([dict(item) for item in snapshot if isinstance(item, dict)])
+        portfolio_transactions = saved_transactions
+        portfolio_import_backup = clear_portfolio_import_backup()
+        prices = _current_portfolio_prices()
+        state = _build_portfolio_state_from_snapshots([dict(item) for item in saved_transactions], [], prices)
+        state["import_backup"] = portfolio_import_backup_state(portfolio_import_backup)
+        return True, state
 
 
 def preview_import_portfolio_transactions_csv(content):
@@ -1734,6 +1851,7 @@ apply_persisted_threshold_state(load_thresholds())
 watch_targets = load_watch_targets()
 portfolio_positions = load_portfolio_positions()
 portfolio_transactions = load_portfolio_transactions()
+portfolio_import_backup = load_portfolio_import_backup()
 portfolio_alerts = load_portfolio_alerts()
 
 
@@ -3702,6 +3820,21 @@ def on_import_portfolio_transactions(data=None):
         emit("portfolio_error", {"message": "持仓流水导入失败，请检查配置目录权限。"})
         return
     emit("portfolio_imported", {"ok": True, "kind": "transactions", "count": imported_count})
+    socketio.emit("portfolio_updated", state)
+
+
+@socketio.on("undo_portfolio_import")
+def on_undo_portfolio_import():
+    try:
+        ok, state = undo_portfolio_import()
+    except OSError:
+        emit("portfolio_error", {"message": "撤销导入失败，请检查配置目录权限。"})
+        return
+    if not ok:
+        emit("portfolio_error", {"message": "没有可撤销的导入批次。"})
+        emit("portfolio_updated", state)
+        return
+    emit("portfolio_import_undone", {"ok": True, "kind": "transactions"})
     socketio.emit("portfolio_updated", state)
 
 

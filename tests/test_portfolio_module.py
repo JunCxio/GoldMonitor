@@ -1026,11 +1026,13 @@ def test_export_portfolio_review_socket_event_emits_markdown_details(monkeypatch
     client.disconnect()
 
 
-def test_import_portfolio_transactions_socket_event_emits_summary_and_updates_state(monkeypatch):
+def test_import_portfolio_transactions_socket_event_emits_summary_and_updates_state(monkeypatch, tmp_path):
     import app
 
     saved_transactions = []
+    monkeypatch.setattr(app, "PORTFOLIO_IMPORT_BACKUP_PATH", str(tmp_path / "portfolio_import_backup.json"))
     monkeypatch.setattr(app, "portfolio_transactions", [])
+    monkeypatch.setattr(app, "portfolio_import_backup", app.empty_portfolio_import_backup())
     monkeypatch.setattr(app, "price_rmb", 740.0)
     monkeypatch.setattr(app, "price_usd", 2350.0)
 
@@ -1105,6 +1107,112 @@ def test_preview_import_portfolio_transactions_socket_event_validates_without_sa
     assert "卖出数量不能超过当前持仓" in payload["message"]
     assert saved_transactions == []
     assert app.portfolio_transactions == existing
+    client.disconnect()
+
+
+def test_import_portfolio_transactions_creates_undo_snapshot_and_restores(monkeypatch, tmp_path):
+    import app
+
+    monkeypatch.setattr(app, "PORTFOLIO_IMPORT_BACKUP_PATH", str(tmp_path / "portfolio_import_backup.json"))
+    monkeypatch.setattr(app, "PORTFOLIO_TRANSACTIONS_PATH", str(tmp_path / "portfolio_transactions.json"))
+    existing = [{
+        "id": "transaction-buy-old",
+        "position_id": "position-rmb",
+        "name": "金条",
+        "type": "buy",
+        "mode": "rmb",
+        "price": 680.0,
+        "quantity": 1.0,
+        "fee": 0.0,
+        "trade_date": "2026-06-01",
+        "note": "",
+        "created_at": "2026-06-01T09:00:00",
+        "updated_at": "2026-06-01T09:00:00",
+    }]
+    monkeypatch.setattr(app, "portfolio_transactions", list(existing))
+    monkeypatch.setattr(app, "portfolio_import_backup", app.empty_portfolio_import_backup())
+    monkeypatch.setattr(app, "price_rmb", 740.0)
+    monkeypatch.setattr(app, "price_usd", 2350.0)
+
+    csv_text = "\n".join([
+        "id,position_id,name,type,mode,price,quantity,fee,trade_date,note",
+        "transaction-sell-new,position-rmb,金条,sell,rmb,720,1,0,2026-06-03,卖出",
+    ])
+
+    state, imported_count = app.import_portfolio_transactions_csv(csv_text)
+
+    assert imported_count == 1
+    assert len(app.portfolio_transactions) == 2
+    assert state["import_backup"]["available"] is True
+    assert state["import_backup"]["count"] == 1
+    assert state["import_backup"]["create"] == 1
+    assert state["import_backup"]["overwrite"] == 0
+
+    backup = app.load_portfolio_import_backup()
+    assert backup["snapshot"] == existing
+
+    ok, restored_state = app.undo_portfolio_import()
+
+    assert ok is True
+    assert [item["id"] for item in app.portfolio_transactions] == ["transaction-buy-old"]
+    assert app.portfolio_transactions[0]["price"] == 680.0
+    assert [item["id"] for item in restored_state["transactions"]] == ["transaction-buy-old"]
+    assert restored_state["import_backup"]["available"] is False
+    assert app.load_portfolio_import_backup()["available"] is False
+
+
+def test_undo_portfolio_import_socket_event_emits_restore_and_update(monkeypatch, tmp_path):
+    import app
+
+    monkeypatch.setattr(app, "PORTFOLIO_IMPORT_BACKUP_PATH", str(tmp_path / "portfolio_import_backup.json"))
+    monkeypatch.setattr(app, "PORTFOLIO_TRANSACTIONS_PATH", str(tmp_path / "portfolio_transactions.json"))
+    existing = [{
+        "id": "transaction-buy-old",
+        "position_id": "position-rmb",
+        "name": "金条",
+        "type": "buy",
+        "mode": "rmb",
+        "price": 680.0,
+        "quantity": 1.0,
+        "fee": 0.0,
+        "trade_date": "2026-06-01",
+        "note": "",
+        "created_at": "2026-06-01T09:00:00",
+        "updated_at": "2026-06-01T09:00:00",
+    }]
+    imported = existing + [{
+        "id": "transaction-sell-new",
+        "position_id": "position-rmb",
+        "name": "金条",
+        "type": "sell",
+        "mode": "rmb",
+        "price": 720.0,
+        "quantity": 1.0,
+        "fee": 0.0,
+        "trade_date": "2026-06-03",
+        "note": "卖出",
+        "created_at": "2026-06-03T09:00:00",
+        "updated_at": "2026-06-03T09:00:00",
+    }]
+    monkeypatch.setattr(app, "portfolio_transactions", list(imported))
+    monkeypatch.setattr(app, "portfolio_import_backup", app.save_portfolio_import_backup(
+        existing,
+        {"count": 1, "create": 1, "overwrite": 0},
+    ))
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+    client.emit("undo_portfolio_import")
+    events = client.get_received()
+
+    event_names = [event["name"] for event in events]
+    assert "portfolio_import_undone" in event_names
+    assert "portfolio_updated" in event_names
+    undone_payload = next(event["args"][0] for event in events if event["name"] == "portfolio_import_undone")
+    updated_payload = next(event["args"][0] for event in events if event["name"] == "portfolio_updated")
+    assert undone_payload["ok"] is True
+    assert len(updated_payload["transactions"]) == 1
+    assert updated_payload["import_backup"]["available"] is False
     client.disconnect()
 
 

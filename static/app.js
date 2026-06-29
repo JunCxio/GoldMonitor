@@ -66,7 +66,7 @@ let allThresholds = {};
 let volConfig = { percent: null, minutes: 10, enabled: false };
 let activeAlertRule = null;
 let watchTargets = [];
-let portfolioState = { items: [], transactions: [], total: 0, rmb_summary: {}, usd_summary: {}, prices: {}, review: { rmb: {}, usd: {} }, alerts: { items: [], total: 0, enabled: 0, triggered: 0 } };
+let portfolioState = { items: [], transactions: [], total: 0, rmb_summary: {}, usd_summary: {}, prices: {}, review: { rmb: {}, usd: {} }, alerts: { items: [], total: 0, enabled: 0, triggered: 0 }, import_backup: { available: false } };
 let portfolioView = 'positions';
 let portfolioSearch = '';
 let portfolioPositionFilter = 'all';
@@ -82,6 +82,7 @@ let portfolioTransactionDrafts = {};
 let portfolioAlertDrafts = {};
 let pendingPortfolioSave = null;
 let pendingPortfolioImportMessage = '';
+let pendingPortfolioUndoMessage = '';
 let portfolioImportPreview = null;
 let portfolioImportPreviewRequestSeq = 0;
 let activeWatchTargetId = null;
@@ -541,6 +542,9 @@ socket.on('portfolio_updated', data => {
   if (pendingPortfolioImportMessage) {
     setPortfolioStatus(pendingPortfolioImportMessage, 'ok');
     pendingPortfolioImportMessage = '';
+  } else if (pendingPortfolioUndoMessage) {
+    setPortfolioStatus(pendingPortfolioUndoMessage, 'ok');
+    pendingPortfolioUndoMessage = '';
   } else {
     setPortfolioStatus('持仓已更新。', 'ok');
   }
@@ -569,6 +573,13 @@ socket.on('portfolio_imported', data => {
 
 socket.on('portfolio_import_previewed', data => {
   applyPortfolioImportBackendPreview(data || {});
+});
+
+socket.on('portfolio_import_undone', data => {
+  if (data && data.ok) {
+    pendingPortfolioUndoMessage = '已撤销最近一次 CSV 导入。';
+    setPortfolioStatus(pendingPortfolioUndoMessage, 'ok');
+  }
 });
 
 socket.on('settings_updated', data => {
@@ -2689,6 +2700,19 @@ function normalizePortfolioAlertsState(alerts) {
   };
 }
 
+function normalizePortfolioImportBackup(data) {
+  const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  return {
+    available: source.available === true,
+    kind: source.kind || 'transactions',
+    batch_id: source.batch_id || '',
+    imported_at: source.imported_at || '',
+    count: Number.isFinite(Number(source.count)) ? Number(source.count) : 0,
+    create: Number.isFinite(Number(source.create)) ? Number(source.create) : 0,
+    overwrite: Number.isFinite(Number(source.overwrite)) ? Number(source.overwrite) : 0,
+  };
+}
+
 function normalizePortfolioState(data) {
   const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
   const items = Array.isArray(source.items)
@@ -2706,6 +2730,7 @@ function normalizePortfolioState(data) {
     prices: source.prices && typeof source.prices === 'object' && !Array.isArray(source.prices) ? Object.assign({}, source.prices) : {},
     review: normalizePortfolioReview(source.review),
     alerts: normalizePortfolioAlertsState(source.alerts),
+    import_backup: normalizePortfolioImportBackup(source.import_backup),
   };
 }
 
@@ -3253,6 +3278,7 @@ function renderPortfolio() {
   renderPortfolioSummary();
   renderPortfolioTabs();
   renderPortfolioControls();
+  renderPortfolioImportBackup();
   const box = document.getElementById('portfolioList');
   if (!box) return;
   if (portfolioView === 'review') {
@@ -4185,6 +4211,30 @@ function renderPortfolioImportPreview() {
   ].join('');
 }
 
+function renderPortfolioImportBackup() {
+  const box = document.getElementById('portfolioImportBackup');
+  if (!box) return;
+  const backup = normalizePortfolioImportBackup(portfolioState.import_backup);
+  if (!backup.available) {
+    box.innerHTML = '';
+    box.classList.remove('show');
+    return;
+  }
+  box.classList.add('show');
+  const timeText = backup.imported_at ? backup.imported_at.replace('T', ' ') : '未知时间';
+  box.innerHTML = [
+    '<div class="portfolio-import-backup-head">',
+    '<div><strong>最近 CSV 导入</strong><span>' + escapeHtml(timeText) + '</span></div>',
+    '<button class="btn-clear-sm" type="button" onclick="undoPortfolioImport()">撤销导入</button>',
+    '</div>',
+    '<div class="portfolio-import-preview-grid">',
+    '<div><span>导入</span><strong>' + escapeHtml(String(backup.count)) + '</strong></div>',
+    '<div><span>新增</span><strong>' + escapeHtml(String(backup.create)) + '</strong></div>',
+    '<div><span>覆盖</span><strong>' + escapeHtml(String(backup.overwrite)) + '</strong></div>',
+    '</div>',
+  ].join('');
+}
+
 function confirmPortfolioImport() {
   if (!portfolioImportPreview || portfolioImportPreview.errors.length || portfolioImportPreview.backendStatus !== 'ok') {
     setPortfolioStatus('请先选择并复核有效的 CSV 文件。', 'fail');
@@ -4212,6 +4262,11 @@ function importPortfolioTransactions() {
     return;
   }
   input.click();
+}
+
+function undoPortfolioImport() {
+  setPortfolioStatus('正在撤销最近一次导入...', '');
+  socket.emit('undo_portfolio_import');
 }
 
 function onPortfolioImportFile(input) {
