@@ -141,43 +141,48 @@
         </div>
 
         <div class="card-outer log-card">
-          <div class="card-inner">
-            <h3>数据状态</h3>
-            <div class="source-comparison" id="sourceComparison">
-              <div class="source-comparison-head">
-                <span>行情源价差</span>
-                <span class="source-comparison-badge insufficient">等待</span>
-              </div>
-              <div class="source-comparison-list"></div>
-            </div>
+          <div class="card-inner alert-log-shell">
             <div class="source-health" id="sourceHealth">
               <div class="source-health-head">
-                <span>等待数据源检查</span>
-                <button class="btn-clear-sm" type="button" onclick="refreshSourceHealth()">刷新</button>
+                <div class="source-health-summary">
+                  <span class="source-summary-label">数据状态</span>
+                  <strong class="source-summary-text">等待数据源检查</strong>
+                </div>
+                <div class="source-health-actions">
+                  <button class="btn-clear-sm" type="button" onclick="toggleSourceHealthDetails()">详情</button>
+                  <button class="btn-clear-sm" type="button" onclick="refreshSourceHealth()">刷新</button>
+                </div>
               </div>
-              <div class="source-health-list"></div>
+              <div class="source-health-details" id="sourceHealthDetails" hidden>
+                <div class="source-comparison" id="sourceComparison">
+                  <div class="source-comparison-head">
+                    <span>行情源价差</span>
+                    <span class="source-comparison-badge insufficient">等待</span>
+                  </div>
+                  <div class="source-comparison-list"></div>
+                </div>
+                <div class="source-health-list"></div>
+              </div>
             </div>
             <div class="log-head">
-              <h3>警报记录 <span class="log-count" id="alertUnreadCount">0 未读</span></h3>
+              <h3>警报记录 <span class="log-count" id="alertUnreadCount">0 新</span></h3>
               <div class="log-tools">
-                <select class="log-filter" id="alertLogFilter" onchange="setAlertLogFilter(this.value)" aria-label="筛选警报记录">
-                  <option value="all">全部</option>
-                  <option value="unread">未读</option>
-                  <option value="pending">未确认</option>
-                  <option value="warning">价格</option>
-                  <option value="critical">关键</option>
-                  <option value="volatility">波动</option>
-                </select>
-                <input class="log-search" id="alertLogSearch" type="search" placeholder="搜索" oninput="setAlertLogSearch(this.value)" aria-label="搜索警报记录">
-                <button class="btn-clear-sm" type="button" onclick="exportAlertLog()">导出</button>
-                <button class="btn-clear-sm" type="button" onclick="clearAlertLog()">清空</button>
+                <div class="alert-log-tabs" id="alertLogModeTabs" role="tablist" aria-label="警报记录范围">
+                  <button class="alert-log-tab active" type="button" onclick="setAlertLogView('all')">全部</button>
+                  <button class="alert-log-tab" type="button" onclick="setAlertLogView('new')">新警报</button>
+                </div>
+                <div class="alert-log-more">
+                  <button class="btn-clear-sm" type="button" onclick="toggleAlertLogMenu()">更多</button>
+                  <div class="alert-log-menu" id="alertLogMenu" hidden>
+                    <input class="log-search" id="alertLogSearch" type="search" placeholder="搜索警报" oninput="setAlertLogSearch(this.value)" aria-label="搜索警报记录">
+                    <button class="btn-clear-sm" type="button" onclick="exportAlertLog()">导出记录</button>
+                    <button class="btn-clear-sm" type="button" onclick="clearAlertLog()">清空记录</button>
+                  </div>
+                </div>
               </div>
             </div>
             <div class="log-status" id="alertLogStatus"></div>
             <div class="log-list" id="logList"><div class="log-empty">暂无警报</div></div>
-            <div class="alert-detail" id="alertDetail">
-              <div class="alert-detail-empty">选择一条警报查看详情</div>
-            </div>
           </div>
         </div>
 

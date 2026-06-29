@@ -151,9 +151,8 @@ function autoUpdateIntervalMs() {
   return AUTO_UPDATE_CHECK_INTERVAL_MS;
 }
 let alertEntries = [];
-let alertLogFilter = 'all';
+let alertLogView = 'all';
 let alertLogSearch = '';
-let selectedAlertId = null;
 let activeAlert = null;
 let mergedAlertCount = 0;
 let riskAnalysisRunning = false;
@@ -790,6 +789,12 @@ function downloadText(filename, content, mimeType) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
+function toggleSourceHealthDetails() {
+  const details = document.getElementById('sourceHealthDetails');
+  if (!details) return;
+  details.hidden = !details.hidden;
+}
+
 function renderSourceHealth(data) {
   latestSourceHealthState = data || { items: [], summary: {} };
   if (data && data.comparison) renderSourceComparison(data.comparison);
@@ -797,9 +802,14 @@ function renderSourceHealth(data) {
   if (!box) return;
   const items = Array.isArray(data.items) ? data.items : [];
   const summary = data.summary || {};
-  const head = box.querySelector('.source-health-head span');
+  const head = box.querySelector('.source-summary-text');
   const list = box.querySelector('.source-health-list');
-  head.textContent = '正常 ' + (summary.ok || 0) + ' · 异常 ' + (summary.failed || 0) + ' · 缓存 ' + (summary.cached || 0);
+  const ok = Number(summary.ok || 0);
+  const failed = Number(summary.failed || 0);
+  const cached = Number(summary.cached || 0);
+  head.textContent = failed
+    ? '异常 ' + failed + ' · 正常 ' + ok
+    : (cached ? '缓存 ' + cached + ' · 正常 ' + ok : '正常 ' + ok);
   if (!items.length) {
     list.innerHTML = '<div class="source-health-item"><span class="source-health-dot"></span><span class="source-health-name">等待数据源检查</span><span class="source-health-meta">--</span></div>';
     return;
@@ -1092,8 +1102,6 @@ function renderTimelineDetail() {
   if (event.type === 'alert') {
     cells.push(detailCell('等级', alertLevelLabel(payload.level)));
     cells.push(detailCell('品种', alertModeLabel(payload.mode)));
-    cells.push(detailCell('读取状态', payload.read ? '已读' : '未读'));
-    cells.push(detailCell('处理状态', payload.acknowledged ? '已确认' : '未确认'));
     if (Array.isArray(payload.related_news) && payload.related_news.length) {
       extras += '<div class="timeline-detail-news">' + payload.related_news.slice(0, 3).map(item => (
         '<a href="' + escapeHtml(item.url || '#') + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(item.title || '相关新闻') + '</a>'
@@ -2050,6 +2058,7 @@ function showAlertModal(entry) {
 }
 
 function closeAlertModal() {
+  if (activeAlert && activeAlert.id) updateAlertStatus(activeAlert.id, { read: true });
   document.getElementById('alertBackdrop').classList.remove('show');
   activeAlert = null;
   mergedAlertCount = 0;
@@ -4300,21 +4309,21 @@ function normalizeAlertEntry(entry) {
   const item = entry && typeof entry === 'object' ? { ...entry } : {};
   item.id = item.id || 'local-' + (item.timestamp || Date.now()) + '-' + Math.random().toString(16).slice(2);
   item.read = item.read === true;
-  item.acknowledged = item.acknowledged === true;
-  if (item.acknowledged) item.read = true;
   return item;
 }
 
 function setAlertEntries(items) {
   alertEntries = Array.isArray(items) ? items.slice(-50).map(normalizeAlertEntry) : [];
-  if (selectedAlertId && !alertEntries.some(entry => entry.id === selectedAlertId)) selectedAlertId = null;
   updateAlertLogSummary();
-  renderAlertDetail();
   renderAlertLog();
 }
 
-function setAlertLogFilter(value) {
-  alertLogFilter = value || 'all';
+function setAlertLogView(value) {
+  alertLogView = value === 'new' ? 'new' : 'all';
+  document.querySelectorAll('.alert-log-tab').forEach(button => {
+    const isActive = button.textContent.trim() === (alertLogView === 'new' ? '新警报' : '全部');
+    button.classList.toggle('active', isActive);
+  });
   renderAlertLog();
 }
 
@@ -4323,18 +4332,22 @@ function setAlertLogSearch(value) {
   renderAlertLog();
 }
 
+function toggleAlertLogMenu() {
+  const menu = document.getElementById('alertLogMenu');
+  if (!menu) return;
+  menu.hidden = !menu.hidden;
+}
+
 function updateAlertLogSummary() {
   const countEl = document.getElementById('alertUnreadCount');
   const unread = alertEntries.filter(entry => !entry.read).length;
-  countEl.textContent = unread + ' 未读';
+  countEl.textContent = unread + ' 新';
   countEl.className = 'log-count' + (unread ? '' : ' empty');
 }
 
-function alertLogMatchesFilter(entry) {
-  if (alertLogFilter === 'unread') return !entry.read;
-  if (alertLogFilter === 'pending') return !entry.acknowledged;
-  if (alertLogFilter === 'all') return true;
-  return (entry.type || '') === alertLogFilter;
+function alertLogMatchesView(entry) {
+  if (alertLogView === 'new') return !entry.read;
+  return true;
 }
 
 function alertLogMatchesSearch(entry) {
@@ -4346,14 +4359,13 @@ function alertLogMatchesSearch(entry) {
   return haystack.includes(alertLogSearch);
 }
 
-function alertStatusLabel(entry) {
-  if (entry.acknowledged) return '已确认';
-  if (entry.read) return '已读';
-  return '未读';
+function alertNotificationIssues(entry) {
+  const items = Array.isArray(entry.notifications) ? entry.notifications : [];
+  return items.filter(item => item && item.status && item.status !== 'queued');
 }
 
 function renderNotificationBadges(entry) {
-  const items = Array.isArray(entry.notifications) ? entry.notifications : [];
+  const items = alertNotificationIssues(entry);
   if (!items.length) return '';
   return '<span class="log-notify">' + items.map(item => {
     const status = item.status || '';
@@ -4365,33 +4377,34 @@ function renderNotificationBadges(entry) {
 }
 
 function buildLogEntry(entry) {
-  const button = document.createElement('button');
-  const selected = selectedAlertId === entry.id;
-  button.type = 'button';
-  button.className = [
+  const item = document.createElement('div');
+  const encodedId = encodeURIComponent(String(entry.id || ''));
+  const hasNotificationIssue = alertNotificationIssues(entry).length > 0;
+  item.className = [
     'log-item',
     entry.read ? 'read' : 'unread',
-    entry.acknowledged ? 'acknowledged' : '',
-    selected ? 'active' : '',
   ].filter(Boolean).join(' ');
-  button.onclick = () => selectAlertEntry(entry.id);
-  const stateBadge = entry.acknowledged
-    ? '<span class="log-state-badge ack">已确认</span>'
-    : (entry.read ? '<span class="log-state-badge">已读</span>' : '<span class="log-state-badge unread">未读</span>');
-  button.innerHTML = [
+  item.innerHTML = [
     '<span class="log-unread-dot"></span>',
     '<span class="log-meta">',
-    '<span class="log-time">' + escapeHtml(entry.time || '') + '</span>',
-    '<span class="log-msg ' + escapeHtml(entry.type || '') + '">' + escapeHtml(entry.message || '') + renderNotificationBadges(entry) + '</span>',
+    '<span class="log-line-head">',
+    '<span class="log-time">' + escapeHtml(entry.time || entry.timestamp || '') + '</span>',
+    '<span class="log-level ' + escapeHtml(entry.type || '') + '">' + escapeHtml(alertLevelLabel(entry.type)) + '</span>',
     '</span>',
-    '<span class="log-state">' + stateBadge + '</span>',
+    '<span class="log-msg ' + escapeHtml(entry.type || '') + '">' + escapeHtml(entry.message || '达到预警条件') + '</span>',
+    renderNotificationBadges(entry),
+    '</span>',
+    '<span class="log-actions">',
+    '<button class="btn-clear-sm" type="button" onclick="analyzeAlertFromLog(decodeURIComponent(\'' + encodedId + '\'))">风险分析</button>',
+    hasNotificationIssue ? '<button class="btn-clear-sm" type="button" onclick="resendAlertNotification(decodeURIComponent(\'' + encodedId + '\'))">重发通知</button>' : '',
+    '</span>',
   ].join('');
-  return button;
+  return item;
 }
 
 function renderAlertLog() {
   const list = document.getElementById('logList');
-  const items = alertEntries.filter(entry => alertLogMatchesFilter(entry) && alertLogMatchesSearch(entry));
+  const items = alertEntries.filter(entry => alertLogMatchesView(entry) && alertLogMatchesSearch(entry));
   list.innerHTML = '';
   if (!items.length) {
     const empty = document.createElement('div');
@@ -4408,9 +4421,7 @@ function addLogEntry(entry) {
   const normalized = normalizeAlertEntry(entry);
   alertEntries.push(normalized);
   while (alertEntries.length > 50) alertEntries.shift();
-  selectedAlertId = normalized.id;
   updateAlertLogSummary();
-  renderAlertDetail();
   renderAlertLog();
 }
 
@@ -4420,19 +4431,6 @@ function mergeAlertLogEntry(entry) {
   if (index >= 0) alertEntries[index] = normalized;
   else alertEntries.push(normalized);
   updateAlertLogSummary();
-  renderAlertDetail();
-  renderAlertLog();
-}
-
-function findSelectedAlert() {
-  return alertEntries.find(entry => entry.id === selectedAlertId) || null;
-}
-
-function selectAlertEntry(id) {
-  selectedAlertId = id;
-  const entry = findSelectedAlert();
-  if (entry && !entry.read) updateAlertStatus(entry.id, { read: true });
-  renderAlertDetail();
   renderAlertLog();
 }
 
@@ -4440,19 +4438,13 @@ function updateAlertStatus(id, patch) {
   const entry = alertEntries.find(item => item.id === id);
   if (entry) {
     Object.assign(entry, patch || {});
-    if (entry.acknowledged) entry.read = true;
     updateAlertLogSummary();
-    renderAlertDetail();
     renderAlertLog();
   }
   socket.emit('update_alert_log_status', Object.assign({ id }, patch || {}));
 }
 
-function acknowledgeAlert(id) {
-  updateAlertStatus(id, { read: true, acknowledged: true });
-}
-
-function analyzeAlertFromDetail(id) {
+function analyzeAlertFromLog(id) {
   const entry = alertEntries.find(item => item.id === id);
   if (!entry) return;
   activeAlert = entry;
@@ -4464,40 +4456,6 @@ function resendAlertNotification(id) {
   status.textContent = '正在重新提交通知...';
   status.className = 'log-status';
   socket.emit('resend_alert_notification', { id });
-}
-
-function renderAlertDetail() {
-  const detail = document.getElementById('alertDetail');
-  if (!detail) return;
-  const entry = findSelectedAlert();
-  if (!entry) {
-    detail.innerHTML = '<div class="alert-detail-empty">选择一条警报查看详情</div>';
-    return;
-  }
-  const notifications = renderNotificationBadges(entry);
-  detail.innerHTML = [
-    '<div class="alert-detail-head">',
-    '<div>',
-    '<div class="alert-detail-title">' + escapeHtml(alertLevelLabel(entry.type)) + '</div>',
-    '<div class="alert-detail-time">' + escapeHtml(entry.timestamp || entry.time || '--') + '</div>',
-    '</div>',
-    '<span class="log-state-badge ' + (!entry.read ? 'unread' : (entry.acknowledged ? 'ack' : '')) + '">' + escapeHtml(alertStatusLabel(entry)) + '</span>',
-    '</div>',
-    '<div class="alert-detail-message">' + escapeHtml(entry.message || '达到预警条件') + '</div>',
-    notifications,
-    '<div class="alert-detail-grid">',
-    '<div class="alert-detail-cell"><span>类型</span><strong>' + escapeHtml(alertLevelLabel(entry.type)) + '</strong></div>',
-    '<div class="alert-detail-cell"><span>品种</span><strong>' + escapeHtml(alertModeLabel(entry.mode)) + '</strong></div>',
-    '<div class="alert-detail-cell"><span>读取状态</span><strong>' + escapeHtml(entry.read ? '已读' : '未读') + '</strong></div>',
-    '<div class="alert-detail-cell"><span>处理状态</span><strong>' + escapeHtml(entry.acknowledged ? '已确认' : '未确认') + '</strong></div>',
-    '</div>',
-    '<div class="alert-detail-actions">',
-    entry.read ? '' : '<button class="btn-clear-sm" type="button" onclick="updateAlertStatus(\'' + escapeHtml(entry.id) + '\', { read: true })">标为已读</button>',
-    entry.acknowledged ? '' : '<button class="btn-clear-sm" type="button" onclick="acknowledgeAlert(\'' + escapeHtml(entry.id) + '\')">确认</button>',
-    '<button class="btn-clear-sm" type="button" onclick="resendAlertNotification(\'' + escapeHtml(entry.id) + '\')">重发通知</button>',
-    '<button class="btn-clear-sm" type="button" onclick="analyzeAlertFromDetail(\'' + escapeHtml(entry.id) + '\')">风险分析</button>',
-    '</div>',
-  ].join('');
 }
 
 function exportAlertLog() {

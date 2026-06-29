@@ -47,7 +47,7 @@ app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 OFFICIAL_UPDATE_HOST = "github.com"
@@ -1437,14 +1437,61 @@ def normalize_update_manifest(raw, base_url=None):
     )
 
 
-def fetch_update_manifest(manifest_url=None):
+def normalize_github_release_manifest(raw):
+    return update_manager_core.normalize_github_release_manifest(
+        raw,
+        platform_key=_platform_update_key(),
+        official_host=OFFICIAL_UPDATE_HOST,
+        official_path_prefix=OFFICIAL_UPDATE_PATH_PREFIX,
+        asset_names=OFFICIAL_UPDATE_ASSET_NAMES,
+    )
+
+
+def github_release_api_url_from_manifest(manifest_url):
+    return update_manager_core.github_release_api_url_from_manifest(
+        manifest_url,
+        official_host=OFFICIAL_UPDATE_HOST,
+        official_path_prefix=OFFICIAL_UPDATE_PATH_PREFIX,
+    )
+
+
+def _update_request_headers():
+    return {
+        "Accept": "application/json",
+        "User-Agent": HTTP_USER_AGENT,
+    }
+
+
+def _get_update_json(url, request_get=None, timeout=REQUEST_TIMEOUT):
+    request_get = request_get or requests.get
+    response = request_get(url, timeout=timeout, headers=_update_request_headers())
+    response.raise_for_status()
+    return response.json()
+
+
+def _update_fetch_error_message(manifest_error, api_error):
+    detail = str(api_error or manifest_error or "").strip()
+    suffix = f" 原因: {detail}" if detail else ""
+    return (
+        "检查更新失败：无法访问 GitHub 更新服务。请确认当前网络允许访问 "
+        "github.com、api.github.com 和 release-assets.githubusercontent.com，或检查系统代理/VPN。"
+        f"{suffix}"
+    )
+
+
+def fetch_update_manifest(manifest_url=None, request_get=None):
     manifest_url = str(manifest_url or get_update_manifest_url()).strip()
     if not manifest_url:
         raise ValueError("未配置更新源")
     _require_official_update_url(manifest_url, "更新源", {"version.json"})
-    response = requests.get(manifest_url, timeout=REQUEST_TIMEOUT, proxies=REQ_PROXY)
-    response.raise_for_status()
-    return normalize_update_manifest(response.json(), manifest_url)
+    api_url = github_release_api_url_from_manifest(manifest_url)
+    try:
+        return normalize_update_manifest(_get_update_json(manifest_url, request_get=request_get), manifest_url)
+    except Exception as manifest_error:
+        try:
+            return normalize_github_release_manifest(_get_update_json(api_url, request_get=request_get))
+        except Exception as api_error:
+            raise ValueError(_update_fetch_error_message(manifest_error, api_error)) from api_error
 
 
 def get_update_status(expose_download=False):
@@ -1870,6 +1917,84 @@ def find_available_port(preferred=DEFAULT_PORT):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind((DEFAULT_HOST, 0))
         return probe.getsockname()[1]
+
+
+def local_app_url(host=DEFAULT_HOST, port=DEFAULT_PORT, path="/"):
+    normalized_path = path or "/"
+    if not normalized_path.startswith("/"):
+        normalized_path = f"/{normalized_path}"
+    return f"http://{host}:{int(port)}{normalized_path}"
+
+
+def is_tcp_port_open(host, port, timeout=0.05):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(timeout)
+        return probe.connect_ex((host, int(port))) == 0
+
+
+def is_goldmonitor_health_payload(payload):
+    return (
+        isinstance(payload, dict)
+        and payload.get("app") == APP_NAME
+        and isinstance(payload.get("version"), str)
+        and bool(payload.get("version"))
+    )
+
+
+def find_existing_goldmonitor_instance(
+    host=DEFAULT_HOST,
+    preferred=DEFAULT_PORT,
+    port_count=50,
+    request_get=None,
+    port_probe=None,
+    timeout=0.2,
+):
+    request_get = request_get or requests.get
+    port_probe = port_probe or is_tcp_port_open
+    for port in range(int(preferred), int(preferred) + max(1, int(port_count))):
+        try:
+            if port_probe and not port_probe(host, port, timeout):
+                continue
+        except Exception:
+            continue
+        try:
+            response = request_get(local_app_url(host, port, "/api/health"), timeout=timeout, proxies=REQ_PROXY)
+            if getattr(response, "status_code", 0) == 200 and is_goldmonitor_health_payload(response.json()):
+                return port
+        except Exception:
+            continue
+    return None
+
+
+def open_existing_goldmonitor_instance(
+    host=DEFAULT_HOST,
+    port=DEFAULT_PORT,
+    desktop_mode=False,
+    request_post=None,
+    browser_open=None,
+    timeout=0.5,
+):
+    request_post = request_post or requests.post
+    if browser_open is None:
+        import webbrowser
+        browser_open = webbrowser.open
+
+    activated = False
+    try:
+        response = request_post(local_app_url(host, port, "/api/activate"), timeout=timeout, proxies=REQ_PROXY)
+        payload = response.json() if getattr(response, "ok", False) else {}
+        activated = bool(isinstance(payload, dict) and payload.get("ok"))
+    except Exception:
+        activated = False
+
+    if desktop_mode and activated:
+        return True
+
+    try:
+        browser_open(local_app_url(host, port))
+        return True
+    except Exception:
+        return activated
 
 
 # ---------- 数据获取 ----------
@@ -3540,6 +3665,30 @@ def api_price():
             "ok": last_fetch_ok,
             "klines_5min": klines_5min[-72:],
         })
+
+
+@app.route("/api/health")
+def api_health():
+    return jsonify({
+        "app": APP_NAME,
+        "version": APP_VERSION,
+        "port": server_port,
+        "desktop": bool(_desktop_runtime_active),
+    })
+
+
+@app.route("/api/activate", methods=["POST"])
+def api_activate():
+    if _desktop_runtime_active:
+        if sys.platform == "darwin":
+            _call_macos_main(show_main_window)
+        else:
+            show_main_window()
+    return jsonify({
+        "ok": True,
+        "desktop": bool(_desktop_runtime_active),
+        "port": server_port,
+    })
 
 
 @app.route("/favicon.ico")
@@ -5443,6 +5592,15 @@ def show_main_window():
         except Exception:
             pass
 
+    if sys.platform == "darwin":
+        script = f'''
+tell application "System Events"
+    set targetProcesses to every process whose unix id is {os.getpid()}
+    if (count of targetProcesses) > 0 then set frontmost of item 1 of targetProcesses to true
+end tell
+'''
+        _run_macos_osascript(script, wait=False)
+
     if os.name == "nt":
         try:
             import ctypes
@@ -5748,6 +5906,14 @@ if __name__ == "__main__":
         or (macos_packaged_app and "--web" not in sys.argv)
     )
     startup_mode = "--startup" in sys.argv
+    existing_port = find_existing_goldmonitor_instance(DEFAULT_HOST, DEFAULT_PORT)
+    if existing_port is not None:
+        existing_url = local_app_url(DEFAULT_HOST, existing_port)
+        print(f"金价监控已在运行，正在打开已有实例 -> {existing_url}")
+        if not startup_mode:
+            open_existing_goldmonitor_instance(DEFAULT_HOST, existing_port, desktop_mode=desktop_mode)
+        sys.exit(0)
+
     server_port = find_available_port(DEFAULT_PORT)
     _desktop_runtime_active = desktop_mode
 

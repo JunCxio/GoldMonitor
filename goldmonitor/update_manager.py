@@ -55,6 +55,29 @@ def require_official_update_url(
             raise ValueError(f"{label}文件名无效")
 
 
+def github_release_api_url_from_manifest(
+    manifest_url,
+    official_host=OFFICIAL_UPDATE_HOST,
+    official_path_prefix=OFFICIAL_UPDATE_PATH_PREFIX,
+):
+    require_official_update_url(
+        manifest_url,
+        "更新源",
+        {"version.json"},
+        official_host=official_host,
+        official_path_prefix=official_path_prefix,
+    )
+    parsed = urlparse(str(manifest_url or "").strip())
+    path = parsed.path.strip("/")
+    releases_index = path.lower().find("/releases/")
+    if releases_index < 0:
+        raise ValueError("更新源必须使用官方 GitHub Release 地址")
+    owner_repo = path[:releases_index]
+    if owner_repo.count("/") != 1:
+        raise ValueError("更新源仓库路径无效")
+    return f"https://api.github.com/repos/{owner_repo}/releases/latest"
+
+
 def platform_update_key(sys_platform=None, os_name=None):
     sys_platform = sys.platform if sys_platform is None else sys_platform
     os_name = os.name if os_name is None else os_name
@@ -63,6 +86,60 @@ def platform_update_key(sys_platform=None, os_name=None):
     if os_name == "nt":
         return "windows"
     return ""
+
+
+def _release_asset_sha256(asset):
+    digest = str((asset or {}).get("digest") or "").strip().lower()
+    prefix = "sha256:"
+    if digest.startswith(prefix):
+        return digest[len(prefix):]
+    return ""
+
+
+def _platform_asset_name(platform_key):
+    if platform_key == "macos":
+        return "GoldMonitor-macOS.dmg"
+    return "GoldMonitorSetup.exe"
+
+
+def normalize_github_release_manifest(
+    raw,
+    platform_key=None,
+    official_host=OFFICIAL_UPDATE_HOST,
+    official_path_prefix=OFFICIAL_UPDATE_PATH_PREFIX,
+    asset_names=OFFICIAL_UPDATE_ASSET_NAMES,
+):
+    if not isinstance(raw, dict):
+        raise ValueError("GitHub Release 格式无效")
+
+    version = str(raw.get("tag_name") or raw.get("name") or "").strip()
+    if version.lower().startswith("v"):
+        version = version[1:]
+
+    platform_key = platform_update_key() if platform_key is None else platform_key
+    expected_name = _platform_asset_name(platform_key)
+    assets = raw.get("assets") if isinstance(raw.get("assets"), list) else []
+    selected = None
+    for asset in assets:
+        if isinstance(asset, dict) and asset.get("name") == expected_name:
+            selected = asset
+            break
+    if selected is None:
+        raise ValueError("GitHub Release 缺少当前平台安装包")
+
+    payload = {
+        "version": version,
+        "url": str(selected.get("browser_download_url") or "").strip(),
+        "notes": str(raw.get("body") or "").strip(),
+        "sha256": _release_asset_sha256(selected),
+    }
+    return normalize_update_manifest(
+        payload,
+        platform_key=platform_key,
+        official_host=official_host,
+        official_path_prefix=official_path_prefix,
+        asset_names=asset_names,
+    )
 
 
 def normalize_update_manifest(
