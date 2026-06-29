@@ -1158,6 +1158,18 @@ def import_portfolio_transactions_csv(content):
         return state, imported_count
 
 
+def preview_import_portfolio_transactions_csv(content):
+    with lock:
+        transactions = [dict(item) for item in portfolio_transactions]
+        return portfolio_core.preview_portfolio_transactions_csv(
+            transactions,
+            content,
+            now_factory=datetime.now,
+            id_factory=portfolio_core.generate_portfolio_transaction_id,
+            position_id_factory=portfolio_core.generate_portfolio_position_id,
+        )
+
+
 def build_portfolio_csv(kind="positions"):
     with lock:
         transactions = [dict(item) for item in portfolio_transactions]
@@ -3666,6 +3678,16 @@ def on_delete_portfolio_transaction(data=None):
         emit("portfolio_updated", state)
         return
     socketio.emit("portfolio_updated", state)
+
+
+@socketio.on("preview_import_portfolio_transactions")
+def on_preview_import_portfolio_transactions(data=None):
+    content = data.get("content") if isinstance(data, dict) else ""
+    payload = preview_import_portfolio_transactions_csv(content)
+    request_id = data.get("request_id") if isinstance(data, dict) else ""
+    if request_id:
+        payload["request_id"] = str(request_id)
+    emit("portfolio_import_previewed", payload)
 
 
 @socketio.on("import_portfolio_transactions")

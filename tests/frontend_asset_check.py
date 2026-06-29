@@ -128,6 +128,8 @@ for required in (
     "function parsePortfolioCsvRows",
     "function portfolioImportRowErrors",
     "function previewPortfolioImport",
+    "function requestPortfolioImportBackendPreview",
+    "function applyPortfolioImportBackendPreview",
     "function renderPortfolioImportPreview",
     "function confirmPortfolioImport",
     "function cancelPortfolioImport",
@@ -172,6 +174,7 @@ for required in (
     "portfolio_exported",
     "portfolio_export_error",
     "portfolio_imported",
+    "portfolio_import_previewed",
     "get_portfolio",
     "save_portfolio_position",
     "save_portfolio_transaction",
@@ -182,6 +185,7 @@ for required in (
     "delete_portfolio_transaction",
     "export_portfolio",
     "import_portfolio_transactions",
+    "preview_import_portfolio_transactions",
 ):
     if required not in js:
         raise SystemExit(f"static/app.js missing portfolio frontend contract: {required}")

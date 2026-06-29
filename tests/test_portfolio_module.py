@@ -646,6 +646,55 @@ def test_import_portfolio_transactions_csv_merges_and_validates_rows():
         import_portfolio_transactions_csv(existing, invalid_csv, now_factory=fixed_now)
 
 
+def test_preview_portfolio_transactions_csv_reports_summary_and_validation_errors():
+    from goldmonitor.portfolio import preview_portfolio_transactions_csv
+
+    existing = [{
+        "id": "transaction-buy-old",
+        "position_id": "position-rmb",
+        "name": "旧金条",
+        "type": "buy",
+        "mode": "rmb",
+        "price": 680.0,
+        "quantity": 1.0,
+        "fee": 0.0,
+        "trade_date": "2026-06-01",
+        "note": "",
+        "created_at": "2026-06-01T09:00:00",
+        "updated_at": "2026-06-01T09:00:00",
+    }]
+    valid_csv = "\n".join([
+        "id,position_id,name,type,mode,price,quantity,fee,trade_date,note",
+        "transaction-buy-old,position-rmb,金条,buy,rmb,690,2,0,2026-06-02,覆盖",
+        "transaction-sell-new,position-rmb,金条,sell,rmb,720,1,0,2026-06-03,卖出",
+    ])
+
+    summary = preview_portfolio_transactions_csv(existing, valid_csv, now_factory=fixed_now)
+
+    assert summary == {
+        "ok": True,
+        "kind": "transactions",
+        "count": 2,
+        "create": 1,
+        "overwrite": 1,
+        "message": "",
+    }
+
+    invalid_csv = "\n".join([
+        "id,position_id,name,type,mode,price,quantity,fee,trade_date,note",
+        "transaction-sell-bad,position-rmb,金条,sell,rmb,720,8,0,2026-06-04,超卖",
+    ])
+
+    invalid_summary = preview_portfolio_transactions_csv(existing, invalid_csv, now_factory=fixed_now)
+
+    assert invalid_summary["ok"] is False
+    assert invalid_summary["kind"] == "transactions"
+    assert invalid_summary["count"] == 0
+    assert invalid_summary["create"] == 0
+    assert invalid_summary["overwrite"] == 0
+    assert "卖出数量不能超过当前持仓" in invalid_summary["message"]
+
+
 def test_app_portfolio_wrappers_upsert_delete_and_export(monkeypatch):
     import app
 
@@ -1010,6 +1059,52 @@ def test_import_portfolio_transactions_socket_event_emits_summary_and_updates_st
     assert len(saved_transactions) == 2
     assert updated_payload["items"][0]["quantity"] == 1.0
     assert updated_payload["items"][0]["realized_pnl"] == 48.0
+    client.disconnect()
+
+
+def test_preview_import_portfolio_transactions_socket_event_validates_without_saving(monkeypatch):
+    import app
+
+    saved_transactions = []
+    existing = [{
+        "id": "transaction-buy-old",
+        "position_id": "position-rmb",
+        "name": "金条",
+        "type": "buy",
+        "mode": "rmb",
+        "price": 680.0,
+        "quantity": 1.0,
+        "fee": 0.0,
+        "trade_date": "2026-06-01",
+        "note": "",
+        "created_at": "2026-06-01T09:00:00",
+        "updated_at": "2026-06-01T09:00:00",
+    }]
+    monkeypatch.setattr(app, "portfolio_transactions", list(existing))
+
+    def fake_save(items=None):
+        saved_transactions[:] = list(app.portfolio_transactions if items is None else items)
+        return list(saved_transactions)
+
+    monkeypatch.setattr(app, "save_portfolio_transactions", fake_save)
+    invalid_csv = "\n".join([
+        "id,position_id,name,type,mode,price,quantity,fee,trade_date,note",
+        "transaction-sell-bad,position-rmb,金条,sell,rmb,720,8,0,2026-06-04,超卖",
+    ])
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+    client.emit("preview_import_portfolio_transactions", {"content": invalid_csv})
+    events = client.get_received()
+
+    event_names = [event["name"] for event in events]
+    assert event_names == ["portfolio_import_previewed"]
+    payload = events[0]["args"][0]
+    assert payload["ok"] is False
+    assert payload["kind"] == "transactions"
+    assert "卖出数量不能超过当前持仓" in payload["message"]
+    assert saved_transactions == []
+    assert app.portfolio_transactions == existing
     client.disconnect()
 
 

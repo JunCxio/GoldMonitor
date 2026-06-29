@@ -428,6 +428,10 @@
   .portfolio-import-preview-grid div { min-width:0; padding:7px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(0,0,0,0.12); }
   .portfolio-import-preview-grid span { display:block; color:var(--text-dim); font-size:0.58rem; margin-bottom:2px; }
   .portfolio-import-preview-grid strong { display:block; color:#f0f0f4; font-size:0.78rem; font-variant-numeric:tabular-nums; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .portfolio-import-preview-state { min-width:0; padding:7px 8px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(0,0,0,0.12); color:var(--text-dim); font-size:0.66rem; line-height:1.4; overflow-wrap:anywhere; }
+  .portfolio-import-preview-state.ok { color:var(--down); border-color:rgba(76,175,132,0.25); background:rgba(76,175,132,0.08); }
+  .portfolio-import-preview-state.fail { color:var(--up); border-color:rgba(224,85,106,0.28); background:rgba(224,85,106,0.08); }
+  .portfolio-import-preview-state.pending { color:var(--gold); border-color:rgba(232,184,48,0.2); background:rgba(232,184,48,0.06); }
   .portfolio-import-error { display:grid; gap:4px; min-width:0; padding:7px 8px; border:1px solid rgba(224,85,106,0.28); border-radius:8px; background:rgba(224,85,106,0.08); color:var(--up); font-size:0.66rem; line-height:1.4; overflow-wrap:anywhere; }
   .portfolio-import-preview-table { display:grid; gap:4px; min-width:0; }
   .portfolio-import-preview-row { display:grid; grid-template-columns:minmax(68px, 0.9fr) minmax(42px, 0.52fr) minmax(0, 1fr) minmax(64px, 0.9fr); gap:6px; align-items:center; min-width:0; padding:5px 0; border-bottom:1px solid rgba(255,255,255,0.045); }

@@ -83,6 +83,7 @@ let portfolioAlertDrafts = {};
 let pendingPortfolioSave = null;
 let pendingPortfolioImportMessage = '';
 let portfolioImportPreview = null;
+let portfolioImportPreviewRequestSeq = 0;
 let activeWatchTargetId = null;
 let historyView = 'prices';
 let eventTimelineState = { events: [], summary: {}, filters: {}, range: {}, price_summary: {} };
@@ -564,6 +565,10 @@ socket.on('portfolio_imported', data => {
   const count = data && Number.isFinite(Number(data.count)) ? Number(data.count) : 0;
   pendingPortfolioImportMessage = '已导入流水 ' + count + ' 条。';
   setPortfolioStatus(pendingPortfolioImportMessage, 'ok');
+});
+
+socket.on('portfolio_import_previewed', data => {
+  applyPortfolioImportBackendPreview(data || {});
 });
 
 socket.on('settings_updated', data => {
@@ -4073,9 +4078,53 @@ function previewPortfolioImport(fileName, content) {
     rows: parsed.rows,
     summary: portfolioImportSummary(parsed.rows),
     errors,
+    backendStatus: errors.length ? 'skip' : 'pending',
+    backendMessage: errors.length ? '' : '正在复核完整持仓约束...',
+    requestId: '',
   };
   renderPortfolioImportPreview();
   setPortfolioStatus(errors.length ? errors[0] : 'CSV 已读取，确认后导入。', errors.length ? 'fail' : 'ok');
+  if (!errors.length) requestPortfolioImportBackendPreview();
+}
+
+function requestPortfolioImportBackendPreview() {
+  if (!portfolioImportPreview || portfolioImportPreview.errors.length) return;
+  portfolioImportPreviewRequestSeq += 1;
+  const requestId = 'portfolio-import-preview-' + portfolioImportPreviewRequestSeq;
+  portfolioImportPreview.requestId = requestId;
+  portfolioImportPreview.backendStatus = 'pending';
+  portfolioImportPreview.backendMessage = '正在复核完整持仓约束...';
+  renderPortfolioImportPreview();
+  socket.emit('preview_import_portfolio_transactions', {
+    content: portfolioImportPreview.content,
+    request_id: requestId,
+  });
+}
+
+function applyPortfolioImportBackendPreview(data) {
+  if (!portfolioImportPreview) return;
+  const requestId = data && data.request_id ? String(data.request_id) : '';
+  if (requestId && portfolioImportPreview.requestId && requestId !== portfolioImportPreview.requestId) return;
+  if (data && data.ok) {
+    portfolioImportPreview.backendStatus = 'ok';
+    portfolioImportPreview.backendMessage = '后端复核通过。';
+    portfolioImportPreview.summary = {
+      total: Number(data.count) || 0,
+      create: Number(data.create) || 0,
+      overwrite: Number(data.overwrite) || 0,
+      previewCount: portfolioImportPreview.summary ? portfolioImportPreview.summary.previewCount : 0,
+    };
+    portfolioImportPreview.errors = [];
+    renderPortfolioImportPreview();
+    setPortfolioStatus('CSV 复核通过，确认后导入。', 'ok');
+    return;
+  }
+  const message = (data && data.message) || 'CSV 后端复核失败。';
+  portfolioImportPreview.backendStatus = 'fail';
+  portfolioImportPreview.backendMessage = message;
+  portfolioImportPreview.errors = [message];
+  renderPortfolioImportPreview();
+  setPortfolioStatus(message, 'fail');
 }
 
 function renderPortfolioImportPreview() {
@@ -4090,10 +4139,15 @@ function renderPortfolioImportPreview() {
   const summary = preview.summary || { total: 0, create: 0, overwrite: 0, previewCount: 0 };
   const rows = (preview.rows || []).slice(0, summary.previewCount || 0);
   const hasError = !!(preview.errors && preview.errors.length);
+  const backendPending = preview.backendStatus === 'pending';
+  const backendOk = preview.backendStatus === 'ok';
   box.classList.toggle('show', true);
   box.classList.toggle('fail', hasError);
   const errorHtml = hasError
     ? '<div class="portfolio-import-error">' + preview.errors.map(error => '<div>' + escapeHtml(error) + '</div>').join('') + '</div>'
+    : '';
+  const stateHtml = preview.backendMessage
+    ? '<div class="portfolio-import-preview-state ' + escapeHtml(preview.backendStatus || '') + '">' + escapeHtml(preview.backendMessage) + '</div>'
     : '';
   const rowHtml = rows.map(item => {
     const values = item.values || {};
@@ -4117,6 +4171,7 @@ function renderPortfolioImportPreview() {
     '<div><span>新增</span><strong>' + escapeHtml(String(summary.create)) + '</strong></div>',
     '<div><span>覆盖</span><strong>' + escapeHtml(String(summary.overwrite)) + '</strong></div>',
     '</div>',
+    stateHtml,
     errorHtml,
     '<div class="portfolio-import-preview-table">',
     '<div class="portfolio-import-preview-row head"><span>日期</span><span>类型</span><span>名称</span><span>数量/价格</span></div>',
@@ -4124,14 +4179,15 @@ function renderPortfolioImportPreview() {
     '</div>',
     '<div class="portfolio-import-actions">',
     '<button class="btn-clear-sm" type="button" onclick="downloadPortfolioTransactionTemplate()">下载模板</button>',
-    hasError ? '' : '<button class="btn-set" type="button" onclick="confirmPortfolioImport()">确认导入</button>',
+    !hasError && backendOk ? '<button class="btn-set" type="button" onclick="confirmPortfolioImport()">确认导入</button>' : '',
+    backendPending ? '<button class="btn-clear-sm" type="button" disabled>复核中</button>' : '',
     '</div>',
   ].join('');
 }
 
 function confirmPortfolioImport() {
-  if (!portfolioImportPreview || portfolioImportPreview.errors.length) {
-    setPortfolioStatus('请先选择有效的 CSV 文件。', 'fail');
+  if (!portfolioImportPreview || portfolioImportPreview.errors.length || portfolioImportPreview.backendStatus !== 'ok') {
+    setPortfolioStatus('请先选择并复核有效的 CSV 文件。', 'fail');
     return;
   }
   const content = portfolioImportPreview.content;

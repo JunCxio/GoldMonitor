@@ -1099,6 +1099,65 @@ def import_portfolio_transactions_csv(
     id_factory=None,
     position_id_factory=None,
 ):
+    merged, imported_ids = _merge_portfolio_transactions_csv(
+        existing_items,
+        csv_text,
+        now_factory=now_factory,
+        id_factory=id_factory,
+        position_id_factory=position_id_factory,
+    )
+    return merged, len(imported_ids)
+
+
+def preview_portfolio_transactions_csv(
+    existing_items,
+    csv_text,
+    now_factory=None,
+    id_factory=None,
+    position_id_factory=None,
+):
+    try:
+        _merged, imported_ids = _merge_portfolio_transactions_csv(
+            existing_items,
+            csv_text,
+            now_factory=now_factory,
+            id_factory=id_factory,
+            position_id_factory=position_id_factory,
+        )
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "kind": "transactions",
+            "count": 0,
+            "create": 0,
+            "overwrite": 0,
+            "message": str(exc),
+        }
+    existing = normalize_portfolio_transactions(
+        list(existing_items or []),
+        now_factory=now_factory,
+        id_factory=id_factory,
+        position_id_factory=position_id_factory,
+    )
+    existing_ids = {item["id"] for item in existing}
+    overwrite = sum(1 for transaction_id in imported_ids if transaction_id in existing_ids)
+    return {
+        "ok": True,
+        "kind": "transactions",
+        "count": len(imported_ids),
+        "create": len(imported_ids) - overwrite,
+        "overwrite": overwrite,
+        "message": "",
+    }
+
+
+def _merge_portfolio_transactions_csv(
+    existing_items,
+    csv_text,
+    now_factory=None,
+    id_factory=None,
+    position_id_factory=None,
+):
     reader = _portfolio_csv_reader(csv_text)
     required_fields = {"name", "type", "mode", "price", "quantity"}
     missing_fields = sorted(field for field in required_fields if field not in reader.fieldnames)
@@ -1142,4 +1201,4 @@ def import_portfolio_transactions_csv(
         now_factory=now_factory,
         id_factory=id_factory,
         position_id_factory=position_id_factory,
-    ), len(imported_ids)
+    ), imported_ids
