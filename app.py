@@ -1140,6 +1140,24 @@ def delete_portfolio_transaction(transaction_id):
         return True, _build_portfolio_state_from_snapshots([dict(item) for item in saved_transactions], [], prices)
 
 
+def import_portfolio_transactions_csv(content):
+    global portfolio_transactions
+    with lock:
+        transactions = [dict(item) for item in portfolio_transactions]
+        imported_transactions, imported_count = portfolio_core.import_portfolio_transactions_csv(
+            transactions,
+            content,
+            now_factory=datetime.now,
+            id_factory=portfolio_core.generate_portfolio_transaction_id,
+            position_id_factory=portfolio_core.generate_portfolio_position_id,
+        )
+        saved_transactions = save_portfolio_transactions(imported_transactions)
+        portfolio_transactions = saved_transactions
+        prices = _current_portfolio_prices()
+        state = _build_portfolio_state_from_snapshots([dict(item) for item in saved_transactions], [], prices)
+        return state, imported_count
+
+
 def build_portfolio_csv(kind="positions"):
     with lock:
         transactions = [dict(item) for item in portfolio_transactions]
@@ -3647,6 +3665,21 @@ def on_delete_portfolio_transaction(data=None):
         emit("portfolio_error", {"message": "未找到持仓流水"})
         emit("portfolio_updated", state)
         return
+    socketio.emit("portfolio_updated", state)
+
+
+@socketio.on("import_portfolio_transactions")
+def on_import_portfolio_transactions(data=None):
+    content = data.get("content") if isinstance(data, dict) else ""
+    try:
+        state, imported_count = import_portfolio_transactions_csv(content)
+    except ValueError as exc:
+        emit("portfolio_error", {"message": str(exc)})
+        return
+    except OSError:
+        emit("portfolio_error", {"message": "持仓流水导入失败，请检查配置目录权限。"})
+        return
+    emit("portfolio_imported", {"ok": True, "kind": "transactions", "count": imported_count})
     socketio.emit("portfolio_updated", state)
 
 

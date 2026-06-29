@@ -598,6 +598,54 @@ def test_portfolio_transaction_store_migrates_legacy_positions_and_exports_csv()
         assert "transaction-position-rmb" in transactions_csv
 
 
+def test_import_portfolio_transactions_csv_merges_and_validates_rows():
+    from goldmonitor.portfolio import import_portfolio_transactions_csv
+
+    existing = [{
+        "id": "transaction-buy-old",
+        "position_id": "position-rmb",
+        "name": "旧金条",
+        "type": "buy",
+        "mode": "rmb",
+        "price": 680.0,
+        "quantity": 1.0,
+        "fee": 0.0,
+        "trade_date": "2026-06-01",
+        "note": "旧备注",
+        "created_at": "2026-06-01T09:00:00",
+        "updated_at": "2026-06-01T09:00:00",
+    }]
+    csv_text = "\n".join([
+        "id,position_id,name,type,mode,price,quantity,fee,trade_date,realized_pnl,note,created_at,updated_at",
+        "transaction-buy-old,position-rmb,金条,buy,rmb,690,2,3,2026-06-02,999,覆盖备注,2026-06-01T09:00:00,2026-06-02T10:00:00",
+        "transaction-sell-new,position-rmb,金条,sell,rmb,720,1,1,2026-06-03,0,卖出一克,2026-06-03T09:00:00,2026-06-03T09:00:00",
+    ])
+
+    merged, imported_count = import_portfolio_transactions_csv(
+        existing,
+        csv_text,
+        now_factory=fixed_now,
+    )
+
+    assert imported_count == 2
+    assert [item["id"] for item in merged] == ["transaction-buy-old", "transaction-sell-new"]
+    assert merged[0]["name"] == "金条"
+    assert merged[0]["price"] == 690.0
+    assert merged[0]["quantity"] == 2.0
+    assert merged[0]["fee"] == 3.0
+    assert merged[0]["note"] == "覆盖备注"
+    assert "realized_pnl" not in merged[0]
+    assert merged[1]["type"] == "sell"
+    assert merged[1]["trade_date"] == "2026-06-03"
+
+    invalid_csv = "\n".join([
+        "id,position_id,name,type,mode,price,quantity,fee,trade_date,note",
+        "transaction-sell-bad,position-rmb,金条,sell,rmb,720,8,0,2026-06-04,超卖",
+    ])
+    with pytest.raises(ValueError, match="卖出数量不能超过当前持仓"):
+        import_portfolio_transactions_csv(existing, invalid_csv, now_factory=fixed_now)
+
+
 def test_app_portfolio_wrappers_upsert_delete_and_export(monkeypatch):
     import app
 
@@ -926,6 +974,42 @@ def test_export_portfolio_review_socket_event_emits_markdown_details(monkeypatch
     assert payload["saved_path"] == f"/tmp/{payload['filename']}"
     assert "# 持仓复盘" in saved["content"]
     assert "金条" in saved["content"]
+    client.disconnect()
+
+
+def test_import_portfolio_transactions_socket_event_emits_summary_and_updates_state(monkeypatch):
+    import app
+
+    saved_transactions = []
+    monkeypatch.setattr(app, "portfolio_transactions", [])
+    monkeypatch.setattr(app, "price_rmb", 740.0)
+    monkeypatch.setattr(app, "price_usd", 2350.0)
+
+    def fake_save(items=None):
+        saved_transactions[:] = list(app.portfolio_transactions if items is None else items)
+        return list(saved_transactions)
+
+    monkeypatch.setattr(app, "save_portfolio_transactions", fake_save)
+    csv_text = "\n".join([
+        "id,position_id,name,type,mode,price,quantity,fee,trade_date,note",
+        "transaction-buy,position-rmb,金条,buy,rmb,680,2,0,2026-06-01,首笔",
+        "transaction-sell,position-rmb,金条,sell,rmb,730,1,2,2026-06-10,卖出",
+    ])
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+    client.emit("import_portfolio_transactions", {"content": csv_text})
+    events = client.get_received()
+
+    event_names = [event["name"] for event in events]
+    assert "portfolio_imported" in event_names
+    assert "portfolio_updated" in event_names
+    imported_payload = next(event["args"][0] for event in events if event["name"] == "portfolio_imported")
+    updated_payload = next(event["args"][0] for event in events if event["name"] == "portfolio_updated")
+    assert imported_payload == {"ok": True, "kind": "transactions", "count": 2}
+    assert len(saved_transactions) == 2
+    assert updated_payload["items"][0]["quantity"] == 1.0
+    assert updated_payload["items"][0]["realized_pnl"] == 48.0
     client.disconnect()
 
 

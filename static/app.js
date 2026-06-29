@@ -66,6 +66,12 @@ let activeAlertRule = null;
 let watchTargets = [];
 let portfolioState = { items: [], transactions: [], total: 0, rmb_summary: {}, usd_summary: {}, prices: {}, review: { rmb: {}, usd: {} }, alerts: { items: [], total: 0, enabled: 0, triggered: 0 } };
 let portfolioView = 'positions';
+let portfolioSearch = '';
+let portfolioPositionFilter = 'all';
+let portfolioPositionSort = 'recent';
+let portfolioTransactionTypeFilter = 'all';
+let portfolioTransactionModeFilter = 'all';
+let portfolioTransactionSort = 'date_desc';
 let activePortfolioPositionId = null;
 let activePortfolioDetailId = null;
 let portfolioDrafts = {};
@@ -73,6 +79,7 @@ let activePortfolioTransactionId = null;
 let portfolioTransactionDrafts = {};
 let portfolioAlertDrafts = {};
 let pendingPortfolioSave = null;
+let pendingPortfolioImportMessage = '';
 let activeWatchTargetId = null;
 let historyView = 'prices';
 let eventTimelineState = { events: [], summary: {}, filters: {}, range: {}, price_summary: {} };
@@ -527,7 +534,12 @@ socket.on('watch_target_error', data => {
 
 socket.on('portfolio_updated', data => {
   applyPortfolio(data || {});
-  setPortfolioStatus('持仓已更新。', 'ok');
+  if (pendingPortfolioImportMessage) {
+    setPortfolioStatus(pendingPortfolioImportMessage, 'ok');
+    pendingPortfolioImportMessage = '';
+  } else {
+    setPortfolioStatus('持仓已更新。', 'ok');
+  }
 });
 
 socket.on('portfolio_error', data => {
@@ -543,6 +555,12 @@ socket.on('portfolio_exported', data => {
 
 socket.on('portfolio_export_error', data => {
   setPortfolioStatus((data && data.message) || '持仓导出失败。', 'fail');
+});
+
+socket.on('portfolio_imported', data => {
+  const count = data && Number.isFinite(Number(data.count)) ? Number(data.count) : 0;
+  pendingPortfolioImportMessage = '已导入流水 ' + count + ' 条。';
+  setPortfolioStatus(pendingPortfolioImportMessage, 'ok');
 });
 
 socket.on('settings_updated', data => {
@@ -2992,6 +3010,185 @@ function renderPortfolioTabs() {
   });
 }
 
+function setPortfolioSearch(value) {
+  portfolioSearch = String(value || '').trim();
+  renderPortfolio();
+}
+
+function setPortfolioPositionFilter(value) {
+  portfolioPositionFilter = ['all', 'rmb', 'usd', 'profit', 'loss', 'valued', 'waiting_price', 'closed'].includes(value) ? value : 'all';
+  renderPortfolio();
+}
+
+function setPortfolioPositionSort(value) {
+  portfolioPositionSort = ['recent', 'market_value', 'total_pnl', 'unrealized_pnl', 'quantity', 'name'].includes(value) ? value : 'recent';
+  renderPortfolio();
+}
+
+function setPortfolioTransactionTypeFilter(value) {
+  portfolioTransactionTypeFilter = ['all', 'buy', 'sell'].includes(value) ? value : 'all';
+  renderPortfolio();
+}
+
+function setPortfolioTransactionModeFilter(value) {
+  portfolioTransactionModeFilter = ['all', 'rmb', 'usd'].includes(value) ? value : 'all';
+  renderPortfolio();
+}
+
+function setPortfolioTransactionSort(value) {
+  portfolioTransactionSort = ['date_desc', 'date_asc', 'amount_desc', 'realized_desc', 'name'].includes(value) ? value : 'date_desc';
+  renderPortfolio();
+}
+
+function portfolioControlOption(value, label, current) {
+  return '<option value="' + escapeHtml(value) + '"' + (value === current ? ' selected' : '') + '>' + escapeHtml(label) + '</option>';
+}
+
+function renderPortfolioControls() {
+  const box = document.getElementById('portfolioControls');
+  if (!box) return;
+  if (portfolioView === 'review') {
+    box.innerHTML = '<div class="portfolio-controls-note">复盘和收益曲线基于全部流水生成</div>';
+    return;
+  }
+  const search = [
+    '<label class="portfolio-control portfolio-search">',
+    '<span>搜索</span>',
+    '<input type="search" value="' + escapeHtml(portfolioSearch) + '" placeholder="名称、备注、日期" oninput="setPortfolioSearch(this.value)">',
+    '</label>',
+  ].join('');
+  if (portfolioView === 'transactions') {
+    box.innerHTML = [
+      search,
+      '<label class="portfolio-control portfolio-filter"><span>类型</span><select onchange="setPortfolioTransactionTypeFilter(this.value)">',
+      portfolioControlOption('all', '全部类型', portfolioTransactionTypeFilter),
+      portfolioControlOption('buy', '买入', portfolioTransactionTypeFilter),
+      portfolioControlOption('sell', '卖出', portfolioTransactionTypeFilter),
+      '</select></label>',
+      '<label class="portfolio-control portfolio-filter"><span>单位</span><select onchange="setPortfolioTransactionModeFilter(this.value)">',
+      portfolioControlOption('all', '全部单位', portfolioTransactionModeFilter),
+      portfolioControlOption('rmb', 'RMB/克', portfolioTransactionModeFilter),
+      portfolioControlOption('usd', 'USD/oz', portfolioTransactionModeFilter),
+      '</select></label>',
+      '<label class="portfolio-control portfolio-sort"><span>排序</span><select onchange="setPortfolioTransactionSort(this.value)">',
+      portfolioControlOption('date_desc', '交易日期倒序', portfolioTransactionSort),
+      portfolioControlOption('date_asc', '交易日期正序', portfolioTransactionSort),
+      portfolioControlOption('amount_desc', '成交金额优先', portfolioTransactionSort),
+      portfolioControlOption('realized_desc', '已实现优先', portfolioTransactionSort),
+      portfolioControlOption('name', '名称', portfolioTransactionSort),
+      '</select></label>',
+    ].join('');
+    return;
+  }
+  box.innerHTML = [
+    search,
+    '<label class="portfolio-control portfolio-filter"><span>筛选</span><select onchange="setPortfolioPositionFilter(this.value)">',
+    portfolioControlOption('all', '全部持仓', portfolioPositionFilter),
+    portfolioControlOption('rmb', '人民币', portfolioPositionFilter),
+    portfolioControlOption('usd', '美元', portfolioPositionFilter),
+    portfolioControlOption('profit', '盈利', portfolioPositionFilter),
+    portfolioControlOption('loss', '亏损', portfolioPositionFilter),
+    portfolioControlOption('valued', '已估值', portfolioPositionFilter),
+    portfolioControlOption('waiting_price', '等待行情', portfolioPositionFilter),
+    portfolioControlOption('closed', '清仓', portfolioPositionFilter),
+    '</select></label>',
+    '<label class="portfolio-control portfolio-sort"><span>排序</span><select onchange="setPortfolioPositionSort(this.value)">',
+    portfolioControlOption('recent', '最近交易', portfolioPositionSort),
+    portfolioControlOption('market_value', '市值', portfolioPositionSort),
+    portfolioControlOption('total_pnl', '总盈亏', portfolioPositionSort),
+    portfolioControlOption('unrealized_pnl', '未实现盈亏', portfolioPositionSort),
+    portfolioControlOption('quantity', '数量', portfolioPositionSort),
+    portfolioControlOption('name', '名称', portfolioPositionSort),
+    '</select></label>',
+  ].join('');
+}
+
+function portfolioSearchMatches(textParts) {
+  const query = portfolioSearch.trim().toLowerCase();
+  if (!query) return true;
+  return textParts.filter(Boolean).join(' ').toLowerCase().includes(query);
+}
+
+function portfolioSortableNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : Number.NEGATIVE_INFINITY;
+}
+
+function portfolioSortableDate(value) {
+  return String(value || '');
+}
+
+function filteredPortfolioPositions() {
+  const items = Array.isArray(portfolioState.items) ? portfolioState.items.slice() : [];
+  const filtered = items.filter(item => {
+    const mode = item.mode || 'rmb';
+    const pnl = Number(item.total_pnl != null ? item.total_pnl : item.pnl);
+    const status = item.valuation_status || '';
+    const matchesFilter = portfolioPositionFilter === 'all'
+      || portfolioPositionFilter === mode
+      || (portfolioPositionFilter === 'profit' && Number.isFinite(pnl) && pnl > 0)
+      || (portfolioPositionFilter === 'loss' && Number.isFinite(pnl) && pnl < 0)
+      || portfolioPositionFilter === status;
+    if (!matchesFilter) return false;
+    return portfolioSearchMatches([
+      item.id,
+      item.name,
+      item.note,
+      portfolioModeLabel(mode),
+      portfolioValuationLabel(item),
+      item.last_trade_date,
+      item.entry_date,
+    ]);
+  });
+  filtered.sort((left, right) => {
+    if (portfolioPositionSort === 'name') return String(left.name || '').localeCompare(String(right.name || ''), 'zh-CN');
+    if (portfolioPositionSort === 'market_value') return portfolioSortableNumber(right.market_value) - portfolioSortableNumber(left.market_value);
+    if (portfolioPositionSort === 'total_pnl') {
+      const rightPnl = right.total_pnl != null ? right.total_pnl : right.pnl;
+      const leftPnl = left.total_pnl != null ? left.total_pnl : left.pnl;
+      return portfolioSortableNumber(rightPnl) - portfolioSortableNumber(leftPnl);
+    }
+    if (portfolioPositionSort === 'unrealized_pnl') return portfolioSortableNumber(right.unrealized_pnl) - portfolioSortableNumber(left.unrealized_pnl);
+    if (portfolioPositionSort === 'quantity') return portfolioSortableNumber(right.quantity) - portfolioSortableNumber(left.quantity);
+    const dateCompare = portfolioSortableDate(right.last_trade_date || right.entry_date).localeCompare(portfolioSortableDate(left.last_trade_date || left.entry_date));
+    return dateCompare || String(left.name || '').localeCompare(String(right.name || ''), 'zh-CN');
+  });
+  return filtered;
+}
+
+function filteredPortfolioTransactions() {
+  const transactions = Array.isArray(portfolioState.transactions) ? portfolioState.transactions.slice() : [];
+  const filtered = transactions.filter(item => {
+    const type = item.type === 'sell' ? 'sell' : 'buy';
+    const mode = item.mode || 'rmb';
+    if (portfolioTransactionTypeFilter !== 'all' && portfolioTransactionTypeFilter !== type) return false;
+    if (portfolioTransactionModeFilter !== 'all' && portfolioTransactionModeFilter !== mode) return false;
+    return portfolioSearchMatches([
+      item.id,
+      item.position_id,
+      item.name,
+      item.note,
+      item.trade_date,
+      type === 'sell' ? '卖出' : '买入',
+      portfolioModeLabel(mode),
+    ]);
+  });
+  filtered.sort((left, right) => {
+    if (portfolioTransactionSort === 'name') return String(left.name || '').localeCompare(String(right.name || ''), 'zh-CN');
+    if (portfolioTransactionSort === 'date_asc') {
+      return portfolioSortableDate(left.trade_date).localeCompare(portfolioSortableDate(right.trade_date)) || String(left.id || '').localeCompare(String(right.id || ''));
+    }
+    if (portfolioTransactionSort === 'amount_desc') {
+      const rightAmount = (Number(right.price) || 0) * (Number(right.quantity) || 0) + (Number(right.fee) || 0);
+      const leftAmount = (Number(left.price) || 0) * (Number(left.quantity) || 0) + (Number(left.fee) || 0);
+      return rightAmount - leftAmount;
+    }
+    if (portfolioTransactionSort === 'realized_desc') return portfolioSortableNumber(right.realized_pnl) - portfolioSortableNumber(left.realized_pnl);
+    return portfolioSortableDate(right.trade_date).localeCompare(portfolioSortableDate(left.trade_date)) || String(right.id || '').localeCompare(String(left.id || ''));
+  });
+  return filtered;
+}
+
 function buildPortfolioEditor(item) {
   const target = portfolioDraftFor(item);
   const id = target.id;
@@ -3047,6 +3244,7 @@ function buildPortfolioEditor(item) {
 function renderPortfolio() {
   renderPortfolioSummary();
   renderPortfolioTabs();
+  renderPortfolioControls();
   const box = document.getElementById('portfolioList');
   if (!box) return;
   if (portfolioView === 'review') {
@@ -3117,12 +3315,56 @@ function renderPortfolioReviewPoint(mode, point, maxNetInvested) {
   ].join('');
 }
 
+function renderPortfolioReviewCurve(mode, summary) {
+  const state = normalizePortfolioReviewSummary(summary, mode);
+  const points = state.points.map(normalizePortfolioReviewPoint).filter(point => point.date);
+  if (!points.length) return '';
+  const values = points.map(point => Number(point.cumulative_realized_pnl) || 0);
+  const minValue = Math.min(0, ...values);
+  const maxValue = Math.max(0, ...values);
+  const range = maxValue - minValue || 1;
+  const width = 240;
+  const height = 88;
+  const padding = 12;
+  const innerWidth = width - padding * 2;
+  const innerHeight = height - padding * 2;
+  const xy = values.map((value, index) => {
+    const x = points.length === 1 ? width / 2 : padding + innerWidth * (index / (points.length - 1));
+    const y = padding + innerHeight * (1 - ((value - minValue) / range));
+    return {
+      x: Number(x.toFixed(2)),
+      y: Number(y.toFixed(2)),
+      value,
+      point: points[index],
+    };
+  });
+  const zeroY = padding + innerHeight * (1 - ((0 - minValue) / range));
+  const linePoints = xy.map(item => item.x + ',' + item.y).join(' ');
+  const last = xy[xy.length - 1];
+  const pnlClass = portfolioPnlClass(last.value);
+  return [
+    '<div class="portfolio-review-curve">',
+    '<div class="portfolio-review-curve-head">',
+    '<div class="portfolio-review-section-title">' + escapeHtml((mode === 'usd' ? '美元' : '人民币') + '收益曲线') + '</div>',
+    '<div class="portfolio-review-curve-value ' + pnlClass + '">' + escapeHtml(formatPortfolioSignedMoney(last.value, mode)) + '</div>',
+    '</div>',
+    '<svg class="portfolio-curve-svg" viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="none" aria-hidden="true">',
+    '<line class="portfolio-curve-axis" x1="' + padding + '" y1="' + zeroY.toFixed(2) + '" x2="' + (width - padding) + '" y2="' + zeroY.toFixed(2) + '"></line>',
+    '<polyline class="portfolio-curve-line" points="' + linePoints + '"></polyline>',
+    xy.map(item => '<circle class="portfolio-curve-point" cx="' + item.x + '" cy="' + item.y + '" r="2.8"></circle>').join(''),
+    '</svg>',
+    '<div class="portfolio-review-curve-meta">' + escapeHtml(points[0].date + ' 至 ' + last.point.date + ' · ' + points.length + ' 个交易日') + '</div>',
+    '</div>',
+  ].join('');
+}
+
 function renderPortfolioReviewSection(mode, summary, maxNetInvested) {
   const state = normalizePortfolioReviewSummary(summary, mode);
   if (!state.points.length) return '';
   return [
     '<div class="portfolio-review-section">',
     '<div class="portfolio-review-section-title">' + escapeHtml((mode === 'usd' ? '美元' : '人民币') + '趋势') + '</div>',
+    renderPortfolioReviewCurve(mode, state),
     '<div class="portfolio-review-points">',
     state.points.map(point => renderPortfolioReviewPoint(mode, point, maxNetInvested)).join(''),
     '</div>',
@@ -3300,7 +3542,8 @@ function renderPortfolioPositionDetail(item) {
 }
 
 function renderPortfolioPositions(box) {
-  const items = Array.isArray(portfolioState.items) ? portfolioState.items : [];
+  const sourceItems = Array.isArray(portfolioState.items) ? portfolioState.items : [];
+  const items = filteredPortfolioPositions();
   const parts = [];
   if (activePortfolioPositionId === 'new') {
     parts.push([
@@ -3315,7 +3558,7 @@ function renderPortfolioPositions(box) {
     ].join(''));
   }
   if (!items.length && activePortfolioPositionId !== 'new') {
-    parts.push('<div class="portfolio-empty">暂无持仓</div>');
+    parts.push('<div class="portfolio-empty">' + (sourceItems.length ? '没有匹配的持仓' : '暂无持仓') + '</div>');
   }
   parts.push(...items.map(item => {
     const cls = [
@@ -3359,7 +3602,8 @@ function renderPortfolioPositions(box) {
 }
 
 function renderPortfolioTransactions(box) {
-  const transactions = Array.isArray(portfolioState.transactions) ? portfolioState.transactions : [];
+  const sourceTransactions = Array.isArray(portfolioState.transactions) ? portfolioState.transactions : [];
+  const transactions = filteredPortfolioTransactions();
   const parts = [];
   if (activePortfolioTransactionId === 'new') {
     parts.push([
@@ -3374,7 +3618,7 @@ function renderPortfolioTransactions(box) {
     ].join(''));
   }
   if (!transactions.length && activePortfolioTransactionId !== 'new') {
-    parts.push('<div class="portfolio-empty">暂无流水</div>');
+    parts.push('<div class="portfolio-empty">' + (sourceTransactions.length ? '没有匹配的流水' : '暂无流水') + '</div>');
   }
   parts.push(...transactions.map(item => {
     const cls = [
@@ -3704,6 +3948,42 @@ function exportPortfolio(kind) {
     : exportKind === 'transactions' ? '正在导出流水...' : '正在导出持仓...';
   setPortfolioStatus(statusText, '');
   socket.emit('export_portfolio', { kind: exportKind });
+}
+
+function importPortfolioTransactions() {
+  const input = document.getElementById('portfolioImportFile');
+  if (!input) {
+    setPortfolioStatus('未找到导入入口。', 'fail');
+    return;
+  }
+  input.click();
+}
+
+function onPortfolioImportFile(input) {
+  const file = input && input.files && input.files[0] ? input.files[0] : null;
+  if (!file) return;
+  if (file.size > 1024 * 1024) {
+    setPortfolioStatus('CSV 文件不能超过 1MB。', 'fail');
+    input.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const content = String(reader.result || '');
+    if (!content.trim()) {
+      setPortfolioStatus('CSV 内容不能为空。', 'fail');
+      input.value = '';
+      return;
+    }
+    setPortfolioStatus('正在导入流水...', '');
+    socket.emit('import_portfolio_transactions', { content });
+    input.value = '';
+  };
+  reader.onerror = () => {
+    setPortfolioStatus('CSV 读取失败。', 'fail');
+    input.value = '';
+  };
+  reader.readAsText(file, 'utf-8');
 }
 
 // ========== 日志 ==========

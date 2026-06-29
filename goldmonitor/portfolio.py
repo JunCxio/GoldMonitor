@@ -1079,3 +1079,67 @@ def build_portfolio_transactions_csv(items):
     for item in state["transactions"]:
         writer.writerow({field: item.get(field) for field in PORTFOLIO_TRANSACTION_CSV_FIELDS})
     return buffer.getvalue(), len(state["transactions"])
+
+
+def _portfolio_csv_reader(csv_text):
+    text = str(csv_text or "").strip()
+    if not text:
+        raise ValueError("CSV 内容不能为空")
+    reader = csv.DictReader(StringIO(text))
+    if not reader.fieldnames:
+        raise ValueError("CSV 缺少表头")
+    reader.fieldnames = [_clean_text(field).lstrip("\ufeff") for field in reader.fieldnames]
+    return reader
+
+
+def import_portfolio_transactions_csv(
+    existing_items,
+    csv_text,
+    now_factory=None,
+    id_factory=None,
+    position_id_factory=None,
+):
+    reader = _portfolio_csv_reader(csv_text)
+    required_fields = {"name", "type", "mode", "price", "quantity"}
+    missing_fields = sorted(field for field in required_fields if field not in reader.fieldnames)
+    if missing_fields:
+        raise ValueError("CSV 缺少必要字段: " + ", ".join(missing_fields))
+
+    existing = normalize_portfolio_transactions(
+        list(existing_items or []),
+        now_factory=now_factory,
+        id_factory=id_factory,
+        position_id_factory=position_id_factory,
+    )
+    by_id = {item["id"]: dict(item) for item in existing}
+    imported_ids = []
+    for index, row in enumerate(reader, start=2):
+        if not row or not any(_clean_text(value) for value in row.values()):
+            continue
+        try:
+            normalized = normalize_portfolio_transaction(
+                row,
+                existing=by_id.get(_valid_position_id(row.get("id"))),
+                now_factory=now_factory,
+                id_factory=id_factory,
+                position_id_factory=position_id_factory,
+            )
+        except ValueError as exc:
+            raise ValueError(f"第 {index} 行导入失败: {exc}") from exc
+        by_id[normalized["id"]] = normalized
+        if normalized["id"] not in imported_ids:
+            imported_ids.append(normalized["id"])
+
+    if not imported_ids:
+        raise ValueError("CSV 没有可导入流水")
+
+    imported_set = set(imported_ids)
+    merged = [by_id[item["id"]] for item in existing if item["id"] not in imported_set]
+    merged.extend(by_id[transaction_id] for transaction_id in imported_ids)
+    validate_portfolio_transactions(merged)
+    return normalize_portfolio_transactions(
+        merged,
+        now_factory=now_factory,
+        id_factory=id_factory,
+        position_id_factory=position_id_factory,
+    ), len(imported_ids)
