@@ -417,6 +417,26 @@
   .portfolio-status { min-height:16px; color:var(--text-dim); font-size:0.68rem; line-height:1.4; margin-bottom:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .portfolio-status.ok { color:var(--down); }
   .portfolio-status.fail { color:var(--up); }
+  .portfolio-import-preview { display:none; min-width:0; margin-bottom:8px; padding:9px; border:1px solid rgba(232,184,48,0.18); border-radius:8px; background:rgba(232,184,48,0.035); overflow:hidden; }
+  .portfolio-import-preview.show { display:grid; gap:8px; }
+  .portfolio-import-preview.fail { border-color:rgba(224,85,106,0.28); background:rgba(224,85,106,0.055); }
+  .portfolio-import-preview-head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; min-width:0; }
+  .portfolio-import-preview-head div { min-width:0; display:grid; gap:2px; }
+  .portfolio-import-preview-head strong { color:#f0f0f4; font-size:0.76rem; line-height:1.3; }
+  .portfolio-import-preview-head span { color:var(--text-dim); font-size:0.64rem; line-height:1.35; overflow-wrap:anywhere; }
+  .portfolio-import-preview-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:6px; min-width:0; }
+  .portfolio-import-preview-grid div { min-width:0; padding:7px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(0,0,0,0.12); }
+  .portfolio-import-preview-grid span { display:block; color:var(--text-dim); font-size:0.58rem; margin-bottom:2px; }
+  .portfolio-import-preview-grid strong { display:block; color:#f0f0f4; font-size:0.78rem; font-variant-numeric:tabular-nums; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .portfolio-import-error { display:grid; gap:4px; min-width:0; padding:7px 8px; border:1px solid rgba(224,85,106,0.28); border-radius:8px; background:rgba(224,85,106,0.08); color:var(--up); font-size:0.66rem; line-height:1.4; overflow-wrap:anywhere; }
+  .portfolio-import-preview-table { display:grid; gap:4px; min-width:0; }
+  .portfolio-import-preview-row { display:grid; grid-template-columns:minmax(68px, 0.9fr) minmax(42px, 0.52fr) minmax(0, 1fr) minmax(64px, 0.9fr); gap:6px; align-items:center; min-width:0; padding:5px 0; border-bottom:1px solid rgba(255,255,255,0.045); }
+  .portfolio-import-preview-row.head { color:var(--text-dim); font-size:0.58rem; font-weight:800; border-bottom-color:rgba(255,255,255,0.08); }
+  .portfolio-import-preview-row span { min-width:0; color:var(--text); font-size:0.64rem; line-height:1.35; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .portfolio-import-preview-row.head span { color:var(--text-dim); }
+  .portfolio-import-preview-empty { color:var(--text-dim); font-size:0.66rem; text-align:center; padding:10px 6px; border:1px dashed rgba(255,255,255,0.08); border-radius:8px; }
+  .portfolio-import-actions { display:flex; justify-content:flex-end; gap:6px; flex-wrap:wrap; min-width:0; }
+  .portfolio-import-actions button { min-height:32px; padding:6px 10px; font-size:0.7rem; }
   .portfolio-summary { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px; margin-bottom:8px; }
   .portfolio-summary-card { padding:8px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(255,255,255,0.022); }
   .portfolio-summary-title { color:var(--text-dim); font-size:0.66rem; font-weight:800; margin-bottom:5px; }
@@ -653,6 +673,13 @@
     .portfolio-controls { grid-template-columns:1fr; }
     .portfolio-search { grid-column:auto; }
     .portfolio-controls-note, .portfolio-review-curve-meta { white-space:normal; overflow-wrap:anywhere; }
+    .portfolio-import-preview-head { flex-direction:column; align-items:stretch; }
+    .portfolio-import-preview-head button, .portfolio-import-actions button { width:100%; }
+    .portfolio-import-preview-grid { grid-template-columns:1fr 1fr 1fr; }
+    .portfolio-import-preview-row { grid-template-columns:minmax(0, 1fr) minmax(42px, 0.5fr); }
+    .portfolio-import-preview-row span { white-space:normal; overflow-wrap:anywhere; }
+    .portfolio-import-preview-row span:nth-child(3) { grid-column:1 / -1; }
+    .portfolio-import-preview-row span:nth-child(4) { grid-column:1 / -1; }
     .log-filter { flex:1 1 112px; width:auto; max-width:none; min-width:0; }
     .log-search { flex:2 1 132px; width:auto; min-width:0; }
     .log-tools button { flex:1 1 70px; min-width:0; }
