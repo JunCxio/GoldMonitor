@@ -244,7 +244,7 @@ for required in (
     "function updateAlertHandling",
     "handling_note",
     "payload.handled",
-    "处理状态",
+    "处置结果",
     "已处理",
 ):
     if required not in js:

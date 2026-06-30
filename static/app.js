@@ -495,7 +495,7 @@ socket.on('alert_log_status_updated', data => {
 socket.on('alert_log_handling_updated', data => {
   const status = document.getElementById('alertLogStatus');
   if (data && data.entry) mergeAlertLogEntry(data.entry);
-  status.textContent = data && data.entry && data.entry.handled ? '警报已标记为已处理。' : '警报处理状态已更新。';
+  status.textContent = data && data.entry && data.entry.handled ? '警报已标记为已处理。' : '警报处置已更新。';
   status.className = 'log-status ok';
 });
 
@@ -507,7 +507,7 @@ socket.on('alert_log_status_error', data => {
 
 socket.on('alert_log_handling_error', data => {
   const status = document.getElementById('alertLogStatus');
-  status.textContent = (data && data.message) || '警报处理状态更新失败。';
+  status.textContent = (data && data.message) || '警报处置更新失败。';
   status.className = 'log-status fail';
 });
 
@@ -1151,7 +1151,7 @@ function renderTimelineDetail() {
   if (event.type === 'alert') {
     cells.push(detailCell('等级', alertLevelLabel(payload.level)));
     cells.push(detailCell('品种', alertModeLabel(payload.mode)));
-    cells.push(detailCell('处理状态', payload.handled ? '已处理' : '未处理'));
+    cells.push(detailCell('处置结果', payload.handled ? '已处理' : '未处理'));
     if (payload.handled_at) cells.push(detailCell('处理时间', payload.handled_at));
     if (payload.handling_note) cells.push(detailCell('处理备注', payload.handling_note));
     if (Array.isArray(payload.related_news) && payload.related_news.length) {
