@@ -52,6 +52,37 @@ def test_alert_delivery_respects_quiet_time_force_and_cooldown():
     assert second["remaining_seconds"] == 1200
 
 
+def test_alert_cooldown_is_scoped_to_the_specific_alert_rule():
+    from goldmonitor.notifications import evaluate_alert_delivery
+
+    settings = {"alert_cooldown_minutes": 30}
+    cooldown_state = {}
+
+    threshold = evaluate_alert_delivery(
+        {"type": "warning", "mode": "rmb", "source": "threshold", "threshold_key": "upper_warning_rmb"},
+        settings,
+        cooldown_state,
+        now=datetime(2026, 6, 8, 12, 0),
+    )
+    watch_target = evaluate_alert_delivery(
+        {"type": "warning", "mode": "rmb", "source": "watch_target", "watch_target_id": "target-1"},
+        settings,
+        cooldown_state,
+        now=datetime(2026, 6, 8, 12, 5),
+    )
+    same_watch_target = evaluate_alert_delivery(
+        {"type": "warning", "mode": "rmb", "source": "watch_target", "watch_target_id": "target-1"},
+        settings,
+        cooldown_state,
+        now=datetime(2026, 6, 8, 12, 10),
+    )
+
+    assert threshold == {"deliver": True, "reason": ""}
+    assert watch_target == {"deliver": True, "reason": ""}
+    assert same_watch_target["deliver"] is False
+    assert same_watch_target["reason"] == "cooldown"
+
+
 def test_templates_and_webhook_payload_use_market_context_without_leaking_format_errors():
     from goldmonitor.notifications import build_alert_template_values, build_webhook_payload, format_template
 
@@ -139,6 +170,41 @@ def test_dispatch_alert_reports_enabled_disabled_and_skipped_channels():
         logger=QuietLogger(),
     )
     assert [item["status"] for item in disabled] == ["disabled", "disabled"]
+
+
+def test_summarize_notifications_prioritizes_muted_and_partial_failures():
+    from goldmonitor.notifications import notification_status, summarize_notifications
+
+    muted = summarize_notifications([
+        notification_status("all", "通知", "muted", "当前处于静默时段，仅记录提醒。"),
+    ])
+    assert muted == {
+        "status": "muted",
+        "label": "已静默",
+        "message": "当前处于静默时段，仅记录提醒。",
+        "queued": 0,
+        "skipped": 0,
+        "disabled": 0,
+        "muted": 1,
+    }
+
+    partial = summarize_notifications([
+        notification_status("email", "邮件", "queued", "已提交发送"),
+        notification_status("webhook", "Webhook", "skipped", "Webhook 地址未配置"),
+    ])
+    assert partial["status"] == "partial"
+    assert partial["label"] == "部分提交"
+    assert partial["queued"] == 1
+    assert partial["skipped"] == 1
+    assert partial["message"] == "Webhook 地址未配置"
+
+    disabled = summarize_notifications([
+        notification_status("email", "邮件", "disabled", "未启用"),
+        notification_status("webhook", "Webhook", "disabled", "未启用"),
+    ])
+    assert disabled["status"] == "disabled"
+    assert disabled["label"] == "未启用"
+    assert disabled["disabled"] == 2
 
 
 if __name__ == "__main__":

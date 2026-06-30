@@ -70,6 +70,29 @@ def test_diagnostics_summary_marks_degraded_health():
     assert summary["storage"]["settings"]["path"] == "/tmp/settings.json"
 
 
+def test_diagnostics_summary_counts_alert_notification_states():
+    from goldmonitor.diagnostics import build_health_summary
+
+    summary = build_health_summary(
+        fetch_status={"ok": True, "message": "行情数据正常"},
+        source_health={"summary": {"total": 1, "ok": 1, "failed": 0, "cached": 0}},
+        price_history={"total": 8},
+        watch_targets={"total": 0, "enabled": 0, "triggered": 0},
+        risk_history_count=0,
+        recent_alerts=[
+            {"id": "alert-1", "notification_summary": {"status": "muted"}},
+            {"id": "alert-2", "notification_summary": {"status": "partial"}},
+            {"id": "alert-3", "notification_summary": {"status": "skipped"}},
+        ],
+        paths={},
+    )
+
+    assert summary["status"] == "degraded"
+    assert summary["counts"]["notification_muted_alerts"] == 1
+    assert summary["counts"]["notification_problem_alerts"] == 2
+    assert "2 条警报通知未完全提交" in summary["messages"]
+
+
 def test_frontend_shell_static_resource_is_referenced():
     template = Path("templates/index.html").read_text(encoding="utf-8")
     shell = Path("static/app-shell.js")

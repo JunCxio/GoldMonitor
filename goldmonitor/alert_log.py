@@ -263,11 +263,32 @@ class AlertLogStore:
             parts.append(f"{label}:{status}:{message}".strip(":"))
         return "；".join(parts)
 
+    @staticmethod
+    def format_notification_summary(entry):
+        summary = entry.get("notification_summary")
+        if not isinstance(summary, dict):
+            return ""
+        status = summary.get("status") or ""
+        label = summary.get("label") or ""
+        message = summary.get("message") or ""
+        return f"{status}:{label}:{message}".strip(":")
+
     def build_csv(self, memory_entries, limit=None):
         items = self.export_entries(memory_entries, limit=limit)
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(["timestamp", "time", "type", "mode", "message", "read", "acknowledged", "notifications", "related_news"])
+        writer.writerow([
+            "timestamp",
+            "time",
+            "type",
+            "mode",
+            "message",
+            "read",
+            "acknowledged",
+            "notification_summary",
+            "notifications",
+            "related_news",
+        ])
         for entry in items:
             related = entry.get("related_news")
             if isinstance(related, list):
@@ -282,6 +303,7 @@ class AlertLogStore:
                 entry.get("message", ""),
                 "yes" if entry.get("read") else "no",
                 "yes" if entry.get("acknowledged") else "no",
+                self.format_notification_summary(entry),
                 self.format_notifications(entry),
                 news_text,
             ])

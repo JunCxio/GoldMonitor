@@ -58,6 +58,8 @@ def test_thresholds_normalize_persist_and_build_alert_plans():
     )
     assert plan["key"] == "upper_warning_rmb"
     assert plan["alert"]["type"] == "warning"
+    assert plan["alert"]["source"] == "threshold"
+    assert plan["alert"]["threshold_key"] == "upper_warning_rmb"
     assert plan["title"] == "金价预警 - 上涨关注"
     assert "缓存汇率 7.1900" in plan["alert"]["message"]
 

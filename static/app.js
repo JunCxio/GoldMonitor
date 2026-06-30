@@ -1938,12 +1938,14 @@ function applyFetchStatus(data) {
   const stale = document.getElementById('priceStale');
   const retry = document.getElementById('priceRetry');
   const ok = data.ok === true;
-  const message = data.message || (ok ? '行情数据正常' : '行情数据获取失败');
+  const status = data.status || (ok ? 'ok' : 'error');
+  const degraded = data.degraded === true || status === 'degraded';
+  const message = data.message || (ok && !degraded ? '行情数据正常' : degraded ? '行情数据降级' : '行情数据获取失败');
   retry.textContent = data.reconnect ? '重新连接' : '重新获取';
   stale.textContent = message;
   retry.disabled = data.retryable === false;
 
-  if (ok) {
+  if (ok && !degraded) {
     stale.classList.remove('show');
     retry.classList.remove('show');
     return;
@@ -4360,6 +4362,16 @@ function alertLogMatchesSearch(entry) {
 }
 
 function alertNotificationIssues(entry) {
+  const summary = entry && entry.notification_summary;
+  if (summary && typeof summary === 'object') {
+    const status = summary.status || '';
+    if (!status || status === 'queued') return [];
+    return [{
+      status,
+      label: summary.label || '通知',
+      message: summary.message || '',
+    }];
+  }
   const items = Array.isArray(entry.notifications) ? entry.notifications : [];
   return items.filter(item => item && item.status && item.status !== 'queued');
 }
@@ -4369,7 +4381,7 @@ function renderNotificationBadges(entry) {
   if (!items.length) return '';
   return '<span class="log-notify">' + items.map(item => {
     const status = item.status || '';
-    const cls = status === 'queued' ? 'ok' : (status === 'skipped' ? 'fail' : (status === 'muted' ? 'muted' : ''));
+    const cls = status === 'queued' ? 'ok' : (status === 'skipped' || status === 'partial' ? 'fail' : (status === 'muted' ? 'muted' : ''));
     const label = item.label || item.channel || '通知';
     const message = item.message ? '：' + item.message : '';
     return '<span class="log-notify-badge ' + cls + '">' + escapeHtml(label + message) + '</span>';

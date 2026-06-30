@@ -1833,6 +1833,10 @@ def _notification_status(channel, label, status, message):
     return notifications_core.notification_status(channel, label, status, message)
 
 
+def _notification_summary(notifications):
+    return notifications_core.summarize_notifications(notifications)
+
+
 def dispatch_alert(entry, title):
     """通知渠道分发: 根据设置决定哪些渠道发送"""
     settings = get_settings_snapshot()
@@ -1863,6 +1867,7 @@ def emit_alert(entry, title):
         ]
     else:
         entry["notifications"] = dispatch_alert(entry, title)
+    entry["notification_summary"] = _notification_summary(entry.get("notifications"))
     entry["related_news"] = select_related_news(title)
     entry["timestamp"] = datetime.now().isoformat(timespec="seconds")
     alert_log.append(entry)
@@ -1998,7 +2003,31 @@ def open_existing_goldmonitor_instance(
 
 
 # ---------- 数据获取 ----------
-def build_fetch_status(ok, message="", gold_ok=None, forex_ok=None, error="", retryable=True):
+def _fetch_source_status(ok=None, cached=False, source="", error=""):
+    status = {
+        "ok": ok,
+        "cached": bool(cached),
+        "source": str(source or ""),
+    }
+    if error:
+        status["error"] = str(error)
+    return status
+
+
+def build_fetch_status(
+    ok,
+    message="",
+    gold_ok=None,
+    forex_ok=None,
+    error="",
+    retryable=True,
+    gold_cached=False,
+    forex_cached=False,
+    gold_source="",
+    forex_source="",
+    gold_error="",
+    forex_error="",
+):
     failed = []
     if gold_ok is False:
         failed.append("金价源")
@@ -2010,11 +2039,23 @@ def build_fetch_status(ok, message="", gold_ok=None, forex_ok=None, error="", re
         base = f"{source_text}: {base}"
     if error:
         base = f"{base}（{error}）"
+    degraded = bool(gold_cached or forex_cached)
+    if not degraded and not ok:
+        degraded = gold_ok is True or forex_ok is True
+    status = "ok" if ok and not degraded else "degraded" if degraded else "busy" if retryable is False else "error"
     return {
-        "ok": bool(ok),
+        "ok": status == "ok",
+        "status": status,
+        "degraded": status == "degraded",
         "message": base,
         "gold_ok": gold_ok,
         "forex_ok": forex_ok,
+        "gold_cached": bool(gold_cached),
+        "forex_cached": bool(forex_cached),
+        "sources": {
+            "gold": _fetch_source_status(gold_ok, gold_cached, gold_source, gold_error),
+            "forex": _fetch_source_status(forex_ok, forex_cached, forex_source, forex_error),
+        },
         "error": error,
         "retryable": bool(retryable),
         "time": datetime.now().strftime("%H:%M:%S"),
@@ -2033,6 +2074,14 @@ def _current_fetch_status_locked():
         last_fetch_ok,
         "行情数据正常" if last_fetch_ok else "行情数据获取失败",
         error=last_fetch_error,
+        gold_ok=False if gold_price_error and not gold_price_cached else None if price_usd is None else not gold_price_cached,
+        forex_ok=usdcny_rate is not None,
+        gold_cached=gold_price_cached,
+        forex_cached=usdcny_rate_cached,
+        gold_source=gold_price_source,
+        forex_source=usdcny_rate_source,
+        gold_error=gold_price_error,
+        forex_error=usdcny_rate_error,
         retryable=True,
     )
 
@@ -2941,6 +2990,7 @@ def resend_alert_notification(alert_id):
     def updater(entry):
         updated = dict(entry)
         updated["notifications"] = dispatch_alert(updated, _alert_resend_title(updated))
+        updated["notification_summary"] = _notification_summary(updated.get("notifications"))
         updated["notification_muted"] = False
         updated["notification_reason"] = ""
         updated["notification_message"] = ""
@@ -3579,6 +3629,12 @@ def fetch_price_once():
                     gold_ok=not gold_cached,
                     forex_ok=cny_rate is not None,
                     error="" if status_ok else last_fetch_error,
+                    gold_cached=gold_cached,
+                    forex_cached=rate_cached,
+                    gold_source=source_name,
+                    forex_source=rate_source,
+                    gold_error=gold_error or "",
+                    forex_error=forex_error or "",
                     retryable=True,
                 ))
                 history_state = build_price_history_state(limit=240)
@@ -3595,6 +3651,11 @@ def fetch_price_once():
                     gold_ok=False,
                     forex_ok=rate_info is not None,
                     error=last_fetch_error,
+                    gold_source=source_name,
+                    forex_source=rate_info.get("source", "") if isinstance(rate_info, dict) else "",
+                    forex_cached=bool(rate_info.get("cached")) if isinstance(rate_info, dict) else False,
+                    gold_error=gold_error or "",
+                    forex_error=forex_error or "",
                     retryable=True,
                 )
                 socketio.emit("fetch_error", status)

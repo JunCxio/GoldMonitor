@@ -70,6 +70,7 @@ def test_alert_log_store_updates_persisted_and_memory_entries():
             "message": "测试价格预警",
             "timestamp": "2026-06-08T12:00:00",
             "notifications": [{"channel": "email", "label": "邮件", "status": "queued", "message": "已提交"}],
+            "notification_summary": {"status": "queued", "label": "已提交", "message": "已提交"},
             "related_news": [{"title": "Gold holds near highs"}],
         }]
 
@@ -94,6 +95,8 @@ def test_alert_log_store_updates_persisted_and_memory_entries():
         csv_text, count = store.build_csv(memory_entries)
         assert count == 1
         assert "测试价格预警" in csv_text
+        assert "notification_summary" in csv_text
+        assert "queued:已提交:已提交" in csv_text
         assert "邮件:queued:已提交" in csv_text
         assert "Gold holds near highs" in csv_text
 

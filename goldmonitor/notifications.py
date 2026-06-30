@@ -60,9 +60,21 @@ def is_alert_quiet_time(settings, now=None):
 
 
 def alert_cooldown_key(entry):
+    source = str(entry.get("source") or "alert")
+    identifier = (
+        entry.get("threshold_key")
+        or entry.get("watch_target_id")
+        or entry.get("portfolio_alert_id")
+        or entry.get("portfolio_position_id")
+        or source
+    )
+    if entry.get("portfolio_alert_condition"):
+        identifier = f"{identifier}:{entry.get('portfolio_alert_condition')}"
     return ":".join([
         str(entry.get("type") or "warning"),
         str(entry.get("mode") or "all"),
+        source,
+        str(identifier),
     ])
 
 
@@ -275,6 +287,41 @@ def notification_status(channel, label, status, message):
         "label": label,
         "status": status,
         "message": message,
+    }
+
+
+def summarize_notifications(notifications):
+    items = [dict(item) for item in list(notifications or []) if isinstance(item, dict)]
+    counts = {
+        "queued": sum(1 for item in items if item.get("status") == "queued"),
+        "skipped": sum(1 for item in items if item.get("status") == "skipped"),
+        "disabled": sum(1 for item in items if item.get("status") == "disabled"),
+        "muted": sum(1 for item in items if item.get("status") == "muted"),
+    }
+    message = next(
+        (str(item.get("message") or "") for item in items if item.get("status") in {"muted", "skipped"} and item.get("message")),
+        "",
+    )
+    total = len(items)
+    if counts["muted"]:
+        status, label = "muted", "已静默"
+    elif counts["skipped"] and counts["queued"]:
+        status, label = "partial", "部分提交"
+    elif counts["skipped"]:
+        status, label = "skipped", "提交失败"
+    elif counts["queued"]:
+        status, label = "queued", "已提交"
+    elif total and counts["disabled"] == total:
+        status, label = "disabled", "未启用"
+    else:
+        status, label = "none", "无通知"
+    if not message:
+        message = label
+    return {
+        "status": status,
+        "label": label,
+        "message": message,
+        **counts,
     }
 
 
