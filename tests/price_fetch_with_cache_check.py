@@ -67,6 +67,9 @@ with tempfile.TemporaryDirectory() as tmp_dir:
     if not latest["rate_cached"] or latest["rate_source"] != "测试缓存":
         raise SystemExit(f"price_update must expose cached rate status, got {latest}")
 
+    if "klines_5min" not in latest:
+        raise SystemExit("price_update must expose refreshed 5 minute kline data")
+
     statuses = [data for name, data in emitted if name == "fetch_status"]
     if not any("使用缓存汇率" in status.get("message", "") for status in statuses):
         raise SystemExit(f"fetch_status must tell the user cached forex is used, got {statuses}")

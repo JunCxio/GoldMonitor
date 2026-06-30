@@ -20,6 +20,7 @@ for forbidden in (
     "function renderAlertDetail",
     "selectedAlertId",
     "acknowledged ?",
+    "log-risk-action",
 ):
     if forbidden in template or forbidden in js:
         raise SystemExit(f"alert log UI must not expose acknowledgement/detail workflow: {forbidden}")
@@ -27,6 +28,7 @@ for forbidden in (
 
 for required in (
     'id="alertLogModeTabs"',
+    'class="log-title-row"',
     "setAlertLogView('all')",
     "setAlertLogView('new')",
     "setAlertLogView('unhandled')",
@@ -39,7 +41,10 @@ for required in (
     "renderAlertLog",
     "analyzeAlertFromLog",
     "alert-log-shell",
+    "grid-template-columns:repeat(5, minmax(0, 1fr))",
     "source-health-summary",
+    "source-health-menu",
+    "toggleSourceHealthMenu",
     "source-health-details",
 ):
     if required not in template and required not in js and required not in css:

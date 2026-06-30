@@ -23,6 +23,9 @@ if '<meta name="goldmonitor-socket-token" content="{{ socket_access_token }}">' 
 if '<script src="/static/app.js"></script>' not in template:
     raise SystemExit("template must reference /static/app.js")
 
+if 'id="chartEmptyState"' not in template:
+    raise SystemExit("template must expose chart empty state overlay")
+
 for required in (
     'id="portfolioStatus"',
     'id="portfolioViewTabs"',
@@ -72,6 +75,17 @@ for required in (":root", ".container", ".settings-modal", ".price-card"):
         raise SystemExit(f"static/app.css missing expected selector: {required}")
 
 for required in (
+    "input[type=\"number\"]",
+    "appearance:textfield",
+    "-moz-appearance:textfield",
+    "input[type=\"number\"]::-webkit-outer-spin-button",
+    "input[type=\"number\"]::-webkit-inner-spin-button",
+    "-webkit-appearance:none",
+):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing global number input spinner contract: {required}")
+
+for required in (
     ".portfolio-card",
     ".portfolio-head h3",
     ".portfolio-tools-more",
@@ -81,6 +95,10 @@ for required in (
     ".portfolio-search",
     ".portfolio-filter",
     ".portfolio-sort",
+    ".portfolio-select-control",
+    ".portfolio-select-trigger",
+    ".portfolio-select-menu",
+    ".portfolio-select-option",
     ".portfolio-summary",
     ".portfolio-item",
     ".portfolio-editor",
@@ -119,6 +137,25 @@ for required in ("const socket = io", "function switchMode", "function renderAle
     if required not in js:
         raise SystemExit(f"static/app.js missing expected frontend function: {required}")
 
+for required in (
+    "'5min': { label: '5分钟波动'",
+    "function klineOhlcForMode",
+    "open_rmb",
+    "function setChartEmptyState",
+    "x: label",
+    "if (Array.isArray(data.klines_5min))",
+    "暂无5分钟波动数据",
+):
+    if required not in js:
+        raise SystemExit(f"static/app.js missing 5 minute kline frontend contract: {required}")
+
+for required in (
+    ".chart-empty-state",
+    ".chart-empty-state[hidden]",
+):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing chart empty state contract: {required}")
+
 for required in ("market_quality", "function renderRiskQuality", "function sourceQualityText", "data.quality", "行情质量"):
     if required not in js:
         raise SystemExit(f"static/app.js missing risk quality frontend contract: {required}")
@@ -133,6 +170,9 @@ for required in (
     "function clearPortfolioTransactionDraft",
     "function renderPortfolio",
     "function renderPortfolioControls",
+    "function renderPortfolioDropdownControl",
+    "function togglePortfolioControlMenu",
+    "function setPortfolioControlSelection",
     "function setPortfolioSearch",
     "function setPortfolioPositionFilter",
     "function setPortfolioPositionSort",
@@ -225,9 +265,28 @@ for required in (
     "import_portfolio_transactions",
     "preview_import_portfolio_transactions",
     "undo_portfolio_import",
+    "portfolio-select-menu",
+    "portfolio-select-trigger",
+    "renderPortfolioDropdownControl('portfolio-filter', '筛选'",
+    "renderPortfolioDropdownControl('portfolio-sort', '排序'",
+    "'positionFilter'",
+    "'positionSort'",
+    "'transactionType'",
+    "'transactionMode'",
+    "'transactionSort'",
 ):
     if required not in js:
         raise SystemExit(f"static/app.js missing portfolio frontend contract: {required}")
+
+for forbidden in (
+    '<select onchange="setPortfolioPositionFilter',
+    '<select onchange="setPortfolioPositionSort',
+    '<select onchange="setPortfolioTransactionTypeFilter',
+    '<select onchange="setPortfolioTransactionModeFilter',
+    '<select onchange="setPortfolioTransactionSort',
+):
+    if forbidden in js:
+        raise SystemExit(f"portfolio controls must not use native select dropdowns: {forbidden}")
 
 for required in (
     "repeat(auto-fit, minmax(min(150px, 100%), 1fr))",
@@ -242,21 +301,36 @@ for required in (
 for required in (
     ".btn-risk-sm",
     ".btn-muted-sm",
+    ".source-summary-text { color:#f0f0f4; font-size:0.78rem; line-height:1.28; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }",
+    ".source-health-menu",
+    "bottom:calc(100% + 6px)",
+    ".log-title-row",
+    "grid-template-columns:repeat(5, minmax(0, 1fr))",
+    ".log-list { overflow-y:auto; max-height:240px; display:grid; gap:6px;",
+    "background:rgba(255,255,255,0.018)",
+    "border:1px solid rgba(255,255,255,0.055)",
+    ".log-item { display:grid; grid-template-columns:8px minmax(0, 1fr);",
+    ".log-body { min-width:0; }",
+    ".log-entry-head { display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:0; min-height:28px; margin-bottom:7px; }",
+    ".log-line-head { display:flex; align-items:center; gap:5px; row-gap:3px; flex-wrap:nowrap; min-width:0; min-height:28px; margin-bottom:0; }",
+    ".log-time { min-height:28px; display:inline-flex; align-items:center;",
     ".log-action-trigger",
-    ".log-risk-action",
+    ".log-msg { display:block; font-size:0.74rem; line-height:1.35; white-space:normal; overflow:visible; overflow-wrap:anywhere; text-overflow:clip; }",
     ".log-entry-menu",
     ".log-entry-menu[hidden]",
-    "grid-template-columns:8px minmax(0, 1fr) 112px",
-    "overflow-wrap:break-word",
+    "'<span class=\"log-body\">'",
+    "'<span class=\"log-entry-head\">'",
 ):
-    if required not in css:
-        raise SystemExit(f"static/app.css missing compact alert log contract: {required}")
+    if required not in css and required not in js:
+        raise SystemExit(f"frontend missing compact alert log contract: {required}")
 
 for forbidden in (
     "grid-template-columns:minmax(140px, 1fr) minmax(140px, 1fr) minmax(150px, 1fr)",
     "grid-column:span 3",
+    ".source-health-menu { position:absolute; right:0; top:calc(100% + 6px);",
+    "grid-template-columns:8px minmax(0, 1fr) 58px",
 ):
-    if forbidden in css:
+    if forbidden in css or forbidden in js:
         raise SystemExit(f"static/app.css keeps a fixed portfolio grid that can overflow: {forbidden}")
 
 for required in (
@@ -273,6 +347,31 @@ for required in (
     "update_alert_log_handling",
     "alert_log_handling_updated",
     "function updateAlertHandling",
+    "function syncEllipsisTitle",
+    "function setupEllipsisTooltips",
+    "document.addEventListener('mouseover', syncEllipsisTitle",
+    "document.addEventListener('focusin', syncEllipsisTitle",
+    "textOverflow === 'ellipsis'",
+    "target.setAttribute('title'",
+    "head.title = head.textContent",
+    "title=\"' + escapeHtml(logMessage) + '\"",
+    "function closeRightPanelMenus",
+    "function isRightPanelMenuEventTarget",
+    "function closeRightPanelMenusOnOutsideClick",
+    "closeRightPanelMenus(menu)",
+    "if (isRightPanelMenuEventTarget(event.target)) return;",
+    "document.addEventListener('click', closeRightPanelMenusOnOutsideClick",
+    "document.getElementById('portfolioToolsMenu')",
+    "document.getElementById('sourceHealthMenu')",
+    "document.getElementById('alertLogMenu')",
+    "document.querySelectorAll('.log-entry-menu')",
+    "aria-expanded",
+    "function renderLogEntryActions",
+    "actions.length === 1",
+    "actions.length > 1",
+    "log-action-direct",
+    "log-action-trigger",
+    "const actions = hasNotificationIssue ? [",
     "alertLogView === 'unhandled'",
     "alertLogView === 'handled'",
     "alertLogView === 'failed'",
@@ -286,5 +385,28 @@ for required in (
 ):
     if required not in js:
         raise SystemExit(f"static/app.js missing alert handling contract: {required}")
+
+for pattern in (
+    r"clearThreshold\(.*?rule\.type.*?>停用预警</button>",
+    r"setActiveAlertRule\(.*?rule\.type.*?>放弃编辑</button>",
+    r"clearVolatility\(\).*?>停用预警</button>",
+    r"setActiveAlertRule\(.*?volatility.*?>放弃编辑</button>",
+    r"rule\.clear \+ .*?>停用</button>",
+):
+    if not re.search(pattern, js):
+        raise SystemExit(f"static/app.js missing explicit alert rule action label: {pattern}")
+
+for pattern in (
+    r"clearThreshold\(.*?rule\.type.*?>关闭</button>",
+    r"setActiveAlertRule\(.*?rule\.type.*?>取消</button>",
+    r"clearVolatility\(\).*?>关闭</button>",
+    r"setActiveAlertRule\(.*?volatility.*?>取消</button>",
+    r"rule\.clear \+ .*?>关闭</button>",
+):
+    if re.search(pattern, js):
+        raise SystemExit(f"static/app.js keeps ambiguous alert rule action label: {pattern}")
+
+if "alertLogView === 'failed' && hasNotificationIssue" in js:
+    raise SystemExit("notification-failed log entries must direct-render their single retry action in every alert log view")
 
 print("frontend asset checks passed.")

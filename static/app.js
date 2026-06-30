@@ -45,7 +45,7 @@ const CHART_PERIODS = {
   '4h': { label: '4小时走势', minutes: 240, limit: 720 },
   day: { label: '日内走势', minutes: 1440, limit: 1440 },
   '7d': { label: '7日走势', minutes: 10080, limit: 2000 },
-  '5min': { label: '5分钟K线', minutes: null, limit: 96, kline: true },
+  '5min': { label: '5分钟波动', minutes: null, limit: 96, kline: true },
 };
 const PORTFOLIO_TRANSACTION_IMPORT_FIELDS = ['id', 'position_id', 'type', 'name', 'mode', 'price', 'quantity', 'fee', 'trade_date', 'note'];
 const PORTFOLIO_TRANSACTION_IMPORT_REQUIRED_FIELDS = ['name', 'type', 'mode', 'price', 'quantity'];
@@ -200,6 +200,42 @@ function chartHistoryLabel(item) {
   return String(raw).replace('T', ' ').slice(0, chartPeriod === '7d' ? 16 : 8);
 }
 
+function klineNumber(kline, key) {
+  const value = kline[key];
+  if (value == null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function klineOhlcForMode(kline, label) {
+  const suffix = currentMode === 'usd' ? '' : '_rmb';
+  const open = klineNumber(kline, 'open' + suffix);
+  const high = klineNumber(kline, 'high' + suffix);
+  const low = klineNumber(kline, 'low' + suffix);
+  const close = klineNumber(kline, 'close' + suffix);
+  if (![open, high, low, close].every(Number.isFinite)) return null;
+  return { x: label, y: close, o: open, h: high, l: low, c: close };
+}
+
+function setChartEmptyState(message) {
+  const empty = document.getElementById('chartEmptyState');
+  if (!empty) return;
+  if (message) {
+    empty.textContent = message;
+    empty.hidden = false;
+  } else {
+    empty.textContent = '';
+    empty.hidden = true;
+  }
+}
+
+function chartEmptyMessage(pointCount) {
+  if (pointCount) return '';
+  if (chartPeriod === '5min') return '暂无5分钟波动数据，需累计至少2个有效行情采样点。';
+  if (chartPeriod !== 'realtime') return '暂无历史价格数据。';
+  return '';
+}
+
 function normalizeChartEvents(events) {
   if (!Array.isArray(events)) return [];
   const seen = new Set();
@@ -318,8 +354,11 @@ function switchChartData() {
   let labels, prices;
 
   if (chartPeriod === '5min') {
-    labels = klines5min.map(k => k.time);
-    prices = klines5min.map(k => ({ y: k.close, o: k.open, h: k.high, l: k.low, c: k.close }));
+    const rows = klines5min
+      .map(kline => ({ label: kline.time, point: klineOhlcForMode(kline, kline.time) }))
+      .filter(row => row.point);
+    labels = rows.map(row => row.label);
+    prices = rows.map(row => row.point);
   } else if (chartPeriod !== 'realtime') {
     const items = chartHistoryState.period === chartPeriod && Array.isArray(chartHistoryState.items)
       ? chartHistoryState.items
@@ -340,6 +379,7 @@ function switchChartData() {
   chart.data.datasets[0].data = prices;
   chart.options.plugins.goldMonitorEvents = { events: activeChartEvents(labels) };
   chart.options.scales.y.ticks.callback = v => (isUsd ? '$' : '¥') + v.toLocaleString('en-US');
+  setChartEmptyState(chartEmptyMessage(prices.length));
   chart.update();
 }
 
@@ -423,6 +463,9 @@ socket.on('init_state', data => {
 
 socket.on('price_update', data => {
   latestData = data;
+  if (Array.isArray(data.klines_5min)) {
+    klines5min = data.klines_5min;
+  }
 
   historyUsd.labels.push(data.time); historyUsd.prices.push(data.usd);
   historyRmb.labels.push(data.time); historyRmb.prices.push(data.rmb);
@@ -438,7 +481,10 @@ socket.on('price_update', data => {
     chart.data.labels = [...hist.labels];
     chart.data.datasets[0].data = [...hist.prices];
     chart.options.plugins.goldMonitorEvents = { events: activeChartEvents(chart.data.labels) };
+    setChartEmptyState(chartEmptyMessage(chart.data.datasets[0].data.length));
     chart.update('none');
+  } else if (chart && chartPeriod === '5min') {
+    switchChartData();
   }
   checkThresholdProximity();
 });
@@ -860,6 +906,7 @@ function renderSourceHealth(data) {
     ? '异常 ' + failed + ' · 正常 ' + ok
     : (cached ? '缓存 ' + cached + ' · 正常 ' + ok : '正常 ' + ok);
   head.textContent = [sourceQualityText(data.quality), countText].filter(Boolean).join(' · ');
+  head.title = head.textContent;
   if (!items.length) {
     list.innerHTML = '<div class="source-health-item"><span class="source-health-dot"></span><span class="source-health-name">等待数据源检查</span><span class="source-health-meta">--</span></div>';
     return;
@@ -1753,6 +1800,36 @@ function escapeHtml(value) {
   }[ch]));
 }
 
+function syncEllipsisTitle(eventOrElement) {
+  let target = eventOrElement && eventOrElement.target ? eventOrElement.target : eventOrElement;
+  while (target && target.nodeType === 1 && target !== document.body) {
+    const style = window.getComputedStyle(target);
+    const isEllipsis = style.textOverflow === 'ellipsis' && style.overflow !== 'visible';
+    const text = (target.textContent || '').trim();
+    if (isEllipsis && text) {
+      const isTruncated = target.scrollWidth > target.clientWidth || target.scrollHeight > target.clientHeight;
+      if (isTruncated) {
+        if (!target.getAttribute('title') || target.dataset.ellipsisTitle === 'true') {
+          target.setAttribute('title', text);
+          target.dataset.ellipsisTitle = 'true';
+        }
+      } else if (target.dataset.ellipsisTitle === 'true') {
+        target.removeAttribute('title');
+        delete target.dataset.ellipsisTitle;
+      }
+      return;
+    }
+    target = target.parentElement;
+  }
+}
+
+function setupEllipsisTooltips() {
+  document.addEventListener('mouseover', syncEllipsisTitle, true);
+  document.addEventListener('focusin', syncEllipsisTitle, true);
+}
+
+setupEllipsisTooltips();
+
 function renderRiskSnapshot(snapshot) {
   const meta = document.getElementById('riskMeta');
   if (!snapshot) {
@@ -2340,8 +2417,8 @@ function buildThresholdRuleEditor(rule, value) {
     '</div>',
     '<div class="alert-rule-editor-actions">',
     '<button class="btn-set" type="button" onclick="saveThresholdRule(\'' + rule.type + '\')">保存</button>',
-    '<button class="btn-clear-sm" type="button" onclick="clearThreshold(\'' + rule.type + '\')">关闭</button>',
-    '<button class="btn-clear-sm" type="button" onclick="setActiveAlertRule(\'' + rule.type + '\')">取消</button>',
+    '<button class="btn-clear-sm" type="button" onclick="clearThreshold(\'' + rule.type + '\')">停用预警</button>',
+    '<button class="btn-clear-sm" type="button" onclick="setActiveAlertRule(\'' + rule.type + '\')">放弃编辑</button>',
     '</div>',
     '</div>',
   ].join('');
@@ -2369,8 +2446,8 @@ function buildVolatilityRuleEditor() {
     '</div>',
     '<div class="alert-rule-editor-actions">',
     '<button class="btn-set" type="button" onclick="saveVolatilityRule()">保存</button>',
-    '<button class="btn-clear-sm" type="button" onclick="clearVolatility()">关闭</button>',
-    '<button class="btn-clear-sm" type="button" onclick="setActiveAlertRule(\'volatility\')">取消</button>',
+    '<button class="btn-clear-sm" type="button" onclick="clearVolatility()">停用预警</button>',
+    '<button class="btn-clear-sm" type="button" onclick="setActiveAlertRule(\'volatility\')">放弃编辑</button>',
     '</div>',
     '</div>',
   ].join('');
@@ -2418,7 +2495,7 @@ function renderAlertRules() {
     '<div class="alert-rule-actions">',
     '<span class="alert-rule-state ' + (rule.enabled ? 'on' : 'off') + '">' + escapeHtml(rule.state) + '</span>',
     '<button class="btn-clear-sm alert-rule-edit" type="button" onclick="' + rule.edit + '">编辑</button>',
-    '<button class="btn-clear-sm alert-rule-edit" type="button" onclick="' + rule.clear + '">关闭</button>',
+    '<button class="btn-clear-sm alert-rule-edit" type="button" onclick="' + rule.clear + '">停用</button>',
     '</div>',
     rule.editor,
     '</div>',
@@ -3181,11 +3258,62 @@ function renderPortfolioTabs() {
   });
 }
 
+function rightPanelMenuForButton(button) {
+  if (!button || !button.closest) return null;
+  if (button.id === 'portfolioToolsMoreButton') return document.getElementById('portfolioToolsMenu');
+  if (button.id === 'alertLogMoreButton') return document.getElementById('alertLogMenu');
+  const portfolioSelect = button.closest('.portfolio-select-wrap');
+  if (portfolioSelect) return portfolioSelect.querySelector('.portfolio-select-menu');
+  const sourceActions = button.closest('.source-health-actions');
+  if (sourceActions) return sourceActions.querySelector('#sourceHealthMenu');
+  const logActions = button.closest('.log-actions');
+  if (logActions) return logActions.querySelector('.log-entry-menu');
+  return null;
+}
+
+function closeRightPanelMenus(exceptMenu) {
+  const menus = [
+    document.getElementById('portfolioToolsMenu'),
+    document.getElementById('sourceHealthMenu'),
+    document.getElementById('alertLogMenu'),
+    ...document.querySelectorAll('.portfolio-select-menu'),
+    ...document.querySelectorAll('.log-entry-menu'),
+  ].filter(Boolean);
+  menus.forEach(menu => {
+    if (menu !== exceptMenu) menu.hidden = true;
+  });
+  document.querySelectorAll('#portfolioToolsMoreButton, #alertLogMoreButton, .portfolio-select-trigger, .source-health-action-trigger, .log-action-trigger').forEach(button => {
+    const controlledMenu = rightPanelMenuForButton(button);
+    if (controlledMenu !== exceptMenu) button.setAttribute('aria-expanded', 'false');
+  });
+}
+
+function isRightPanelMenuEventTarget(target) {
+  return !!(target && target.closest && target.closest([
+    '#portfolioToolsMoreButton',
+    '#portfolioToolsMenu',
+    '#alertLogMoreButton',
+    '#alertLogMenu',
+    '.portfolio-select-wrap',
+    '.source-health-actions',
+    '#sourceHealthMenu',
+    '.log-actions',
+  ].join(', ')));
+}
+
+function closeRightPanelMenusOnOutsideClick(event) {
+  if (isRightPanelMenuEventTarget(event.target)) return;
+  closeRightPanelMenus();
+}
+
+document.addEventListener('click', closeRightPanelMenusOnOutsideClick);
+
 function togglePortfolioToolsMenu() {
   const menu = document.getElementById('portfolioToolsMenu');
   const button = document.getElementById('portfolioToolsMoreButton');
   if (!menu) return;
   const willOpen = menu.hidden;
+  closeRightPanelMenus(menu);
   menu.hidden = !willOpen;
   if (button) button.setAttribute('aria-expanded', String(willOpen));
 }
@@ -3195,33 +3323,123 @@ function setPortfolioSearch(value) {
   renderPortfolio();
 }
 
+const PORTFOLIO_POSITION_FILTER_OPTIONS = [
+  { value: 'all', label: '全部持仓' },
+  { value: 'rmb', label: '人民币' },
+  { value: 'usd', label: '美元' },
+  { value: 'profit', label: '盈利' },
+  { value: 'loss', label: '亏损' },
+  { value: 'near_cost', label: '接近成本' },
+  { value: 'target_hit', label: '触发预警' },
+  { value: 'valued', label: '已估值' },
+  { value: 'waiting_price', label: '等待行情' },
+  { value: 'closed', label: '清仓' },
+];
+const PORTFOLIO_POSITION_SORT_OPTIONS = [
+  { value: 'recent', label: '最近交易' },
+  { value: 'market_value', label: '市值' },
+  { value: 'total_pnl', label: '总盈亏' },
+  { value: 'unrealized_pnl', label: '未实现盈亏' },
+  { value: 'quantity', label: '数量' },
+  { value: 'name', label: '名称' },
+];
+const PORTFOLIO_TRANSACTION_TYPE_OPTIONS = [
+  { value: 'all', label: '全部类型' },
+  { value: 'buy', label: '买入' },
+  { value: 'sell', label: '卖出' },
+];
+const PORTFOLIO_TRANSACTION_MODE_OPTIONS = [
+  { value: 'all', label: '全部单位' },
+  { value: 'rmb', label: 'RMB/克' },
+  { value: 'usd', label: 'USD/oz' },
+];
+const PORTFOLIO_TRANSACTION_SORT_OPTIONS = [
+  { value: 'date_desc', label: '交易日期倒序' },
+  { value: 'date_asc', label: '交易日期正序' },
+  { value: 'amount_desc', label: '成交金额优先' },
+  { value: 'realized_desc', label: '已实现优先' },
+  { value: 'name', label: '名称' },
+];
+
+function portfolioOptionValue(options, value, fallback) {
+  return options.some(option => option.value === value) ? value : fallback;
+}
+
 function setPortfolioPositionFilter(value) {
-  portfolioPositionFilter = ['all', 'rmb', 'usd', 'profit', 'loss', 'near_cost', 'target_hit', 'valued', 'waiting_price', 'closed'].includes(value) ? value : 'all';
+  portfolioPositionFilter = portfolioOptionValue(PORTFOLIO_POSITION_FILTER_OPTIONS, value, 'all');
   renderPortfolio();
 }
 
 function setPortfolioPositionSort(value) {
-  portfolioPositionSort = ['recent', 'market_value', 'total_pnl', 'unrealized_pnl', 'quantity', 'name'].includes(value) ? value : 'recent';
+  portfolioPositionSort = portfolioOptionValue(PORTFOLIO_POSITION_SORT_OPTIONS, value, 'recent');
   renderPortfolio();
 }
 
 function setPortfolioTransactionTypeFilter(value) {
-  portfolioTransactionTypeFilter = ['all', 'buy', 'sell'].includes(value) ? value : 'all';
+  portfolioTransactionTypeFilter = portfolioOptionValue(PORTFOLIO_TRANSACTION_TYPE_OPTIONS, value, 'all');
   renderPortfolio();
 }
 
 function setPortfolioTransactionModeFilter(value) {
-  portfolioTransactionModeFilter = ['all', 'rmb', 'usd'].includes(value) ? value : 'all';
+  portfolioTransactionModeFilter = portfolioOptionValue(PORTFOLIO_TRANSACTION_MODE_OPTIONS, value, 'all');
   renderPortfolio();
 }
 
 function setPortfolioTransactionSort(value) {
-  portfolioTransactionSort = ['date_desc', 'date_asc', 'amount_desc', 'realized_desc', 'name'].includes(value) ? value : 'date_desc';
+  portfolioTransactionSort = portfolioOptionValue(PORTFOLIO_TRANSACTION_SORT_OPTIONS, value, 'date_desc');
   renderPortfolio();
 }
 
-function portfolioControlOption(value, label, current) {
-  return '<option value="' + escapeHtml(value) + '"' + (value === current ? ' selected' : '') + '>' + escapeHtml(label) + '</option>';
+function escapeJsString(value) {
+  return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+}
+
+function togglePortfolioControlMenu(button) {
+  const wrap = button && button.closest ? button.closest('.portfolio-select-wrap') : null;
+  const menu = wrap ? wrap.querySelector('.portfolio-select-menu') : null;
+  if (!menu) return;
+  const willOpen = menu.hidden;
+  closeRightPanelMenus(menu);
+  menu.hidden = !willOpen;
+  button.setAttribute('aria-expanded', String(willOpen));
+}
+
+function setPortfolioControlSelection(action, value) {
+  closeRightPanelMenus();
+  const handlers = {
+    positionFilter: setPortfolioPositionFilter,
+    positionSort: setPortfolioPositionSort,
+    transactionType: setPortfolioTransactionTypeFilter,
+    transactionMode: setPortfolioTransactionModeFilter,
+    transactionSort: setPortfolioTransactionSort,
+  };
+  if (handlers[action]) handlers[action](value);
+}
+
+function renderPortfolioDropdownControl(className, label, current, options, action) {
+  const selected = options.find(option => option.value === current) || options[0];
+  const optionButtons = options.map(option => {
+    const active = option.value === current;
+    return [
+      '<button class="portfolio-select-option' + (active ? ' active' : '') + '" type="button" data-value="' + escapeHtml(option.value) + '" aria-pressed="' + String(active) + '" onclick="setPortfolioControlSelection(\'' + escapeJsString(action) + '\', \'' + escapeJsString(option.value) + '\')">',
+      escapeHtml(option.label),
+      '</button>',
+    ].join('');
+  }).join('');
+  return [
+    '<div class="portfolio-control ' + escapeHtml(className) + ' portfolio-select-control">',
+    '<span>' + escapeHtml(label) + '</span>',
+    '<div class="portfolio-select-wrap">',
+    '<button class="portfolio-select-trigger" type="button" aria-haspopup="true" aria-expanded="false" onclick="togglePortfolioControlMenu(this)">',
+    '<span class="portfolio-select-value">' + escapeHtml(selected.label) + '</span>',
+    '<span class="portfolio-select-arrow" aria-hidden="true"></span>',
+    '</button>',
+    '<div class="portfolio-select-menu" hidden>',
+    optionButtons,
+    '</div>',
+    '</div>',
+    '</div>',
+  ].join('');
 }
 
 function renderPortfolioControls() {
@@ -3240,48 +3458,16 @@ function renderPortfolioControls() {
   if (portfolioView === 'transactions') {
     box.innerHTML = [
       search,
-      '<label class="portfolio-control portfolio-filter"><span>类型</span><select onchange="setPortfolioTransactionTypeFilter(this.value)">',
-      portfolioControlOption('all', '全部类型', portfolioTransactionTypeFilter),
-      portfolioControlOption('buy', '买入', portfolioTransactionTypeFilter),
-      portfolioControlOption('sell', '卖出', portfolioTransactionTypeFilter),
-      '</select></label>',
-      '<label class="portfolio-control portfolio-filter"><span>单位</span><select onchange="setPortfolioTransactionModeFilter(this.value)">',
-      portfolioControlOption('all', '全部单位', portfolioTransactionModeFilter),
-      portfolioControlOption('rmb', 'RMB/克', portfolioTransactionModeFilter),
-      portfolioControlOption('usd', 'USD/oz', portfolioTransactionModeFilter),
-      '</select></label>',
-      '<label class="portfolio-control portfolio-sort"><span>排序</span><select onchange="setPortfolioTransactionSort(this.value)">',
-      portfolioControlOption('date_desc', '交易日期倒序', portfolioTransactionSort),
-      portfolioControlOption('date_asc', '交易日期正序', portfolioTransactionSort),
-      portfolioControlOption('amount_desc', '成交金额优先', portfolioTransactionSort),
-      portfolioControlOption('realized_desc', '已实现优先', portfolioTransactionSort),
-      portfolioControlOption('name', '名称', portfolioTransactionSort),
-      '</select></label>',
+      renderPortfolioDropdownControl('portfolio-filter', '类型', portfolioTransactionTypeFilter, PORTFOLIO_TRANSACTION_TYPE_OPTIONS, 'transactionType'),
+      renderPortfolioDropdownControl('portfolio-filter', '单位', portfolioTransactionModeFilter, PORTFOLIO_TRANSACTION_MODE_OPTIONS, 'transactionMode'),
+      renderPortfolioDropdownControl('portfolio-sort', '排序', portfolioTransactionSort, PORTFOLIO_TRANSACTION_SORT_OPTIONS, 'transactionSort'),
     ].join('');
     return;
   }
   box.innerHTML = [
     search,
-    '<label class="portfolio-control portfolio-filter"><span>筛选</span><select onchange="setPortfolioPositionFilter(this.value)">',
-    portfolioControlOption('all', '全部持仓', portfolioPositionFilter),
-    portfolioControlOption('rmb', '人民币', portfolioPositionFilter),
-    portfolioControlOption('usd', '美元', portfolioPositionFilter),
-    portfolioControlOption('profit', '盈利', portfolioPositionFilter),
-    portfolioControlOption('loss', '亏损', portfolioPositionFilter),
-    portfolioControlOption('near_cost', '接近成本', portfolioPositionFilter),
-    portfolioControlOption('target_hit', '触发预警', portfolioPositionFilter),
-    portfolioControlOption('valued', '已估值', portfolioPositionFilter),
-    portfolioControlOption('waiting_price', '等待行情', portfolioPositionFilter),
-    portfolioControlOption('closed', '清仓', portfolioPositionFilter),
-    '</select></label>',
-    '<label class="portfolio-control portfolio-sort"><span>排序</span><select onchange="setPortfolioPositionSort(this.value)">',
-    portfolioControlOption('recent', '最近交易', portfolioPositionSort),
-    portfolioControlOption('market_value', '市值', portfolioPositionSort),
-    portfolioControlOption('total_pnl', '总盈亏', portfolioPositionSort),
-    portfolioControlOption('unrealized_pnl', '未实现盈亏', portfolioPositionSort),
-    portfolioControlOption('quantity', '数量', portfolioPositionSort),
-    portfolioControlOption('name', '名称', portfolioPositionSort),
-    '</select></label>',
+    renderPortfolioDropdownControl('portfolio-filter', '筛选', portfolioPositionFilter, PORTFOLIO_POSITION_FILTER_OPTIONS, 'positionFilter'),
+    renderPortfolioDropdownControl('portfolio-sort', '排序', portfolioPositionSort, PORTFOLIO_POSITION_SORT_OPTIONS, 'positionSort'),
   ].join('');
 }
 
@@ -4563,8 +4749,21 @@ function setAlertLogSearch(value) {
 
 function toggleAlertLogMenu() {
   const menu = document.getElementById('alertLogMenu');
+  const button = document.getElementById('alertLogMoreButton');
   if (!menu) return;
-  menu.hidden = !menu.hidden;
+  const willOpen = menu.hidden;
+  closeRightPanelMenus(menu);
+  menu.hidden = !willOpen;
+  if (button) button.setAttribute('aria-expanded', String(willOpen));
+}
+
+function toggleSourceHealthMenu(button) {
+  const menu = document.getElementById('sourceHealthMenu');
+  if (!menu) return;
+  const willOpen = menu.hidden;
+  closeRightPanelMenus(menu);
+  menu.hidden = !willOpen;
+  if (button) button.setAttribute('aria-expanded', String(willOpen));
 }
 
 function toggleLogEntryMenu(button) {
@@ -4572,12 +4771,7 @@ function toggleLogEntryMenu(button) {
   const menu = actions ? actions.querySelector('.log-entry-menu') : null;
   if (!menu) return;
   const willOpen = menu.hidden;
-  document.querySelectorAll('.log-entry-menu').forEach(openMenu => {
-    if (openMenu !== menu) openMenu.hidden = true;
-  });
-  document.querySelectorAll('.log-action-trigger[aria-expanded="true"]').forEach(openButton => {
-    if (openButton !== button) openButton.setAttribute('aria-expanded', 'false');
-  });
+  closeRightPanelMenus(menu);
   menu.hidden = !willOpen;
   button.setAttribute('aria-expanded', String(willOpen));
 }
@@ -4633,12 +4827,42 @@ function renderNotificationBadges(entry) {
   }).join('') + '</span>';
 }
 
+function renderLogActionButton(action, extraClass) {
+  const classes = ['btn-clear-sm', action.buttonClass || 'btn-muted-sm', extraClass || ''].filter(Boolean).join(' ');
+  return '<button class="' + escapeHtml(classes) + '" type="button" onclick="' + action.onclick + '">' + escapeHtml(action.label) + '</button>';
+}
+
+function renderLogEntryActions(actions) {
+  if (actions.length === 1) {
+    return '<span class="log-actions">' + renderLogActionButton(actions[0], 'log-action-direct') + '</span>';
+  }
+  if (actions.length > 1) {
+    return [
+      '<span class="log-actions">',
+      '<button class="btn-clear-sm btn-muted-sm log-action-trigger" type="button" aria-haspopup="true" aria-expanded="false" onclick="toggleLogEntryMenu(this)">操作</button>',
+      '<span class="log-entry-menu" hidden>',
+      actions.map(action => renderLogActionButton(action, '')).join(''),
+      '</span>',
+      '</span>',
+    ].join('');
+  }
+  return '<span class="log-actions"></span>';
+}
+
 function buildLogEntry(entry) {
   const item = document.createElement('div');
   const encodedId = encodeURIComponent(String(entry.id || ''));
   const hasNotificationIssue = alertNotificationIssues(entry).length > 0;
+  const logMessage = entry.message || '达到预警条件';
   const handledBadge = entry.handled ? '<span class="log-handled">已处理</span>' : '';
   const handlingNote = entry.handling_note ? '<span class="log-note">处理备注：' + escapeHtml(entry.handling_note) + '</span>' : '';
+  const actions = hasNotificationIssue ? [
+    { label: '重发通知', buttonClass: 'btn-muted-sm', onclick: "resendAlertNotification(decodeURIComponent('" + encodedId + "'))" },
+  ] : [
+    { label: '分析', buttonClass: 'btn-risk-sm', onclick: "analyzeAlertFromLog(decodeURIComponent('" + encodedId + "'))" },
+    { label: entry.handled ? '取消处理' : '标记已处理', buttonClass: 'btn-muted-sm', onclick: "updateAlertHandling(decodeURIComponent('" + encodedId + "'), " + (entry.handled ? 'false' : 'true') + ")" },
+    hasNotificationIssue ? { label: '重发通知', buttonClass: 'btn-muted-sm', onclick: "resendAlertNotification(decodeURIComponent('" + encodedId + "'))" } : null,
+  ].filter(Boolean);
   item.className = [
     'log-item',
     entry.read ? 'read' : 'unread',
@@ -4646,22 +4870,19 @@ function buildLogEntry(entry) {
   ].filter(Boolean).join(' ');
   item.innerHTML = [
     '<span class="log-unread-dot"></span>',
-    '<span class="log-meta">',
+    '<span class="log-body">',
+    '<span class="log-entry-head">',
     '<span class="log-line-head">',
     '<span class="log-time">' + escapeHtml(entry.time || entry.timestamp || '') + '</span>',
     '<span class="log-level ' + escapeHtml(entry.type || '') + '">' + escapeHtml(alertLevelLabel(entry.type)) + '</span>',
     handledBadge,
     '</span>',
-    '<span class="log-msg ' + escapeHtml(entry.type || '') + '">' + escapeHtml(entry.message || '达到预警条件') + '</span>',
+    renderLogEntryActions(actions),
+    '</span>',
+    '<span class="log-meta">',
+    '<span class="log-msg ' + escapeHtml(entry.type || '') + '" title="' + escapeHtml(logMessage) + '">' + escapeHtml(logMessage) + '</span>',
     handlingNote,
     renderNotificationBadges(entry),
-    '</span>',
-    '<span class="log-actions">',
-    '<button class="btn-clear-sm btn-risk-sm log-risk-action" type="button" onclick="analyzeAlertFromLog(decodeURIComponent(\'' + encodedId + '\'))">分析</button>',
-    '<button class="btn-clear-sm btn-muted-sm log-action-trigger" type="button" aria-haspopup="true" aria-expanded="false" onclick="toggleLogEntryMenu(this)">操作</button>',
-    '<span class="log-entry-menu" hidden>',
-    '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="updateAlertHandling(decodeURIComponent(\'' + encodedId + '\'), ' + (entry.handled ? 'false' : 'true') + ')">' + (entry.handled ? '取消处理' : '标记已处理') + '</button>',
-    hasNotificationIssue ? '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="resendAlertNotification(decodeURIComponent(\'' + encodedId + '\'))">重发通知</button>' : '',
     '</span>',
     '</span>',
   ].join('');

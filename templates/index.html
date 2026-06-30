@@ -84,10 +84,13 @@
               <button class="chart-tg" data-period="4h" onclick="switchChartPeriod('4h')">4小时</button>
               <button class="chart-tg" data-period="day" onclick="switchChartPeriod('day')">日内</button>
               <button class="chart-tg" data-period="7d" onclick="switchChartPeriod('7d')">7日</button>
-              <button class="chart-tg" data-period="5min" onclick="switchChartPeriod('5min')">5分K线</button>
+              <button class="chart-tg" data-period="5min" onclick="switchChartPeriod('5min')">5分钟波动</button>
             </div>
           </div>
-          <div class="chart-wrapper"><canvas id="priceChart"></canvas></div>
+          <div class="chart-wrapper">
+            <canvas id="priceChart"></canvas>
+            <div id="chartEmptyState" class="chart-empty-state" hidden></div>
+          </div>
         </div>
       </div>
 
@@ -154,9 +157,12 @@
                   <strong class="source-summary-text">等待数据源检查</strong>
                 </div>
                 <div class="source-health-actions">
-                  <button class="btn-clear-sm btn-risk-sm source-risk-action" type="button" onclick="openRiskAnalysis()">风险分析</button>
-                  <button class="btn-clear-sm btn-muted-sm" type="button" onclick="toggleSourceHealthDetails()">详情</button>
-                  <button class="btn-clear-sm btn-muted-sm" type="button" onclick="refreshSourceHealth()">刷新</button>
+                  <button class="btn-clear-sm btn-muted-sm source-health-action-trigger" type="button" aria-haspopup="true" aria-expanded="false" onclick="toggleSourceHealthMenu(this)">操作</button>
+                  <div class="source-health-menu" id="sourceHealthMenu" hidden>
+                    <button class="btn-clear-sm btn-risk-sm source-risk-action" type="button" onclick="openRiskAnalysis()">风险分析</button>
+                    <button class="btn-clear-sm btn-muted-sm" type="button" onclick="toggleSourceHealthDetails()">详情</button>
+                    <button class="btn-clear-sm btn-muted-sm" type="button" onclick="refreshSourceHealth()">刷新</button>
+                  </div>
                 </div>
               </div>
               <div class="source-health-details" id="sourceHealthDetails" hidden>
@@ -171,7 +177,17 @@
               </div>
             </div>
             <div class="log-head">
-              <h3>警报记录 <span class="log-count" id="alertUnreadCount">0 新</span></h3>
+              <div class="log-title-row">
+                <h3>警报记录 <span class="log-count" id="alertUnreadCount">0 新</span></h3>
+                <div class="alert-log-more">
+                  <button class="btn-clear-sm btn-muted-sm" id="alertLogMoreButton" type="button" aria-haspopup="true" aria-expanded="false" onclick="toggleAlertLogMenu()">更多</button>
+                  <div class="alert-log-menu" id="alertLogMenu" hidden>
+                    <input class="log-search" id="alertLogSearch" type="search" placeholder="搜索警报" oninput="setAlertLogSearch(this.value)" aria-label="搜索警报记录">
+                    <button class="btn-clear-sm btn-muted-sm" type="button" onclick="exportAlertLog()">导出记录</button>
+                    <button class="btn-clear-sm btn-muted-sm" type="button" onclick="clearAlertLog()">清空记录</button>
+                  </div>
+                </div>
+              </div>
               <div class="log-tools">
                 <div class="alert-log-tabs" id="alertLogModeTabs" role="tablist" aria-label="警报记录范围">
                   <button class="alert-log-tab active" type="button" data-alert-log-view="all" onclick="setAlertLogView('all')">全部</button>
@@ -179,14 +195,6 @@
                   <button class="alert-log-tab" type="button" data-alert-log-view="unhandled" onclick="setAlertLogView('unhandled')">未处理</button>
                   <button class="alert-log-tab" type="button" data-alert-log-view="handled" onclick="setAlertLogView('handled')">已处理</button>
                   <button class="alert-log-tab" type="button" data-alert-log-view="failed" onclick="setAlertLogView('failed')">通知失败</button>
-                </div>
-                <div class="alert-log-more">
-                  <button class="btn-clear-sm" type="button" onclick="toggleAlertLogMenu()">更多</button>
-                  <div class="alert-log-menu" id="alertLogMenu" hidden>
-                    <input class="log-search" id="alertLogSearch" type="search" placeholder="搜索警报" oninput="setAlertLogSearch(this.value)" aria-label="搜索警报记录">
-                    <button class="btn-clear-sm" type="button" onclick="exportAlertLog()">导出记录</button>
-                    <button class="btn-clear-sm" type="button" onclick="clearAlertLog()">清空记录</button>
-                  </div>
                 </div>
               </div>
             </div>

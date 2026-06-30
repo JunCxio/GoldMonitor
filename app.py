@@ -49,7 +49,7 @@ app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 OFFICIAL_UPDATE_HOST = "github.com"
@@ -298,7 +298,7 @@ gold_price_cached = False
 gold_price_error = ""
 price_history = []  # [{usd, rmb, rate, time, timestamp}]
 price_archive = []
-klines_5min = []    # [{open, high, low, close, time, timestamp}]
+klines_5min = []    # [{open, high, low, close, open_rmb, high_rmb, low_rmb, close_rmb, time, timestamp}]
 last_price_history_save_at = 0.0
 last_fetch_ok = False
 last_fetch_error = ""
@@ -3078,6 +3078,101 @@ def build_alert_log_csv():
     return _alert_log_store().build_csv(alert_log)
 
 
+def _history_number(value):
+    if value in (None, ""):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _history_timestamp(value):
+    parsed = _parse_iso_datetime(value)
+    if not parsed:
+        return None
+    if parsed.tzinfo:
+        parsed = parsed.replace(tzinfo=None)
+    return parsed
+
+
+def _kline_bucket_start(timestamp):
+    return timestamp.replace(minute=(timestamp.minute // 5) * 5, second=0, microsecond=0)
+
+
+def _ohlc(values):
+    if not values:
+        return {"open": None, "high": None, "low": None, "close": None}
+    return {
+        "open": values[0],
+        "high": max(values),
+        "low": min(values),
+        "close": values[-1],
+    }
+
+
+def build_5min_klines(history_items, limit=96):
+    points = []
+    for item in history_items or []:
+        if not isinstance(item, dict):
+            continue
+        timestamp = _history_timestamp(item.get("timestamp"))
+        if not timestamp:
+            continue
+        usd = _history_number(item.get("usd"))
+        rmb = _history_number(item.get("rmb"))
+        if usd is None and rmb is None:
+            continue
+        points.append((timestamp, usd, rmb))
+
+    if len(points) < 2:
+        return []
+
+    points.sort(key=lambda point: point[0])
+    buckets = []
+    bucket_by_timestamp = {}
+    for timestamp, usd, rmb in points:
+        bucket_start = _kline_bucket_start(timestamp)
+        bucket_key = bucket_start.isoformat(timespec="seconds")
+        if bucket_key not in bucket_by_timestamp:
+            bucket_by_timestamp[bucket_key] = {
+                "time": bucket_start.strftime("%H:%M"),
+                "timestamp": bucket_key,
+                "usd": [],
+                "rmb": [],
+            }
+            buckets.append(bucket_by_timestamp[bucket_key])
+        if usd is not None:
+            bucket_by_timestamp[bucket_key]["usd"].append(usd)
+        if rmb is not None:
+            bucket_by_timestamp[bucket_key]["rmb"].append(rmb)
+
+    candles = []
+    for bucket in buckets:
+        usd_ohlc = _ohlc(bucket["usd"])
+        rmb_ohlc = _ohlc(bucket["rmb"])
+        candles.append({
+            "open": usd_ohlc["open"],
+            "high": usd_ohlc["high"],
+            "low": usd_ohlc["low"],
+            "close": usd_ohlc["close"],
+            "open_rmb": rmb_ohlc["open"],
+            "high_rmb": rmb_ohlc["high"],
+            "low_rmb": rmb_ohlc["low"],
+            "close_rmb": rmb_ohlc["close"],
+            "time": bucket["time"],
+            "timestamp": bucket["timestamp"],
+        })
+    return candles[-int(limit or 96):]
+
+
+def restore_price_history_state(archive):
+    global price_history, klines_5min
+    price_history = list((archive or [])[-360:])
+    klines_5min = build_5min_klines(price_history, limit=96)
+
+
 def news_loop():
     while True:
         refresh_gold_news(emit_update=True)
@@ -3088,8 +3183,7 @@ news_items = load_news_cache()
 risk_analysis_history = load_risk_analysis_history()
 alert_log = load_alert_log_archive(limit=ALERT_LOG_MEMORY_LIMIT)
 price_archive = load_price_history_archive()
-if price_archive:
-    price_history = list(price_archive[-360:])
+restore_price_history_state(price_archive)
 initialize_market_cache()
 
 
@@ -3497,33 +3591,7 @@ def run_risk_analysis(settings, context):
 def _aggregate_klines():
     """从 price_history 聚合 5 分钟 K 线"""
     global klines_5min
-    if len(price_history) < 2:
-        return
-
-    now = datetime.now()
-    bucket_minute = (now.minute // 5) * 5
-    bucket_label = now.replace(minute=bucket_minute, second=0, microsecond=0)
-
-    recent = price_history[-30:]  # 最近 5 分钟数据
-    usd_prices = [p["usd"] for p in recent if p["usd"] is not None]
-    if not usd_prices:
-        return
-
-    candle = {
-        "open": usd_prices[0],
-        "high": max(usd_prices),
-        "low": min(usd_prices),
-        "close": usd_prices[-1],
-        "time": bucket_label.strftime("%H:%M"),
-        "timestamp": bucket_label.isoformat(),
-    }
-
-    if klines_5min and klines_5min[-1]["time"] == candle["time"]:
-        klines_5min[-1] = candle
-    else:
-        klines_5min.append(candle)
-    if len(klines_5min) > 96:  # 保留 8 小时
-        klines_5min = klines_5min[-96:]
+    klines_5min = build_5min_klines(price_history, limit=96)
 
 
 # ---------- 后台轮询 ----------
@@ -3664,6 +3732,7 @@ def fetch_price_once():
                     "change_usd": chg_usd, "change_pct_usd": pct_usd,
                     "change_rmb": chg_rmb, "change_pct_rmb": pct_rmb,
                     "time": now_str, "timestamp": now_iso,
+                    "klines_5min": list(klines_5min[-72:]),
                     "daily": daily_stats,
                     "source_comparison": source_comparison,
                 })
