@@ -566,7 +566,10 @@ socket.on('portfolio_export_error', data => {
 
 socket.on('portfolio_imported', data => {
   const count = data && Number.isFinite(Number(data.count)) ? Number(data.count) : 0;
-  pendingPortfolioImportMessage = '已导入流水 ' + count + ' 条。';
+  const summary = data && data.summary ? data.summary : {};
+  const create = Number(summary.create || 0);
+  const overwrite = Number(summary.overwrite || 0);
+  pendingPortfolioImportMessage = '已导入流水 ' + count + ' 条（新增 ' + create + '，覆盖 ' + overwrite + '）。';
   setPortfolioStatus(pendingPortfolioImportMessage, 'ok');
 });
 
@@ -578,6 +581,14 @@ socket.on('portfolio_import_undone', data => {
   if (data && data.ok) {
     pendingPortfolioUndoMessage = '已撤销最近一次 CSV 导入。';
     setPortfolioStatus(pendingPortfolioUndoMessage, 'ok');
+  }
+});
+
+socket.on('portfolio_import_undo_error', data => {
+  setPortfolioStatus((data && data.message) || '撤销导入失败。', 'fail');
+  if (data && data.import_backup) {
+    portfolioState.import_backup = normalizePortfolioImportBackup(data.import_backup);
+    renderPortfolioImportBackup();
   }
 });
 
@@ -4147,11 +4158,14 @@ function applyPortfolioImportBackendPreview(data) {
     portfolioImportPreview.backendMessage = '后端复核通过。';
     portfolioImportPreview.summary = {
       total: Number(data.count) || 0,
+      row_count: Number(data.row_count) || 0,
+      valid_count: Number(data.valid_count) || 0,
       create: Number(data.create) || 0,
       overwrite: Number(data.overwrite) || 0,
       previewCount: portfolioImportPreview.summary ? portfolioImportPreview.summary.previewCount : 0,
     };
-    portfolioImportPreview.errors = [];
+    portfolioImportPreview.errors = Array.isArray(data.errors) ? data.errors : [];
+    portfolioImportPreview.warnings = Array.isArray(data.warnings) ? data.warnings : [];
     renderPortfolioImportPreview();
     setPortfolioStatus('CSV 复核通过，确认后导入。', 'ok');
     return;
@@ -4159,7 +4173,8 @@ function applyPortfolioImportBackendPreview(data) {
   const message = (data && data.message) || 'CSV 后端复核失败。';
   portfolioImportPreview.backendStatus = 'fail';
   portfolioImportPreview.backendMessage = message;
-  portfolioImportPreview.errors = [message];
+  portfolioImportPreview.errors = Array.isArray(data && data.errors) && data.errors.length ? data.errors : [message];
+  portfolioImportPreview.warnings = Array.isArray(data && data.warnings) ? data.warnings : [];
   renderPortfolioImportPreview();
   setPortfolioStatus(message, 'fail');
 }
@@ -4173,15 +4188,19 @@ function renderPortfolioImportPreview() {
     return;
   }
   const preview = portfolioImportPreview;
-  const summary = preview.summary || { total: 0, create: 0, overwrite: 0, previewCount: 0 };
+  const summary = preview.summary || { total: 0, row_count: 0, valid_count: 0, create: 0, overwrite: 0, previewCount: 0 };
   const rows = (preview.rows || []).slice(0, summary.previewCount || 0);
   const hasError = !!(preview.errors && preview.errors.length);
   const backendPending = preview.backendStatus === 'pending';
   const backendOk = preview.backendStatus === 'ok';
+  const warnings = Array.isArray(preview.warnings) ? preview.warnings : [];
   box.classList.toggle('show', true);
   box.classList.toggle('fail', hasError);
   const errorHtml = hasError
     ? '<div class="portfolio-import-error">' + preview.errors.map(error => '<div>' + escapeHtml(error) + '</div>').join('') + '</div>'
+    : '';
+  const warningHtml = warnings.length
+    ? '<div class="portfolio-import-preview-state">' + warnings.map(warning => escapeHtml(warning)).join('；') + '</div>'
     : '';
   const stateHtml = preview.backendMessage
     ? '<div class="portfolio-import-preview-state ' + escapeHtml(preview.backendStatus || '') + '">' + escapeHtml(preview.backendMessage) + '</div>'
@@ -4204,11 +4223,13 @@ function renderPortfolioImportPreview() {
     '<button class="btn-clear-sm" type="button" onclick="cancelPortfolioImport()">取消</button>',
     '</div>',
     '<div class="portfolio-import-preview-grid">',
-    '<div><span>可导入</span><strong>' + escapeHtml(String(summary.total)) + '</strong></div>',
+    '<div><span>总行数</span><strong>' + escapeHtml(String(summary.row_count || summary.total)) + '</strong></div>',
+    '<div><span>有效</span><strong>' + escapeHtml(String(summary.valid_count || summary.total)) + '</strong></div>',
     '<div><span>新增</span><strong>' + escapeHtml(String(summary.create)) + '</strong></div>',
     '<div><span>覆盖</span><strong>' + escapeHtml(String(summary.overwrite)) + '</strong></div>',
     '</div>',
     stateHtml,
+    warningHtml,
     errorHtml,
     '<div class="portfolio-import-preview-table">',
     '<div class="portfolio-import-preview-row head"><span>日期</span><span>类型</span><span>名称</span><span>数量/价格</span></div>',

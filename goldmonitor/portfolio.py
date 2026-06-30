@@ -1092,6 +1092,14 @@ def _portfolio_csv_reader(csv_text):
     return reader
 
 
+def _portfolio_csv_data_row_count(csv_text):
+    try:
+        reader = _portfolio_csv_reader(csv_text)
+    except ValueError:
+        return 0
+    return sum(1 for row in reader if row and any(_clean_text(value) for value in row.values()))
+
+
 def import_portfolio_transactions_csv(
     existing_items,
     csv_text,
@@ -1116,6 +1124,7 @@ def preview_portfolio_transactions_csv(
     id_factory=None,
     position_id_factory=None,
 ):
+    row_count = _portfolio_csv_data_row_count(csv_text)
     try:
         _merged, imported_ids = _merge_portfolio_transactions_csv(
             existing_items,
@@ -1125,13 +1134,18 @@ def preview_portfolio_transactions_csv(
             position_id_factory=position_id_factory,
         )
     except ValueError as exc:
+        message = str(exc)
         return {
             "ok": False,
             "kind": "transactions",
             "count": 0,
+            "row_count": row_count,
+            "valid_count": 0,
             "create": 0,
             "overwrite": 0,
-            "message": str(exc),
+            "errors": [message],
+            "warnings": [],
+            "message": message,
         }
     existing = normalize_portfolio_transactions(
         list(existing_items or []),
@@ -1145,8 +1159,12 @@ def preview_portfolio_transactions_csv(
         "ok": True,
         "kind": "transactions",
         "count": len(imported_ids),
+        "row_count": row_count,
+        "valid_count": len(imported_ids),
         "create": len(imported_ids) - overwrite,
         "overwrite": overwrite,
+        "errors": [],
+        "warnings": [],
         "message": "",
     }
 

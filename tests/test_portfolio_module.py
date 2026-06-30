@@ -675,8 +675,12 @@ def test_preview_portfolio_transactions_csv_reports_summary_and_validation_error
         "ok": True,
         "kind": "transactions",
         "count": 2,
+        "row_count": 2,
+        "valid_count": 2,
         "create": 1,
         "overwrite": 1,
+        "errors": [],
+        "warnings": [],
         "message": "",
     }
 
@@ -690,8 +694,12 @@ def test_preview_portfolio_transactions_csv_reports_summary_and_validation_error
     assert invalid_summary["ok"] is False
     assert invalid_summary["kind"] == "transactions"
     assert invalid_summary["count"] == 0
+    assert invalid_summary["row_count"] == 1
+    assert invalid_summary["valid_count"] == 0
     assert invalid_summary["create"] == 0
     assert invalid_summary["overwrite"] == 0
+    assert invalid_summary["errors"] == [invalid_summary["message"]]
+    assert invalid_summary["warnings"] == []
     assert "卖出数量不能超过当前持仓" in invalid_summary["message"]
 
 
@@ -1057,7 +1065,16 @@ def test_import_portfolio_transactions_socket_event_emits_summary_and_updates_st
     assert "portfolio_updated" in event_names
     imported_payload = next(event["args"][0] for event in events if event["name"] == "portfolio_imported")
     updated_payload = next(event["args"][0] for event in events if event["name"] == "portfolio_updated")
-    assert imported_payload == {"ok": True, "kind": "transactions", "count": 2}
+    assert imported_payload["ok"] is True
+    assert imported_payload["kind"] == "transactions"
+    assert imported_payload["count"] == 2
+    assert imported_payload["summary"]["count"] == 2
+    assert imported_payload["summary"]["row_count"] == 2
+    assert imported_payload["summary"]["valid_count"] == 2
+    assert imported_payload["summary"]["create"] == 2
+    assert imported_payload["summary"]["overwrite"] == 0
+    assert imported_payload["import_backup"]["available"] is True
+    assert imported_payload["import_backup"]["count"] == 2
     assert len(saved_transactions) == 2
     assert updated_payload["items"][0]["quantity"] == 1.0
     assert updated_payload["items"][0]["realized_pnl"] == 48.0
@@ -1211,8 +1228,31 @@ def test_undo_portfolio_import_socket_event_emits_restore_and_update(monkeypatch
     undone_payload = next(event["args"][0] for event in events if event["name"] == "portfolio_import_undone")
     updated_payload = next(event["args"][0] for event in events if event["name"] == "portfolio_updated")
     assert undone_payload["ok"] is True
+    assert undone_payload["kind"] == "transactions"
+    assert undone_payload["import_backup"]["available"] is False
     assert len(updated_payload["transactions"]) == 1
     assert updated_payload["import_backup"]["available"] is False
+    client.disconnect()
+
+
+def test_undo_portfolio_import_socket_event_reports_missing_backup(monkeypatch):
+    import app
+
+    monkeypatch.setattr(app, "portfolio_import_backup", app.empty_portfolio_import_backup())
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+    client.emit("undo_portfolio_import")
+    events = client.get_received()
+
+    event_names = [event["name"] for event in events]
+    assert "portfolio_import_undo_error" in event_names
+    payload = next(event["args"][0] for event in events if event["name"] == "portfolio_import_undo_error")
+    assert payload["ok"] is False
+    assert payload["kind"] == "transactions"
+    assert payload["code"] == "no_backup"
+    assert payload["import_backup"]["available"] is False
+    assert "没有可撤销" in payload["message"]
     client.disconnect()
 
 

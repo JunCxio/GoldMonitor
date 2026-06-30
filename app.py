@@ -1256,6 +1256,7 @@ def import_portfolio_transactions_csv(content):
         prices = _current_portfolio_prices()
         state = _build_portfolio_state_from_snapshots([dict(item) for item in saved_transactions], [], prices)
         state["import_backup"] = portfolio_import_backup_state(portfolio_import_backup)
+        state["import_summary"] = dict(preview_summary)
         return state, imported_count
 
 
@@ -4029,7 +4030,13 @@ def on_import_portfolio_transactions(data=None):
     except OSError:
         emit("portfolio_error", {"message": "持仓流水导入失败，请检查配置目录权限。"})
         return
-    emit("portfolio_imported", {"ok": True, "kind": "transactions", "count": imported_count})
+    emit("portfolio_imported", {
+        "ok": True,
+        "kind": "transactions",
+        "count": imported_count,
+        "summary": state.get("import_summary") or {"count": imported_count},
+        "import_backup": state.get("import_backup") or portfolio_import_backup_state(portfolio_import_backup),
+    })
     socketio.emit("portfolio_updated", state)
 
 
@@ -4041,10 +4048,20 @@ def on_undo_portfolio_import():
         emit("portfolio_error", {"message": "撤销导入失败，请检查配置目录权限。"})
         return
     if not ok:
-        emit("portfolio_error", {"message": "没有可撤销的导入批次。"})
+        emit("portfolio_import_undo_error", {
+            "ok": False,
+            "kind": "transactions",
+            "code": "no_backup",
+            "message": "没有可撤销的导入批次。",
+            "import_backup": state.get("import_backup") if isinstance(state, dict) else portfolio_import_backup_state(portfolio_import_backup),
+        })
         emit("portfolio_updated", state)
         return
-    emit("portfolio_import_undone", {"ok": True, "kind": "transactions"})
+    emit("portfolio_import_undone", {
+        "ok": True,
+        "kind": "transactions",
+        "import_backup": state.get("import_backup") or portfolio_import_backup_state(portfolio_import_backup),
+    })
     socketio.emit("portfolio_updated", state)
 
 
