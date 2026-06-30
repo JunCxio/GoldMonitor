@@ -154,8 +154,9 @@
                   <strong class="source-summary-text">等待数据源检查</strong>
                 </div>
                 <div class="source-health-actions">
-                  <button class="btn-clear-sm" type="button" onclick="toggleSourceHealthDetails()">详情</button>
-                  <button class="btn-clear-sm" type="button" onclick="refreshSourceHealth()">刷新</button>
+                  <button class="btn-clear-sm btn-risk-sm source-risk-action" type="button" onclick="openRiskAnalysis()">风险分析</button>
+                  <button class="btn-clear-sm btn-muted-sm" type="button" onclick="toggleSourceHealthDetails()">详情</button>
+                  <button class="btn-clear-sm btn-muted-sm" type="button" onclick="refreshSourceHealth()">刷新</button>
                 </div>
               </div>
               <div class="source-health-details" id="sourceHealthDetails" hidden>

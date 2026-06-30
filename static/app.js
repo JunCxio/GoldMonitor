@@ -76,6 +76,7 @@ let portfolioTransactionModeFilter = 'all';
 let portfolioTransactionSort = 'date_desc';
 let activePortfolioPositionId = null;
 let activePortfolioDetailId = null;
+let activePortfolioAlertEditorId = null;
 let portfolioDrafts = {};
 let activePortfolioTransactionId = null;
 let portfolioTransactionDrafts = {};
@@ -2861,6 +2862,9 @@ function applyPortfolio(data) {
   if (activePortfolioDetailId && !portfolioState.items.some(item => item.id === activePortfolioDetailId)) {
     activePortfolioDetailId = null;
   }
+  if (activePortfolioAlertEditorId && !portfolioState.items.some(item => item.id === activePortfolioAlertEditorId)) {
+    activePortfolioAlertEditorId = null;
+  }
   if (activePortfolioTransactionId && activePortfolioTransactionId !== 'new' && !portfolioState.transactions.some(item => item.id === activePortfolioTransactionId)) {
     clearPortfolioTransactionDraft(activePortfolioTransactionId);
     activePortfolioTransactionId = null;
@@ -3666,6 +3670,40 @@ function buildPortfolioAlertEditor(item) {
   ].join('');
 }
 
+function portfolioAlertThresholdText(label, value, mode, suffix) {
+  if (value === null || value === undefined || value === '') return '';
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '';
+  const text = suffix ? formatPortfolioNumber(number, 2) + suffix : formatPortfolioMoney(number, mode);
+  return label + ' ' + text;
+}
+
+function renderPortfolioAlertSummary(item, alert) {
+  const mode = item.mode || 'rmb';
+  const positionId = escapeHtml(item.id);
+  const parts = [
+    portfolioAlertThresholdText('止盈', alert && alert.take_profit_price, mode, ''),
+    portfolioAlertThresholdText('止损', alert && alert.stop_loss_price, mode, ''),
+    portfolioAlertThresholdText('浮盈', alert && alert.profit_percent, mode, '%'),
+    portfolioAlertThresholdText('浮亏', alert && alert.loss_percent, mode, '%'),
+    portfolioAlertThresholdText('近成本', alert && alert.near_cost_percent, mode, '%'),
+  ].filter(Boolean);
+  const stateText = portfolioAlertStatusLabel(alert);
+  const summaryText = parts.length ? stateText + ' · ' + parts.join(' · ') : stateText + ' · 未设置价格条件';
+  const buttonText = activePortfolioAlertEditorId === item.id ? '收起编辑' : '编辑提醒';
+  return [
+    '<div class="portfolio-alert-summary">',
+    '<div class="portfolio-alert-summary-main">',
+    '<span class="portfolio-alert-state ' + portfolioAlertStatusClass(alert) + '">' + escapeHtml(stateText) + '</span>',
+    '<span class="portfolio-alert-summary-text">' + escapeHtml(summaryText) + '</span>',
+    '</div>',
+    '<div class="portfolio-alert-summary-actions">',
+    '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="togglePortfolioAlertEditor(\'' + positionId + '\')">' + buttonText + '</button>',
+    '</div>',
+    '</div>',
+  ].join('');
+}
+
 function renderPortfolioPositionDetail(item) {
   const mode = item.mode || 'rmb';
   const quantityDigits = mode === 'usd' ? 4 : 2;
@@ -3673,9 +3711,12 @@ function renderPortfolioPositionDetail(item) {
   const currentPrice = item.current_price == null ? '等待行情' : formatPortfolioMoney(item.current_price, mode);
   const unrealizedPnl = item.unrealized_pnl != null ? item.unrealized_pnl : item.pnl;
   const totalPnl = item.total_pnl != null ? item.total_pnl : item.pnl;
+  const pnlClass = portfolioPnlClass(totalPnl);
+  const alert = portfolioAlertForPosition(item.id);
   const transactions = portfolioTransactionsForPosition(item.id);
+  const visibleTransactions = transactions.slice(0, 3);
   const transactionHtml = transactions.length
-    ? transactions.map(transaction => {
+    ? visibleTransactions.map(transaction => {
       const transactionMode = transaction.mode || mode;
       const typeText = transaction.type === 'sell' ? '卖出' : '买入';
       const typeClass = transaction.type === 'sell' ? 'sell' : 'buy';
@@ -3698,26 +3739,36 @@ function renderPortfolioPositionDetail(item) {
         '<div class="portfolio-detail-transaction-value ' + portfolioPnlClass(transaction.realized_pnl) + '">' + escapeHtml(realizedText) + '</div>',
         '</div>',
       ].join('');
-    }).join('')
+    }).join('') + (transactions.length > visibleTransactions.length ? '<div class="portfolio-detail-more">还有 ' + escapeHtml(String(transactions.length - visibleTransactions.length)) + ' 条流水，可切换到流水页查看</div>' : '')
     : '<div class="portfolio-detail-empty">暂无关联流水</div>';
   return [
     '<div class="portfolio-detail">',
+    '<div class="portfolio-detail-focus">',
+    '<div class="portfolio-detail-focus-main">',
+    '<div class="portfolio-detail-focus-title">' + escapeHtml(item.name || '未命名持仓') + '</div>',
+    '<div class="portfolio-detail-focus-meta">' + escapeHtml([portfolioModeLabel(mode), quantityText, '当前价 ' + currentPrice, item.last_trade_date ? '最近 ' + item.last_trade_date : ''].filter(Boolean).join(' · ')) + '</div>',
+    '</div>',
+    '<div class="portfolio-detail-focus-value ' + pnlClass + '">',
+    '<strong>' + escapeHtml(formatPortfolioSignedMoney(totalPnl, mode)) + '</strong>',
+    '<span>合计盈亏</span>',
+    '</div>',
+    '</div>',
     '<div class="portfolio-detail-grid">',
-    renderPortfolioDetailMetric('数量', quantityText, ''),
     renderPortfolioDetailMetric('平均成本', formatPortfolioMoney(item.average_cost != null ? item.average_cost : item.entry_price, mode), ''),
-    renderPortfolioDetailMetric('当前价', currentPrice, ''),
-    renderPortfolioDetailMetric('剩余成本', formatPortfolioMoney(item.cost_basis != null ? item.cost_basis : item.cost, mode), ''),
     renderPortfolioDetailMetric('市值', formatPortfolioMoney(item.market_value, mode), ''),
     renderPortfolioDetailMetric('未实现', formatPortfolioSignedMoney(unrealizedPnl, mode), portfolioPnlClass(unrealizedPnl)),
     renderPortfolioDetailMetric('已实现', formatPortfolioSignedMoney(item.realized_pnl, mode), portfolioPnlClass(item.realized_pnl)),
-    renderPortfolioDetailMetric('合计', formatPortfolioSignedMoney(totalPnl, mode), portfolioPnlClass(totalPnl)),
-    renderPortfolioDetailMetric('手续费', formatPortfolioMoney(item.fees, mode), ''),
-    renderPortfolioDetailMetric('最近交易', item.last_trade_date || item.entry_date || '未标日期', ''),
     '</div>',
-    buildPortfolioAlertEditor(item),
+    renderPortfolioAlertSummary(item, alert),
+    activePortfolioAlertEditorId === item.id ? buildPortfolioAlertEditor(item) : '',
     '<div class="portfolio-detail-transactions">',
-    '<div class="portfolio-detail-section-title">流水明细</div>',
+    '<div class="portfolio-detail-transactions-head">',
+    '<div class="portfolio-detail-section-title">最近流水</div>',
+    '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="setPortfolioView(\'transactions\')">查看全部</button>',
+    '</div>',
+    '<div class="portfolio-detail-transactions-list">',
     transactionHtml,
+    '</div>',
     '</div>',
     '</div>',
   ].join('');
@@ -3936,7 +3987,19 @@ function setPortfolioView(view) {
 }
 
 function setActivePortfolioDetail(id) {
+  captureActivePortfolioAlertDraft();
   activePortfolioDetailId = activePortfolioDetailId === id ? null : id;
+  if (activePortfolioDetailId !== id) activePortfolioAlertEditorId = null;
+  if (activePortfolioDetailId && activePortfolioAlertEditorId && activePortfolioAlertEditorId !== activePortfolioDetailId) {
+    activePortfolioAlertEditorId = null;
+  }
+  renderPortfolio();
+}
+
+function togglePortfolioAlertEditor(positionId) {
+  captureActivePortfolioAlertDraft();
+  activePortfolioAlertEditorId = activePortfolioAlertEditorId === positionId ? null : positionId;
+  activePortfolioDetailId = positionId;
   renderPortfolio();
 }
 
@@ -4030,6 +4093,7 @@ function deletePortfolioPosition(id) {
   clearPortfolioAlertDraft(id);
   if (activePortfolioPositionId === id) activePortfolioPositionId = null;
   if (activePortfolioDetailId === id) activePortfolioDetailId = null;
+  if (activePortfolioAlertEditorId === id) activePortfolioAlertEditorId = null;
 }
 
 function savePortfolioAlert(positionId) {
@@ -4061,6 +4125,7 @@ function deletePortfolioAlert(alertId, positionId) {
   setPortfolioStatus('正在清空持仓提醒...', '');
   socket.emit('delete_portfolio_alert', { id: alertId });
   clearPortfolioAlertDraft(positionId);
+  if (activePortfolioAlertEditorId === positionId) activePortfolioAlertEditorId = null;
 }
 
 function savePortfolioTransaction(id) {
@@ -4578,11 +4643,11 @@ function buildLogEntry(entry) {
     renderNotificationBadges(entry),
     '</span>',
     '<span class="log-actions">',
-    '<button class="btn-clear-sm log-action-trigger" type="button" aria-haspopup="true" aria-expanded="false" onclick="toggleLogEntryMenu(this)">操作</button>',
+    '<button class="btn-clear-sm btn-risk-sm log-risk-action" type="button" onclick="analyzeAlertFromLog(decodeURIComponent(\'' + encodedId + '\'))">分析</button>',
+    '<button class="btn-clear-sm btn-muted-sm log-action-trigger" type="button" aria-haspopup="true" aria-expanded="false" onclick="toggleLogEntryMenu(this)">操作</button>',
     '<span class="log-entry-menu" hidden>',
-    '<button class="btn-clear-sm" type="button" onclick="updateAlertHandling(decodeURIComponent(\'' + encodedId + '\'), ' + (entry.handled ? 'false' : 'true') + ')">' + (entry.handled ? '取消处理' : '标记已处理') + '</button>',
-    '<button class="btn-clear-sm" type="button" onclick="analyzeAlertFromLog(decodeURIComponent(\'' + encodedId + '\'))">风险分析</button>',
-    hasNotificationIssue ? '<button class="btn-clear-sm" type="button" onclick="resendAlertNotification(decodeURIComponent(\'' + encodedId + '\'))">重发通知</button>' : '',
+    '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="updateAlertHandling(decodeURIComponent(\'' + encodedId + '\'), ' + (entry.handled ? 'false' : 'true') + ')">' + (entry.handled ? '取消处理' : '标记已处理') + '</button>',
+    hasNotificationIssue ? '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="resendAlertNotification(decodeURIComponent(\'' + encodedId + '\'))">重发通知</button>' : '',
     '</span>',
     '</span>',
   ].join('');
