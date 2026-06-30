@@ -17,6 +17,7 @@ import secrets
 import requests
 from flask import Flask, jsonify, render_template, request, send_from_directory
 from flask_socketio import SocketIO, emit
+from goldmonitor import app_state as app_state_core
 from goldmonitor import desktop_ui as desktop_ui_core
 from goldmonitor import event_timeline as event_timeline_core
 from goldmonitor import market_data as market_data_core
@@ -27,6 +28,7 @@ from goldmonitor import portfolio as portfolio_core
 from goldmonitor import portfolio_alerts as portfolio_alerts_core
 from goldmonitor import risk_analysis as risk_analysis_core
 from goldmonitor import settings_store as settings_store_core
+from goldmonitor import storage_manifest as storage_manifest_core
 from goldmonitor import support_files as support_files_core
 from goldmonitor import targets as targets_core
 from goldmonitor import update_manager as update_manager_core
@@ -980,10 +982,14 @@ def _attach_portfolio_alerts_to_state(state, alerts):
         **portfolio_alerts_core.portfolio_alerts_state(alerts),
         "items": alerts,
     }
-    state["items"] = [
-        {**item, "alert": by_position.get(item.get("id"))}
-        for item in list(state.get("items") or [])
-    ]
+    items = []
+    for item in list(state.get("items") or []):
+        alert = by_position.get(item.get("id"))
+        next_item = {**item, "alert": alert}
+        if isinstance(alert, dict) and alert.get("status") == "triggered":
+            next_item["portfolio_status"] = "target_hit"
+        items.append(next_item)
+    state["items"] = items
     return state
 
 
@@ -1574,6 +1580,15 @@ def build_config_backup():
     )
 
 
+def preview_config_backup(payload):
+    return support_files_core.build_config_import_preview(
+        payload,
+        settings_defaults=DEFAULT_SETTINGS,
+        threshold_keys=set(thresholds) | {"volatility_config"},
+        secret_keys=SECRET_SETTING_KEYS,
+    )
+
+
 def save_export_file(filename, content):
     return support_files_core.save_export_file(EXPORT_DIR, filename, content)
 
@@ -1628,18 +1643,32 @@ def build_diagnostics_report():
         "settings": SETTINGS_PATH,
         "thresholds": THRESHOLDS_PATH,
         "watch_targets": WATCH_TARGETS_PATH,
+        "portfolio_positions": PORTFOLIO_POSITIONS_PATH,
+        "portfolio_transactions": PORTFOLIO_TRANSACTIONS_PATH,
+        "portfolio_import_backup": PORTFOLIO_IMPORT_BACKUP_PATH,
+        "portfolio_alerts": PORTFOLIO_ALERTS_PATH,
         "market_cache": MARKET_CACHE_PATH,
+        "update_dir": UPDATE_DIR,
+        "exports": EXPORT_DIR,
+        "news": NEWS_CACHE_PATH,
+        "risk_analysis_history": RISK_ANALYSIS_HISTORY_PATH,
         "price_history": PRICE_HISTORY_PATH,
         "price_history_db": _price_history_db_path(),
         "alert_log_db": _alert_log_db_path(),
         "log": APP_LOG_PATH,
     }
+    storage_manifest = storage_manifest_core.build_storage_manifest(paths)
     fetch_status = get_fetch_status()
     source_health_state = get_source_health_state()
     price_history_state = build_price_history_state(limit=120)
     watch_targets_state = get_watch_targets_state()
     risk_history_count = len(get_risk_analysis_history_state().get("items", []))
     recent_alerts = list(alert_log[-20:])
+    data_schemas = {
+        key: dict(item)
+        for key, item in sorted(storage_manifest.items())
+        if item.get("schema") == "item_payload"
+    }
     report = {
         "app": APP_NAME,
         "version": APP_VERSION,
@@ -1653,13 +1682,10 @@ def build_diagnostics_report():
             risk_history_count=risk_history_count,
             recent_alerts=recent_alerts,
             paths=paths,
+            storage_manifest=storage_manifest,
         ),
-        "data_schemas": {
-            "watch_targets": _json_payload_metadata(WATCH_TARGETS_PATH),
-            "news": _json_payload_metadata(NEWS_CACHE_PATH),
-            "risk_analysis_history": _json_payload_metadata(RISK_ANALYSIS_HISTORY_PATH),
-            "price_history": _json_payload_metadata(PRICE_HISTORY_PATH),
-        },
+        "storage_manifest": storage_manifest,
+        "data_schemas": data_schemas,
         "settings": diagnostic_settings_snapshot(),
         "fetch_status": fetch_status,
         "source_health": source_health_state,
@@ -2092,6 +2118,27 @@ def get_fetch_status():
         return _current_fetch_status_locked()
 
 
+def _market_state_locked():
+    return {
+        "price_usd": price_usd,
+        "price_rmb": price_rmb,
+        "usdcny_rate": usdcny_rate,
+        "gold_price_source": gold_price_source,
+        "gold_price_time": gold_price_time,
+        "gold_price_cached": gold_price_cached,
+        "gold_price_error": gold_price_error,
+        "usdcny_rate_source": usdcny_rate_source,
+        "usdcny_rate_time": usdcny_rate_time,
+        "usdcny_rate_cached": usdcny_rate_cached,
+        "usdcny_rate_error": usdcny_rate_error,
+        "previous_usd": previous_usd,
+        "previous_rmb": previous_rmb,
+        "price_history": price_history,
+        "last_fetch_ok": last_fetch_ok,
+        "klines_5min": klines_5min,
+    }
+
+
 def record_source_health(name, category, ok, error="", started_at=None, cached=False):
     if not name:
         return
@@ -2112,10 +2159,17 @@ def record_source_health(name, category, ok, error="", started_at=None, cached=F
 def get_source_health_state():
     with lock:
         health_snapshot = {name: dict(item) for name, item in source_health.items()}
-    return market_data_core.build_source_health_state(
+    comparison = get_source_comparison_state()
+    state = market_data_core.build_source_health_state(
         health_snapshot,
-        comparison=get_source_comparison_state(),
+        comparison=comparison,
     )
+    state["quality"] = market_data_core.build_market_quality(
+        fetch_status=get_fetch_status(),
+        source_health=state,
+        comparison=comparison,
+    )
+    return state
 
 
 def record_source_price_sample(name, data, cached=False):
@@ -2968,6 +3022,10 @@ def _apply_alert_log_status(entry, read=None, acknowledged=None):
     return _alert_log_store().apply_status(entry, read=read, acknowledged=acknowledged)
 
 
+def _apply_alert_log_handling(entry, handled=None, note=None):
+    return _alert_log_store().apply_handling(entry, handled=handled, note=note)
+
+
 def _replace_alert_log_entry(updated):
     return AlertLogStore.replace_memory_entry(alert_log, updated)
 
@@ -2980,6 +3038,13 @@ def update_alert_log_status(alert_id, read=None, acknowledged=None):
     return _update_alert_log_entry_payload(
         alert_id,
         lambda entry: _apply_alert_log_status(entry, read=read, acknowledged=acknowledged),
+    )
+
+
+def update_alert_log_handling(alert_id, handled=None, note=None):
+    return _update_alert_log_entry_payload(
+        alert_id,
+        lambda entry: _apply_alert_log_handling(entry, handled=handled, note=note),
     )
 
 
@@ -3348,6 +3413,8 @@ def build_risk_analysis_context(trigger=None, depth=None):
             "mode": str(trigger.get("mode") or ""),
             "message": str(trigger.get("message") or "")[:500],
         }
+    source_health_state = get_source_health_state()
+    context["market_quality"] = source_health_state.get("quality") if isinstance(source_health_state, dict) else {}
     context["sample_warning"] = "样本不足" if len(history) < 12 or len(candles) < 2 else ""
     context["data_quality"] = assess_risk_data_quality(context)
     context["risk_scorecard"] = build_risk_scorecard(context)
@@ -3712,21 +3779,7 @@ def index():
 @app.route("/api/price")
 def api_price():
     with lock:
-        return jsonify({
-            "usd": price_usd, "rmb": price_rmb, "rate": usdcny_rate,
-            "gold_source": gold_price_source,
-            "gold_time": gold_price_time,
-            "gold_cached": gold_price_cached,
-            "gold_error": gold_price_error,
-            "rate_source": usdcny_rate_source,
-            "rate_time": usdcny_rate_time,
-            "rate_cached": usdcny_rate_cached,
-            "rate_error": usdcny_rate_error,
-            "previous_usd": previous_usd, "previous_rmb": previous_rmb,
-            "time": price_history[-1]["time"] if price_history else None,
-            "ok": last_fetch_ok,
-            "klines_5min": klines_5min[-72:],
-        })
+        return jsonify(app_state_core.build_price_api_state(_market_state_locked()))
 
 
 @app.route("/api/health")
@@ -3780,35 +3833,23 @@ def on_connect(auth=None):
         return False
 
     with lock:
-        state = {
-            "usd": price_usd, "rmb": price_rmb, "rate": usdcny_rate,
-            "gold_source": gold_price_source,
-            "gold_time": gold_price_time,
-            "gold_cached": gold_price_cached,
-            "gold_error": gold_price_error,
-            "rate_source": usdcny_rate_source,
-            "rate_time": usdcny_rate_time,
-            "rate_cached": usdcny_rate_cached,
-            "rate_error": usdcny_rate_error,
-            "previous_usd": previous_usd, "previous_rmb": previous_rmb,
-            "history": price_history[-60:],
-            "klines_5min": klines_5min[-72:],
-            "thresholds": dict(thresholds),
-            "volatility_config": dict(volatility_config),
-            "watch_targets": get_watch_targets_state(),
-            "portfolio": build_portfolio_state(),
-            "settings": public_settings_snapshot(),
-            "alert_log": alert_log[-20:],
-            "ok": last_fetch_ok,
-            "fetch_status": _current_fetch_status_locked(),
-            "source_health": get_source_health_state(),
-            "source_comparison": get_source_comparison_state(),
-            "price_history_state": build_price_history_state(limit=240),
-            "daily": {
+        state = app_state_core.build_socket_init_state(
+            _market_state_locked(),
+            thresholds=dict(thresholds),
+            volatility_config=dict(volatility_config),
+            watch_targets=get_watch_targets_state(),
+            portfolio=build_portfolio_state(),
+            settings=public_settings_snapshot(),
+            alert_log=alert_log,
+            fetch_status=_current_fetch_status_locked(),
+            source_health=get_source_health_state(),
+            source_comparison=get_source_comparison_state(),
+            price_history_state=build_price_history_state(limit=240),
+            daily={
                 "open_usd": today_open_usd, "high_usd": today_high_usd, "low_usd": today_low_usd,
                 "open_rmb": today_open_rmb, "high_rmb": today_high_rmb, "low_rmb": today_low_rmb,
             },
-        }
+        )
     state["news"] = get_news_state()
     state["risk_analysis_history"] = get_risk_analysis_history_state()
     emit("init_state", state)
@@ -4511,6 +4552,22 @@ def on_update_alert_log_status(data=None):
     socketio.emit("alert_log_status_updated", {"ok": True, "entry": entry})
 
 
+@socketio.on("update_alert_log_handling")
+def on_update_alert_log_handling(data=None):
+    if not isinstance(data, dict):
+        emit("alert_log_handling_error", {"message": "告警处理参数无效"})
+        return
+    ok, entry = update_alert_log_handling(
+        data.get("id"),
+        handled=data.get("handled") if "handled" in data else None,
+        note=data.get("note") if "note" in data else None,
+    )
+    if not ok:
+        emit("alert_log_handling_error", {"message": "未找到对应告警记录"})
+        return
+    socketio.emit("alert_log_handling_updated", {"ok": True, "entry": entry})
+
+
 @socketio.on("resend_alert_notification")
 def on_resend_alert_notification(data=None):
     if not isinstance(data, dict):
@@ -4537,6 +4594,21 @@ def on_export_config():
         })
     except OSError:
         emit("config_backup_ready", {"ok": False, "message": "配置导出失败，请检查导出目录权限。"})
+
+
+@socketio.on("preview_import_config")
+def on_preview_import_config(data=None):
+    try:
+        payload = data.get("payload") if isinstance(data, dict) else data
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        emit("config_import_previewed", preview_config_backup(payload))
+    except json.JSONDecodeError as exc:
+        emit("config_import_previewed", {
+            "ok": False,
+            "importable": False,
+            "message": str(exc),
+        })
 
 
 @socketio.on("import_config")

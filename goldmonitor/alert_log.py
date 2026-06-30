@@ -8,6 +8,9 @@ import sqlite3
 from datetime import datetime
 
 
+HANDLING_NOTE_LIMIT = 200
+
+
 class AlertLogStore:
     def __init__(self, appdata_dir, memory_limit=50, db_limit=5000, export_limit=1000, id_factory=None, logger=None):
         self.appdata_dir = appdata_dir
@@ -69,6 +72,11 @@ class AlertLogStore:
             normalized["read"] = True
         normalized["read_at"] = str(normalized.get("read_at") or "")
         normalized["acknowledged_at"] = str(normalized.get("acknowledged_at") or "")
+        normalized["handled"] = self.coerce_bool(normalized.get("handled"), False)
+        if normalized["handled"]:
+            normalized["read"] = True
+        normalized["handled_at"] = str(normalized.get("handled_at") or "")
+        normalized["handling_note"] = str(normalized.get("handling_note") or "").strip()[:HANDLING_NOTE_LIMIT]
         return normalized
 
     def connect_db(self):
@@ -168,6 +176,21 @@ class AlertLogStore:
             if is_acknowledged:
                 entry["read"] = True
                 entry["read_at"] = entry.get("read_at") or now
+        return entry
+
+    def apply_handling(self, entry, handled=None, note=None):
+        now = datetime.now().isoformat(timespec="seconds")
+        if handled is not None:
+            is_handled = self.coerce_bool(handled, entry.get("handled", False))
+            entry["handled"] = is_handled
+            entry["handled_at"] = now if is_handled else ""
+            if is_handled:
+                entry["read"] = True
+                entry["read_at"] = entry.get("read_at") or now
+            elif note is None:
+                entry["handling_note"] = ""
+        if note is not None:
+            entry["handling_note"] = str(note or "").strip()[:HANDLING_NOTE_LIMIT]
         return entry
 
     @staticmethod
@@ -285,6 +308,9 @@ class AlertLogStore:
             "message",
             "read",
             "acknowledged",
+            "handled",
+            "handled_at",
+            "handling_note",
             "notification_summary",
             "notifications",
             "related_news",
@@ -303,6 +329,9 @@ class AlertLogStore:
                 entry.get("message", ""),
                 "yes" if entry.get("read") else "no",
                 "yes" if entry.get("acknowledged") else "no",
+                "yes" if entry.get("handled") else "no",
+                entry.get("handled_at", ""),
+                entry.get("handling_note", ""),
                 self.format_notification_summary(entry),
                 self.format_notifications(entry),
                 news_text,

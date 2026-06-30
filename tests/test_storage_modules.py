@@ -92,9 +92,23 @@ def test_alert_log_store_updates_persisted_and_memory_entries():
         assert memory_entries[0]["acknowledged"] is True
         assert store.load_archive(limit=5)[-1]["acknowledged"] is True
 
+        ok, handled = store.update_entry_payload(
+            alert_id,
+            lambda entry: store.apply_handling(entry, handled=True, note="已电话确认"),
+            memory_entries=memory_entries,
+        )
+        assert ok is True
+        assert handled["handled"] is True
+        assert handled["handling_note"] == "已电话确认"
+        assert handled["handled_at"]
+        assert memory_entries[0]["handled"] is True
+        assert store.load_archive(limit=5)[-1]["handling_note"] == "已电话确认"
+
         csv_text, count = store.build_csv(memory_entries)
         assert count == 1
         assert "测试价格预警" in csv_text
+        assert "handling_note" in csv_text
+        assert "已电话确认" in csv_text
         assert "notification_summary" in csv_text
         assert "queued:已提交:已提交" in csv_text
         assert "邮件:queued:已提交" in csv_text

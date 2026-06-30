@@ -102,6 +102,21 @@ def test_frontend_shell_static_resource_is_referenced():
     assert "window.GoldMonitorShell" in shell.read_text(encoding="utf-8")
 
 
+def test_extension_readiness_docs_gate_boundary_expansion():
+    checklist = Path("docs/product-discovery/extension-readiness-checklist.md")
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert checklist.exists()
+    text = checklist.read_text(encoding="utf-8")
+    assert "阶段 1：模块边界整理" in text
+    assert "阶段 2：本地数据能力完善" in text
+    assert "阶段 3：持仓、预警、复盘闭环" in text
+    assert "阶段 4：行情可信度增强" in text
+    assert "多品种贵金属" in text
+    assert "云同步" in text
+    assert "extension-readiness-checklist.md" in readme
+
+
 if __name__ == "__main__":
     failures = []
     for name, value in sorted(globals().items()):

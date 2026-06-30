@@ -21,6 +21,10 @@ GoldMonitor 是一个黄金价格监控工具，提供 Windows 桌面版和 macO
 - 支持配置导出、配置导入、恢复默认设置、诊断报告导出和固定导出目录。
 - 支持软件更新检查、下载进度、SHA256 校验、安装器启动和内置 GitHub Release 官方更新源。
 
+## 扩展边界
+
+当前版本聚焦本地黄金行情监控、持仓管理、提醒通知和复盘分析。多品种贵金属、更多通知渠道、局域网只读面板和云同步属于后续扩展方向，启动前需先满足 `docs/product-discovery/extension-readiness-checklist.md` 中的模块边界、数据能力、核心闭环和行情可信度前置条件。
+
 ## 下载
 
 最新安装包发布在 GitHub Releases：

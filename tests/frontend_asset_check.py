@@ -106,6 +106,10 @@ for required in ("const socket = io", "function switchMode", "function renderAle
     if required not in js:
         raise SystemExit(f"static/app.js missing expected frontend function: {required}")
 
+for required in ("market_quality", "function renderRiskQuality", "function sourceQualityText", "data.quality", "行情质量"):
+    if required not in js:
+        raise SystemExit(f"static/app.js missing risk quality frontend contract: {required}")
+
 for required in (
     "function applyPortfolio",
     "function capturePortfolioDraft",
@@ -164,6 +168,10 @@ for required in (
     "portfolioTransactionDrafts",
     "portfolioAlertDrafts",
     "portfolioImportPreview",
+    "function portfolioStatusLabel",
+    "portfolio_status",
+    "near_cost",
+    "target_hit",
     "PORTFOLIO_TRANSACTION_IMPORT_FIELDS",
     "确认导入",
     "下载模板",
@@ -219,5 +227,27 @@ for forbidden in (
 ):
     if forbidden in css:
         raise SystemExit(f"static/app.css keeps a fixed portfolio grid that can overflow: {forbidden}")
+
+for required in (
+    "preview_import_config",
+    "config_import_previewed",
+    "pendingConfigImportPayload",
+    "function renderConfigImportPreview",
+    "再次点击导入确认",
+):
+    if required not in js:
+        raise SystemExit(f"static/app.js missing config import preview contract: {required}")
+
+for required in (
+    "update_alert_log_handling",
+    "alert_log_handling_updated",
+    "function updateAlertHandling",
+    "handling_note",
+    "payload.handled",
+    "处理状态",
+    "已处理",
+):
+    if required not in js:
+        raise SystemExit(f"static/app.js missing alert handling contract: {required}")
 
 print("frontend asset checks passed.")

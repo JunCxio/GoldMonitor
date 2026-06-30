@@ -144,6 +144,8 @@ let pendingSettingsSave = false;
 let settingsSaveFailed = false;
 let settingsSaveTimer = null;
 let pendingUpdateInfo = null;
+let pendingConfigImportPayload = null;
+let pendingConfigImportPreview = null;
 let autoUpdateTimer = null;
 let lastAutoUpdateCheckAt = 0;
 const AUTO_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -490,9 +492,22 @@ socket.on('alert_log_status_updated', data => {
   mergeAlertLogEntry(data.entry);
 });
 
+socket.on('alert_log_handling_updated', data => {
+  const status = document.getElementById('alertLogStatus');
+  if (data && data.entry) mergeAlertLogEntry(data.entry);
+  status.textContent = data && data.entry && data.entry.handled ? '警报已标记为已处理。' : '警报处理状态已更新。';
+  status.className = 'log-status ok';
+});
+
 socket.on('alert_log_status_error', data => {
   const status = document.getElementById('alertLogStatus');
   status.textContent = (data && data.message) || '警报记录状态更新失败。';
+  status.className = 'log-status fail';
+});
+
+socket.on('alert_log_handling_error', data => {
+  const status = document.getElementById('alertLogStatus');
+  status.textContent = (data && data.message) || '警报处理状态更新失败。';
   status.className = 'log-status fail';
 });
 
@@ -773,7 +788,22 @@ socket.on('exports_folder_opened', data => {
   setOpsStatus(data && data.message ? data.message : '已打开导出目录。', !!(data && data.ok));
 });
 
+socket.on('config_import_previewed', data => {
+  const text = document.getElementById('configImportText') ? document.getElementById('configImportText').value.trim() : '';
+  if (data && data.importable) {
+    pendingConfigImportPayload = text;
+    pendingConfigImportPreview = data;
+    setOpsStatus(renderConfigImportPreview(data), true);
+    return;
+  }
+  pendingConfigImportPayload = null;
+  pendingConfigImportPreview = null;
+  setOpsStatus(renderConfigImportPreview(data), false);
+});
+
 socket.on('config_import_result', data => {
+  pendingConfigImportPayload = null;
+  pendingConfigImportPreview = null;
   setOpsStatus(data && data.message ? data.message : '配置导入完成。', !!(data && data.ok));
 });
 
@@ -806,6 +836,13 @@ function toggleSourceHealthDetails() {
   details.hidden = !details.hidden;
 }
 
+function sourceQualityText(quality) {
+  if (!quality || typeof quality !== 'object') return '';
+  const score = quality.score == null ? '--' : quality.score;
+  const label = quality.label || quality.level || '--';
+  return '行情质量 ' + score + '分/' + label;
+}
+
 function renderSourceHealth(data) {
   latestSourceHealthState = data || { items: [], summary: {} };
   if (data && data.comparison) renderSourceComparison(data.comparison);
@@ -818,9 +855,10 @@ function renderSourceHealth(data) {
   const ok = Number(summary.ok || 0);
   const failed = Number(summary.failed || 0);
   const cached = Number(summary.cached || 0);
-  head.textContent = failed
+  const countText = failed
     ? '异常 ' + failed + ' · 正常 ' + ok
     : (cached ? '缓存 ' + cached + ' · 正常 ' + ok : '正常 ' + ok);
+  head.textContent = [sourceQualityText(data.quality), countText].filter(Boolean).join(' · ');
   if (!items.length) {
     list.innerHTML = '<div class="source-health-item"><span class="source-health-dot"></span><span class="source-health-name">等待数据源检查</span><span class="source-health-meta">--</span></div>';
     return;
@@ -1113,6 +1151,9 @@ function renderTimelineDetail() {
   if (event.type === 'alert') {
     cells.push(detailCell('等级', alertLevelLabel(payload.level)));
     cells.push(detailCell('品种', alertModeLabel(payload.mode)));
+    cells.push(detailCell('处理状态', payload.handled ? '已处理' : '未处理'));
+    if (payload.handled_at) cells.push(detailCell('处理时间', payload.handled_at));
+    if (payload.handling_note) cells.push(detailCell('处理备注', payload.handling_note));
     if (Array.isArray(payload.related_news) && payload.related_news.length) {
       extras += '<div class="timeline-detail-news">' + payload.related_news.slice(0, 3).map(item => (
         '<a href="' + escapeHtml(item.url || '#') + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(item.title || '相关新闻') + '</a>'
@@ -1120,9 +1161,9 @@ function renderTimelineDetail() {
     }
   } else if (event.type === 'risk_analysis') {
     const structured = payload.structured || {};
-    const quality = payload.data_quality || {};
+    const quality = payload.market_quality || payload.data_quality || {};
     cells.push(detailCell('模型', [payload.provider, payload.model].filter(Boolean).join(' / ')));
-    cells.push(detailCell('可信度', quality.score == null ? '' : quality.score + '分'));
+    cells.push(detailCell('行情质量', quality.score == null ? '' : quality.score + '分'));
     cells.push(detailCell('风险等级', structured.risk_level || ''));
     cells.push(detailCell('主要因素', structured.key_factors || structured.main_factors || ''));
   } else if (event.type === 'news') {
@@ -1183,14 +1224,61 @@ function exportConfig() {
   socket.emit('export_config');
 }
 
+function configImportSectionLabel(section) {
+  if (section === 'settings') return '通用设置';
+  if (section === 'thresholds') return '预警阈值';
+  return section || '未知配置';
+}
+
+function configImportSecretActionLabel(action) {
+  if (action === 'import') return '导入';
+  if (action === 'clear') return '清空';
+  return '保留现有';
+}
+
+function renderConfigImportPreview(data) {
+  if (!data || data.ok === false || data.importable === false) {
+    return (data && data.message) || '配置导入预检失败。';
+  }
+  const sections = Array.isArray(data.sections) ? data.sections.map(configImportSectionLabel) : [];
+  const ignored = data.ignored && typeof data.ignored === 'object' ? data.ignored : {};
+  const ignoredCount = []
+    .concat(Array.isArray(ignored.settings) ? ignored.settings : [])
+    .concat(Array.isArray(ignored.thresholds) ? ignored.thresholds : [])
+    .length;
+  const secretActions = data.secret_actions && typeof data.secret_actions === 'object' ? data.secret_actions : {};
+  const secretSummary = Object.keys(secretActions).reduce((acc, key) => {
+    const label = configImportSecretActionLabel(secretActions[key]);
+    acc[label] = (acc[label] || 0) + 1;
+    return acc;
+  }, {});
+  const secretText = Object.keys(secretSummary).map(label => label + ' ' + secretSummary[label] + ' 项').join('，');
+  const parts = [
+    '配置预检通过：将导入' + (sections.length ? sections.join('、') : '配置'),
+  ];
+  if (ignoredCount) parts.push('忽略不支持字段 ' + ignoredCount + ' 项');
+  if (secretText) parts.push('敏感字段：' + secretText);
+  parts.push('再次点击导入确认');
+  return parts.join('；') + '。';
+}
+
 function importConfig() {
   const text = document.getElementById('configImportText').value.trim();
   if (!text) {
     setOpsStatus('请先粘贴配置备份 JSON。', false);
     return;
   }
-  setOpsStatus('正在导入配置...', true);
-  socket.emit('import_config', { payload: text });
+  if (pendingConfigImportPayload === text && pendingConfigImportPreview && pendingConfigImportPreview.importable) {
+    setOpsStatus('正在导入配置...', true);
+    socket.emit('import_config', { payload: text });
+    pendingConfigImportPayload = null;
+    pendingConfigImportPreview = null;
+    return;
+  }
+  pendingConfigImportPayload = null;
+  pendingConfigImportPreview = null;
+  setOpsStatus('正在预检导入配置...', true);
+  socket.emit('preview_import_config', { payload: text });
 }
 
 function exportDiagnostics() {
@@ -1684,11 +1772,13 @@ function renderRiskSnapshot(snapshot) {
     'K线 ' + (snapshot.kline_points || 0),
     '资讯 ' + (snapshot.news_count || 0),
   ];
-  if (snapshot.data_quality) items.push('可信度 ' + snapshot.data_quality.score + '分/' + snapshot.data_quality.level);
+  const marketQuality = snapshot.market_quality && Object.keys(snapshot.market_quality).length ? snapshot.market_quality : null;
+  const quality = marketQuality || snapshot.data_quality || null;
+  if (quality) items.push('行情质量 ' + quality.score + '分/' + (quality.label || quality.level || '--'));
   if (snapshot.sample_warning) items.push(snapshot.sample_warning);
   meta.innerHTML = items.map(item => '<span>' + escapeHtml(item) + '</span>').join('');
   meta.classList.add('show');
-  renderRiskQuality(snapshot.data_quality || null);
+  renderRiskQuality(quality);
   renderRiskTrends(snapshot.multi_period_trends || []);
   renderRiskScorecard(snapshot.risk_scorecard || null);
 }
@@ -1700,11 +1790,13 @@ function renderRiskQuality(quality) {
     el.classList.remove('show');
     return;
   }
+  const reasons = Array.isArray(quality.reasons) ? quality.reasons.filter(Boolean).join('；') : '';
+  const summary = quality.summary || reasons || quality.label || '暂无说明';
   el.innerHTML = [
-    '<div class="risk-block-title">数据可信度</div>',
+    '<div class="risk-block-title">行情质量</div>',
     '<div class="risk-quality-score">' + escapeHtml(quality.score == null ? '--' : quality.score) + '</div>',
     '<div class="risk-quality-level">等级 ' + escapeHtml(quality.level || '--') + '</div>',
-    '<div class="risk-quality-summary">' + escapeHtml(quality.summary || '暂无说明') + '</div>',
+    '<div class="risk-quality-summary">' + escapeHtml(summary) + '</div>',
   ].join('');
   el.classList.add('show');
 }
@@ -1799,7 +1891,8 @@ function renderRiskHistory() {
   }
   list.innerHTML = riskAnalysisHistory.map((item, index) => {
     const firstLine = String(item.content || '').split('\n').find(Boolean) || '历史分析';
-    const quality = item.snapshot && item.snapshot.data_quality ? ' · 可信度 ' + item.snapshot.data_quality.score + '分' : '';
+    const qualitySource = item.snapshot ? (item.snapshot.market_quality || item.snapshot.data_quality) : null;
+    const quality = qualitySource ? ' · 行情质量 ' + qualitySource.score + '分' : '';
     return [
       '<button class="risk-history-item" type="button" onclick="openRiskHistoryItem(' + index + ')">',
       '<div class="risk-history-time">' + escapeHtml(item.analysis_time || '--') + escapeHtml(quality) + '</div>',
@@ -2839,6 +2932,25 @@ function portfolioPnlClass(value) {
   return number > 0 ? 'up' : 'down';
 }
 
+function portfolioStatusLabel(status) {
+  return ({
+    profit: '盈利',
+    loss: '亏损',
+    near_cost: '接近成本',
+    target_hit: '触发预警',
+    waiting_price: '等待行情',
+    closed: '清仓',
+    invalid_position: '需修正',
+    valued: '已估值',
+  })[status] || '未分类';
+}
+
+function portfolioStatusClass(status) {
+  if (status === 'profit') return 'on';
+  if (status === 'loss' || status === 'target_hit') return 'warn';
+  return 'off';
+}
+
 function portfolioValuationLabel(item) {
   if (!item || item.valuation_status === 'invalid_position' || item.quantity == null) {
     return '持仓数据需修正';
@@ -3071,7 +3183,7 @@ function setPortfolioSearch(value) {
 }
 
 function setPortfolioPositionFilter(value) {
-  portfolioPositionFilter = ['all', 'rmb', 'usd', 'profit', 'loss', 'valued', 'waiting_price', 'closed'].includes(value) ? value : 'all';
+  portfolioPositionFilter = ['all', 'rmb', 'usd', 'profit', 'loss', 'near_cost', 'target_hit', 'valued', 'waiting_price', 'closed'].includes(value) ? value : 'all';
   renderPortfolio();
 }
 
@@ -3143,6 +3255,8 @@ function renderPortfolioControls() {
     portfolioControlOption('usd', '美元', portfolioPositionFilter),
     portfolioControlOption('profit', '盈利', portfolioPositionFilter),
     portfolioControlOption('loss', '亏损', portfolioPositionFilter),
+    portfolioControlOption('near_cost', '接近成本', portfolioPositionFilter),
+    portfolioControlOption('target_hit', '触发预警', portfolioPositionFilter),
     portfolioControlOption('valued', '已估值', portfolioPositionFilter),
     portfolioControlOption('waiting_price', '等待行情', portfolioPositionFilter),
     portfolioControlOption('closed', '清仓', portfolioPositionFilter),
@@ -3178,18 +3292,21 @@ function filteredPortfolioPositions() {
   const filtered = items.filter(item => {
     const mode = item.mode || 'rmb';
     const pnl = Number(item.total_pnl != null ? item.total_pnl : item.pnl);
-    const status = item.valuation_status || '';
+    const portfolioStatus = item.portfolio_status || item.valuation_status || '';
+    const valuationStatus = item.valuation_status || '';
     const matchesFilter = portfolioPositionFilter === 'all'
       || portfolioPositionFilter === mode
+      || portfolioPositionFilter === portfolioStatus
+      || portfolioPositionFilter === valuationStatus
       || (portfolioPositionFilter === 'profit' && Number.isFinite(pnl) && pnl > 0)
-      || (portfolioPositionFilter === 'loss' && Number.isFinite(pnl) && pnl < 0)
-      || portfolioPositionFilter === status;
+      || (portfolioPositionFilter === 'loss' && Number.isFinite(pnl) && pnl < 0);
     if (!matchesFilter) return false;
     return portfolioSearchMatches([
       item.id,
       item.name,
       item.note,
       portfolioModeLabel(mode),
+      portfolioStatusLabel(portfolioStatus),
       portfolioValuationLabel(item),
       item.last_trade_date,
       item.entry_date,
@@ -3627,6 +3744,7 @@ function renderPortfolioPositions(box) {
     const averageCost = formatPortfolioMoney(item.average_cost != null ? item.average_cost : item.entry_price, mode);
     const currentPrice = item.current_price == null ? '等待行情' : formatPortfolioMoney(item.current_price, mode);
     const valuationLabel = portfolioValuationLabel(item);
+    const portfolioStatus = item.portfolio_status || item.valuation_status || '';
     const pnlClass = portfolioPnlClass(item.total_pnl != null ? item.total_pnl : item.pnl);
     const metaParts = [
       portfolioModeLabel(mode),
@@ -3644,7 +3762,7 @@ function renderPortfolioPositions(box) {
       '<div class="portfolio-meta portfolio-pnl ' + pnlClass + '">未实现 ' + escapeHtml(formatPortfolioMoney(item.unrealized_pnl != null ? item.unrealized_pnl : item.pnl, mode)) + ' · 已实现 ' + escapeHtml(formatPortfolioMoney(item.realized_pnl, mode)) + ' · 合计 ' + escapeHtml(formatPortfolioMoney(item.total_pnl, mode)) + '</div>',
       '</div>',
       '<div class="portfolio-actions">',
-      '<span class="alert-rule-state ' + (item.valuation_status === 'valued' ? 'on' : 'off') + '">' + escapeHtml(item.valuation_status === 'valued' ? '已估值' : item.valuation_status === 'closed' ? '清仓' : '等待') + '</span>',
+      '<span class="alert-rule-state ' + portfolioStatusClass(portfolioStatus) + '">' + escapeHtml(portfolioStatusLabel(portfolioStatus)) + '</span>',
       '<button class="btn-clear-sm alert-rule-edit" type="button" onclick="setActivePortfolioDetail(\'' + escapeHtml(item.id) + '\')">' + (activePortfolioDetailId === item.id ? '收起' : '详情') + '</button>',
       '<button class="btn-clear-sm alert-rule-edit" type="button" onclick="startPortfolioTransactionForPosition(\'' + escapeHtml(item.id) + '\', \'buy\')">买入</button>',
       '<button class="btn-clear-sm alert-rule-edit" type="button" onclick="startPortfolioTransactionForPosition(\'' + escapeHtml(item.id) + '\', \'sell\')">卖出</button>',
@@ -4332,6 +4450,9 @@ function normalizeAlertEntry(entry) {
   const item = entry && typeof entry === 'object' ? { ...entry } : {};
   item.id = item.id || 'local-' + (item.timestamp || Date.now()) + '-' + Math.random().toString(16).slice(2);
   item.read = item.read === true;
+  item.handled = item.handled === true;
+  item.handled_at = item.handled_at ? String(item.handled_at) : '';
+  item.handling_note = item.handling_note ? String(item.handling_note) : '';
   return item;
 }
 
@@ -4377,7 +4498,7 @@ function alertLogMatchesSearch(entry) {
   if (!alertLogSearch) return true;
   const haystack = [
     entry.time, entry.timestamp, entry.type, entry.mode, entry.message,
-    alertLevelLabel(entry.type), alertModeLabel(entry.mode),
+    entry.handling_note, alertLevelLabel(entry.type), alertModeLabel(entry.mode),
   ].join(' ').toLowerCase();
   return haystack.includes(alertLogSearch);
 }
@@ -4413,9 +4534,12 @@ function buildLogEntry(entry) {
   const item = document.createElement('div');
   const encodedId = encodeURIComponent(String(entry.id || ''));
   const hasNotificationIssue = alertNotificationIssues(entry).length > 0;
+  const handledBadge = entry.handled ? '<span class="log-handled">已处理</span>' : '';
+  const handlingNote = entry.handling_note ? '<span class="log-note">处理备注：' + escapeHtml(entry.handling_note) + '</span>' : '';
   item.className = [
     'log-item',
     entry.read ? 'read' : 'unread',
+    entry.handled ? 'handled' : '',
   ].filter(Boolean).join(' ');
   item.innerHTML = [
     '<span class="log-unread-dot"></span>',
@@ -4423,11 +4547,14 @@ function buildLogEntry(entry) {
     '<span class="log-line-head">',
     '<span class="log-time">' + escapeHtml(entry.time || entry.timestamp || '') + '</span>',
     '<span class="log-level ' + escapeHtml(entry.type || '') + '">' + escapeHtml(alertLevelLabel(entry.type)) + '</span>',
+    handledBadge,
     '</span>',
     '<span class="log-msg ' + escapeHtml(entry.type || '') + '">' + escapeHtml(entry.message || '达到预警条件') + '</span>',
+    handlingNote,
     renderNotificationBadges(entry),
     '</span>',
     '<span class="log-actions">',
+    '<button class="btn-clear-sm" type="button" onclick="updateAlertHandling(decodeURIComponent(\'' + encodedId + '\'), ' + (entry.handled ? 'false' : 'true') + ')">' + (entry.handled ? '取消处理' : '标记已处理') + '</button>',
     '<button class="btn-clear-sm" type="button" onclick="analyzeAlertFromLog(decodeURIComponent(\'' + encodedId + '\'))">风险分析</button>',
     hasNotificationIssue ? '<button class="btn-clear-sm" type="button" onclick="resendAlertNotification(decodeURIComponent(\'' + encodedId + '\'))">重发通知</button>' : '',
     '</span>',
@@ -4475,6 +4602,28 @@ function updateAlertStatus(id, patch) {
     renderAlertLog();
   }
   socket.emit('update_alert_log_status', Object.assign({ id }, patch || {}));
+}
+
+function updateAlertHandling(id, handled) {
+  const entry = alertEntries.find(item => item.id === id);
+  const nextHandled = handled === true;
+  let note = entry && entry.handling_note ? entry.handling_note : '';
+  if (nextHandled) {
+    const input = window.prompt('处理备注（可选）', note);
+    if (input === null) return;
+    note = input || '';
+  } else {
+    note = '';
+  }
+  if (entry) {
+    entry.handled = nextHandled;
+    entry.handled_at = nextHandled ? (entry.handled_at || new Date().toISOString().slice(0, 19)) : '';
+    entry.handling_note = note;
+    if (nextHandled) entry.read = true;
+    updateAlertLogSummary();
+    renderAlertLog();
+  }
+  socket.emit('update_alert_log_handling', { id, handled: nextHandled, note });
 }
 
 function analyzeAlertFromLog(id) {

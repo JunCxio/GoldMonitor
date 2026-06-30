@@ -36,7 +36,16 @@ def _path_state(path):
     }
 
 
-def build_health_summary(fetch_status, source_health, price_history, watch_targets, risk_history_count, recent_alerts, paths):
+def build_health_summary(
+    fetch_status,
+    source_health,
+    price_history,
+    watch_targets,
+    risk_history_count,
+    recent_alerts,
+    paths,
+    storage_manifest=None,
+):
     fetch_status = fetch_status if isinstance(fetch_status, dict) else {}
     source_health = source_health if isinstance(source_health, dict) else {}
     price_history = price_history if isinstance(price_history, dict) else {}
@@ -85,5 +94,9 @@ def build_health_summary(fetch_status, source_health, price_history, watch_targe
             "notification_muted_alerts": notification_muted_alerts,
             "notification_problem_alerts": notification_problem_alerts,
         },
-        "storage": {key: _path_state(value) for key, value in sorted(paths.items())},
+        "storage": (
+            {key: dict(value) for key, value in sorted(storage_manifest.items())}
+            if isinstance(storage_manifest, dict)
+            else {key: _path_state(value) for key, value in sorted(paths.items())}
+        ),
     }

@@ -56,6 +56,9 @@ def test_timeline_state_aggregates_injected_sources_without_side_effects():
                 "type": "warning",
                 "mode": "rmb",
                 "message": "国内金价达到上涨关注条件",
+                "handled": True,
+                "handled_at": (base + timedelta(minutes=8)).isoformat(timespec="seconds"),
+                "handling_note": "已电话确认",
                 "notifications": [{"channel": "email", "status": "queued"}],
             },
             {"id": "bad-alert", "timestamp": "not-a-time", "message": "bad"},
@@ -68,7 +71,10 @@ def test_timeline_state_aggregates_injected_sources_without_side_effects():
                 "model": "deepseek-v4-pro",
                 "content": "短线风险偏高。\n关注美元指数。",
                 "structured": {"risk_level": "中", "summary": "短线风险偏高"},
-                "snapshot": {"data_quality": {"score": 85}},
+                "snapshot": {
+                    "data_quality": {"score": 85},
+                    "market_quality": {"level": "normal", "score": 100, "label": "数据可信"},
+                },
             },
             {"id": "bad-risk", "analysis_time": "not-a-time", "content": "bad"},
         ],
@@ -122,11 +128,15 @@ def test_timeline_state_aggregates_injected_sources_without_side_effects():
 
     alert_event = next(event for event in state["events"] if event["type"] == "alert")
     assert alert_event["payload"]["message"] == "国内金价达到上涨关注条件"
+    assert alert_event["payload"]["handled"] is True
+    assert alert_event["payload"]["handled_at"] == (base + timedelta(minutes=8)).isoformat(timespec="seconds")
+    assert alert_event["payload"]["handling_note"] == "已电话确认"
     assert alert_event["payload"]["notifications"] == [{"channel": "email", "status": "queued"}]
 
     risk_event = next(event for event in state["events"] if event["type"] == "risk_analysis")
     assert risk_event["title"] == "风险分析：中"
     assert risk_event["payload"]["provider"] == "deepseek"
+    assert risk_event["payload"]["market_quality"]["level"] == "normal"
 
     news_event = next(event for event in state["events"] if event["type"] == "news")
     assert news_event["id"] == "news-https://example.com/gold"

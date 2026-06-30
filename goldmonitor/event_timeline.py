@@ -198,6 +198,9 @@ def build_alert_timeline_events(start_time, end_time, alert_entries=None, today_
                 "title": entry.get("title", ""),
                 "read": bool(entry.get("read")),
                 "acknowledged": bool(entry.get("acknowledged")),
+                "handled": bool(entry.get("handled")),
+                "handled_at": entry.get("handled_at", ""),
+                "handling_note": entry.get("handling_note", ""),
                 "notifications": entry.get("notifications") if isinstance(entry.get("notifications"), list) else [],
                 "related_news": entry.get("related_news") if isinstance(entry.get("related_news"), list) else [],
                 "source": entry.get("source", ""),
@@ -242,6 +245,7 @@ def build_risk_timeline_events(start_time, end_time, risk_items=None):
                 "structured": structured,
                 "snapshot": snapshot,
                 "data_quality": snapshot.get("data_quality") if isinstance(snapshot.get("data_quality"), dict) else {},
+                "market_quality": snapshot.get("market_quality") if isinstance(snapshot.get("market_quality"), dict) else {},
             },
             event_id=f"risk-analysis-{entry.get('id') or event_time.isoformat(timespec='seconds')}",
         )

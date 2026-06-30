@@ -367,6 +367,7 @@
   .alert-rule-actions { display:flex; gap:5px; align-items:center; justify-content:flex-end; flex-wrap:wrap; }
   .alert-rule-state { min-width:38px; padding:3px 6px; border-radius:6px; text-align:center; font-size:0.64rem; font-weight:800; border:1px solid var(--hairline); color:var(--text-dim); }
   .alert-rule-state.on { color:var(--down); background:rgba(76,175,132,0.1); border-color:rgba(76,175,132,0.25); }
+  .alert-rule-state.warn { color:var(--warn); background:rgba(224,160,64,0.08); border-color:rgba(224,160,64,0.24); }
   .alert-rule-state.off { color:var(--text-dim); background:rgba(255,255,255,0.02); }
   .alert-rule-edit { min-height:28px; padding:4px 8px; font-size:0.66rem; }
   .alert-rule-editor { grid-column:1 / -1; display:grid; gap:8px; padding-top:8px; border-top:1px solid var(--hairline); }
@@ -585,12 +586,14 @@
   .log-level.critical,.log-level.upper { color:var(--up); border-color:rgba(224,85,106,0.28); background:rgba(224,85,106,0.08); }
   .log-level.lower { color:var(--down); border-color:rgba(76,175,132,0.25); background:rgba(76,175,132,0.08); }
   .log-level.volatility { color:var(--blue); border-color:rgba(91,155,213,0.28); background:rgba(91,155,213,0.08); }
+  .log-handled { min-height:20px; display:inline-flex; align-items:center; padding:2px 6px; border-radius:6px; border:1px solid rgba(76,175,132,0.25); color:var(--down); background:rgba(76,175,132,0.08); font-size:0.62rem; font-weight:800; white-space:nowrap; }
   .log-meta { min-width:0; }
   .log-msg.warning { color:var(--warn); }
   .log-msg.critical,.log-msg.upper { color:var(--up); }
   .log-msg.lower { color:var(--down); }
   .log-msg.volatility { color:var(--blue); }
   .log-msg { display:block; font-size:0.76rem; line-height:1.45; overflow-wrap:anywhere; }
+  .log-note { display:block; margin-top:5px; color:var(--text-dim); font-size:0.66rem; line-height:1.4; overflow-wrap:anywhere; }
   .log-actions { min-width:0; display:flex; gap:5px; align-items:flex-start; justify-content:flex-end; flex-wrap:wrap; }
   .log-actions .btn-clear-sm { min-width:0; min-height:28px; padding:4px 8px; font-size:0.64rem; white-space:normal; }
   .log-empty { color:var(--text-dim); font-size:0.8rem; text-align:center; padding:32px 0; }

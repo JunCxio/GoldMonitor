@@ -60,6 +60,7 @@ def test_app_portfolio_alerts_attach_to_state_and_trigger_once(monkeypatch, tmp_
     state_after = app.build_portfolio_state()
     assert state_after["alerts"]["triggered"] == 1
     assert state_after["items"][0]["alert"]["status"] == "triggered"
+    assert state_after["items"][0]["portfolio_status"] == "target_hit"
 
 
 def test_portfolio_alert_socket_events_save_reset_and_delete(monkeypatch, tmp_path):

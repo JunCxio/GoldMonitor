@@ -67,6 +67,64 @@ def test_config_backup_and_export_file_sanitize_outputs():
         assert Path(saved).read_text(encoding="utf-8") == "hello"
 
 
+def test_config_import_preview_reports_sections_ignored_keys_and_secret_actions():
+    from goldmonitor.support_files import build_config_import_preview
+
+    preview = build_config_import_preview(
+        {
+            "settings": {
+                "smtp_server": "smtp.example.com",
+                "smtp_password_configured": True,
+                "smtp_password": "",
+                "deepseek_api_key": "sk-imported",
+                "unknown_setting": "ignored",
+            },
+            "thresholds": {
+                "upper_warning_rmb": 700,
+                "volatility_config": {"enabled": True},
+                "unknown_threshold": 1,
+            },
+        },
+        settings_defaults={
+            "smtp_server": "",
+            "smtp_password": "",
+            "deepseek_api_key": "",
+        },
+        threshold_keys={"upper_warning_rmb", "volatility_config"},
+        secret_keys={"smtp_password", "deepseek_api_key", "openai_compatible_api_key"},
+    )
+
+    assert preview["ok"] is True
+    assert preview["importable"] is True
+    assert preview["sections"] == ["settings", "thresholds"]
+    assert preview["missing_sections"] == []
+    assert preview["ignored"]["settings"] == ["smtp_password_configured", "unknown_setting"]
+    assert preview["ignored"]["thresholds"] == ["unknown_threshold"]
+    assert preview["secret_actions"] == {
+        "deepseek_api_key": "import",
+        "openai_compatible_api_key": "preserve_existing",
+        "smtp_password": "clear",
+    }
+    assert preview["counts"] == {"settings": 3, "thresholds": 2}
+
+
+def test_config_import_preview_rejects_payload_without_importable_sections():
+    from goldmonitor.support_files import build_config_import_preview
+
+    preview = build_config_import_preview(
+        {"app": "GoldMonitor"},
+        settings_defaults={"smtp_server": ""},
+        threshold_keys={"upper_warning_rmb"},
+        secret_keys={"smtp_password"},
+    )
+
+    assert preview["ok"] is False
+    assert preview["importable"] is False
+    assert preview["sections"] == []
+    assert preview["missing_sections"] == ["settings", "thresholds"]
+    assert preview["message"] == "备份中没有可导入的配置"
+
+
 def test_open_exports_folder_plan_matches_platforms():
     from goldmonitor.support_files import build_open_folder_plan
 

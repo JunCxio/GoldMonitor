@@ -13,6 +13,7 @@ PORTFOLIO_MODES = {"rmb", "usd"}
 PORTFOLIO_TRANSACTION_TYPES = {"buy", "sell"}
 PORTFOLIO_NAME_LIMIT = 60
 PORTFOLIO_NOTE_LIMIT = 200
+PORTFOLIO_NEAR_COST_PERCENT = 0.5
 PORTFOLIO_CSV_FIELDS = [
     "id",
     "name",
@@ -207,6 +208,18 @@ def empty_portfolio_summary():
     }
 
 
+def portfolio_status_from_valuation(valuation_status, pnl_percent=None, near_cost_percent=PORTFOLIO_NEAR_COST_PERCENT):
+    if valuation_status in {"waiting_price", "invalid_position", "closed"}:
+        return valuation_status
+    try:
+        percent = float(pnl_percent)
+    except (TypeError, ValueError):
+        return valuation_status or "unknown"
+    if abs(percent) <= float(near_cost_percent):
+        return "near_cost"
+    return "profit" if percent > 0 else "loss"
+
+
 def value_portfolio_position(position, prices):
     item = dict(position) if isinstance(position, dict) else {}
     mode = item.get("mode")
@@ -222,10 +235,12 @@ def value_portfolio_position(position, prices):
         "pnl": None,
         "pnl_percent": None,
         "valuation_status": "valued",
+        "portfolio_status": "valued",
     })
 
     if entry_price is None or quantity is None:
         item["valuation_status"] = "invalid_position"
+        item["portfolio_status"] = "invalid_position"
         return item
 
     cost = entry_price * quantity
@@ -233,14 +248,17 @@ def value_portfolio_position(position, prices):
 
     if current_price is None:
         item["valuation_status"] = "waiting_price"
+        item["portfolio_status"] = "waiting_price"
         return item
 
     market_value = current_price * quantity
     pnl = market_value - cost
+    pnl_percent = _round_value((pnl / cost) * 100)
     item.update({
         "market_value": _round_value(market_value),
         "pnl": _round_value(pnl),
-        "pnl_percent": _round_value((pnl / cost) * 100),
+        "pnl_percent": pnl_percent,
+        "portfolio_status": portfolio_status_from_valuation("valued", pnl_percent),
     })
     return item
 
@@ -718,6 +736,7 @@ def _value_transaction_position(position, prices):
         "entry_price": _round_value(item.get("average_cost")),
         "entry_date": item.get("last_trade_date", ""),
         "valuation_status": "valued",
+        "portfolio_status": "valued",
     })
 
     if quantity <= 0:
@@ -729,11 +748,13 @@ def _value_transaction_position(position, prices):
             "pnl": 0.0,
             "pnl_percent": 0.0,
             "valuation_status": "closed",
+            "portfolio_status": "closed",
         })
         return item
 
     if current_price is None:
         item["valuation_status"] = "waiting_price"
+        item["portfolio_status"] = "waiting_price"
         return item
 
     market_value = current_price * quantity
@@ -746,6 +767,7 @@ def _value_transaction_position(position, prices):
         "total_pnl": _round_value(realized_pnl + unrealized_pnl),
         "pnl": _round_value(unrealized_pnl),
         "pnl_percent": _round_value(unrealized_percent),
+        "portfolio_status": portfolio_status_from_valuation("valued", unrealized_percent),
     })
     return item
 

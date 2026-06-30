@@ -52,3 +52,67 @@ def test_fetch_status_marks_all_live_sources_ok_as_normal():
     assert status["degraded"] is False
     assert status["sources"]["gold"]["cached"] is False
     assert status["sources"]["forex"]["cached"] is False
+
+
+def test_source_health_state_includes_market_quality(monkeypatch):
+    monkeypatch.setattr(app, "price_usd", 2350.0)
+    monkeypatch.setattr(app, "price_rmb", 544.0)
+    monkeypatch.setattr(app, "usdcny_rate", 7.2)
+    monkeypatch.setattr(app, "last_fetch_ok", False)
+    monkeypatch.setattr(app, "last_fetch_error", "实时金价源暂不可用，正在使用缓存金价")
+    monkeypatch.setattr(app, "gold_price_cached", True)
+    monkeypatch.setattr(app, "gold_price_error", "实时金价源暂不可用")
+    monkeypatch.setattr(app, "gold_price_source", "缓存金价")
+    monkeypatch.setattr(app, "usdcny_rate_cached", False)
+    monkeypatch.setattr(app, "usdcny_rate_error", "")
+    monkeypatch.setattr(app, "usdcny_rate_source", "新浪汇率")
+    monkeypatch.setattr(app, "source_health", {
+        "缓存金价": {
+            "name": "缓存金价",
+            "category": "gold",
+            "ok": True,
+            "cached": True,
+            "fail_count": 0,
+            "ok_count": 1,
+        }
+    })
+    monkeypatch.setattr(app, "source_comparison_state", {"status": "insufficient", "summary": {}})
+
+    state = app.get_source_health_state()
+
+    assert state["quality"]["level"] == "stale"
+    assert state["quality"]["score"] == 60
+    assert "正在使用缓存行情" in state["quality"]["reasons"]
+
+
+def test_risk_analysis_context_includes_market_quality(monkeypatch):
+    monkeypatch.setattr(app, "price_usd", 2350.0)
+    monkeypatch.setattr(app, "price_rmb", 544.0)
+    monkeypatch.setattr(app, "usdcny_rate", 7.2)
+    monkeypatch.setattr(app, "last_fetch_ok", False)
+    monkeypatch.setattr(app, "last_fetch_error", "实时金价源暂不可用，正在使用缓存金价")
+    monkeypatch.setattr(app, "gold_price_cached", True)
+    monkeypatch.setattr(app, "gold_price_error", "实时金价源暂不可用")
+    monkeypatch.setattr(app, "gold_price_source", "缓存金价")
+    monkeypatch.setattr(app, "gold_price_time", "2026-06-30T10:00:00")
+    monkeypatch.setattr(app, "usdcny_rate_cached", False)
+    monkeypatch.setattr(app, "usdcny_rate_error", "")
+    monkeypatch.setattr(app, "usdcny_rate_source", "新浪汇率")
+    monkeypatch.setattr(app, "usdcny_rate_time", "2026-06-30T10:00:00")
+    monkeypatch.setattr(app, "source_health", {
+        "缓存金价": {
+            "name": "缓存金价",
+            "category": "gold",
+            "ok": True,
+            "cached": True,
+            "fail_count": 0,
+            "ok_count": 1,
+        }
+    })
+    monkeypatch.setattr(app, "source_comparison_state", {"status": "insufficient", "summary": {}})
+
+    context = app.build_risk_analysis_context()
+    snapshot = app.build_risk_analysis_snapshot(context)
+
+    assert context["market_quality"]["level"] == "stale"
+    assert snapshot["market_quality"]["level"] == "stale"

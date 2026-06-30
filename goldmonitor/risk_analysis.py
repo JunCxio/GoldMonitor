@@ -128,6 +128,7 @@ def build_snapshot(context):
         "news_count": len(context.get("news", [])),
         "sample_warning": context.get("sample_warning", ""),
         "data_quality": context.get("data_quality", {}),
+        "market_quality": context.get("market_quality", {}),
         "multi_period_trends": context.get("multi_period_trends", []),
         "risk_scorecard": context.get("risk_scorecard", {}),
         "manual_trigger": context.get("manual_trigger", {}),
@@ -178,6 +179,7 @@ def build_cache_key(snapshot):
         "kline_points": snapshot.get("kline_points"),
         "news_count": snapshot.get("news_count"),
         "sample_warning": snapshot.get("sample_warning", ""),
+        "market_quality": snapshot.get("market_quality") or {},
         "manual_trigger": snapshot.get("manual_trigger") or {},
     }
     return json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

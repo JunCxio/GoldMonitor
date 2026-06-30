@@ -143,6 +143,7 @@ def test_risk_snapshot_sections_and_cache_are_stable():
         "news": [{"title": "Gold holds near highs"}],
         "sample_warning": "",
         "data_quality": {"score": 90},
+        "market_quality": {"level": "stale", "score": 60, "label": "使用缓存", "reasons": ["正在使用缓存行情"]},
         "multi_period_trends": [{"minutes": 15, "direction": "up"}],
         "risk_scorecard": {"overall_risk": 42},
         "manual_trigger": {"source": "manual"},
@@ -150,6 +151,7 @@ def test_risk_snapshot_sections_and_cache_are_stable():
     snapshot = build_snapshot(context)
     assert snapshot["history_points"] == 24
     assert snapshot["news_count"] == 1
+    assert snapshot["market_quality"]["level"] == "stale"
     assert snapshot["risk_scorecard"] == {"overall_risk": 42}
 
     structured = parse_sections("风险等级：中等\n补充说明\n趋势方向: 震荡偏强")
@@ -159,6 +161,9 @@ def test_risk_snapshot_sections_and_cache_are_stable():
     same_market = dict(snapshot)
     same_market["analysis_time"] = "2026-06-08T12:05:00"
     assert build_cache_key(snapshot) == build_cache_key(same_market)
+    changed_quality = dict(snapshot)
+    changed_quality["market_quality"] = {"level": "anomaly", "score": 50, "label": "价差异常"}
+    assert build_cache_key(snapshot) != build_cache_key(changed_quality)
 
     cached = find_recent_cache(
         [{"analysis_time": "2026-06-08T11:58:30", "snapshot": same_market, "content": "cached"}],

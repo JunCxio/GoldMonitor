@@ -451,3 +451,42 @@ def build_source_comparison_state(samples=None, stale_seconds=300, anomaly_pct=0
             state["status"] = "normal"
             state["message"] = f"数据源价差 {spread_pct:.2f}% ，处于正常范围"
     return state
+
+
+def build_market_quality(fetch_status=None, source_health=None, comparison=None):
+    fetch_status = fetch_status if isinstance(fetch_status, dict) else {}
+    source_health = source_health if isinstance(source_health, dict) else {}
+    comparison = comparison if isinstance(comparison, dict) else {}
+    source_summary = source_health.get("summary") if isinstance(source_health.get("summary"), dict) else {}
+
+    failed_sources = int(source_summary.get("failed") or 0)
+    cached_sources = int(source_summary.get("cached") or 0)
+    uses_cache = bool(fetch_status.get("gold_cached") or fetch_status.get("forex_cached") or cached_sources)
+    has_anomaly = comparison.get("status") == "anomaly"
+    degraded = bool(fetch_status.get("degraded") or fetch_status.get("ok") is False or failed_sources)
+
+    reasons = []
+    if has_anomaly:
+        reasons.append("数据源价差异常")
+    if uses_cache:
+        reasons.append("正在使用缓存行情")
+    if failed_sources:
+        reasons.append(f"{failed_sources} 个数据源异常")
+    if fetch_status.get("error"):
+        reasons.append(str(fetch_status.get("error")))
+
+    if has_anomaly:
+        level, score, label = "anomaly", 50, "价差异常"
+    elif uses_cache:
+        level, score, label = "stale", 60, "使用缓存"
+    elif degraded:
+        level, score, label = "degraded", 70, "部分降级"
+    else:
+        level, score, label = "normal", 100, "数据可信"
+
+    return {
+        "level": level,
+        "score": score,
+        "label": label,
+        "reasons": reasons,
+    }

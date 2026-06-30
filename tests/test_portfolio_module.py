@@ -118,6 +118,74 @@ def test_portfolio_state_marks_waiting_price_and_invalid_position():
     assert state["rmb_summary"]["valued"] == 0
 
 
+def test_portfolio_state_adds_user_facing_status_categories():
+    from goldmonitor.portfolio import (
+        build_portfolio_state,
+        build_portfolio_state_from_transactions,
+        normalize_portfolio_position,
+        normalize_portfolio_transaction,
+    )
+
+    profit = normalize_portfolio_position(
+        {"id": "profit", "name": "盈利", "mode": "rmb", "entry_price": "680", "quantity": "1"},
+        now_factory=fixed_now,
+    )
+    loss = normalize_portfolio_position(
+        {"id": "loss", "name": "亏损", "mode": "usd", "entry_price": "2300", "quantity": "1"},
+        now_factory=fixed_now,
+    )
+    near_cost = normalize_portfolio_position(
+        {"id": "near-cost", "name": "近成本", "mode": "rmb", "entry_price": "700", "quantity": "1"},
+        now_factory=fixed_now,
+    )
+    state = build_portfolio_state(
+        [profit, loss, near_cost],
+        {"rmb": 700.4, "usd": 2200.0},
+    )
+    by_id = {item["id"]: item for item in state["items"]}
+
+    assert by_id["profit"]["portfolio_status"] == "profit"
+    assert by_id["loss"]["portfolio_status"] == "loss"
+    assert by_id["near-cost"]["portfolio_status"] == "near_cost"
+
+    waiting = normalize_portfolio_position(
+        {"id": "waiting", "name": "等待价格", "mode": "usd", "entry_price": "2300", "quantity": "1"},
+        now_factory=fixed_now,
+    )
+    waiting_state = build_portfolio_state([waiting], {"rmb": 700.4, "usd": None})
+
+    assert waiting_state["items"][0]["portfolio_status"] == "waiting_price"
+
+    closed_buy = normalize_portfolio_transaction(
+        {
+            "position_id": "closed-position",
+            "name": "已清仓",
+            "type": "buy",
+            "mode": "rmb",
+            "price": "680",
+            "quantity": "1",
+        },
+        now_factory=fixed_now,
+        id_factory=lambda: "transaction-closed-buy",
+    )
+    closed_sell = normalize_portfolio_transaction(
+        {
+            "position_id": "closed-position",
+            "name": "已清仓",
+            "type": "sell",
+            "mode": "rmb",
+            "price": "700",
+            "quantity": "1",
+        },
+        now_factory=fixed_now,
+        id_factory=lambda: "transaction-closed-sell",
+    )
+    closed_state = build_portfolio_state_from_transactions([closed_buy, closed_sell], {"rmb": 720.0})
+
+    assert closed_state["items"][0]["valuation_status"] == "closed"
+    assert closed_state["items"][0]["portfolio_status"] == "closed"
+
+
 def test_portfolio_normalization_dates_and_timestamps():
     from goldmonitor.portfolio import normalize_portfolio_position
 

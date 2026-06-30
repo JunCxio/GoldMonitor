@@ -136,6 +136,49 @@ def test_source_health_and_comparison_are_pure_state_helpers():
     assert comparison["summary"]["high_source"] == "B"
 
 
+def test_market_quality_summarizes_fetch_health_cache_and_source_anomaly():
+    from goldmonitor.market_data import build_market_quality
+
+    normal = build_market_quality(
+        fetch_status={"ok": True, "degraded": False, "gold_cached": False, "forex_cached": False},
+        source_health={"summary": {"failed": 0, "cached": 0}},
+        comparison={"status": "normal", "message": "数据源价差 0.10% ，处于正常范围"},
+    )
+    assert normal == {
+        "level": "normal",
+        "score": 100,
+        "label": "数据可信",
+        "reasons": [],
+    }
+
+    stale = build_market_quality(
+        fetch_status={"ok": False, "degraded": True, "gold_cached": True, "forex_cached": False},
+        source_health={"summary": {"failed": 0, "cached": 1}},
+        comparison={"status": "insufficient"},
+    )
+    assert stale["level"] == "stale"
+    assert stale["score"] == 60
+    assert "正在使用缓存行情" in stale["reasons"]
+
+    degraded = build_market_quality(
+        fetch_status={"ok": False, "degraded": True, "gold_cached": False, "forex_cached": False},
+        source_health={"summary": {"failed": 2, "cached": 0}},
+        comparison={"status": "insufficient"},
+    )
+    assert degraded["level"] == "degraded"
+    assert degraded["score"] == 70
+    assert "2 个数据源异常" in degraded["reasons"]
+
+    anomaly = build_market_quality(
+        fetch_status={"ok": True, "degraded": False, "gold_cached": False, "forex_cached": False},
+        source_health={"summary": {"failed": 0, "cached": 0}},
+        comparison={"status": "anomaly", "message": "数据源价差 0.87% ，建议核对行情源"},
+    )
+    assert anomaly["level"] == "anomaly"
+    assert anomaly["score"] == 50
+    assert "数据源价差异常" in anomaly["reasons"]
+
+
 if __name__ == "__main__":
     failures = []
     for name, value in sorted(globals().items()):
