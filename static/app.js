@@ -4536,11 +4536,22 @@ function setAlertEntries(items) {
   renderAlertLog();
 }
 
+const alertLogViewLabels = {
+  all: '全部',
+  new: '新警报',
+  unhandled: '未处理',
+  handled: '已处理',
+  failed: '通知失败',
+};
+
+function normalizeAlertLogView(value) {
+  return Object.prototype.hasOwnProperty.call(alertLogViewLabels, value) ? value : 'all';
+}
+
 function setAlertLogView(value) {
-  alertLogView = value === 'new' ? 'new' : 'all';
+  alertLogView = normalizeAlertLogView(value);
   document.querySelectorAll('.alert-log-tab').forEach(button => {
-    const isActive = button.textContent.trim() === (alertLogView === 'new' ? '新警报' : '全部');
-    button.classList.toggle('active', isActive);
+    button.classList.toggle('active', button.dataset.alertLogView === alertLogView);
   });
   renderAlertLog();
 }
@@ -4580,6 +4591,9 @@ function updateAlertLogSummary() {
 
 function alertLogMatchesView(entry) {
   if (alertLogView === 'new') return !entry.read;
+  if (alertLogView === 'unhandled') return !entry.handled;
+  if (alertLogView === 'handled') return !!entry.handled;
+  if (alertLogView === 'failed') return alertNotificationIssues(entry).length > 0;
   return true;
 }
 

@@ -273,10 +273,16 @@ for required in (
     "update_alert_log_handling",
     "alert_log_handling_updated",
     "function updateAlertHandling",
+    "alertLogView === 'unhandled'",
+    "alertLogView === 'handled'",
+    "alertLogView === 'failed'",
+    "alertNotificationIssues(entry).length > 0",
     "handling_note",
     "payload.handled",
     "处置结果",
     "已处理",
+    "未处理",
+    "通知失败",
 ):
     if required not in js:
         raise SystemExit(f"static/app.js missing alert handling contract: {required}")

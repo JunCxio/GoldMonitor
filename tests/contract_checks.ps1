@@ -129,7 +129,13 @@ Assert-Contains -Path ".github\workflows\release.yml" -Pattern 'GoldMonitor-macO
 Assert-Contains -Path "scripts\build_macos_dmg.sh" -Pattern 'hdiutil create' -Message "macOS packaging must create a DMG"
 Assert-Contains -Path "scripts\generate_release_manifest.py" -Pattern 'CHANGELOG\.md' -Message "release metadata must read version notes from CHANGELOG.md"
 Assert-Contains -Path "scripts\generate_release_manifest.py" -Pattern 'missing release notes' -Message "release metadata must fail when release notes are missing"
-Assert-Contains -Path "CHANGELOG.md" -Pattern '## 1\.3\.2' -Message "CHANGELOG.md must document the current release"
+$appSource = Get-Content -Path "app.py" -Raw -Encoding UTF8
+$appVersionMatch = [regex]::Match($appSource, 'APP_VERSION\s*=\s*"([^"]+)"')
+if (-not $appVersionMatch.Success) {
+    throw "app.py must expose APP_VERSION as a quoted string"
+}
+$currentReleasePattern = '##\s+' + [regex]::Escape($appVersionMatch.Groups[1].Value)
+Assert-Contains -Path "CHANGELOG.md" -Pattern $currentReleasePattern -Message "CHANGELOG.md must document the current release"
 Assert-Contains -Path "app.py" -Pattern 'NEWS_CACHE_PATH' -Message "app.py must cache gold-related news locally"
 Assert-Contains -Path "app.py" -Pattern 'THRESHOLDS_PATH' -Message "app.py must persist thresholds locally"
 Assert-Contains -Path "app.py" -Pattern 'load_thresholds' -Message "app.py must load thresholds from disk"

@@ -174,8 +174,11 @@
               <h3>警报记录 <span class="log-count" id="alertUnreadCount">0 新</span></h3>
               <div class="log-tools">
                 <div class="alert-log-tabs" id="alertLogModeTabs" role="tablist" aria-label="警报记录范围">
-                  <button class="alert-log-tab active" type="button" onclick="setAlertLogView('all')">全部</button>
-                  <button class="alert-log-tab" type="button" onclick="setAlertLogView('new')">新警报</button>
+                  <button class="alert-log-tab active" type="button" data-alert-log-view="all" onclick="setAlertLogView('all')">全部</button>
+                  <button class="alert-log-tab" type="button" data-alert-log-view="new" onclick="setAlertLogView('new')">新警报</button>
+                  <button class="alert-log-tab" type="button" data-alert-log-view="unhandled" onclick="setAlertLogView('unhandled')">未处理</button>
+                  <button class="alert-log-tab" type="button" data-alert-log-view="handled" onclick="setAlertLogView('handled')">已处理</button>
+                  <button class="alert-log-tab" type="button" data-alert-log-view="failed" onclick="setAlertLogView('failed')">通知失败</button>
                 </div>
                 <div class="alert-log-more">
                   <button class="btn-clear-sm" type="button" onclick="toggleAlertLogMenu()">更多</button>
