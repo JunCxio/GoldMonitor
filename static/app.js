@@ -3177,6 +3177,15 @@ function renderPortfolioTabs() {
   });
 }
 
+function togglePortfolioToolsMenu() {
+  const menu = document.getElementById('portfolioToolsMenu');
+  const button = document.getElementById('portfolioToolsMoreButton');
+  if (!menu) return;
+  const willOpen = menu.hidden;
+  menu.hidden = !willOpen;
+  if (button) button.setAttribute('aria-expanded', String(willOpen));
+}
+
 function setPortfolioSearch(value) {
   portfolioSearch = String(value || '').trim();
   renderPortfolio();
@@ -4482,6 +4491,21 @@ function toggleAlertLogMenu() {
   menu.hidden = !menu.hidden;
 }
 
+function toggleLogEntryMenu(button) {
+  const actions = button && button.closest ? button.closest('.log-actions') : null;
+  const menu = actions ? actions.querySelector('.log-entry-menu') : null;
+  if (!menu) return;
+  const willOpen = menu.hidden;
+  document.querySelectorAll('.log-entry-menu').forEach(openMenu => {
+    if (openMenu !== menu) openMenu.hidden = true;
+  });
+  document.querySelectorAll('.log-action-trigger[aria-expanded="true"]').forEach(openButton => {
+    if (openButton !== button) openButton.setAttribute('aria-expanded', 'false');
+  });
+  menu.hidden = !willOpen;
+  button.setAttribute('aria-expanded', String(willOpen));
+}
+
 function updateAlertLogSummary() {
   const countEl = document.getElementById('alertUnreadCount');
   const unread = alertEntries.filter(entry => !entry.read).length;
@@ -4554,9 +4578,12 @@ function buildLogEntry(entry) {
     renderNotificationBadges(entry),
     '</span>',
     '<span class="log-actions">',
+    '<button class="btn-clear-sm log-action-trigger" type="button" aria-haspopup="true" aria-expanded="false" onclick="toggleLogEntryMenu(this)">操作</button>',
+    '<span class="log-entry-menu" hidden>',
     '<button class="btn-clear-sm" type="button" onclick="updateAlertHandling(decodeURIComponent(\'' + encodedId + '\'), ' + (entry.handled ? 'false' : 'true') + ')">' + (entry.handled ? '取消处理' : '标记已处理') + '</button>',
     '<button class="btn-clear-sm" type="button" onclick="analyzeAlertFromLog(decodeURIComponent(\'' + encodedId + '\'))">风险分析</button>',
     hasNotificationIssue ? '<button class="btn-clear-sm" type="button" onclick="resendAlertNotification(decodeURIComponent(\'' + encodedId + '\'))">重发通知</button>' : '',
+    '</span>',
     '</span>',
   ].join('');
   return item;

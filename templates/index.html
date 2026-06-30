@@ -117,12 +117,17 @@
             <div class="portfolio-head">
               <h3>持仓</h3>
               <div class="portfolio-tools">
-                <button class="btn-clear-sm" type="button" onclick="setActivePortfolioTransaction('new')">新增流水</button>
-                <button class="btn-clear-sm" type="button" onclick="downloadPortfolioTransactionTemplate()">下载模板</button>
-                <button class="btn-clear-sm" type="button" onclick="importPortfolioTransactions()">导入流水</button>
-                <button class="btn-clear-sm" type="button" onclick="exportPortfolio('positions')">导出持仓</button>
-                <button class="btn-clear-sm" type="button" onclick="exportPortfolio('transactions')">导出流水</button>
-                <button class="btn-clear-sm" type="button" onclick="exportPortfolio('review')">导出复盘</button>
+                <button class="btn-clear-sm portfolio-primary-action" type="button" onclick="setActivePortfolioTransaction('new')">新增流水</button>
+                <div class="portfolio-tools-more">
+                  <button class="btn-clear-sm" id="portfolioToolsMoreButton" type="button" aria-haspopup="true" aria-expanded="false" onclick="togglePortfolioToolsMenu()">更多</button>
+                  <div class="portfolio-tools-menu" id="portfolioToolsMenu" hidden>
+                    <button class="btn-clear-sm" type="button" onclick="downloadPortfolioTransactionTemplate()">下载模板</button>
+                    <button class="btn-clear-sm" type="button" onclick="importPortfolioTransactions()">导入流水</button>
+                    <button class="btn-clear-sm" type="button" onclick="exportPortfolio('positions')">导出持仓</button>
+                    <button class="btn-clear-sm" type="button" onclick="exportPortfolio('transactions')">导出流水</button>
+                    <button class="btn-clear-sm" type="button" onclick="exportPortfolio('review')">导出复盘</button>
+                  </div>
+                </div>
               </div>
             </div>
             <input id="portfolioImportFile" class="portfolio-import-file" type="file" accept=".csv,text/csv" onchange="onPortfolioImportFile(this)">

@@ -26,6 +26,8 @@ if '<script src="/static/app.js"></script>' not in template:
 for required in (
     'id="portfolioStatus"',
     'id="portfolioViewTabs"',
+    'id="portfolioToolsMenu"',
+    'onclick="togglePortfolioToolsMenu()"',
     'id="portfolioSummary"',
     'id="portfolioList"',
     'onclick="setPortfolioView(\'positions\')"',
@@ -70,6 +72,8 @@ for required in (":root", ".container", ".settings-modal", ".price-card"):
 for required in (
     ".portfolio-card",
     ".portfolio-head h3",
+    ".portfolio-tools-more",
+    ".portfolio-tools-menu",
     ".portfolio-tabs",
     ".portfolio-controls",
     ".portfolio-search",
@@ -151,6 +155,8 @@ for required in (
     "function renderPortfolioPositionDetail",
     "function buildPortfolioAlertEditor",
     "function portfolioAlertForPosition",
+    "function togglePortfolioToolsMenu",
+    "function toggleLogEntryMenu",
     "function capturePortfolioAlertDraft",
     "function setPortfolioView",
     "function setActivePortfolioDetail",
@@ -220,6 +226,16 @@ for required in (
 ):
     if required not in css:
         raise SystemExit(f"static/app.css missing portfolio editor sizing contract: {required}")
+
+for required in (
+    ".log-action-trigger",
+    ".log-entry-menu",
+    ".log-entry-menu[hidden]",
+    "grid-template-columns:8px minmax(0, 1fr) 54px",
+    "overflow-wrap:break-word",
+):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing compact alert log contract: {required}")
 
 for forbidden in (
     "grid-template-columns:minmax(140px, 1fr) minmax(140px, 1fr) minmax(150px, 1fr)",
