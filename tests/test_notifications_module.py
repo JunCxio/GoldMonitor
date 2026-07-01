@@ -114,10 +114,10 @@ def test_templates_and_webhook_payload_use_market_context_without_leaking_format
         "价格触发",
         values,
         app_name="GoldMonitor",
-        app_version="1.4.2",
+        app_version="1.0.0",
     )
     assert payload["app"] == "GoldMonitor"
-    assert payload["version"] == "1.4.2"
+    assert payload["version"] == "1.0.0"
     assert payload["type"] == "critical"
     assert payload["title"] == "突破上限"
     assert payload["price_rmb"] == "543.21"

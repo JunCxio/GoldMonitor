@@ -8,8 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import app
 
 
-WINDOWS_ASSET_URL = "https://github.com/JunCxio/GoldMonitor/releases/download/v1.0.5/GoldMonitorSetup.exe"
-MACOS_ASSET_URL = "https://github.com/JunCxio/GoldMonitor/releases/download/v1.0.5/GoldMonitor-macOS.dmg"
+WINDOWS_ASSET_URL = "https://github.com/JunCxio/GoldMonitor/releases/download/v1.0.0/GoldMonitorSetup.exe"
+MACOS_ASSET_URL = "https://github.com/JunCxio/GoldMonitor/releases/download/v1.0.0/GoldMonitor-macOS.dmg"
 
 
 class FakeResponse:
@@ -28,9 +28,9 @@ class FakeResponse:
 
 def release_api_payload():
     return {
-        "tag_name": "v1.0.5",
-        "name": "GoldMonitor v1.0.5",
-        "body": "修复更新检查网络兼容性。",
+        "tag_name": "v1.0.0",
+        "name": "GoldMonitor v1.0.0",
+        "body": "首次正式发布。",
         "assets": [
             {
                 "name": "GoldMonitorSetup.exe",
@@ -65,9 +65,9 @@ def test_fetch_update_manifest_falls_back_to_github_release_api_when_asset_downl
         app._platform_update_key = original_platform_key
 
     assert manifest == {
-        "version": "1.0.5",
+        "version": "1.0.0",
         "url": WINDOWS_ASSET_URL,
-        "notes": "修复更新检查网络兼容性。",
+        "notes": "首次正式发布。",
         "sha256": "a" * 64,
     }
     assert [url for url, _kwargs in calls] == [

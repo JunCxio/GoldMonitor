@@ -4,27 +4,27 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import app
 
-WINDOWS_ASSET_URL = "https://github.com/JunCxio/GoldMonitor/releases/download/v1.0.1/GoldMonitorSetup.exe"
-MACOS_ASSET_URL = "https://github.com/JunCxio/GoldMonitor/releases/download/v1.0.2/GoldMonitor-macOS.dmg"
+WINDOWS_ASSET_URL = "https://github.com/JunCxio/GoldMonitor/releases/download/v9.0.0/GoldMonitorSetup.exe"
+MACOS_ASSET_URL = "https://github.com/JunCxio/GoldMonitor/releases/download/v9.0.0/GoldMonitor-macOS.dmg"
 
 
-if app.compare_versions("1.2.0", "1.1.9") <= 0:
-    raise SystemExit("1.2.0 must be newer than 1.1.9")
+if app.compare_versions("9.0.0", "8.9.9") <= 0:
+    raise SystemExit("9.0.0 must be newer than 8.9.9")
 
 if app.compare_versions("1.0.0", "1.0") != 0:
     raise SystemExit("1.0.0 and 1.0 must compare as the same version")
 
-if app.compare_versions("1.0.0", "1.0.1") >= 0:
-    raise SystemExit("1.0.0 must be older than 1.0.1")
+if app.compare_versions("1.0.0", "9.0.0") >= 0:
+    raise SystemExit("1.0.0 must be older than 9.0.0")
 
 manifest = app.normalize_update_manifest({
-    "version": "1.0.1",
+    "version": "9.0.0",
     "url": WINDOWS_ASSET_URL,
     "notes": "test release",
     "sha256": "A" * 64,
 })
 
-if manifest["version"] != "1.0.1":
+if manifest["version"] != "9.0.0":
     raise SystemExit("manifest version was not normalized")
 
 if manifest["url"] != WINDOWS_ASSET_URL:
@@ -37,7 +37,7 @@ original_platform_key = app._platform_update_key
 try:
     app._platform_update_key = lambda: "macos"
     platform_manifest = app.normalize_update_manifest({
-        "version": "1.0.2",
+        "version": "9.0.0",
         "url": WINDOWS_ASSET_URL,
         "sha256": "b" * 64,
         "downloads": {
@@ -62,7 +62,7 @@ if platform_manifest["sha256"] != "c" * 64:
 
 try:
     app.normalize_update_manifest({
-        "version": "1.0.1",
+        "version": "9.0.0",
         "url": "http://example.com/GoldMonitorSetup.exe",
         "sha256": "a" * 64,
     })
@@ -73,7 +73,7 @@ else:
 
 try:
     app.normalize_update_manifest({
-        "version": "1.0.1",
+        "version": "9.0.0",
         "url": "https://example.com/GoldMonitorSetup.exe",
         "sha256": "a" * 64,
     })
@@ -84,7 +84,7 @@ else:
 
 try:
     app.normalize_update_manifest({
-        "version": "1.0.1",
+        "version": "9.0.0",
         "url": WINDOWS_ASSET_URL,
     })
 except ValueError:

@@ -1219,7 +1219,7 @@ python tests/test_portfolio_module.py
 
 - [ ] **Step 4: 更新 CHANGELOG**
 
-Under `## 1.4.3`, add:
+Under the current release section, add:
 
 ```markdown
 - 新增持仓看板，支持人民币克价和国际金价持仓的成本、市值、浮动盈亏计算与 CSV 导出。

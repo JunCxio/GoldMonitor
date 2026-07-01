@@ -49,14 +49,14 @@ def test_config_backup_and_export_file_sanitize_outputs():
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         backup = build_config_backup(
-            app_version="1.4.2",
+            app_version="1.0.0",
             settings={"smtp_password": ""},
             thresholds={"upper_warning_rmb": 888.88, "volatility_config": {"enabled": True}},
             now_factory=fixed_now,
         )
         assert backup == {
             "app": "GoldMonitor",
-            "version": "1.4.2",
+            "version": "1.0.0",
             "exported_at": "2026-06-12T10:00:00",
             "settings": {"smtp_password": ""},
             "thresholds": {"upper_warning_rmb": 888.88, "volatility_config": {"enabled": True}},

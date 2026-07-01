@@ -106,10 +106,10 @@ def test_cli_can_verify_local_release_fixture_without_network():
         macos_sha = sha256_of(macos_asset)
 
         release_path.write_text(json.dumps({
-            "tag_name": "v1.2.3",
+            "tag_name": "v9.0.0",
             "draft": False,
             "prerelease": False,
-            "html_url": "https://example.test/v1.2.3",
+            "html_url": "https://example.test/v9.0.0",
             "assets": [
                 {"name": "GoldMonitorSetup.exe", "size": windows_asset.stat().st_size},
                 {"name": "GoldMonitor-macOS.dmg", "size": macos_asset.stat().st_size},
@@ -117,16 +117,16 @@ def test_cli_can_verify_local_release_fixture_without_network():
             ],
         }), encoding="utf-8")
         manifest_path.write_text(json.dumps({
-            "version": "1.2.3",
-            "url": "https://github.com/owner/repo/releases/download/v1.2.3/GoldMonitorSetup.exe",
+            "version": "9.0.0",
+            "url": "https://github.com/owner/repo/releases/download/v9.0.0/GoldMonitorSetup.exe",
             "sha256": windows_sha,
             "downloads": {
                 "windows": {
-                    "url": "https://github.com/owner/repo/releases/download/v1.2.3/GoldMonitorSetup.exe",
+                    "url": "https://github.com/owner/repo/releases/download/v9.0.0/GoldMonitorSetup.exe",
                     "sha256": windows_sha,
                 },
                 "macos": {
-                    "url": "https://github.com/owner/repo/releases/download/v1.2.3/GoldMonitor-macOS.dmg",
+                    "url": "https://github.com/owner/repo/releases/download/v9.0.0/GoldMonitor-macOS.dmg",
                     "sha256": macos_sha,
                 },
             },
@@ -134,7 +134,7 @@ def test_cli_can_verify_local_release_fixture_without_network():
         }), encoding="utf-8")
 
         exit_code = main([
-            "--tag", "v1.2.3",
+            "--tag", "v9.0.0",
             "--release-json", str(release_path),
             "--manifest-json", str(manifest_path),
             "--asset-dir", str(tmp),

@@ -17,7 +17,7 @@ class ReleaseVerificationError(RuntimeError):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Verify GoldMonitor GitHub Release assets and update manifest.")
-    parser.add_argument("--tag", required=True, help="Release tag, for example v1.4.3.")
+    parser.add_argument("--tag", required=True, help="Release tag, for example v1.0.0.")
     parser.add_argument("--repository", default="", help="GitHub repository in owner/name form.")
     parser.add_argument("--release-json", default="", help="Local release JSON fixture path.")
     parser.add_argument("--manifest-json", default="", help="Local version.json fixture path.")
