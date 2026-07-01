@@ -272,7 +272,7 @@ Assert-Contains -Path "app.py" -Pattern '@socketio\.on\("export_alert_log"\)' -M
 Assert-Contains -Path "app.py" -Pattern '@socketio\.on\("clear_alert_log"\)' -Message "backend must clear alert logs"
 Assert-Contains -Path "app.py" -Pattern '@socketio\.on\("update_alert_log_status"\)' -Message "backend must update alert log read state"
 Assert-Contains -Path "app.py" -Pattern '@socketio\.on\("resend_alert_notification"\)' -Message "backend must resend alert notifications"
-Assert-Contains -Path "templates\index.html" -Pattern 'alertLogModeTabs' -Message "frontend must support compact alert log range switching"
+Assert-NotContains -Path "templates\index.html" -Pattern 'alertLogModeTabs' -Message "frontend must not expose alert log range switching"
 Assert-Contains -Path "templates\index.html" -Pattern 'alertLogSearch' -Message "frontend must support alert log search"
 Assert-Contains -Path "templates\index.html" -Pattern 'alertUnreadCount' -Message "frontend must show unread alert counts"
 Assert-NotContains -Path "templates\index.html" -Pattern 'acknowledgeAlert' -Message "frontend must not expose alert acknowledgement"

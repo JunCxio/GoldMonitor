@@ -10,6 +10,10 @@ css = (root / "static" / "app.css").read_text(encoding="utf-8")
 for forbidden in (
     'value="pending"',
     'id="alertDetail"',
+    'id="alertLogModeTabs"',
+    'class="alert-log-tabs"',
+    'class="alert-log-tab',
+    "setAlertLogView(",
     "选择一条警报查看详情",
     "确认</button>",
     "未确认",
@@ -21,27 +25,25 @@ for forbidden in (
     "selectedAlertId",
     "acknowledged ?",
     "log-risk-action",
+    "log-handled",
+    "标记已处理",
+    "取消处理",
 ):
     if forbidden in template or forbidden in js:
         raise SystemExit(f"alert log UI must not expose acknowledgement/detail workflow: {forbidden}")
 
 
 for required in (
-    'id="alertLogModeTabs"',
     'class="log-title-row"',
-    "setAlertLogView('all')",
-    "setAlertLogView('new')",
-    "setAlertLogView('unhandled')",
-    "setAlertLogView('handled')",
-    "setAlertLogView('failed')",
-    "未处理",
-    "通知失败",
     'id="alertLogMenu"',
     "toggleAlertLogMenu",
     "renderAlertLog",
     "analyzeAlertFromLog",
+    "resendAlertNotification",
+    "{ label: '分析'",
+    "if (hasNotificationIssue) actions.push",
+    "重发通知",
     "alert-log-shell",
-    "grid-template-columns:repeat(5, minmax(0, 1fr))",
     "source-health-summary",
     "source-health-menu",
     "toggleSourceHealthMenu",

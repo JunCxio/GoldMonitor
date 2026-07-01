@@ -188,15 +188,6 @@
                   </div>
                 </div>
               </div>
-              <div class="log-tools">
-                <div class="alert-log-tabs" id="alertLogModeTabs" role="tablist" aria-label="警报记录范围">
-                  <button class="alert-log-tab active" type="button" data-alert-log-view="all" onclick="setAlertLogView('all')">全部</button>
-                  <button class="alert-log-tab" type="button" data-alert-log-view="new" onclick="setAlertLogView('new')">新警报</button>
-                  <button class="alert-log-tab" type="button" data-alert-log-view="unhandled" onclick="setAlertLogView('unhandled')">未处理</button>
-                  <button class="alert-log-tab" type="button" data-alert-log-view="handled" onclick="setAlertLogView('handled')">已处理</button>
-                  <button class="alert-log-tab" type="button" data-alert-log-view="failed" onclick="setAlertLogView('failed')">通知失败</button>
-                </div>
-              </div>
             </div>
             <div class="log-status" id="alertLogStatus"></div>
             <div class="log-list" id="logList"><div class="log-empty">暂无警报</div></div>
@@ -764,8 +755,8 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-<script src="/static/app-shell.js"></script>
+<script src="/static/app-shell.js?v={{ app_version }}"></script>
 
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v={{ app_version }}"></script>
 </body>
 </html>

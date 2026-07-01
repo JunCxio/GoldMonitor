@@ -606,10 +606,6 @@
   .log-head h3 { min-width:0; display:flex; align-items:center; margin-bottom:0; white-space:nowrap; }
   .log-count { display:inline-flex; align-items:center; min-height:20px; margin-left:6px; padding:2px 6px; border-radius:6px; border:1px solid rgba(232,184,48,0.22); color:var(--gold); background:rgba(232,184,48,0.08); font-size:0.62rem; font-weight:800; letter-spacing:0; vertical-align:middle; }
   .log-count.empty { color:var(--text-dim); border-color:var(--hairline); background:rgba(255,255,255,0.025); }
-  .log-tools { position:relative; min-width:0; display:block; }
-  .alert-log-tabs { width:100%; min-width:0; display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); align-items:center; gap:3px; padding:3px; border:1px solid var(--control-border); border-radius:8px; background:rgba(255,255,255,0.025); }
-  .alert-log-tab { min-width:0; min-height:26px; padding:4px 5px; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--control-muted); cursor:pointer; font-size:0.62rem; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .alert-log-tab.active { color:#111116; border-color:rgba(232,184,48,0.6); background:var(--gold); }
   .alert-log-more { min-width:0; position:relative; }
   .alert-log-menu { position:absolute; right:0; top:calc(100% + 6px); z-index:5; box-sizing:border-box; width:min(230px, calc(100vw - 28px)); display:grid; gap:8px; padding:10px; border:1px solid var(--hairline); border-radius:8px; background:#141420; box-shadow:0 16px 32px rgba(0,0,0,0.36); }
   .alert-log-menu[hidden] { display:none; }
@@ -634,7 +630,6 @@
   .log-level.critical,.log-level.upper { color:var(--up); border-color:rgba(224,85,106,0.28); background:rgba(224,85,106,0.08); }
   .log-level.lower { color:var(--down); border-color:rgba(76,175,132,0.25); background:rgba(76,175,132,0.08); }
   .log-level.volatility { color:var(--blue); border-color:rgba(91,155,213,0.28); background:rgba(91,155,213,0.08); }
-  .log-handled { min-height:20px; display:inline-flex; align-items:center; padding:2px 6px; border-radius:6px; border:1px solid rgba(76,175,132,0.25); color:var(--down); background:rgba(76,175,132,0.08); font-size:0.62rem; font-weight:800; white-space:nowrap; }
   .log-meta { min-width:0; }
   .log-msg.warning { color:var(--warn); }
   .log-msg.critical,.log-msg.upper { color:var(--up); }

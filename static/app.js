@@ -154,7 +154,6 @@ function autoUpdateIntervalMs() {
   return AUTO_UPDATE_CHECK_INTERVAL_MS;
 }
 let alertEntries = [];
-let alertLogView = 'all';
 let alertLogSearch = '';
 let activeAlert = null;
 let mergedAlertCount = 0;
@@ -4722,26 +4721,6 @@ function setAlertEntries(items) {
   renderAlertLog();
 }
 
-const alertLogViewLabels = {
-  all: '全部',
-  new: '新警报',
-  unhandled: '未处理',
-  handled: '已处理',
-  failed: '通知失败',
-};
-
-function normalizeAlertLogView(value) {
-  return Object.prototype.hasOwnProperty.call(alertLogViewLabels, value) ? value : 'all';
-}
-
-function setAlertLogView(value) {
-  alertLogView = normalizeAlertLogView(value);
-  document.querySelectorAll('.alert-log-tab').forEach(button => {
-    button.classList.toggle('active', button.dataset.alertLogView === alertLogView);
-  });
-  renderAlertLog();
-}
-
 function setAlertLogSearch(value) {
   alertLogSearch = (value || '').trim().toLowerCase();
   renderAlertLog();
@@ -4781,14 +4760,6 @@ function updateAlertLogSummary() {
   const unread = alertEntries.filter(entry => !entry.read).length;
   countEl.textContent = unread + ' 新';
   countEl.className = 'log-count' + (unread ? '' : ' empty');
-}
-
-function alertLogMatchesView(entry) {
-  if (alertLogView === 'new') return !entry.read;
-  if (alertLogView === 'unhandled') return !entry.handled;
-  if (alertLogView === 'handled') return !!entry.handled;
-  if (alertLogView === 'failed') return alertNotificationIssues(entry).length > 0;
-  return true;
 }
 
 function alertLogMatchesSearch(entry) {
@@ -4854,15 +4825,13 @@ function buildLogEntry(entry) {
   const encodedId = encodeURIComponent(String(entry.id || ''));
   const hasNotificationIssue = alertNotificationIssues(entry).length > 0;
   const logMessage = entry.message || '达到预警条件';
-  const handledBadge = entry.handled ? '<span class="log-handled">已处理</span>' : '';
   const handlingNote = entry.handling_note ? '<span class="log-note">处理备注：' + escapeHtml(entry.handling_note) + '</span>' : '';
-  const actions = hasNotificationIssue ? [
-    { label: '重发通知', buttonClass: 'btn-muted-sm', onclick: "resendAlertNotification(decodeURIComponent('" + encodedId + "'))" },
-  ] : [
+  const actions = [
     { label: '分析', buttonClass: 'btn-risk-sm', onclick: "analyzeAlertFromLog(decodeURIComponent('" + encodedId + "'))" },
-    { label: entry.handled ? '取消处理' : '标记已处理', buttonClass: 'btn-muted-sm', onclick: "updateAlertHandling(decodeURIComponent('" + encodedId + "'), " + (entry.handled ? 'false' : 'true') + ")" },
-    hasNotificationIssue ? { label: '重发通知', buttonClass: 'btn-muted-sm', onclick: "resendAlertNotification(decodeURIComponent('" + encodedId + "'))" } : null,
-  ].filter(Boolean);
+  ];
+  if (hasNotificationIssue) actions.push(
+    { label: '重发通知', buttonClass: 'btn-muted-sm', onclick: "resendAlertNotification(decodeURIComponent('" + encodedId + "'))" },
+  );
   item.className = [
     'log-item',
     entry.read ? 'read' : 'unread',
@@ -4875,7 +4844,6 @@ function buildLogEntry(entry) {
     '<span class="log-line-head">',
     '<span class="log-time">' + escapeHtml(entry.time || entry.timestamp || '') + '</span>',
     '<span class="log-level ' + escapeHtml(entry.type || '') + '">' + escapeHtml(alertLevelLabel(entry.type)) + '</span>',
-    handledBadge,
     '</span>',
     renderLogEntryActions(actions),
     '</span>',
@@ -4891,12 +4859,12 @@ function buildLogEntry(entry) {
 
 function renderAlertLog() {
   const list = document.getElementById('logList');
-  const items = alertEntries.filter(entry => alertLogMatchesView(entry) && alertLogMatchesSearch(entry));
+  const items = alertEntries.filter(alertLogMatchesSearch);
   list.innerHTML = '';
   if (!items.length) {
     const empty = document.createElement('div');
     empty.className = 'log-empty';
-    empty.textContent = alertEntries.length ? '当前条件暂无警报' : '暂无警报';
+    empty.textContent = alertEntries.length ? '当前搜索暂无警报' : '暂无警报';
     list.appendChild(empty);
     return;
   }

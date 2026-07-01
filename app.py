@@ -49,7 +49,7 @@ app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.9"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 OFFICIAL_UPDATE_HOST = "github.com"
@@ -3842,7 +3842,7 @@ def _check_volatility(now_str):
 # ---------- Flask 路由 ----------
 @app.route("/")
 def index():
-    return render_template("index.html", socket_access_token=SOCKET_ACCESS_TOKEN)
+    return render_template("index.html", socket_access_token=SOCKET_ACCESS_TOKEN, app_version=APP_VERSION)
 
 
 @app.route("/api/price")

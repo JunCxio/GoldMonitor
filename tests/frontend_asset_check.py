@@ -4,6 +4,7 @@ import re
 
 root = Path(__file__).resolve().parents[1]
 template = (root / "templates" / "index.html").read_text(encoding="utf-8")
+app_py = (root / "app.py").read_text(encoding="utf-8")
 css_path = root / "static" / "app.css"
 js_path = root / "static" / "app.js"
 
@@ -20,8 +21,14 @@ if '<link rel="stylesheet" href="/static/app.css">' not in template:
 if '<meta name="goldmonitor-socket-token" content="{{ socket_access_token }}">' not in template:
     raise SystemExit("template must expose the socket token through a meta tag")
 
-if '<script src="/static/app.js"></script>' not in template:
-    raise SystemExit("template must reference /static/app.js")
+if '<script src="/static/app-shell.js?v={{ app_version }}"></script>' not in template:
+    raise SystemExit("template must reference versioned /static/app-shell.js")
+
+if '<script src="/static/app.js?v={{ app_version }}"></script>' not in template:
+    raise SystemExit("template must reference versioned /static/app.js")
+
+if "render_template(\"index.html\", socket_access_token=SOCKET_ACCESS_TOKEN, app_version=APP_VERSION)" not in app_py:
+    raise SystemExit("app.py must inject app_version into index.html")
 
 if 'id="chartEmptyState"' not in template:
     raise SystemExit("template must expose chart empty state overlay")
@@ -305,7 +312,6 @@ for required in (
     ".source-health-menu",
     "bottom:calc(100% + 6px)",
     ".log-title-row",
-    "grid-template-columns:repeat(5, minmax(0, 1fr))",
     ".log-list { overflow-y:auto; max-height:240px; display:grid; gap:6px;",
     "background:rgba(255,255,255,0.018)",
     "border:1px solid rgba(255,255,255,0.055)",
@@ -329,6 +335,8 @@ for forbidden in (
     "grid-column:span 3",
     ".source-health-menu { position:absolute; right:0; top:calc(100% + 6px);",
     "grid-template-columns:8px minmax(0, 1fr) 58px",
+    ".alert-log-tabs",
+    ".alert-log-tab",
 ):
     if forbidden in css or forbidden in js:
         raise SystemExit(f"static/app.css keeps a fixed portfolio grid that can overflow: {forbidden}")
@@ -371,20 +379,29 @@ for required in (
     "actions.length > 1",
     "log-action-direct",
     "log-action-trigger",
-    "const actions = hasNotificationIssue ? [",
-    "alertLogView === 'unhandled'",
-    "alertLogView === 'handled'",
-    "alertLogView === 'failed'",
+    "const actions = [",
+    "{ label: '分析'",
+    "if (hasNotificationIssue) actions.push",
     "alertNotificationIssues(entry).length > 0",
     "handling_note",
     "payload.handled",
     "处置结果",
-    "已处理",
-    "未处理",
-    "通知失败",
+    "重发通知",
 ):
     if required not in js:
         raise SystemExit(f"static/app.js missing alert handling contract: {required}")
+
+for forbidden in (
+    "alertLogView === 'unhandled'",
+    "alertLogView === 'handled'",
+    "alertLogView === 'failed'",
+    "const actions = hasNotificationIssue ? [",
+    "标记已处理",
+    "取消处理",
+    "log-handled",
+):
+    if forbidden in js:
+        raise SystemExit(f"static/app.js keeps removed alert log workflow: {forbidden}")
 
 for pattern in (
     r"clearThreshold\(.*?rule\.type.*?>停用预警</button>",
