@@ -296,6 +296,27 @@ for forbidden in (
         raise SystemExit(f"portfolio controls must not use native select dropdowns: {forbidden}")
 
 for required in (
+    "function portfolioTransactionToday",
+    "function defaultPortfolioTransactionPrice",
+    "latestData && mode === 'usd' ? latestData.usd : latestData && latestData.rmb",
+    "Number.isFinite(number) && number > 0 ? number.toFixed(2) : ''",
+    "const mode = source.mode || currentMode",
+    "const defaultPrice = isNew ? defaultPortfolioTransactionPrice(mode) : ''",
+    "price: source.price == null || (isNew && source.price === '') ? defaultPrice : String(source.price)",
+    "trade_date: source.trade_date || (isNew ? portfolioTransactionToday() : '')",
+    "price: defaultPortfolioTransactionPrice(mode)",
+    "trade_date: portfolioTransactionToday()",
+    "const priceInput = document.getElementById('portfolioTransactionPrice_' + key)",
+    "const previousMode = modeInput ? modeInput.value || currentMode : currentMode",
+    "const previousDefaultPrice = defaultPortfolioTransactionPrice(previousMode)",
+    "const nextMode = item.mode || currentMode",
+    "if (priceInput && (!priceInput.value || priceInput.value === previousDefaultPrice)) priceInput.value = defaultPortfolioTransactionPrice(nextMode)",
+    "if (modeInput) modeInput.value = nextMode",
+):
+    if required not in js:
+        raise SystemExit(f"static/app.js missing portfolio transaction defaults contract: {required}")
+
+for required in (
     "repeat(auto-fit, minmax(min(150px, 100%), 1fr))",
     "repeat(auto-fit, minmax(min(140px, 100%), 1fr))",
     ".portfolio-name, .portfolio-note { grid-column:1 / -1; }",

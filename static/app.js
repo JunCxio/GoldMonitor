@@ -3100,19 +3100,35 @@ function portfolioTransactionDraftKey(id) {
   return String(id || 'new');
 }
 
+function portfolioTransactionToday(now) {
+  const date = now instanceof Date ? now : new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return year + '-' + month + '-' + day;
+}
+
+function defaultPortfolioTransactionPrice(mode) {
+  const raw = latestData && mode === 'usd' ? latestData.usd : latestData && latestData.rmb;
+  const number = Number(raw);
+  return Number.isFinite(number) && number > 0 ? number.toFixed(2) : '';
+}
+
 function portfolioTransactionBaseDraft(item) {
   const isNew = !item || item.id === 'new';
   const source = item || {};
+  const mode = source.mode || currentMode;
+  const defaultPrice = isNew ? defaultPortfolioTransactionPrice(mode) : '';
   return {
     id: isNew ? 'new' : source.id,
     position_id: source.position_id || '',
     name: source.name || '',
     type: source.type || 'buy',
-    mode: source.mode || currentMode,
-    price: source.price == null ? '' : String(source.price),
+    mode: mode,
+    price: source.price == null || (isNew && source.price === '') ? defaultPrice : String(source.price),
     quantity: source.quantity == null ? '' : String(source.quantity),
     fee: source.fee == null ? '0' : String(source.fee),
-    trade_date: source.trade_date || '',
+    trade_date: source.trade_date || (isNew ? portfolioTransactionToday() : ''),
     note: source.note || '',
   };
 }
@@ -4159,8 +4175,13 @@ function syncPortfolioTransactionPosition(id) {
   }
   const nameInput = document.getElementById('portfolioTransactionName_' + key);
   const modeInput = document.getElementById('portfolioTransactionMode_' + key);
+  const priceInput = document.getElementById('portfolioTransactionPrice_' + key);
+  const previousMode = modeInput ? modeInput.value || currentMode : currentMode;
+  const previousDefaultPrice = defaultPortfolioTransactionPrice(previousMode);
+  const nextMode = item.mode || currentMode;
   if (nameInput && !nameInput.value) nameInput.value = item.name || '';
-  if (modeInput) modeInput.value = item.mode || currentMode;
+  if (priceInput && (!priceInput.value || priceInput.value === previousDefaultPrice)) priceInput.value = defaultPortfolioTransactionPrice(nextMode);
+  if (modeInput) modeInput.value = nextMode;
   capturePortfolioTransactionDraft(id);
 }
 
@@ -4216,17 +4237,29 @@ function setActivePortfolioTransaction(id, defaults) {
 
 function startPortfolioTransactionForPosition(positionId, type) {
   const item = (portfolioState.items || []).find(entry => entry.id === positionId);
-  const defaults = item ? {
-    position_id: item.id,
-    name: item.name || '',
-    type: type === 'sell' ? 'sell' : 'buy',
-    mode: item.mode || currentMode,
-    price: '',
-    quantity: '',
-    fee: '0',
-    trade_date: '',
-    note: '',
-  } : { type: type === 'sell' ? 'sell' : 'buy', mode: currentMode, fee: '0' };
+  let defaults;
+  if (item) {
+    const mode = item.mode || currentMode;
+    defaults = {
+      position_id: item.id,
+      name: item.name || '',
+      type: type === 'sell' ? 'sell' : 'buy',
+      mode: mode,
+      price: defaultPortfolioTransactionPrice(mode),
+      quantity: '',
+      fee: '0',
+      trade_date: portfolioTransactionToday(),
+      note: '',
+    };
+  } else {
+    defaults = {
+      type: type === 'sell' ? 'sell' : 'buy',
+      mode: currentMode,
+      fee: '0',
+      price: defaultPortfolioTransactionPrice(currentMode),
+      trade_date: portfolioTransactionToday(),
+    };
+  }
   setActivePortfolioTransaction('new', defaults);
 }
 
