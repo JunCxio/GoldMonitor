@@ -3196,6 +3196,21 @@ def _format_number(value, digits=2):
         return None
 
 
+def _valid_market_price(value):
+    try:
+        return float(value) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def risk_analysis_market_data_error():
+    with lock:
+        has_price = _valid_market_price(price_usd) or _valid_market_price(price_rmb)
+    if not has_price:
+        return "当前没有可用于风险分析的行情价格，请先重新获取行情数据。"
+    return ""
+
+
 def _summarize_price_series(points, field):
     values = [p.get(field) for p in points if p.get(field) is not None]
     if not values:
@@ -4318,6 +4333,10 @@ def on_request_risk_analysis(data=None):
     provider_key = settings.get("deepseek_api_key") if provider == "deepseek" else settings.get("openai_compatible_api_key")
     if not provider_key:
         emit("risk_analysis_error", {"message": "请先在设置中配置当前模型提供商的 API Key。"})
+        return
+    market_data_error = risk_analysis_market_data_error()
+    if market_data_error:
+        emit("risk_analysis_error", {"message": market_data_error})
         return
     trigger = data.get("trigger") if isinstance(data, dict) else None
     force = bool(data.get("force")) if isinstance(data, dict) else False
