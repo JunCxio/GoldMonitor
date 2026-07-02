@@ -175,6 +175,13 @@
   .risk-meta { display:none; margin-top:12px; gap:8px; flex-wrap:wrap; color:var(--text-dim); font-size:0.74rem; }
   .risk-meta.show { display:flex; }
   .risk-meta span { padding:5px 8px; border:1px solid var(--hairline); border-radius:8px; background:rgba(255,255,255,0.025); }
+  .risk-evidence { display:none; margin-top:12px; padding:12px; border:1px solid var(--hairline); border-radius:10px; background:rgba(255,255,255,0.025); }
+  .risk-evidence.show { display:block; }
+  .risk-evidence-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:8px; }
+  .risk-evidence-item { min-width:0; padding:9px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(0,0,0,0.12); }
+  .risk-evidence-label { color:var(--text-dim); font-size:0.66rem; font-weight:800; margin-bottom:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .risk-evidence-value { color:#f0f0f4; font-size:0.76rem; line-height:1.35; white-space:normal; overflow-wrap:anywhere; }
+  .risk-evidence-warning { margin-top:9px; padding:8px 9px; border:1px solid rgba(224,160,64,0.22); border-radius:8px; background:rgba(224,160,64,0.075); color:#e7c06c; font-size:0.72rem; line-height:1.45; }
   .risk-insight-grid { display:grid; grid-template-columns:minmax(0, 0.75fr) minmax(0, 1.25fr); gap:10px; margin-top:12px; }
   .risk-quality, .risk-trends { display:none; border:1px solid var(--hairline); border-radius:10px; background:rgba(255,255,255,0.025); padding:12px; }
   .risk-quality.show, .risk-trends.show { display:block; }
@@ -748,6 +755,7 @@
     .daily-stats { display:none; }
     .price-value { font-size:1.75rem; }
     .risk-insight-grid { grid-template-columns:1fr; }
+    .risk-evidence-grid { grid-template-columns:1fr; }
     .risk-trend-list { grid-template-columns:1fr; }
     .risk-score-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
     .history-stats { grid-template-columns:repeat(2, minmax(0, 1fr)); }

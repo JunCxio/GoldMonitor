@@ -33,6 +33,9 @@ if "render_template(\"index.html\", socket_access_token=SOCKET_ACCESS_TOKEN, app
 if 'id="chartEmptyState"' not in template:
     raise SystemExit("template must expose chart empty state overlay")
 
+if 'id="riskEvidence"' not in template:
+    raise SystemExit("template must expose risk evidence summary")
+
 for required in (
     'id="portfolioStatus"',
     'id="portfolioViewTabs"',
@@ -166,6 +169,28 @@ for required in (
 for required in ("market_quality", "function renderRiskQuality", "function sourceQualityText", "data.quality", "行情质量"):
     if required not in js:
         raise SystemExit(f"static/app.js missing risk quality frontend contract: {required}")
+
+for required in (
+    "function renderRiskEvidence",
+    "snapshot.evidence_summary",
+    "document.getElementById('riskEvidence')",
+    "数据依据",
+    "缺失数据",
+    "恢复建议",
+    "## 数据依据",
+):
+    if required not in js:
+        raise SystemExit(f"static/app.js missing risk evidence frontend contract: {required}")
+
+for required in (
+    ".risk-evidence",
+    ".risk-evidence.show",
+    ".risk-evidence-grid",
+    ".risk-evidence-item",
+    ".risk-evidence-warning",
+):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing risk evidence selector: {required}")
 
 for required in (
     "function selectedRiskPrice",

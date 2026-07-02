@@ -50,6 +50,12 @@ class RiskAnalysisHistoryStore:
             content = str(item.get("content") or "").strip()
             if not content:
                 continue
+            snapshot = item.get("snapshot") if isinstance(item.get("snapshot"), dict) else {}
+            evidence_summary = item.get("evidence_summary") if isinstance(item.get("evidence_summary"), dict) else None
+            if evidence_summary is None and isinstance(snapshot.get("evidence_summary"), dict):
+                evidence_summary = snapshot.get("evidence_summary")
+            if evidence_summary is None:
+                evidence_summary = build_evidence_summary(snapshot)
             normalized.append({
                 "id": str(item.get("id") or item.get("analysis_time") or self._now_iso()),
                 "analysis_time": str(item.get("analysis_time") or ""),
@@ -57,7 +63,8 @@ class RiskAnalysisHistoryStore:
                 "model": str(item.get("model") or ""),
                 "content": content,
                 "structured": item.get("structured") if isinstance(item.get("structured"), dict) else {},
-                "snapshot": item.get("snapshot") if isinstance(item.get("snapshot"), dict) else {},
+                "snapshot": snapshot,
+                "evidence_summary": evidence_summary,
                 "usage": item.get("usage") if isinstance(item.get("usage"), dict) else None,
             })
             if len(normalized) >= self.history_limit:
@@ -99,6 +106,7 @@ class RiskAnalysisHistoryStore:
             "content": str(result.get("content") or "").strip(),
             "structured": result.get("structured") if isinstance(result.get("structured"), dict) else {},
             "snapshot": snapshot,
+            "evidence_summary": snapshot.get("evidence_summary") if isinstance(snapshot.get("evidence_summary"), dict) else build_evidence_summary(snapshot),
             "usage": result.get("usage") if isinstance(result.get("usage"), dict) else None,
         }
 
@@ -107,11 +115,76 @@ class RiskAnalysisHistoryStore:
         return self.normalize([entry] + list(history or [])), dict(entry)
 
 
+def _as_bool(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _count_value(value):
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _format_quality_summary(quality):
+    if not isinstance(quality, dict):
+        return ""
+    reasons = quality.get("reasons") if isinstance(quality.get("reasons"), list) else []
+    return quality.get("summary") or "；".join(str(item) for item in reasons if item) or quality.get("label") or quality.get("level") or ""
+
+
+def build_evidence_summary(snapshot):
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    quality = snapshot.get("market_quality") if isinstance(snapshot.get("market_quality"), dict) and snapshot.get("market_quality") else snapshot.get("data_quality")
+    quality = quality if isinstance(quality, dict) else {}
+    history_points = _count_value(snapshot.get("history_points"))
+    kline_points = _count_value(snapshot.get("kline_points"))
+    news_count = _count_value(snapshot.get("news_count"))
+    missing = []
+    recovery = []
+    if snapshot.get("price_rmb") is None and snapshot.get("price_usd") is None:
+        missing.append("当前行情价格")
+        recovery.append("点击重新获取行情数据")
+    if history_points < 12:
+        missing.append("历史价格样本不足")
+        recovery.append("保持程序运行一段时间以积累实时价格")
+    if kline_points < 2:
+        missing.append("5分钟K线样本不足")
+        recovery.append("等待至少两根5分钟K线生成")
+    if news_count < 1:
+        missing.append("近期资讯为空")
+        recovery.append("刷新资讯或检查网络连接")
+    return {
+        "price_rmb": snapshot.get("price_rmb"),
+        "price_usd": snapshot.get("price_usd"),
+        "gold_source": snapshot.get("gold_source") or "",
+        "gold_time": snapshot.get("gold_time") or "",
+        "gold_cached": _as_bool(snapshot.get("gold_cached")),
+        "gold_error": snapshot.get("gold_error") or "",
+        "rate_source": snapshot.get("rate_source") or "",
+        "rate_time": snapshot.get("rate_time") or "",
+        "rate_cached": _as_bool(snapshot.get("rate_cached")),
+        "rate_error": snapshot.get("rate_error") or "",
+        "history_points": history_points,
+        "kline_points": kline_points,
+        "news_count": news_count,
+        "quality_score": quality.get("score"),
+        "quality_label": quality.get("label") or quality.get("level") or "",
+        "quality_summary": _format_quality_summary(quality) or snapshot.get("sample_warning") or "",
+        "missing": missing,
+        "recovery": recovery,
+    }
+
+
 def build_snapshot(context):
     market = context.get("market", {})
     daily = context.get("daily", {})
     history = context.get("history_summary", {})
-    return {
+    snapshot = {
         "analysis_time": context.get("analysis_time"),
         "analysis_depth": context.get("analysis_depth", "standard"),
         "price_usd": market.get("price_usd"),
@@ -119,8 +192,12 @@ def build_snapshot(context):
         "usdcny_rate": market.get("usdcny_rate"),
         "gold_source": market.get("gold_source"),
         "gold_time": market.get("gold_time"),
+        "gold_cached": _as_bool(market.get("gold_cached")),
+        "gold_error": market.get("gold_error") or "",
         "rate_source": market.get("rate_source"),
         "rate_time": market.get("rate_time"),
+        "rate_cached": _as_bool(market.get("rate_cached")),
+        "rate_error": market.get("rate_error") or "",
         "daily_pct_usd": daily.get("pct_usd"),
         "daily_pct_rmb": daily.get("pct_rmb"),
         "history_points": history.get("usd", {}).get("points", 0),
@@ -133,6 +210,8 @@ def build_snapshot(context):
         "risk_scorecard": context.get("risk_scorecard", {}),
         "manual_trigger": context.get("manual_trigger", {}),
     }
+    snapshot["evidence_summary"] = build_evidence_summary(snapshot)
+    return snapshot
 
 
 def parse_sections(content, section_labels=RISK_SECTION_LABELS):
@@ -174,7 +253,11 @@ def build_cache_key(snapshot):
         "price_rmb": snapshot.get("price_rmb"),
         "usdcny_rate": snapshot.get("usdcny_rate"),
         "gold_time": snapshot.get("gold_time"),
+        "gold_cached": snapshot.get("gold_cached"),
+        "gold_error": snapshot.get("gold_error", ""),
         "rate_time": snapshot.get("rate_time"),
+        "rate_cached": snapshot.get("rate_cached"),
+        "rate_error": snapshot.get("rate_error", ""),
         "history_points": snapshot.get("history_points"),
         "kline_points": snapshot.get("kline_points"),
         "news_count": snapshot.get("news_count"),

@@ -83,7 +83,17 @@ def test_risk_history_store_persists_versioned_payload_and_clears():
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = str(Path(tmp_dir) / "risk_analysis_history.json")
         store = RiskAnalysisHistoryStore(path, history_limit=2, now_factory=fixed_now)
-        snapshot = {"analysis_time": "2026-06-08T11:59:00", "price_rmb": 542.1}
+        snapshot = {
+            "analysis_time": "2026-06-08T11:59:00",
+            "price_rmb": 542.1,
+            "evidence_summary": {
+                "quality_score": 72,
+                "quality_label": "样本有限",
+                "history_points": 18,
+                "kline_points": 4,
+                "missing": ["近期资讯为空"],
+            },
+        }
         result = {
             "provider": "deepseek",
             "model": "deepseek-v4-pro",
@@ -96,6 +106,8 @@ def test_risk_history_store_persists_versioned_payload_and_clears():
         assert entry["id"] == "2026-06-08T12:00:00"
         assert entry["analysis_time"] == "2026-06-08T11:59:00"
         assert entry["content"] == "风险等级：中等"
+        assert entry["evidence_summary"]["quality_score"] == 72
+        assert entry["evidence_summary"]["missing"] == ["近期资讯为空"]
         assert history == [entry]
 
         saved = store.save(history + [
@@ -134,8 +146,12 @@ def test_risk_snapshot_sections_and_cache_are_stable():
             "usdcny_rate": 7.19,
             "gold_source": "stooq",
             "gold_time": "2026-06-08T11:59:00",
+            "gold_cached": True,
+            "gold_error": "",
             "rate_source": "frankfurter",
             "rate_time": "2026-06-08T11:58:00",
+            "rate_cached": False,
+            "rate_error": "",
         },
         "daily": {"pct_usd": 0.25, "pct_rmb": 0.3},
         "history_summary": {"usd": {"points": 24}},
@@ -151,8 +167,16 @@ def test_risk_snapshot_sections_and_cache_are_stable():
     snapshot = build_snapshot(context)
     assert snapshot["history_points"] == 24
     assert snapshot["news_count"] == 1
+    assert snapshot["gold_cached"] is True
+    assert snapshot["rate_cached"] is False
     assert snapshot["market_quality"]["level"] == "stale"
     assert snapshot["risk_scorecard"] == {"overall_risk": 42}
+    assert snapshot["evidence_summary"]["gold_source"] == "stooq"
+    assert snapshot["evidence_summary"]["gold_cached"] is True
+    assert snapshot["evidence_summary"]["history_points"] == 24
+    assert snapshot["evidence_summary"]["kline_points"] == 6
+    assert snapshot["evidence_summary"]["quality_score"] == 60
+    assert snapshot["evidence_summary"]["missing"] == []
 
     structured = parse_sections("风险等级：中等\n补充说明\n趋势方向: 震荡偏强")
     assert structured["risk_level"] == "中等\n补充说明"

@@ -1875,11 +1875,49 @@ function setupEllipsisTooltips() {
 
 setupEllipsisTooltips();
 
+function renderRiskEvidence(snapshot) {
+  const el = document.getElementById('riskEvidence');
+  if (!el) return;
+  if (!snapshot) {
+    el.innerHTML = '';
+    el.classList.remove('show');
+    return;
+  }
+  const evidence = snapshot.evidence_summary || {};
+  const goldCached = evidence.gold_cached ? '缓存' : '实时';
+  const rateCached = evidence.rate_cached ? '缓存' : '实时';
+  const qualityLabel = evidence.quality_label || '--';
+  const qualityScore = evidence.quality_score == null ? '--' : evidence.quality_score + '分';
+  const items = [
+    ['当前金价', 'RMB ' + formatRiskNumber(evidence.price_rmb ?? snapshot.price_rmb, '/克') + ' · USD ' + formatRiskNumber(evidence.price_usd ?? snapshot.price_usd, '/oz')],
+    ['行情源', (evidence.gold_source || snapshot.gold_source || '--') + ' · ' + goldCached + (evidence.gold_time ? ' · ' + evidence.gold_time : '')],
+    ['汇率源', (evidence.rate_source || snapshot.rate_source || '--') + ' · ' + rateCached + (evidence.rate_time ? ' · ' + evidence.rate_time : '')],
+    ['样本规模', '历史 ' + (evidence.history_points ?? snapshot.history_points ?? 0) + ' 点 · 5分钟K线 ' + (evidence.kline_points ?? snapshot.kline_points ?? 0) + ' 根'],
+    ['近期资讯', (evidence.news_count ?? snapshot.news_count ?? 0) + ' 条'],
+    ['数据质量', qualityScore + ' · ' + qualityLabel],
+  ];
+  const missing = Array.isArray(evidence.missing) ? evidence.missing.filter(Boolean) : [];
+  const recovery = Array.isArray(evidence.recovery) ? evidence.recovery.filter(Boolean) : [];
+  const warning = missing.length || recovery.length
+    ? '<div class="risk-evidence-warning"><strong>缺失数据</strong>：' + escapeHtml(missing.join('、') || '暂无') + '<br><strong>恢复建议</strong>：' + escapeHtml(recovery.join('；') || '继续等待数据更新') + '</div>'
+    : '';
+  const qualitySummary = evidence.quality_summary ? '<div class="risk-evidence-warning">' + escapeHtml(evidence.quality_summary) + '</div>' : '';
+  el.innerHTML = [
+    '<div class="risk-block-title">数据依据</div>',
+    '<div class="risk-evidence-grid">',
+    items.map(item => '<div class="risk-evidence-item"><div class="risk-evidence-label">' + escapeHtml(item[0]) + '</div><div class="risk-evidence-value">' + escapeHtml(item[1]) + '</div></div>').join(''),
+    '</div>',
+    warning + qualitySummary,
+  ].join('');
+  el.classList.add('show');
+}
+
 function renderRiskSnapshot(snapshot) {
   const meta = document.getElementById('riskMeta');
   if (!snapshot) {
     meta.innerHTML = '';
     meta.classList.remove('show');
+    renderRiskEvidence(null);
     renderRiskQuality(null);
     renderRiskTrends(null);
     renderRiskScorecard(null);
@@ -1901,6 +1939,7 @@ function renderRiskSnapshot(snapshot) {
   if (snapshot.sample_warning) items.push(snapshot.sample_warning);
   meta.innerHTML = items.map(item => '<span>' + escapeHtml(item) + '</span>').join('');
   meta.classList.add('show');
+  renderRiskEvidence(snapshot);
   renderRiskQuality(quality);
   renderRiskTrends(snapshot.multi_period_trends || []);
   renderRiskScorecard(snapshot.risk_scorecard || null);
@@ -2016,9 +2055,13 @@ function renderRiskHistory() {
     const firstLine = String(item.content || '').split('\n').find(Boolean) || '历史分析';
     const qualitySource = item.snapshot ? (item.snapshot.market_quality || item.snapshot.data_quality) : null;
     const quality = qualitySource ? ' · 行情质量 ' + qualitySource.score + '分' : '';
+    const evidence = item.evidence_summary || (item.snapshot && item.snapshot.evidence_summary) || {};
+    const samples = evidence.history_points != null || evidence.kline_points != null
+      ? ' · 历史' + (evidence.history_points ?? 0) + '/K线' + (evidence.kline_points ?? 0)
+      : '';
     return [
       '<button class="risk-history-item" type="button" onclick="openRiskHistoryItem(' + index + ')">',
-      '<div class="risk-history-time">' + escapeHtml(item.analysis_time || '--') + escapeHtml(quality) + '</div>',
+      '<div class="risk-history-time">' + escapeHtml(item.analysis_time || '--') + escapeHtml(quality) + escapeHtml(samples) + '</div>',
       '<div class="risk-history-text">' + escapeHtml(firstLine) + '</div>',
       '</button>',
     ].join('');
@@ -2043,8 +2086,10 @@ function clearRiskHistory() {
 function currentRiskReportMarkdown() {
   const result = document.getElementById('riskResult').textContent || '';
   const meta = Array.from(document.querySelectorAll('#riskMeta span')).map(item => item.textContent).join('\n');
+  const evidence = document.getElementById('riskEvidence') ? document.getElementById('riskEvidence').innerText.trim() : '';
   const parts = ['# 风险分析报告'];
   if (meta) parts.push('', '## 数据快照', meta);
+  if (evidence) parts.push('', '## 数据依据', evidence);
   parts.push('', '## 分析内容', result || '暂无分析结果。');
   return parts.join('\n');
 }

@@ -523,7 +523,7 @@ try:
         if required not in context_text:
             raise SystemExit(f"risk analysis context missing {required}")
     snapshot = app.build_risk_analysis_snapshot(context)
-    for required in ("data_quality", "multi_period_trends", "risk_scorecard"):
+    for required in ("data_quality", "multi_period_trends", "risk_scorecard", "evidence_summary"):
         if required not in snapshot:
             raise SystemExit(f"risk analysis snapshot missing {required}")
 
@@ -590,9 +590,12 @@ try:
         if payload.get("thinking", {}).get("type") != "enabled":
             raise SystemExit("deepseek-v4-pro request must enable thinking mode")
         result_snapshot = result.get("snapshot", {})
-        for required in ("data_quality", "multi_period_trends", "risk_scorecard"):
+        for required in ("data_quality", "multi_period_trends", "risk_scorecard", "evidence_summary"):
             if required not in result_snapshot:
                 raise SystemExit(f"risk analysis result snapshot missing {required}")
+        history_entry = result.get("history_entry", {})
+        if "evidence_summary" not in history_entry:
+            raise SystemExit(f"risk analysis history entry missing evidence summary: {history_entry}")
         first_payload_count = len(captured_payloads)
         client.emit("request_risk_analysis", {})
         cache_hit = wait_for_event(client, "risk_analysis_cache_hit")
