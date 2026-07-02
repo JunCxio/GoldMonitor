@@ -172,6 +172,13 @@
   .risk-status.loading { color:var(--gold); }
   .risk-status.error { color:var(--up); }
   .risk-result { margin-top:14px; padding:14px; border:1px solid var(--hairline); border-radius:10px; background:rgba(255,255,255,0.025); color:#f0f0f4; font-size:0.88rem; line-height:1.75; white-space:pre-wrap; max-height:42vh; overflow:auto; }
+  .risk-diagnostic { display:none; margin-top:10px; padding:10px 11px; border:1px solid rgba(224,85,106,0.28); border-radius:10px; background:rgba(224,85,106,0.075); color:#f0d7dc; font-size:0.74rem; line-height:1.5; }
+  .risk-diagnostic.show { display:grid; gap:7px; }
+  .risk-diagnostic-title { color:#ff9aaa; font-size:0.76rem; font-weight:900; }
+  .risk-diagnostic-meta { color:var(--text-dim); font-size:0.68rem; overflow-wrap:anywhere; }
+  .risk-diagnostic-section { display:grid; gap:4px; }
+  .risk-diagnostic-section strong { color:#f0f0f4; font-size:0.68rem; }
+  .risk-diagnostic-list { display:grid; gap:3px; margin:0; padding-left:16px; color:#f0d7dc; }
   .risk-meta { display:none; margin-top:12px; gap:8px; flex-wrap:wrap; color:var(--text-dim); font-size:0.74rem; }
   .risk-meta.show { display:flex; }
   .risk-meta span { padding:5px 8px; border:1px solid var(--hairline); border-radius:8px; background:rgba(255,255,255,0.025); }

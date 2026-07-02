@@ -320,6 +320,105 @@ def build_model_test_messages():
     ]
 
 
+def selected_model_label(settings):
+    settings = settings if isinstance(settings, dict) else {}
+    provider = settings.get("risk_assistant_provider", "deepseek")
+    if provider == "deepseek":
+        return provider, settings.get("deepseek_model") or ""
+    if provider == "openai_compatible":
+        return provider, settings.get("openai_compatible_model") or ""
+    return provider, ""
+
+
+def build_error_diagnostic(message, settings=None, snapshot=None):
+    message = str(message or "风险分析失败。").strip()
+    settings = settings if isinstance(settings, dict) else {}
+    provider, model = selected_model_label(settings)
+    diagnostic = {
+        "type": "unknown",
+        "title": "风险分析失败",
+        "reason": message,
+        "impact": "风险分析未生成，本次不会写入分析历史。",
+        "recovery": ["稍后重试；如果问题持续，请导出诊断报告核对配置和网络状态。"],
+        "provider": provider,
+        "model": model,
+    }
+    if snapshot:
+        diagnostic["data_quality"] = (snapshot or {}).get("evidence_summary") or {}
+
+    if "没有可用于风险分析的行情价格" in message:
+        diagnostic.update({
+            "type": "market_data_missing",
+            "title": "缺少行情价格",
+            "recovery": [
+                "点击重新获取行情，等待当前金价返回后再分析。",
+                "如果行情源持续异常，请查看数据状态中的行情源和缓存状态。",
+            ],
+        })
+    elif "认证失败" in message or "API Key" in message:
+        diagnostic.update({
+            "type": "model_auth",
+            "title": "模型服务认证失败",
+            "recovery": [
+                "在设置中确认当前模型提供商的 API Key 已保存。",
+                "确认 API Key 具备调用所选模型生成接口的权限。",
+                "重新点击测试模型，确认轻量生成测试是否通过。",
+            ],
+        })
+    elif "无法连接模型服务" in message or "模型生成接口连接失败" in message:
+        diagnostic.update({
+            "type": "model_connection",
+            "title": "模型生成接口连接失败",
+            "recovery": [
+                "在设置中重新点击测试模型，确认轻量生成测试是否通过。",
+                "检查网络、代理或防火墙是否允许访问当前模型接口地址。",
+                "确认接口地址是 OpenAI 兼容基础地址，例如 https://api.deepseek.com 或兼容服务的 /v1 地址。",
+            ],
+        })
+    elif "请求超时" in message:
+        diagnostic.update({
+            "type": "model_timeout",
+            "title": "模型生成接口超时",
+            "recovery": [
+                "稍后重试，或切换为快速分析模式降低生成耗时。",
+                "检查网络代理稳定性，确认模型服务当前可用。",
+            ],
+        })
+    elif "HTTP" in message:
+        diagnostic.update({
+            "type": "model_http",
+            "title": "模型生成接口返回错误",
+            "recovery": [
+                "核对接口地址、模型名称和服务商返回的 HTTP 状态。",
+                "如果使用兼容接口，确认服务端支持 /chat/completions。",
+            ],
+        })
+    elif "返回内容为空" in message or "返回格式异常" in message:
+        diagnostic.update({
+            "type": "model_response",
+            "title": "模型返回内容不可用",
+            "recovery": [
+                "重新点击测试模型，确认模型能返回普通文本。",
+                "如使用兼容接口，确认返回结构包含 choices[0].message.content。",
+            ],
+        })
+    elif "冷却" in message:
+        diagnostic.update({
+            "type": "cooldown",
+            "title": "分析请求过于频繁",
+            "impact": "本次请求未发送到模型服务，不会产生新的分析历史。",
+            "recovery": ["等待提示中的剩余时间后再试，或在设置中调整分析冷却时间。"],
+        })
+    elif "已有风险分析正在进行" in message:
+        diagnostic.update({
+            "type": "busy",
+            "title": "已有分析正在进行",
+            "impact": "本次请求未发送到模型服务，不会产生新的分析历史。",
+            "recovery": ["等待当前分析完成后再发起新的风险分析。"],
+        })
+    return diagnostic
+
+
 def chat_completions_url(base_url):
     base_url = (base_url or "").rstrip("/")
     if base_url.endswith("/chat/completions"):

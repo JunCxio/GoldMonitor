@@ -3603,6 +3603,16 @@ def run_risk_analysis(settings, context):
     return _risk_model_client().run(settings, context)
 
 
+def build_risk_analysis_error_payload(message, settings=None, snapshot=None):
+    payload = {
+        "message": message,
+        "diagnostic": risk_analysis_core.build_error_diagnostic(message, settings or get_settings_snapshot(), snapshot),
+    }
+    if snapshot is not None:
+        payload["snapshot"] = snapshot
+    return payload
+
+
 # ---------- K线聚合 ----------
 def _aggregate_klines():
     """从 price_history 聚合 5 分钟 K 线"""
@@ -4325,19 +4335,19 @@ def on_request_risk_analysis(data=None):
     global risk_analysis_last_started
     settings = get_settings_snapshot()
     if not settings.get("risk_assistant_enabled", True):
-        emit("risk_analysis_error", {"message": "风险分析助手已关闭，请先在设置中启用。"})
+        emit("risk_analysis_error", build_risk_analysis_error_payload("风险分析助手已关闭，请先在设置中启用。", settings))
         return
     provider = settings.get("risk_assistant_provider", "deepseek")
     if provider not in VALID_RISK_ASSISTANT_PROVIDERS:
-        emit("risk_analysis_error", {"message": "暂不支持当前模型提供商。"})
+        emit("risk_analysis_error", build_risk_analysis_error_payload("暂不支持当前模型提供商。", settings))
         return
     provider_key = settings.get("deepseek_api_key") if provider == "deepseek" else settings.get("openai_compatible_api_key")
     if not provider_key:
-        emit("risk_analysis_error", {"message": "请先在设置中配置当前模型提供商的 API Key。"})
+        emit("risk_analysis_error", build_risk_analysis_error_payload("请先在设置中配置当前模型提供商的 API Key。", settings))
         return
     market_data_error = risk_analysis_market_data_error()
     if market_data_error:
-        emit("risk_analysis_error", {"message": market_data_error})
+        emit("risk_analysis_error", build_risk_analysis_error_payload(market_data_error, settings))
         return
     trigger = data.get("trigger") if isinstance(data, dict) else None
     force = bool(data.get("force")) if isinstance(data, dict) else False
@@ -4365,10 +4375,10 @@ def on_request_risk_analysis(data=None):
     now_monotonic = time.monotonic()
     if cooldown and risk_analysis_last_started and now_monotonic - risk_analysis_last_started < cooldown:
         remaining = max(1, int(cooldown - (now_monotonic - risk_analysis_last_started)))
-        emit("risk_analysis_error", {"message": f"分析冷却中，请 {remaining} 秒后再试。"})
+        emit("risk_analysis_error", build_risk_analysis_error_payload(f"分析冷却中，请 {remaining} 秒后再试。", settings, snapshot))
         return
     if not risk_analysis_lock.acquire(blocking=False):
-        emit("risk_analysis_error", {"message": "已有风险分析正在进行，请稍后再试。"})
+        emit("risk_analysis_error", build_risk_analysis_error_payload("已有风险分析正在进行，请稍后再试。", settings, snapshot))
         return
 
     risk_analysis_last_started = now_monotonic
@@ -4379,7 +4389,7 @@ def on_request_risk_analysis(data=None):
         try:
             result, error = run_risk_analysis(settings, context)
             if error:
-                socketio.emit("risk_analysis_error", {"message": error, "snapshot": snapshot}, room=sid)
+                socketio.emit("risk_analysis_error", build_risk_analysis_error_payload(error, settings, snapshot), room=sid)
                 return
             history_entry = add_risk_analysis_history_entry(result, snapshot)
             socketio.emit("risk_analysis_result", {

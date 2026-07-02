@@ -51,3 +51,42 @@ def test_request_risk_analysis_rejects_without_market_price(monkeypatch, tmp_pat
 
     assert "当前没有可用于风险分析的行情价格" in error.get("message", "")
     assert model_calls == []
+
+
+def test_request_risk_analysis_error_includes_diagnostic(monkeypatch, tmp_path):
+    import app
+
+    monkeypatch.setattr(app, "app_settings", app._normalize_settings({
+        "risk_assistant_enabled": True,
+        "risk_assistant_provider": "deepseek",
+        "deepseek_base_url": "https://api.deepseek.com",
+        "deepseek_model": "deepseek-v4-pro",
+        "deepseek_api_key": "sk-risk-secret",
+        "risk_assistant_cooldown_seconds": 0,
+        "risk_assistant_cache_minutes": 0,
+    }))
+    monkeypatch.setattr(app, "price_usd", 3300.0)
+    monkeypatch.setattr(app, "price_rmb", 760.0)
+    monkeypatch.setattr(app, "risk_analysis_history", [])
+    monkeypatch.setattr(app, "risk_analysis_last_started", 0.0)
+    monkeypatch.setattr(app, "RISK_ANALYSIS_HISTORY_PATH", str(tmp_path / "risk_analysis_history.json"))
+
+    def fail_run(settings, context):
+        return None, "无法连接模型服务，请检查网络。"
+
+    monkeypatch.setattr(app, "run_risk_analysis", fail_run)
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    try:
+        client.get_received()
+        client.emit("request_risk_analysis", {})
+        error = wait_for_event(client, "risk_analysis_error")
+    finally:
+        client.disconnect()
+
+    diagnostic = error.get("diagnostic") or {}
+    assert diagnostic["type"] == "model_connection"
+    assert diagnostic["title"] == "模型生成接口连接失败"
+    assert diagnostic["provider"] == "deepseek"
+    assert diagnostic["model"] == "deepseek-v4-pro"
+    assert any("测试模型" in item for item in diagnostic.get("recovery", []))

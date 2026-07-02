@@ -698,6 +698,7 @@ socket.on('risk_analysis_status', data => {
 socket.on('risk_analysis_result', data => {
   riskAnalysisRunning = false;
   const usageText = formatRiskUsage(data && data.usage ? data.usage : null);
+  renderRiskDiagnostic(null);
   applyRiskStatus(usageText ? '分析完成。' + usageText : '分析完成。', '');
   renderRiskSnapshot(data && data.snapshot ? data.snapshot : null);
   renderRiskStructured(data && data.structured ? data.structured : null);
@@ -719,12 +720,14 @@ socket.on('risk_analysis_result', data => {
 socket.on('risk_analysis_error', data => {
   riskAnalysisRunning = false;
   applyRiskStatus(data && data.message ? data.message : '风险分析失败。', 'error');
+  renderRiskDiagnostic(data && data.diagnostic ? data.diagnostic : null);
   if (data && data.snapshot) renderRiskSnapshot(data.snapshot);
   updateRiskButtonState();
 });
 
 socket.on('risk_analysis_cache_hit', data => {
   riskAnalysisRunning = false;
+  renderRiskDiagnostic(null);
   const age = data && data.cache_age_seconds != null ? Math.max(0, Number(data.cache_age_seconds)) : 0;
   const ageText = age >= 60 ? Math.floor(age / 60) + ' 分钟前' : Math.max(1, age) + ' 秒前';
   applyRiskStatus((data && data.message ? data.message : '已复用最近同一行情分析。') + ' 生成于 ' + ageText + '。', '');
@@ -1761,6 +1764,29 @@ function applyRiskStatus(message, type) {
   statusEl.className = 'risk-status' + (type ? ' ' + type : '');
 }
 
+function renderRiskDiagnostic(diagnostic) {
+  const el = document.getElementById('riskDiagnostic');
+  if (!el) return;
+  if (!diagnostic) {
+    el.innerHTML = '';
+    el.classList.remove('show');
+    return;
+  }
+  const provider = [diagnostic.provider, diagnostic.model].filter(Boolean).join(' / ');
+  const recovery = Array.isArray(diagnostic.recovery) ? diagnostic.recovery.filter(Boolean) : [];
+  const recoveryHtml = recovery.length
+    ? '<ul class="risk-diagnostic-list">' + recovery.map(item => '<li>' + escapeHtml(item) + '</li>').join('') + '</ul>'
+    : '<div>' + escapeHtml('稍后重试；如果问题持续，请导出诊断报告核对配置和网络状态。') + '</div>';
+  el.innerHTML = [
+    '<div class="risk-diagnostic-title">失败原因 · ' + escapeHtml(diagnostic.title || '风险分析失败') + '</div>',
+    provider ? '<div class="risk-diagnostic-meta">模型 ' + escapeHtml(provider) + '</div>' : '',
+    '<div class="risk-diagnostic-section"><strong>原因</strong><div>' + escapeHtml(diagnostic.reason || '未知错误') + '</div></div>',
+    '<div class="risk-diagnostic-section"><strong>影响</strong><div>' + escapeHtml(diagnostic.impact || '风险分析未生成，本次不会写入分析历史。') + '</div></div>',
+    '<div class="risk-diagnostic-section"><strong>建议处理</strong>' + recoveryHtml + '</div>',
+  ].join('');
+  el.classList.add('show');
+}
+
 function updateRiskButtonState() {
   const runBtn = document.getElementById('riskRunButton');
   const forceBtn = document.getElementById('riskForceRunButton');
@@ -1793,6 +1819,7 @@ function requestRiskAnalysis(trigger, force) {
   }
   riskAnalysisRunning = true;
   document.getElementById('riskResult').textContent = '正在分析当前行情...';
+  renderRiskDiagnostic(null);
   renderRiskSnapshot(null);
   renderRiskStructured(null);
   pendingRiskForceTrigger = null;

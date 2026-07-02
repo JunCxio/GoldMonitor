@@ -281,6 +281,26 @@ def test_risk_model_test_checks_chat_completion_not_only_model_list():
     assert fake_requests.post_calls
 
 
+def test_risk_error_diagnostic_explains_model_connection_recovery():
+    from goldmonitor.risk_analysis import build_error_diagnostic
+
+    diagnostic = build_error_diagnostic(
+        "无法连接模型服务，请检查网络。",
+        settings={
+            "risk_assistant_provider": "deepseek",
+            "deepseek_model": "deepseek-v4-pro",
+        },
+    )
+
+    assert diagnostic["type"] == "model_connection"
+    assert diagnostic["title"] == "模型生成接口连接失败"
+    assert diagnostic["provider"] == "deepseek"
+    assert diagnostic["model"] == "deepseek-v4-pro"
+    assert "风险分析未生成" in diagnostic["impact"]
+    assert any("代理" in item or "网络" in item for item in diagnostic["recovery"])
+    assert any("测试模型" in item for item in diagnostic["recovery"])
+
+
 if __name__ == "__main__":
     failures = []
     for name, value in sorted(globals().items()):
