@@ -110,6 +110,7 @@ let appSettings = {
   floating_price_display_mode: 'rmb_usd',
   floating_price_preset: 'compact',
   floating_price_snap_edge: true,
+  floating_price_always_on_top: false,
   close_behavior: 'ask',
   close_remembered: false,
   alert_sound_enabled: true,
@@ -1406,6 +1407,7 @@ function applyPlatformLabels() {
   setRowHidden('floatingPresetRow', menuBarMode);
   setRowHidden('floatingOpacityRow', menuBarMode);
   setRowHidden('floatingSnapRow', menuBarMode);
+  setRowHidden('floatingTopmostRow', menuBarMode);
 }
 
 function applySettings(data) {
@@ -1419,6 +1421,7 @@ function applySettings(data) {
   document.getElementById('setFloatingPreset').value = appSettings.floating_price_preset || 'compact';
   document.getElementById('setFloatingOpacity').value = appSettings.floating_price_opacity || 94;
   document.getElementById('setFloatingSnapEdge').checked = appSettings.floating_price_snap_edge !== false;
+  document.getElementById('setFloatingAlwaysOnTop').checked = !!appSettings.floating_price_always_on_top;
   document.getElementById('setCloseBehavior').value = closeBehavior;
   document.getElementById('setAlertSound').checked = !!appSettings.alert_sound_enabled;
   document.getElementById('setAlertDialog').checked = !!appSettings.alert_dialog_enabled;
@@ -1536,7 +1539,7 @@ function refreshRiskModels() {
 function testRiskModel() {
   const status = document.getElementById('riskModelTestStatus');
   if (status) {
-    status.textContent = '正在测试当前模型...';
+    status.textContent = '正在测试当前模型生成能力...';
     status.className = 'model-test-status';
   }
   socket.emit('test_risk_model');
@@ -1581,6 +1584,7 @@ function saveSettings() {
     floating_price_preset: document.getElementById('setFloatingPreset').value,
     floating_price_opacity: document.getElementById('setFloatingOpacity').value.trim(),
     floating_price_snap_edge: document.getElementById('setFloatingSnapEdge').checked,
+    floating_price_always_on_top: document.getElementById('setFloatingAlwaysOnTop').checked,
     close_behavior: closeBehavior,
     close_remembered: closeBehavior !== 'ask',
     alert_sound_enabled: document.getElementById('setAlertSound').checked,

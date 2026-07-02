@@ -313,6 +313,13 @@ def build_messages(context):
     ]
 
 
+def build_model_test_messages():
+    return [
+        {"role": "system", "content": "你是金价监控工具中的模型连通性测试助手。"},
+        {"role": "user", "content": "请只回复：模型连接正常。"},
+    ]
+
+
 def chat_completions_url(base_url):
     base_url = (base_url or "").rstrip("/")
     if base_url.endswith("/chat/completions"):
@@ -432,14 +439,10 @@ class RiskModelClient:
         options = self.fetch_model_options(settings, provider)
         models = options.get("models", [])
         if options.get("source") == "api" and model in models:
-            return {
-                "ok": True,
-                "provider": provider,
-                "model": model,
-                "models": models,
-                "message": f"模型连接正常，接口已返回 {model}。",
-            }
-        if options.get("source") == "api":
+            chat_result = self.test_chat_completion(settings, provider, base_url, model, api_key)
+            chat_result["models"] = models
+            return chat_result
+        if options.get("source") == "api" and models:
             return {
                 "ok": False,
                 "provider": provider,
@@ -447,16 +450,78 @@ class RiskModelClient:
                 "models": models,
                 "message": f"接口可访问，但模型列表未包含 {model}。",
             }
-        return {
-            "ok": False,
-            "provider": provider,
-            "model": model,
-            "models": models,
-            "message": options.get("error") or "模型列表获取失败，无法确认当前模型是否可用。",
-        }
+        chat_result = self.test_chat_completion(settings, provider, base_url, model, api_key)
+        chat_result["models"] = models
+        if chat_result.get("ok") and options.get("error"):
+            chat_result["message"] = f"{chat_result['message']} 模型列表未确认：{options.get('error')}"
+        return chat_result
 
     def build_messages(self, context):
         return build_messages(context)
+
+    def build_chat_payload(self, settings, context, provider, model, messages=None, max_tokens=None):
+        if max_tokens is None:
+            max_tokens = settings.get("risk_assistant_max_tokens", self.max_tokens_default)
+            depth = context.get("analysis_depth", "standard")
+            if depth == "quick":
+                max_tokens = min(max_tokens, 900)
+            elif depth == "deep":
+                max_tokens = max(max_tokens, 1800)
+        payload = {
+            "model": model,
+            "messages": messages or self.build_messages(context),
+            "temperature": self.temperature,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        if provider == "deepseek" and model == "deepseek-v4-pro":
+            payload["thinking"] = {"type": "enabled"}
+            payload["reasoning_effort"] = "medium"
+        return payload
+
+    def test_chat_completion(self, settings, provider, base_url, model, api_key):
+        payload = self.build_chat_payload(
+            settings,
+            {"analysis_depth": "quick"},
+            provider,
+            model,
+            messages=build_model_test_messages(),
+            max_tokens=300,
+        )
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": self.user_agent,
+        }
+        try:
+            response = self.request_client.post(
+                chat_completions_url(base_url),
+                headers=headers,
+                json=payload,
+                timeout=self.assistant_timeout,
+                proxies=self.proxies,
+            )
+            if response.status_code in (401, 403):
+                return {"ok": False, "provider": provider, "model": model, "message": "模型服务认证失败，请检查 API Key。"}
+            response.raise_for_status()
+            body = response.json()
+            choices = body.get("choices") if isinstance(body, dict) else None
+            message = choices[0].get("message") if choices and isinstance(choices[0], dict) else {}
+            content = str(message.get("content") or "").strip()
+            if not content:
+                return {"ok": False, "provider": provider, "model": model, "message": "模型生成接口返回内容为空。"}
+            return {"ok": True, "provider": provider, "model": model, "message": f"模型生成测试正常，接口已返回 {model}。"}
+        except self.timeout_type:
+            return {"ok": False, "provider": provider, "model": model, "message": "模型生成接口请求超时，请稍后重试。"}
+        except self.connection_error_type:
+            return {"ok": False, "provider": provider, "model": model, "message": "模型生成接口连接失败，请检查网络、代理或接口地址。"}
+        except self.http_error_type as exc:
+            status = getattr(exc.response, "status_code", "")
+            return {"ok": False, "provider": provider, "model": model, "message": f"模型生成接口请求失败：HTTP {status}"}
+        except self.request_exception_type as exc:
+            return {"ok": False, "provider": provider, "model": model, "message": f"模型生成接口请求失败：{exc}"}
+        except (ValueError, KeyError, TypeError):
+            return {"ok": False, "provider": provider, "model": model, "message": "模型生成接口返回格式异常。"}
 
     def call_chat_completion(self, settings, context, provider, base_url, model, api_key):
         if not api_key:
@@ -466,22 +531,7 @@ class RiskModelClient:
         if not model:
             return None, "请先选择或填写模型。"
 
-        max_tokens = settings.get("risk_assistant_max_tokens", self.max_tokens_default)
-        depth = context.get("analysis_depth", "standard")
-        if depth == "quick":
-            max_tokens = min(max_tokens, 900)
-        elif depth == "deep":
-            max_tokens = max(max_tokens, 1800)
-        payload = {
-            "model": model,
-            "messages": self.build_messages(context),
-            "temperature": self.temperature,
-            "max_tokens": max_tokens,
-            "stream": False,
-        }
-        if provider == "deepseek" and model == "deepseek-v4-pro":
-            payload["thinking"] = {"type": "enabled"}
-            payload["reasoning_effort"] = "medium"
+        payload = self.build_chat_payload(settings, context, provider, model)
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",

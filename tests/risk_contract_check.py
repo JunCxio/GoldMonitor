@@ -543,12 +543,17 @@ try:
         raise SystemExit(f"DeepSeek model options must come from /models when available, got: {model_options}")
     if not get_calls or not str(get_calls[0]["args"][0]).endswith("/models"):
         raise SystemExit(f"DeepSeek model options must request /models, got: {get_calls}")
-    diagnostic = app.test_risk_model_availability(app._normalize_settings({
-        "risk_assistant_provider": "deepseek",
-        "deepseek_base_url": "https://api.deepseek.com",
-        "deepseek_model": "deepseek-v4-pro",
-        "deepseek_api_key": "sk-risk-secret",
-    }))
+    original_post_for_diagnostic = app.requests.post
+    try:
+        app.requests.post = lambda *args, **kwargs: FakeRiskResponse()
+        diagnostic = app.test_risk_model_availability(app._normalize_settings({
+            "risk_assistant_provider": "deepseek",
+            "deepseek_base_url": "https://api.deepseek.com",
+            "deepseek_model": "deepseek-v4-pro",
+            "deepseek_api_key": "sk-risk-secret",
+        }))
+    finally:
+        app.requests.post = original_post_for_diagnostic
     if not diagnostic.get("ok"):
         raise SystemExit(f"model diagnostic must succeed when /models returns the selected model, got: {diagnostic}")
 

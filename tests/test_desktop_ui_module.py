@@ -89,6 +89,7 @@ def test_floating_window_metrics_and_geometry_are_deterministic():
         clamp_floating_position,
         default_floating_position,
         floating_rect,
+        floating_window_z_order,
         floating_window_metrics,
         floating_window_radius,
         floating_window_size,
@@ -97,6 +98,9 @@ def test_floating_window_metrics_and_geometry_are_deterministic():
     )
 
     settings = {"floating_price_preset": "unknown"}
+    assert floating_window_z_order({}) == "notopmost"
+    assert floating_window_z_order({"floating_price_always_on_top": False}) == "notopmost"
+    assert floating_window_z_order({"floating_price_always_on_top": True}) == "topmost"
     assert floating_window_metrics(settings)["size"] == (220, 52)
     assert floating_window_size(settings) == (220, 52)
     assert floating_window_radius(settings) == 14

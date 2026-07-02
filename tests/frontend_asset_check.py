@@ -77,6 +77,22 @@ if inline_scripts:
 css = css_path.read_text(encoding="utf-8")
 js = js_path.read_text(encoding="utf-8")
 
+for required in (
+    'id="floatingTopmostRow"',
+    'id="setFloatingAlwaysOnTop"',
+    'floating_price_always_on_top',
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing floating topmost setting: {required}")
+
+for required in (
+    "HWND_NOTOPMOST",
+    "floating_window_z_order(get_settings_snapshot())",
+    "WS_EX_NOACTIVATE",
+):
+    if required not in app_py:
+        raise SystemExit(f"app.py missing floating z-order contract: {required}")
+
 if "{{" in css or "{{" in js:
     raise SystemExit("static frontend assets must not contain template expressions")
 

@@ -178,6 +178,11 @@ def floating_window_radius(settings, default_preset=DEFAULT_FLOATING_PRICE_PRESE
     return floating_window_metrics(settings, default_preset=default_preset, presets=presets)["radius"]
 
 
+def floating_window_z_order(settings):
+    settings = settings if isinstance(settings, dict) else {}
+    return "topmost" if settings.get("floating_price_always_on_top", False) else "notopmost"
+
+
 def clamp_floating_position(x, y, window_size, work_area, edge_margin=8):
     width, height = window_size
     left, top, right, bottom = work_area

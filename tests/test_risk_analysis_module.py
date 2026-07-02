@@ -47,6 +47,7 @@ class FakeRequests:
     def __init__(self):
         self.get_calls = []
         self.post_calls = []
+        self.next_post_exception = None
         self.next_models_response = FakeResponse(body={"data": [{"id": "deepseek-v4-pro"}, {"model": "deepseek-chat"}]})
         self.next_chat_response = FakeResponse(body={
             "choices": [{
@@ -70,6 +71,8 @@ class FakeRequests:
 
     def post(self, *args, **kwargs):
         self.post_calls.append({"args": args, "kwargs": kwargs})
+        if self.next_post_exception:
+            raise self.next_post_exception
         return self.next_chat_response
 
 
@@ -241,6 +244,41 @@ def test_risk_model_client_fetches_models_and_builds_chat_payload():
     assert payload["max_tokens"] == 900
     assert payload["thinking"] == {"type": "enabled"}
     assert fake_requests.post_calls[0]["args"][0] == "https://api.deepseek.com/chat/completions"
+
+
+def test_risk_model_test_checks_chat_completion_not_only_model_list():
+    from goldmonitor.risk_analysis import RiskModelClient
+
+    fake_requests = FakeRequests()
+    fake_requests.next_post_exception = FakeConnectionError("chat endpoint refused")
+    client = RiskModelClient(
+        request_client=fake_requests,
+        default_settings={
+            "deepseek_base_url": "https://api.deepseek.com",
+            "deepseek_model": "deepseek-v4-pro",
+        },
+        fallback_models=("deepseek-v4-pro", "deepseek-chat"),
+        user_agent="GoldMonitor/test",
+        request_timeout=4,
+        assistant_timeout=20,
+        max_tokens_default=1200,
+        temperature=0.2,
+        proxies={"http": None, "https": None},
+    )
+    settings = {
+        "risk_assistant_provider": "deepseek",
+        "deepseek_base_url": "https://api.deepseek.com",
+        "deepseek_model": "deepseek-v4-pro",
+        "deepseek_api_key": "sk-risk-secret",
+        "risk_assistant_max_tokens": 1200,
+    }
+
+    diagnostic = client.test_availability(settings)
+
+    assert diagnostic["ok"] is False
+    assert "模型生成接口连接失败" in diagnostic["message"]
+    assert fake_requests.get_calls
+    assert fake_requests.post_calls
 
 
 if __name__ == "__main__":

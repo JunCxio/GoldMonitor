@@ -271,6 +271,13 @@
           </div>
           <label class="switch"><input type="checkbox" id="setFloatingSnapEdge"><span class="slider"></span></label>
         </div>
+        <div class="setting-row" id="floatingTopmostRow">
+          <div>
+            <div class="setting-label">悬浮条始终置顶</div>
+            <div class="setting-desc">关闭后，其他应用可以覆盖悬浮条，减少遮挡。</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="setFloatingAlwaysOnTop"><span class="slider"></span></label>
+        </div>
         <div class="setting-row">
           <div>
             <div class="setting-label">关闭窗口时</div>
@@ -527,7 +534,7 @@
         <div class="setting-row">
           <div>
             <div class="setting-label">模型连接测试</div>
-            <div class="setting-desc">仅调用模型列表接口验证当前配置，不触发风险分析。</div>
+            <div class="setting-desc">发送一次轻量生成请求验证当前模型，不保存风险分析结果。</div>
           </div>
           <div class="settings-stack">
             <button class="settings-cancel risk-history-clear" type="button" onclick="testRiskModel()">测试模型</button>

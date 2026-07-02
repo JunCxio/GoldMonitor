@@ -63,6 +63,7 @@ def normalize_settings(raw, defaults, options=None):
     if data.get("floating_price_preset") not in options.get("valid_floating_presets", set()):
         data["floating_price_preset"] = defaults["floating_price_preset"]
     data["floating_price_snap_edge"] = bool(data.get("floating_price_snap_edge", True))
+    data["floating_price_always_on_top"] = bool(data.get("floating_price_always_on_top", False))
     data["close_remembered"] = bool(data.get("close_remembered"))
     data["alert_sound_enabled"] = bool(data.get("alert_sound_enabled"))
     data["alert_dialog_enabled"] = bool(data.get("alert_dialog_enabled"))

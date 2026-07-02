@@ -217,6 +217,7 @@ DEFAULT_SETTINGS = {
     "floating_price_display_mode": "rmb_usd",
     "floating_price_preset": "compact",
     "floating_price_snap_edge": True,
+    "floating_price_always_on_top": False,
     "close_behavior": "ask",
     "close_remembered": False,
     "alert_sound_enabled": True,
@@ -5185,9 +5186,15 @@ def _position_floating_window(hwnd, user32=None, x=None, y=None):
         SWP_NOACTIVATE = 0x0010
         SWP_NOOWNERZORDER = 0x0200
         HWND_TOPMOST = ctypes.c_void_p(-1 & ((1 << (ctypes.sizeof(ctypes.c_void_p) * 8)) - 1))
+        HWND_NOTOPMOST = ctypes.c_void_p(-2 & ((1 << (ctypes.sizeof(ctypes.c_void_p) * 8)) - 1))
+        insert_after = (
+            HWND_TOPMOST
+            if desktop_ui_core.floating_window_z_order(get_settings_snapshot()) == "topmost"
+            else HWND_NOTOPMOST
+        )
         ok = user32.SetWindowPos(
             hwnd,
-            HWND_TOPMOST,
+            insert_after,
             int(x),
             int(y),
             int(width),
@@ -5696,9 +5703,12 @@ def _floating_price_window_loop():
         WS_EX_NOACTIVATE = 0x08000000
         WS_POPUP = 0x80000000
         LWA_ALPHA = 0x00000002
+        extended_style = WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE
+        if desktop_ui_core.floating_window_z_order(get_settings_snapshot()) == "topmost":
+            extended_style |= WS_EX_TOPMOST
 
         hwnd = user32.CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
+            extended_style,
             class_name,
             "金价悬浮条",
             WS_POPUP,

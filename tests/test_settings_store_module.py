@@ -17,6 +17,7 @@ DEFAULTS = {
     "floating_price_display_mode": "rmb_usd",
     "floating_price_preset": "compact",
     "floating_price_snap_edge": True,
+    "floating_price_always_on_top": False,
     "close_behavior": "ask",
     "close_remembered": False,
     "alert_sound_enabled": True,
@@ -79,6 +80,7 @@ def test_normalize_settings_clamps_invalid_values_and_removes_legacy_update_keys
         "floating_price_opacity": "10",
         "floating_price_display_mode": "bad",
         "floating_price_preset": "huge",
+        "floating_price_always_on_top": True,
         "close_behavior": "bad",
         "close_remembered": True,
         "smtp_server": " smtp.example.com ",
@@ -103,6 +105,7 @@ def test_normalize_settings_clamps_invalid_values_and_removes_legacy_update_keys
     assert normalized["floating_price_opacity"] == 50
     assert normalized["floating_price_display_mode"] == "rmb_usd"
     assert normalized["floating_price_preset"] == "compact"
+    assert normalized["floating_price_always_on_top"] is True
     assert normalized["close_behavior"] == "ask"
     assert normalized["close_remembered"] is False
     assert normalized["smtp_server"] == "smtp.example.com"
