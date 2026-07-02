@@ -238,6 +238,7 @@
   .source-health-action-trigger { width:54px; }
   .source-health-menu { position:absolute; right:0; bottom:calc(100% + 6px); z-index:5; box-sizing:border-box; width:128px; display:grid; gap:7px; padding:8px; border:1px solid var(--hairline); border-radius:8px; background:#141420; box-shadow:0 16px 32px rgba(0,0,0,0.36); }
   .source-health-menu[hidden] { display:none; }
+  .source-risk-action[hidden] { display:none; }
   .source-health-menu .btn-clear-sm { width:100%; justify-content:flex-start; }
   .source-health-details { margin-top:10px; padding-top:10px; border-top:1px solid var(--hairline); }
   .source-health-list { display:grid; gap:5px; max-height:88px; overflow:auto; }
@@ -333,6 +334,7 @@
   .price-retry:hover { background:rgba(232,184,48,0.18); border-color:rgba(232,184,48,0.58); transform:translateY(-1px); }
   .price-actions { display:flex; justify-content:center; gap:8px; flex-wrap:wrap; margin-top:10px; }
   .risk-open { min-height:36px; padding:8px 14px; border:1px solid rgba(91,155,213,0.42); background:var(--blue-soft); color:#9fc8f1; font-size:0.75rem; box-shadow:none; }
+  .risk-open[hidden] { display:none; }
   .risk-open:hover { background:rgba(91,155,213,0.18); border-color:rgba(91,155,213,0.58); transform:translateY(-1px); }
 
   /* ====== 日内统计条 ====== */
@@ -428,6 +430,13 @@
   .portfolio-tabs { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:6px; margin-bottom:8px; }
   .portfolio-tab { min-height:32px; border:1px solid var(--control-border); border-radius:8px; background:rgba(255,255,255,0.026); color:var(--text-dim); font-size:0.72rem; font-weight:800; cursor:pointer; }
   .portfolio-tab.active { color:#f0f0f4; border-color:rgba(232,184,48,0.26); background:rgba(232,184,48,0.075); }
+  .portfolio-card.portfolio-detail-mode .portfolio-tabs,
+  .portfolio-card.portfolio-detail-mode .portfolio-controls,
+  .portfolio-card.portfolio-detail-mode .portfolio-summary,
+  .portfolio-card.portfolio-detail-mode .portfolio-import-preview,
+  .portfolio-card.portfolio-detail-mode .portfolio-import-backup { display:none; }
+  .portfolio-card.portfolio-detail-mode .portfolio-head { margin-bottom:7px; padding-bottom:7px; border-bottom:1px solid rgba(255,255,255,0.055); }
+  .portfolio-card.portfolio-detail-mode .portfolio-primary-action { border-color:rgba(255,255,255,0.12); background:rgba(255,255,255,0.04); color:#c7c7d4; }
   .portfolio-controls { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(126px, 100%), 1fr)); gap:6px; min-width:0; margin-bottom:8px; }
   .portfolio-control, .portfolio-filter, .portfolio-sort, .portfolio-select-control { min-width:0; display:grid; gap:4px; }
   .portfolio-control > span, .portfolio-controls-note { color:var(--text-dim); font-size:0.62rem; line-height:1.35; }
@@ -510,6 +519,7 @@
   .portfolio-detail { grid-column:1 / -1; display:grid; gap:9px; min-width:0; padding-top:10px; border-top:1px solid var(--hairline); }
   .portfolio-detail-focus { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px; align-items:center; min-width:0; padding:8px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(255,255,255,0.018); }
   .portfolio-detail-focus-main { min-width:0; }
+  .portfolio-detail-focus-head { display:flex; align-items:center; gap:6px; min-width:0; }
   .portfolio-detail-focus-title { color:#f0f0f4; font-size:0.76rem; font-weight:900; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .portfolio-detail-focus-meta { margin-top:3px; color:var(--text-dim); font-size:0.64rem; line-height:1.35; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .portfolio-detail-focus-value { min-width:76px; text-align:right; }
@@ -517,6 +527,16 @@
   .portfolio-detail-focus-value span { display:block; margin-top:2px; color:var(--text-dim); font-size:0.6rem; white-space:nowrap; }
   .portfolio-detail-focus-value.up strong { color:var(--up); }
   .portfolio-detail-focus-value.down strong { color:var(--down); }
+  .portfolio-detail-actions { position:relative; flex:0 0 auto; margin-left:auto; display:inline-flex; }
+  .portfolio-detail-action-trigger { min-width:48px; justify-content:center; }
+  .portfolio-detail-action-menu { position:absolute; right:0; top:calc(100% + 6px); z-index:7; box-sizing:border-box; width:128px; display:grid; gap:7px; padding:8px; border:1px solid var(--hairline); border-radius:8px; background:#141420; box-shadow:0 16px 32px rgba(0,0,0,0.36); }
+  .portfolio-detail-action-menu[hidden] { display:none; }
+  .portfolio-detail-action-menu .btn-clear-sm { width:100%; justify-content:flex-start; }
+  .portfolio-detail-tabs { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:4px; min-width:0; padding:3px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(255,255,255,0.018); }
+  .portfolio-detail-tab { min-width:0; min-height:28px; padding:5px 6px; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--control-muted); font-size:0.66rem; font-weight:900; cursor:pointer; white-space:nowrap; }
+  .portfolio-detail-tab:hover { color:var(--text); background:var(--control-bg-hover); border-color:rgba(255,255,255,0.08); }
+  .portfolio-detail-tab.active { color:#111116; background:linear-gradient(180deg, #f0c64a, var(--gold)); border-color:rgba(232,184,48,0.68); box-shadow:0 6px 14px rgba(232,184,48,0.12); }
+  .portfolio-detail-panel { display:grid; gap:8px; min-width:0; }
   .portfolio-detail-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(118px, 100%), 1fr)); gap:6px; min-width:0; }
   .portfolio-detail-metric { min-width:0; padding:8px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(0,0,0,0.12); }
   .portfolio-detail-label { color:var(--text-dim); font-size:0.6rem; margin-bottom:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -535,6 +555,30 @@
   .portfolio-detail-transaction-value { color:#f0f0f4; font-size:0.68rem; font-weight:800; font-variant-numeric:tabular-nums; white-space:nowrap; }
   .portfolio-detail-more { color:var(--text-dim); font-size:0.64rem; line-height:1.35; text-align:center; padding:6px 8px; border:1px dashed rgba(255,255,255,0.07); border-radius:8px; background:rgba(255,255,255,0.012); }
   .portfolio-detail-empty { color:var(--text-dim); font-size:0.7rem; padding:10px 8px; text-align:center; border:1px dashed rgba(255,255,255,0.08); border-radius:8px; background:rgba(255,255,255,0.014); }
+  .portfolio-detail-review-panel { gap:9px; }
+  .portfolio-detail-review-summary { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:6px; min-width:0; }
+  .portfolio-detail-review-stat { min-width:0; padding:8px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(255,255,255,0.018); }
+  .portfolio-detail-review-stat-label { color:var(--text-dim); font-size:0.58rem; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-detail-review-stat-value { margin-top:3px; color:#f0f0f4; font-size:0.72rem; font-weight:900; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-detail-review-stat-value.up { color:var(--up); }
+  .portfolio-detail-review-stat-value.down { color:var(--down); }
+  .portfolio-detail-review-stat-meta { margin-top:3px; color:var(--text-dim); font-size:0.58rem; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-review-timeline { display:grid; gap:6px; min-width:0; }
+  .portfolio-review-event { display:grid; grid-template-columns:54px minmax(0, 1fr); gap:7px; min-width:0; padding:8px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(255,255,255,0.018); }
+  .portfolio-review-event-time { color:var(--text-dim); font-size:0.6rem; line-height:1.35; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; white-space:normal; overflow-wrap:anywhere; }
+  .portfolio-review-event-main { min-width:0; }
+  .portfolio-review-event-title { color:#f0f0f4; font-size:0.68rem; font-weight:850; line-height:1.35; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-review-event-type { display:inline-flex; align-items:center; min-height:18px; margin-right:5px; padding:2px 5px; border:1px solid rgba(232,184,48,0.22); border-radius:6px; color:var(--gold); background:rgba(232,184,48,0.07); font-size:0.58rem; font-weight:900; white-space:nowrap; }
+  .portfolio-review-event-text { margin-top:3px; color:var(--text-dim); font-size:0.62rem; line-height:1.35; white-space:normal; overflow-wrap:anywhere; }
+  .portfolio-related-table { display:grid; gap:0; min-width:0; overflow:hidden; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(255,255,255,0.018); }
+  .portfolio-related-row { display:grid; grid-template-columns:minmax(58px, 0.85fr) minmax(46px, 0.65fr) minmax(66px, 0.85fr) minmax(62px, 0.8fr) minmax(72px, 1fr); gap:6px; align-items:center; min-width:0; padding:7px 8px; border-bottom:1px solid rgba(255,255,255,0.045); color:var(--text-dim); font-size:0.62rem; line-height:1.3; }
+  .portfolio-related-row:last-child { border-bottom:none; }
+  .portfolio-related-row.head { color:var(--gold); font-weight:900; background:rgba(232,184,48,0.045); }
+  .portfolio-related-row span { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-related-row .up { color:var(--up); }
+  .portfolio-related-row .down { color:var(--down); }
+  .portfolio-detail-action-row { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:6px; min-width:0; }
+  .portfolio-detail-action-row button { min-height:30px; padding:5px 8px; white-space:nowrap; }
   .portfolio-alert-summary { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px; align-items:center; min-width:0; padding:8px; border:1px solid rgba(232,184,48,0.16); border-radius:8px; background:rgba(232,184,48,0.035); }
   .portfolio-alert-summary-main { min-width:0; display:flex; align-items:center; gap:6px; }
   .portfolio-alert-summary-text { min-width:0; color:var(--gold); font-size:0.66rem; line-height:1.35; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }

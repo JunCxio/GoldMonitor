@@ -168,6 +168,26 @@ for required in ("market_quality", "function renderRiskQuality", "function sourc
         raise SystemExit(f"static/app.js missing risk quality frontend contract: {required}")
 
 for required in (
+    "function selectedRiskPrice",
+    "function hasRiskAnalysisInput",
+    "function riskAnalysisUnavailableMessage",
+    "function updateRiskEntryState",
+    "riskAnalyzeButton.hidden = !available",
+    "document.querySelectorAll('.source-risk-action')",
+    "applyFetchStatus({ ok:false, message:riskUnavailable, retryable:true });",
+    "if (!openRiskAnalysis()) return;",
+    "const riskUnavailable = riskAnalysisUnavailableMessage();",
+):
+    if required not in js:
+        raise SystemExit(f"static/app.js missing risk entry availability contract: {required}")
+
+if ".risk-open[hidden] { display:none; }" not in css:
+    raise SystemExit("static/app.css must let hidden risk action override button display")
+
+if ".source-risk-action[hidden] { display:none; }" not in css:
+    raise SystemExit("static/app.css must let hidden source risk action override button display")
+
+for required in (
     "function applyPortfolio",
     "function capturePortfolioDraft",
     "function portfolioDraftFor",
@@ -317,6 +337,38 @@ for required in (
         raise SystemExit(f"static/app.js missing portfolio transaction defaults contract: {required}")
 
 for required in (
+    "let portfolioDetailView = 'review';",
+    "function setPortfolioDetailView",
+    "function renderPortfolioDetailTabs",
+    "function renderPortfolioDetailActions",
+    "function togglePortfolioDetailActionMenu",
+    "function renderPortfolioDetailOverview",
+    "function renderPortfolioDetailTransactions",
+    "function renderPortfolioDetailAlert",
+    "function activePortfolioDetailItem",
+    "function renderPortfolioHeaderChrome",
+    "function buildPortfolioReviewSummary",
+    "function buildPortfolioReviewTimeline",
+    "function renderPortfolioPositionReview",
+    "function renderPortfolioReviewSummaryStrip",
+    "function renderPortfolioReviewTimeline",
+    "function exportPortfolioPositionReview",
+    "function openPortfolioAlertEditor",
+    "portfolio-detail-tab",
+    "portfolio-detail-review-summary",
+    "portfolio-review-timeline",
+    "portfolio-detail-action-row",
+    "portfolio-detail-mode",
+    "持仓详情 · 复盘",
+    "返回列表",
+    "document.querySelectorAll('.portfolio-detail-action-menu')",
+    ".portfolio-detail-action-trigger",
+    ".portfolio-detail-actions",
+):
+    if required not in js:
+        raise SystemExit(f"static/app.js missing portfolio detail review contract: {required}")
+
+for required in (
     "repeat(auto-fit, minmax(min(150px, 100%), 1fr))",
     "repeat(auto-fit, minmax(min(140px, 100%), 1fr))",
     ".portfolio-name, .portfolio-note { grid-column:1 / -1; }",
@@ -325,6 +377,32 @@ for required in (
 ):
     if required not in css:
         raise SystemExit(f"static/app.css missing portfolio editor sizing contract: {required}")
+
+for required in (
+    ".portfolio-detail-focus-head",
+    ".portfolio-detail-actions",
+    ".portfolio-detail-action-trigger",
+    ".portfolio-detail-action-menu",
+    ".portfolio-detail-tabs",
+    ".portfolio-detail-tab",
+    ".portfolio-detail-panel",
+    ".portfolio-detail-review-summary",
+    ".portfolio-detail-review-stat",
+    ".portfolio-review-timeline",
+    ".portfolio-review-event",
+    ".portfolio-review-event-time",
+    ".portfolio-review-event-type",
+    ".portfolio-review-event-title",
+    ".portfolio-review-event-text",
+    ".portfolio-related-table",
+    ".portfolio-detail-action-row",
+    ".portfolio-card.portfolio-detail-mode .portfolio-tabs",
+    ".portfolio-card.portfolio-detail-mode .portfolio-controls",
+    ".portfolio-card.portfolio-detail-mode .portfolio-summary",
+    ".portfolio-card.portfolio-detail-mode .portfolio-import-backup",
+):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing portfolio detail review selector: {required}")
 
 for required in (
     ".btn-risk-sm",
