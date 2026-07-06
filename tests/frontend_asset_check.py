@@ -128,6 +128,13 @@ for required in (
     if required not in template + js:
         raise SystemExit(f"frontend missing native export directory picker contract: {required}")
 
+settings_updated_handler = "socket.on('settings_updated', data => {"
+settings_updated_pos = js.find(settings_updated_handler)
+settings_failed_pos = js.find("if (settingsSaveFailed)", settings_updated_pos)
+apply_settings_pos = js.find("applySettings(data || {})", settings_updated_pos)
+if not (settings_updated_pos >= 0 and settings_failed_pos >= 0 and apply_settings_pos >= 0 and settings_failed_pos < apply_settings_pos):
+    raise SystemExit("settings_updated must preserve visible settings_error state before repainting the form")
+
 for required in (
     ".portfolio-card",
     ".portfolio-head h3",

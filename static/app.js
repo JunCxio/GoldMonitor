@@ -662,15 +662,16 @@ socket.on('portfolio_import_undo_error', data => {
 });
 
 socket.on('settings_updated', data => {
-  applySettings(data || {});
   if (settingsSaveTimer) {
     clearTimeout(settingsSaveTimer);
     settingsSaveTimer = null;
   }
   if (settingsSaveFailed) {
+    appSettings = Object.assign({}, appSettings, data || {});
     pendingSettingsSave = false;
     return;
   }
+  applySettings(data || {});
   document.getElementById('settingsMessage').textContent = '';
   if (pendingSettingsSave) closeSettings();
   pendingSettingsSave = false;
