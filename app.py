@@ -1789,6 +1789,27 @@ def build_export_error_payload(default_message):
     }
 
 
+def build_open_exports_folder_error_payload(export_dir, exc):
+    category = _export_failure_category(exc)
+    detail = {
+        "ok": False,
+        "status": "failed",
+        "operation": "open_exports_folder",
+        "export_dir": export_dir,
+        "category": category,
+        "message": f"无法打开导出目录：{export_dir}。请检查目录权限，或手动打开该路径。",
+        "error": str(exc),
+        "exception": exc.__class__.__name__,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+    }
+    return {
+        "ok": False,
+        "message": detail["message"],
+        "error_detail": detail,
+        "export_dir_check": build_export_dir_check(),
+    }
+
+
 def choose_export_dir_for_desktop():
     window = _window_instance
     if not window:
@@ -5153,8 +5174,8 @@ def on_open_exports_folder():
     try:
         open_exports_folder()
         emit("exports_folder_opened", {"ok": True, "message": f"已打开导出目录：{export_dir}"})
-    except Exception:
-        emit("exports_folder_opened", {"ok": False, "message": f"无法自动打开导出目录：{export_dir}"})
+    except Exception as exc:
+        emit("exports_folder_opened", build_open_exports_folder_error_payload(export_dir, exc))
 
 
 @socketio.on("test_alert")

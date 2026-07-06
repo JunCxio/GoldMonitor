@@ -138,6 +138,12 @@ for required in (
     if required not in template + js:
         raise SystemExit(f"frontend missing export diagnostics loop contract: {required}")
 
+exports_folder_handler = "socket.on('exports_folder_opened', data => {"
+exports_folder_pos = js.find(exports_folder_handler)
+exports_folder_status_pos = js.find("setOpsExportStatus(data, '已打开导出目录'", exports_folder_pos)
+if not (exports_folder_pos >= 0 and exports_folder_status_pos > exports_folder_pos):
+    raise SystemExit("exports folder failures must reuse export diagnostics status rendering")
+
 settings_updated_handler = "socket.on('settings_updated', data => {"
 settings_updated_pos = js.find(settings_updated_handler)
 settings_failed_pos = js.find("if (settingsSaveFailed)", settings_updated_pos)
