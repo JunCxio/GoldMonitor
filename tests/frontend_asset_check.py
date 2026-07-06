@@ -430,6 +430,36 @@ for required in (
         raise SystemExit(f"static/app.css missing portfolio editor sizing contract: {required}")
 
 for required in (
+    "let pendingTimelineFocus = null;",
+    "function timelineRangeForTimestamp",
+    "function eventMatchesTimelineFocus",
+    "function openEventTimelineAround",
+    "function openAlertTimelineFromLog",
+    "function openRiskTimelineFromHistory",
+    "function handleAlertLogTimelineClick",
+    "function handleRiskHistoryTimelineClick",
+    "pendingTimelineFocus = {",
+    "eventTimelineTypes = EVENT_TIMELINE_TYPE_DEFS.map(item => item.type)",
+    "openEventTimelineAround(entry.timestamp || entry.time, 'alert', entry.id)",
+    "openEventTimelineAround(item.analysis_time || (item.snapshot && item.snapshot.analysis_time), 'risk_analysis', item.id)",
+    "data-log-timeline-id",
+    "data-risk-timeline-index",
+    "label: '复盘'",
+    "risk-history-review",
+    "查看复盘",
+):
+    if required not in js:
+        raise SystemExit(f"static/app.js missing timeline deep-link contract: {required}")
+
+for required in (
+    ".risk-history-main",
+    ".risk-history-review",
+    ".timeline-event.active",
+):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing timeline deep-link selector: {required}")
+
+for required in (
     ".portfolio-detail-focus-head",
     ".portfolio-detail-actions",
     ".portfolio-detail-action-trigger",

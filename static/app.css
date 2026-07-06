@@ -231,8 +231,11 @@
   .risk-history-title { color:var(--text-dim); font-size:0.74rem; letter-spacing:0.06em; text-transform:uppercase; font-weight:700; }
   .risk-history-clear { min-height:28px; padding:5px 10px; font-size:0.7rem; }
   .risk-history-list { max-height:160px; overflow:auto; display:grid; gap:6px; }
-  .risk-history-item { width:100%; text-align:left; border:1px solid var(--hairline); border-radius:8px; background:rgba(255,255,255,0.025); color:var(--text); padding:8px 10px; cursor:pointer; transition:all 0.18s ease; }
+  .risk-history-item { width:100%; display:flex; align-items:center; gap:8px; text-align:left; border:1px solid var(--hairline); border-radius:8px; background:rgba(255,255,255,0.025); color:var(--text); padding:8px 10px; transition:all 0.18s ease; }
   .risk-history-item:hover { border-color:rgba(232,184,48,0.32); background:rgba(232,184,48,0.06); }
+  .risk-history-main { flex:1 1 auto; min-width:0; text-align:left; border:0; background:transparent; color:inherit; padding:0; cursor:pointer; }
+  .risk-history-main:focus-visible { outline:none; box-shadow:var(--focus-ring); border-radius:6px; }
+  .risk-history-review { flex:0 0 auto; min-height:28px; padding:5px 8px; font-size:0.68rem; }
   .risk-history-time { color:var(--gold); font-size:0.72rem; margin-bottom:4px; }
   .risk-history-text { color:var(--text-dim); font-size:0.74rem; line-height:1.45; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .risk-history-empty { color:var(--text-dim); font-size:0.76rem; padding:10px 0; text-align:center; }
@@ -689,6 +692,7 @@
   .log-body { min-width:0; }
   .log-entry-head { display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:0; min-height:28px; margin-bottom:7px; }
   .log-line-head { display:flex; align-items:center; gap:5px; row-gap:3px; flex-wrap:nowrap; min-width:0; min-height:28px; margin-bottom:0; }
+  .log-action-row { display:inline-flex; align-items:center; justify-content:flex-end; gap:6px; flex:0 0 auto; min-width:0; }
   .log-time { min-height:28px; display:inline-flex; align-items:center; color:var(--text-dim); font-size:0.68rem; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; white-space:nowrap; }
   .log-level { min-height:20px; display:inline-flex; align-items:center; padding:2px 6px; border-radius:6px; border:1px solid var(--hairline); color:var(--text-dim); background:rgba(255,255,255,0.025); font-size:0.62rem; font-weight:800; white-space:nowrap; }
   .log-level.warning { color:var(--warn); border-color:rgba(224,160,64,0.24); background:rgba(224,160,64,0.08); }
