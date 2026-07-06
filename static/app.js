@@ -916,6 +916,10 @@ socket.on('diagnostics_copy_ready', data => {
 });
 
 socket.on('exports_folder_opened', data => {
+  if (data && data.ok === false) {
+    setOpsExportStatus(data, '已打开导出目录', '无法打开导出目录。');
+    return;
+  }
   setOpsStatus(data && data.message ? data.message : '已打开导出目录。', !!(data && data.ok));
 });
 

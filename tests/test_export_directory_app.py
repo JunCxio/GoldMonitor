@@ -153,6 +153,33 @@ def test_diagnostics_export_writes_json_object(monkeypatch, tmp_path):
     client.disconnect()
 
 
+def test_open_exports_folder_error_includes_diagnostics(monkeypatch, tmp_path):
+    import app
+
+    export_dir = tmp_path / "exports"
+    monkeypatch.setattr(app, "EXPORT_DIR", str(export_dir))
+    monkeypatch.setattr(app, "app_settings", {**app.DEFAULT_SETTINGS, "export_dir": ""})
+
+    def failing_open_exports_folder():
+        raise PermissionError("blocked")
+
+    monkeypatch.setattr(app, "open_exports_folder", failing_open_exports_folder)
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+
+    client.emit("open_exports_folder")
+    events = client.get_received()
+    payload = next(event["args"][0] for event in events if event["name"] == "exports_folder_opened")
+
+    assert payload["ok"] is False
+    assert "打开导出目录" in payload["message"]
+    assert payload["error_detail"]["category"] == "permission_denied"
+    assert payload["error_detail"]["export_dir"] == str(export_dir)
+    assert payload["export_dir_check"]["path"] == str(export_dir)
+    client.disconnect()
+
+
 def test_export_dir_check_reports_writable_directory(tmp_path):
     import app
 
