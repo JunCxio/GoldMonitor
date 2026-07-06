@@ -118,9 +118,44 @@ for required in (
     "function chooseExportDir",
     "window.pywebview.api.choose_export_dir",
     "保存后生效",
+    "function renderExportDirStatus",
+    "export_dir_check",
+    "useDefaultExportDirFromError",
+    "choose_export_dir",
+    "use_default_export_dir",
+    "open_export_dir",
 ):
     if required not in template + js:
         raise SystemExit(f"frontend missing native export directory picker contract: {required}")
+
+settings_updated_handler = "socket.on('settings_updated', data => {"
+settings_updated_pos = js.find(settings_updated_handler)
+settings_failed_pos = js.find("if (settingsSaveFailed)", settings_updated_pos)
+apply_settings_pos = js.find("applySettings(data || {})", settings_updated_pos)
+if not (settings_updated_pos >= 0 and settings_failed_pos >= 0 and apply_settings_pos >= 0 and settings_failed_pos < apply_settings_pos):
+    raise SystemExit("settings_updated must preserve visible settings_error state before repainting the form")
+
+reset_export_dir_pos = js.find("function resetExportDirField()")
+reset_export_dir_clear_pos = js.find("clearSettingsMessage();", reset_export_dir_pos)
+reset_export_dir_status_pos = js.find("renderExportDirStatus(null", reset_export_dir_pos)
+if not (
+    reset_export_dir_pos >= 0
+    and reset_export_dir_clear_pos >= 0
+    and reset_export_dir_status_pos >= 0
+    and reset_export_dir_clear_pos < reset_export_dir_status_pos
+):
+    raise SystemExit("resetExportDirField must clear stale settings_error text before showing default export directory recovery")
+
+choose_export_dir_pos = js.find("function chooseExportDir()")
+choose_export_dir_clear_pos = js.find("clearSettingsMessage();", choose_export_dir_pos)
+choose_export_dir_picker_pos = js.find("if (typeof picker !== 'function')", choose_export_dir_pos)
+if not (
+    choose_export_dir_pos >= 0
+    and choose_export_dir_clear_pos >= 0
+    and choose_export_dir_picker_pos >= 0
+    and choose_export_dir_clear_pos < choose_export_dir_picker_pos
+):
+    raise SystemExit("chooseExportDir must clear stale settings_error text before showing picker or manual-input recovery")
 
 for required in (
     ".portfolio-card",
