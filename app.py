@@ -1643,6 +1643,64 @@ def resolve_export_dir(settings=None):
     return os.path.abspath(os.path.expandvars(os.path.expanduser(export_dir)))
 
 
+def _export_dir_dialog_initial_dir(settings=None):
+    export_dir = resolve_export_dir(settings)
+    if os.path.isdir(export_dir):
+        return export_dir
+    parent = os.path.dirname(export_dir)
+    if parent and os.path.isdir(parent):
+        return parent
+    return os.path.expanduser("~")
+
+
+def _normalize_export_dir_selection(selection):
+    if not selection:
+        return ""
+    selected = selection[0] if isinstance(selection, (list, tuple)) else selection
+    selected_dir = str(selected or "").strip()
+    if not selected_dir:
+        return ""
+    return os.path.abspath(os.path.expandvars(os.path.expanduser(selected_dir)))
+
+
+def build_export_dir_picker_payload(dialog, settings=None):
+    initial_dir = _export_dir_dialog_initial_dir(settings)
+    selected_dir = _normalize_export_dir_selection(dialog(initial_dir))
+    if not selected_dir:
+        return {
+            "ok": False,
+            "cancelled": True,
+            "message": "已取消选择导出目录。",
+        }
+    return {
+        "ok": True,
+        "path": selected_dir,
+        "message": f"已选择导出目录：{selected_dir}",
+    }
+
+
+def choose_export_dir_for_desktop():
+    window = _window_instance
+    if not window:
+        return {
+            "ok": False,
+            "message": "当前不是桌面窗口模式，请手动输入导出目录。",
+        }
+    try:
+        import webview
+
+        def open_folder_dialog(initial_dir):
+            return window.create_file_dialog(webview.FOLDER_DIALOG, directory=initial_dir)
+
+        return build_export_dir_picker_payload(open_folder_dialog)
+    except Exception:
+        logging.warning("打开导出目录选择器失败", exc_info=True)
+        return {
+            "ok": False,
+            "message": "无法打开系统目录选择器，请手动输入导出目录。",
+        }
+
+
 def save_export_file(filename, content):
     return support_files_core.save_export_file(resolve_export_dir(), filename, content)
 
@@ -6256,6 +6314,11 @@ def ask_close_choice():
 
 
 # ---------- 桌面原生窗口 ----------
+class DesktopBridge:
+    def choose_export_dir(self):
+        return choose_export_dir_for_desktop()
+
+
 def start_desktop_window(start_hidden=False):
     """使用 pywebview 创建原生桌面窗口"""
     global _window_instance, _window_hwnd
@@ -6339,6 +6402,7 @@ def start_desktop_window(start_hidden=False):
             easy_drag=False,
             on_top=False,
             maximized=not start_hidden,  # 启动即最大化
+            js_api=DesktopBridge(),
         )
 
         _window_instance.events.shown += on_shown

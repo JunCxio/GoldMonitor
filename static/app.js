@@ -1696,6 +1696,44 @@ function resetExportDirField() {
   if (status) status.textContent = '保存后将使用默认导出目录：' + (appSettings.export_dir_default || appSettings.export_dir_effective || '未记录');
 }
 
+function chooseExportDir() {
+  const input = document.getElementById('setExportDir');
+  const status = document.getElementById('exportDirStatus');
+  const button = document.getElementById('chooseExportDirButton');
+  const picker = window.pywebview && window.pywebview.api && window.pywebview.api.choose_export_dir;
+  if (!input) return;
+  if (typeof picker !== 'function') {
+    const message = '当前浏览器模式不支持系统目录选择器，请手动输入导出目录。';
+    if (status) status.textContent = message;
+    setOpsStatus(message, false);
+    return;
+  }
+
+  if (status) status.textContent = '正在打开系统目录选择器...';
+  if (button) button.disabled = true;
+  Promise.resolve(picker.call(window.pywebview.api))
+    .then(data => {
+      const message = data && data.message ? data.message : '目录选择完成。';
+      if (!data || !data.ok) {
+        if (status) status.textContent = message;
+        if (!data || !data.cancelled) setOpsStatus(message, false);
+        return;
+      }
+      input.value = data.path || '';
+      const savedMessage = message + '，保存后生效。';
+      if (status) status.textContent = savedMessage;
+      setOpsStatus('已选择导出目录，保存后生效。', true);
+    })
+    .catch(() => {
+      const message = '无法打开系统目录选择器，请手动输入导出目录。';
+      if (status) status.textContent = message;
+      setOpsStatus(message, false);
+    })
+    .finally(() => {
+      if (button) button.disabled = false;
+    });
+}
+
 function renderDeepseekModelOptions(selected) {
   const select = document.getElementById('setDeepseekModel');
   const model = selected || 'deepseek-v4-pro';

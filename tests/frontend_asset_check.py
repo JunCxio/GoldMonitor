@@ -113,6 +113,16 @@ for required in (
         raise SystemExit(f"static/app.css missing global number input spinner contract: {required}")
 
 for required in (
+    'id="chooseExportDirButton"',
+    'onclick="chooseExportDir()"',
+    "function chooseExportDir",
+    "window.pywebview.api.choose_export_dir",
+    "保存后生效",
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing native export directory picker contract: {required}")
+
+for required in (
     ".portfolio-card",
     ".portfolio-head h3",
     ".portfolio-tools-more",
