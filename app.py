@@ -287,6 +287,7 @@ lock = threading.RLock()
 settings_lock = threading.RLock()
 risk_history_lock = threading.RLock()
 last_update_status_lock = threading.RLock()
+last_export_status_lock = threading.RLock()
 price_usd = None
 price_rmb = None
 previous_usd = None
@@ -351,6 +352,7 @@ source_price_samples = {}
 source_comparison_state = {}
 last_source_comparison_probe_at = 0.0
 last_update_status = {}
+last_export_status = {}
 _credential_test_store = None
 _alert_dialog_lock = threading.Lock()
 _alert_dialog_active = False
@@ -1715,6 +1717,78 @@ def build_export_dir_picker_payload(dialog, settings=None):
     }
 
 
+def reset_last_export_status():
+    global last_export_status
+    with last_export_status_lock:
+        last_export_status = {}
+
+
+def get_last_export_status():
+    with last_export_status_lock:
+        return dict(last_export_status) if isinstance(last_export_status, dict) else {}
+
+
+def _set_last_export_status(status):
+    global last_export_status
+    with last_export_status_lock:
+        last_export_status = dict(status)
+
+
+def _export_failure_category(exc):
+    if isinstance(exc, PermissionError):
+        return "permission_denied"
+    if isinstance(exc, NotADirectoryError):
+        return "invalid_path"
+    if isinstance(exc, FileNotFoundError):
+        return "path_missing"
+    return "write_failed"
+
+
+def _export_failure_message(category, export_dir):
+    if category == "permission_denied":
+        return f"导出目录不可写：{export_dir}。请重新选择目录、使用默认目录，或检查权限后重试。"
+    if category == "invalid_path":
+        return f"导出路径不是有效目录：{export_dir}。请重新选择导出目录后重试。"
+    if category == "path_missing":
+        return f"导出目录不存在或无法创建：{export_dir}。请检查上级目录权限后重试。"
+    return f"导出文件写入失败：{export_dir}。请检查目录权限、磁盘空间或文件占用后重试。"
+
+
+def _build_export_failure_status(filename, export_dir, exc):
+    category = _export_failure_category(exc)
+    return {
+        "ok": False,
+        "status": "failed",
+        "filename": os.path.basename(str(filename or "")),
+        "export_dir": export_dir,
+        "category": category,
+        "message": _export_failure_message(category, export_dir),
+        "error": str(exc),
+        "exception": exc.__class__.__name__,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def build_export_status_snapshot(settings=None):
+    return {
+        "directory": build_export_dir_check(settings),
+        "last_export": get_last_export_status(),
+    }
+
+
+def build_export_error_payload(default_message):
+    status = get_last_export_status()
+    if not (isinstance(status, dict) and status.get("ok") is False):
+        status = {}
+    detail_message = status.get("message")
+    return {
+        "ok": False,
+        "message": detail_message or default_message,
+        "error_detail": status,
+        "export_dir_check": build_export_dir_check(),
+    }
+
+
 def choose_export_dir_for_desktop():
     window = _window_instance
     if not window:
@@ -1738,7 +1812,23 @@ def choose_export_dir_for_desktop():
 
 
 def save_export_file(filename, content):
-    return support_files_core.save_export_file(resolve_export_dir(), filename, content)
+    export_dir = resolve_export_dir()
+    safe_name = os.path.basename(str(filename or ""))
+    try:
+        saved_path = support_files_core.save_export_file(export_dir, filename, content)
+    except OSError as exc:
+        _set_last_export_status(_build_export_failure_status(safe_name, export_dir, exc))
+        raise
+    _set_last_export_status({
+        "ok": True,
+        "status": "success",
+        "filename": safe_name,
+        "saved_path": saved_path,
+        "export_dir": export_dir,
+        "message": f"已导出：{saved_path}",
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+    })
+    return saved_path
 
 
 def open_exports_folder():
@@ -1823,6 +1913,7 @@ def build_diagnostics_report():
         "version": APP_VERSION,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "paths": paths,
+        "export_status": build_export_status_snapshot(),
         "health_summary": build_health_summary(
             fetch_status=fetch_status,
             source_health=source_health_state,
@@ -1901,6 +1992,9 @@ def build_diagnostics_clipboard_text(report=None):
     paths = payload.get("paths") if isinstance(payload.get("paths"), dict) else {}
     sources = fetch_status.get("sources") if isinstance(fetch_status.get("sources"), dict) else {}
     source_summary = source_health.get("summary") if isinstance(source_health.get("summary"), dict) else {}
+    export_status = payload.get("export_status") if isinstance(payload.get("export_status"), dict) else build_export_status_snapshot()
+    export_dir_status = export_status.get("directory") if isinstance(export_status.get("directory"), dict) else {}
+    last_export = export_status.get("last_export") if isinstance(export_status.get("last_export"), dict) else {}
     update_status = payload.get("last_update_status") if isinstance(payload.get("last_update_status"), dict) else get_last_update_status()
     update_message = update_status.get("message") or ("尚未检查更新" if not update_status else "更新状态未知")
     logs = payload.get("logs")
@@ -1918,6 +2012,10 @@ def build_diagnostics_clipboard_text(report=None):
     quality_score = quality.get("score")
     quality_text = f"{quality_label} / {quality_score}分" if quality_score is not None else quality_label
     quality_reasons = quality.get("reasons") if isinstance(quality.get("reasons"), list) else []
+    export_dir_ok = export_dir_status.get("ok")
+    export_dir_state = "可写" if export_dir_ok is True else "不可写" if export_dir_ok is False else "未检查"
+    last_export_ok = last_export.get("ok")
+    last_export_state = "成功" if last_export_ok is True else "失败" if last_export_ok is False else "未记录"
 
     lines = [
         "GoldMonitor 诊断摘要",
@@ -1956,7 +2054,16 @@ def build_diagnostics_clipboard_text(report=None):
         f"- 导出目录: {_diagnostics_value(paths.get('exports'))}",
         f"- 数据目录: {_diagnostics_value(paths.get('appdata'))}",
         f"- 最近日志: {log_count} 行",
+        "",
+        "导出状态",
+        f"- 导出目录: {_diagnostics_value(export_dir_status.get('path') or paths.get('exports'))}",
+        f"- 目录状态: {export_dir_state}",
+        f"- 最近导出: {last_export_state}",
     ]
+    if last_export_ok is True:
+        lines.append(f"- 最近保存路径: {_diagnostics_value(last_export.get('saved_path'))}")
+    elif last_export_ok is False:
+        lines.append(f"- 最近失败原因: {_diagnostics_value(last_export.get('message'))}")
     if quality_reasons:
         lines.extend(["", "数据质量提示", *[f"- {item}" for item in quality_reasons[:5]]])
     lines.extend([
@@ -4533,7 +4640,7 @@ def on_export_portfolio(data=None):
             "count": count,
         })
     except OSError as exc:
-        emit("portfolio_export_error", {"message": f"持仓导出失败: {exc}"})
+        emit("portfolio_export_error", build_export_error_payload(f"持仓导出失败: {exc}"))
 
 
 @socketio.on("toggle_watch_target")
@@ -4868,7 +4975,7 @@ def on_export_review_report(data=None):
             "count": state.get("summary", {}).get("total", 0),
         })
     except OSError as exc:
-        emit("review_report_error", {"message": f"复盘报告导出失败: {exc}"})
+        emit("review_report_error", build_export_error_payload(f"复盘报告导出失败: {exc}"))
     except Exception as exc:
         logging.warning("复盘报告导出失败: %s", exc)
         emit("review_report_error", {"message": "复盘报告导出失败，请稍后重试。"})
@@ -4903,7 +5010,7 @@ def on_export_alert_log():
             "count": count,
         })
     except OSError as exc:
-        emit("alert_log_export_error", {"message": f"告警记录导出失败: {exc}"})
+        emit("alert_log_export_error", build_export_error_payload(f"告警记录导出失败: {exc}"))
 
 
 @socketio.on("clear_alert_log")
@@ -4971,7 +5078,7 @@ def on_export_config():
             "saved_path": saved_path,
         })
     except OSError:
-        emit("config_backup_ready", {"ok": False, "message": "配置导出失败，请检查导出目录权限。"})
+        emit("config_backup_ready", build_export_error_payload("配置导出失败，请检查导出目录权限。"))
 
 
 @socketio.on("preview_import_config")
@@ -5025,7 +5132,7 @@ def on_get_diagnostics():
             "saved_path": saved_path,
         })
     except OSError:
-        emit("diagnostics_ready", {"ok": False, "message": "诊断报告导出失败，请检查导出目录权限。"})
+        emit("diagnostics_ready", build_export_error_payload("诊断报告导出失败，请检查导出目录权限。"))
 
 
 @socketio.on("copy_diagnostics")

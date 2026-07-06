@@ -51,6 +51,81 @@ def test_blank_export_dir_falls_back_to_default(monkeypatch, tmp_path):
     assert app.public_settings_snapshot()["export_dir_effective"] == str(default_dir)
 
 
+def test_export_status_records_success_and_diagnostics(monkeypatch, tmp_path):
+    import app
+
+    default_dir = tmp_path / "default-exports"
+    monkeypatch.setattr(app, "EXPORT_DIR", str(default_dir))
+    monkeypatch.setattr(app, "app_settings", {**app.DEFAULT_SETTINGS, "export_dir": ""})
+    monkeypatch.setattr(app, "read_log_tail", lambda: [])
+    app.reset_last_export_status()
+
+    saved = app.save_export_file("report.md", "hello")
+    status = app.get_last_export_status()
+    diagnostics = json.loads(app.build_diagnostics_report())
+    clipboard = app.build_diagnostics_clipboard_text(diagnostics)
+
+    assert saved == str(default_dir / "report.md")
+    assert status["ok"] is True
+    assert status["filename"] == "report.md"
+    assert status["saved_path"] == str(default_dir / "report.md")
+    assert status["export_dir"] == str(default_dir)
+    assert diagnostics["export_status"]["directory"]["ok"] is True
+    assert diagnostics["export_status"]["last_export"]["ok"] is True
+    assert diagnostics["export_status"]["last_export"]["saved_path"] == str(default_dir / "report.md")
+    assert "导出状态" in clipboard
+    assert "最近导出: 成功" in clipboard
+
+
+def test_export_status_records_failure_reason_and_diagnostics(monkeypatch, tmp_path):
+    import app
+
+    export_dir = tmp_path / "blocked-exports"
+    monkeypatch.setattr(app, "EXPORT_DIR", str(export_dir))
+    monkeypatch.setattr(app, "app_settings", {**app.DEFAULT_SETTINGS, "export_dir": ""})
+    monkeypatch.setattr(app, "read_log_tail", lambda: [])
+
+    def failing_save_export_file(_export_dir, _filename, _content):
+        raise PermissionError("readonly")
+
+    monkeypatch.setattr(app.support_files_core, "save_export_file", failing_save_export_file)
+    app.reset_last_export_status()
+
+    try:
+        app.save_export_file("report.md", "hello")
+    except PermissionError:
+        pass
+
+    status = app.get_last_export_status()
+    diagnostics = json.loads(app.build_diagnostics_report())
+    clipboard = app.build_diagnostics_clipboard_text(diagnostics)
+
+    assert status["ok"] is False
+    assert status["filename"] == "report.md"
+    assert status["export_dir"] == str(export_dir)
+    assert status["category"] == "permission_denied"
+    assert "导出目录不可写" in status["message"]
+    assert diagnostics["export_status"]["last_export"]["ok"] is False
+    assert diagnostics["export_status"]["last_export"]["category"] == "permission_denied"
+    assert "最近失败原因: 导出目录不可写" in clipboard
+
+
+def test_export_error_payload_ignores_stale_success_status(monkeypatch, tmp_path):
+    import app
+
+    default_dir = tmp_path / "default-exports"
+    monkeypatch.setattr(app, "EXPORT_DIR", str(default_dir))
+    monkeypatch.setattr(app, "app_settings", {**app.DEFAULT_SETTINGS, "export_dir": ""})
+    app.reset_last_export_status()
+
+    app.save_export_file("report.md", "hello")
+    payload = app.build_export_error_payload("导出失败，请检查目录权限。")
+
+    assert payload["message"] == "导出失败，请检查目录权限。"
+    assert payload["error_detail"] == {}
+    assert payload["export_dir_check"]["ok"] is True
+
+
 def test_export_dir_check_reports_writable_directory(tmp_path):
     import app
 
