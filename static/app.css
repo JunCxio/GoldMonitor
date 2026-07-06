@@ -150,6 +150,7 @@
   .ops-update-status[data-state="error"] { color:var(--up); }
   .ops-update-status[data-state="available"] { color:var(--gold); }
   .ops-update-meta { margin-top:4px; color:var(--text-dim); font-size:0.72rem; line-height:1.35; white-space:normal; overflow-wrap:anywhere; }
+  .diagnostics-copy-fallback { min-height:130px; max-height:220px; margin-top:8px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:0.72rem; line-height:1.5; white-space:pre; }
   .confirm-modal { width:min(460px, 100%); }
   .close-choice-copy { color:var(--text); font-size:0.92rem; line-height:1.65; }
   .dialog-check { margin-top:16px; display:flex; align-items:center; gap:10px; color:var(--text-dim); font-size:0.82rem; cursor:pointer; }

@@ -837,6 +837,51 @@ socket.on('diagnostics_ready', data => {
   setOpsStatus('诊断报告已导出，文件名：' + (data.filename || 'GoldMonitor-diagnostics.json') + '。', true);
 });
 
+function hideDiagnosticsCopyFallback() {
+  const fallback = document.getElementById('diagnosticsCopyFallback');
+  if (!fallback) return;
+  fallback.value = '';
+  fallback.hidden = true;
+}
+
+function showDiagnosticsCopyFallback(content) {
+  const fallback = document.getElementById('diagnosticsCopyFallback');
+  if (!fallback) return;
+  fallback.value = content;
+  fallback.hidden = false;
+  requestAnimationFrame(() => {
+    fallback.focus();
+    fallback.select();
+  });
+}
+
+function copyTextWithSelection(content) {
+  const textarea = document.createElement('textarea');
+  textarea.value = content;
+  textarea.setAttribute('readonly', 'readonly');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  textarea.style.top = '0';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  try {
+    return document.execCommand('copy');
+  } catch (error) {
+    return false;
+  } finally {
+    textarea.remove();
+  }
+}
+
+function copyTextToClipboard(content) {
+  const fallbackCopy = () => Promise.resolve(copyTextWithSelection(content));
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(content).then(() => true).catch(fallbackCopy);
+  }
+  return fallbackCopy();
+}
+
 socket.on('diagnostics_copy_ready', data => {
   if (!data) return;
   if (data.ok === false) {
@@ -848,13 +893,20 @@ socket.on('diagnostics_copy_ready', data => {
     setOpsStatus('诊断摘要为空，无法复制。', false);
     return;
   }
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(content)
-      .then(() => setOpsStatus('诊断摘要已复制。', true))
-      .catch(() => setOpsStatus('复制失败，请生成诊断报告后手动复制。', false));
-    return;
-  }
-  setOpsStatus('当前环境不支持自动复制，请生成诊断报告后手动复制。', false);
+  copyTextToClipboard(content)
+    .then(copied => {
+      if (copied) {
+        hideDiagnosticsCopyFallback();
+        setOpsStatus('诊断摘要已复制。', true);
+        return;
+      }
+      showDiagnosticsCopyFallback(content);
+      setOpsStatus('自动复制失败，已展示诊断摘要，可手动复制。', false);
+    })
+    .catch(() => {
+      showDiagnosticsCopyFallback(content);
+      setOpsStatus('自动复制失败，已展示诊断摘要，可手动复制。', false);
+    });
 });
 
 socket.on('exports_folder_opened', data => {
@@ -1361,6 +1413,7 @@ function exportDiagnostics() {
 }
 
 function copyDiagnostics() {
+  hideDiagnosticsCopyFallback();
   setOpsStatus('正在生成诊断摘要...', true);
   socket.emit('copy_diagnostics');
 }

@@ -503,11 +503,16 @@ for required in (
 
 for required in (
     'onclick="copyDiagnostics()"',
+    'id="diagnosticsCopyFallback"',
     "function copyDiagnostics",
+    "function copyTextToClipboard",
+    "function showDiagnosticsCopyFallback",
     "socket.emit('copy_diagnostics')",
     "diagnostics_copy_ready",
     "navigator.clipboard.writeText",
+    "document.execCommand('copy')",
     "诊断摘要已复制",
+    "自动复制失败，已展示诊断摘要，可手动复制。",
 ):
     if required not in template + js:
         raise SystemExit(f"frontend missing diagnostics copy contract: {required}")
