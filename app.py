@@ -266,6 +266,7 @@ VALID_RISK_ASSISTANT_PROVIDERS = {"deepseek", "openai_compatible"}
 VALID_RISK_ASSISTANT_DEPTHS = {"quick", "standard", "deep"}
 VALID_FLOATING_DISPLAY_MODES = {"rmb_usd", "rmb_only", "usd_only"}
 VALID_FLOATING_PRESETS = set(desktop_ui_core.FLOATING_PRICE_PRESETS)
+EXPORT_DIR_CHECK_ACTIONS = ["choose_export_dir", "use_default_export_dir", "open_export_dir"]
 FLOATING_PRICE_PRESETS = desktop_ui_core.FLOATING_PRICE_PRESETS
 DEEPSEEK_FALLBACK_MODELS = ("deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner")
 RISK_STRUCTURED_SECTION_LABELS = (
@@ -648,6 +649,7 @@ def public_settings_snapshot(settings=None):
     )
     public["export_dir_default"] = EXPORT_DIR
     public["export_dir_effective"] = resolve_export_dir(snapshot)
+    public["export_dir_check"] = build_export_dir_check(snapshot)
     return public
 
 
@@ -1641,6 +1643,40 @@ def resolve_export_dir(settings=None):
     if not export_dir:
         return EXPORT_DIR
     return os.path.abspath(os.path.expandvars(os.path.expanduser(export_dir)))
+
+
+def _probe_export_dir_writable(export_dir):
+    os.makedirs(export_dir, exist_ok=True)
+    probe_path = os.path.join(export_dir, ".goldmonitor-write-check")
+    with open(probe_path, "w", encoding="utf-8") as f:
+        f.write("ok")
+    try:
+        os.remove(probe_path)
+    except OSError:
+        pass
+
+
+def build_export_dir_check(settings=None, probe_writer=None):
+    export_dir = resolve_export_dir(settings)
+    writer = probe_writer or _probe_export_dir_writable
+    try:
+        writer(export_dir)
+        return {
+            "ok": True,
+            "path": export_dir,
+            "status": "writable",
+            "message": f"导出目录可写：{export_dir}",
+            "actions": [],
+        }
+    except OSError as exc:
+        return {
+            "ok": False,
+            "path": export_dir,
+            "status": "unwritable",
+            "message": f"导出目录不可写：{export_dir}。请重新选择目录、使用默认目录，或检查权限后重试。",
+            "error": str(exc),
+            "actions": list(EXPORT_DIR_CHECK_ACTIONS),
+        }
 
 
 def _export_dir_dialog_initial_dir(settings=None):
@@ -4553,6 +4589,15 @@ def on_update_settings(data):
         allowed_keys=set(DEFAULT_SETTINGS),
         secret_clear_flags=secret_clear_flags,
     )
+    if "export_dir" in data:
+        export_dir_check = build_export_dir_check(current)
+        if not export_dir_check.get("ok"):
+            emit("settings_error", {
+                "message": export_dir_check.get("message") or "导出目录不可写，请检查目录权限。",
+                "export_dir_check": export_dir_check,
+            })
+            emit("settings_updated", public_settings_snapshot())
+            return
     try:
         updated, startup_error = apply_settings(current)
     except OSError:

@@ -684,6 +684,7 @@ socket.on('settings_error', data => {
   pendingSettingsSave = false;
   settingsSaveFailed = true;
   document.getElementById('settingsMessage').textContent = data.message || '设置保存失败';
+  if (data && data.export_dir_check) renderExportDirStatus(data.export_dir_check);
 });
 
 socket.on('threshold_error', data => alert(data.message));
@@ -1678,22 +1679,54 @@ function applySettings(data) {
 
 function applyExportDirSetting() {
   const input = document.getElementById('setExportDir');
-  const status = document.getElementById('exportDirStatus');
-  if (!input || !status) return;
+  if (!input) return;
   const configured = appSettings.export_dir || '';
   const effective = appSettings.export_dir_effective || appSettings.export_dir_default || '';
   input.value = configured;
-  status.textContent = configured
+  renderExportDirStatus(appSettings.export_dir_check, configured
     ? '当前导出目录：' + effective
-    : '当前使用默认导出目录：' + (effective || '未记录');
+    : '当前使用默认导出目录：' + (effective || '未记录'));
+}
+
+function exportDirActionButton(action) {
+  if (action === 'choose_export_dir') {
+    return '<button class="btn-clear-sm export-dir-action" type="button" onclick="chooseExportDir()">重新选择</button>';
+  }
+  if (action === 'use_default_export_dir') {
+    return '<button class="btn-clear-sm export-dir-action" type="button" onclick="useDefaultExportDirFromError()">使用默认</button>';
+  }
+  if (action === 'open_export_dir') {
+    return '<button class="btn-clear-sm export-dir-action" type="button" onclick="openExportsFolder()">打开当前目录</button>';
+  }
+  return '';
+}
+
+function renderExportDirStatus(check, fallbackText) {
+  const status = document.getElementById('exportDirStatus');
+  if (!status) return;
+  const data = check && typeof check === 'object' ? check : null;
+  if (!data || !data.status) {
+    status.textContent = fallbackText || '留空使用默认导出目录。';
+    return;
+  }
+  const statusClass = data.ok ? 'ok' : 'fail';
+  const actions = Array.isArray(data.actions) ? data.actions.map(exportDirActionButton).filter(Boolean) : [];
+  status.innerHTML = [
+    '<span class="export-dir-check ' + statusClass + '">' + escapeHtml(data.message || fallbackText || '') + '</span>',
+    actions.length ? '<span class="export-dir-actions">' + actions.join('') + '</span>' : '',
+  ].join('');
 }
 
 function resetExportDirField() {
   const input = document.getElementById('setExportDir');
-  const status = document.getElementById('exportDirStatus');
   if (!input) return;
   input.value = '';
-  if (status) status.textContent = '保存后将使用默认导出目录：' + (appSettings.export_dir_default || appSettings.export_dir_effective || '未记录');
+  renderExportDirStatus(null, '保存后将使用默认导出目录：' + (appSettings.export_dir_default || appSettings.export_dir_effective || '未记录'));
+}
+
+function useDefaultExportDirFromError() {
+  resetExportDirField();
+  setOpsStatus('已切换为默认导出目录，保存后生效。', true);
 }
 
 function chooseExportDir() {

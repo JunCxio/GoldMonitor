@@ -118,6 +118,12 @@ for required in (
     "function chooseExportDir",
     "window.pywebview.api.choose_export_dir",
     "保存后生效",
+    "function renderExportDirStatus",
+    "export_dir_check",
+    "useDefaultExportDirFromError",
+    "choose_export_dir",
+    "use_default_export_dir",
+    "open_export_dir",
 ):
     if required not in template + js:
         raise SystemExit(f"frontend missing native export directory picker contract: {required}")
