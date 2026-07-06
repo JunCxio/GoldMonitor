@@ -5123,7 +5123,7 @@ def on_reset_settings():
 def on_get_diagnostics():
     filename = f"GoldMonitor-diagnostics-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
     try:
-        content = json.dumps(build_diagnostics_report(), ensure_ascii=False, indent=2)
+        content = build_diagnostics_report()
         saved_path = save_export_file(filename, content)
         emit("diagnostics_ready", {
             "ok": True,

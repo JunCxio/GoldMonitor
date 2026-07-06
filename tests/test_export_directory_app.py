@@ -126,6 +126,33 @@ def test_export_error_payload_ignores_stale_success_status(monkeypatch, tmp_path
     assert payload["export_dir_check"]["ok"] is True
 
 
+def test_diagnostics_export_writes_json_object(monkeypatch, tmp_path):
+    import app
+
+    export_dir = tmp_path / "exports"
+    monkeypatch.setattr(app, "EXPORT_DIR", str(export_dir))
+    monkeypatch.setattr(app, "app_settings", {**app.DEFAULT_SETTINGS, "export_dir": ""})
+    monkeypatch.setattr(app, "read_log_tail", lambda: [])
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+
+    client.emit("get_diagnostics")
+    events = client.get_received()
+    payload = next(event["args"][0] for event in events if event["name"] == "diagnostics_ready")
+    saved_text = Path(payload["saved_path"]).read_text(encoding="utf-8")
+    content_report = json.loads(payload["content"])
+    saved_report = json.loads(saved_text)
+
+    assert payload["ok"] is True
+    assert isinstance(content_report, dict)
+    assert isinstance(saved_report, dict)
+    assert content_report["app"] == app.APP_NAME
+    assert saved_report["app"] == app.APP_NAME
+    assert saved_text == payload["content"]
+    client.disconnect()
+
+
 def test_export_dir_check_reports_writable_directory(tmp_path):
     import app
 
