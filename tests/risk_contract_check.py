@@ -843,6 +843,14 @@ try:
             raise SystemExit("diagnostics report must not include raw SMTP password")
         if "smtp_password_masked" not in diagnostics:
             raise SystemExit("diagnostics report must include masked SMTP password state")
+        diagnostics_copy = app.build_diagnostics_clipboard_text()
+        for required in ("GoldMonitor 诊断摘要", "版本", "行情状态", "风险分析", "悬浮条", "最近日志"):
+            if required not in diagnostics_copy:
+                raise SystemExit(f"diagnostics copy text missing {required}: {diagnostics_copy}")
+        if "smtp-secret" in diagnostics_copy:
+            raise SystemExit("diagnostics copy text must not include raw SMTP password")
+        if "smtp_password_masked" in diagnostics_copy or "smtp_password" in diagnostics_copy:
+            raise SystemExit("diagnostics copy text should use user-facing secret labels")
 
         client = authorized_client()
         try:
@@ -872,6 +880,16 @@ try:
                 raise SystemExit(f"diagnostics export must save a visible file path, got: {diagnostics_export}")
             if "smtp-secret" in diagnostics_export.get("content", ""):
                 raise SystemExit("diagnostics export must not include raw SMTP password")
+            client.emit("copy_diagnostics")
+            diagnostics_copy_event = wait_for_event(client, "diagnostics_copy_ready")
+            if not diagnostics_copy_event.get("ok") or not diagnostics_copy_event.get("content"):
+                raise SystemExit(f"diagnostics copy event must return text content, got: {diagnostics_copy_event}")
+            if diagnostics_copy_event.get("saved_path"):
+                raise SystemExit(f"diagnostics copy event must not create export files, got: {diagnostics_copy_event}")
+            if "GoldMonitor 诊断摘要" not in diagnostics_copy_event.get("content", ""):
+                raise SystemExit(f"diagnostics copy event must include copy summary, got: {diagnostics_copy_event}")
+            if "smtp-secret" in diagnostics_copy_event.get("content", ""):
+                raise SystemExit("diagnostics copy event must not include raw SMTP password")
             client.emit("update_alert_log_status", {"id": alert_id, "read": True, "acknowledged": True})
             status_event = wait_for_event(client, "alert_log_status_updated")
             if not status_event.get("ok") or not status_event.get("entry", {}).get("acknowledged"):

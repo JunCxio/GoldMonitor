@@ -586,7 +586,10 @@
             <div class="setting-label">诊断报告</div>
             <div class="setting-desc">导出版本、数据源状态、最近日志和配置摘要，便于排查问题。</div>
           </div>
-          <button class="settings-cancel btn-form" type="button" onclick="exportDiagnostics()">生成诊断</button>
+          <div class="settings-stack">
+            <button class="btn-set btn-form" type="button" onclick="copyDiagnostics()">复制诊断</button>
+            <button class="settings-cancel btn-form" type="button" onclick="exportDiagnostics()">生成诊断</button>
+          </div>
         </div>
         <div class="setting-row">
           <div>

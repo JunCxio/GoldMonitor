@@ -502,6 +502,17 @@ for required in (
         raise SystemExit(f"static/app.js missing config import preview contract: {required}")
 
 for required in (
+    'onclick="copyDiagnostics()"',
+    "function copyDiagnostics",
+    "socket.emit('copy_diagnostics')",
+    "diagnostics_copy_ready",
+    "navigator.clipboard.writeText",
+    "诊断摘要已复制",
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing diagnostics copy contract: {required}")
+
+for required in (
     "update_alert_log_handling",
     "alert_log_handling_updated",
     "function updateAlertHandling",

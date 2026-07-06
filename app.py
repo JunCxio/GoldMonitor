@@ -1699,6 +1699,118 @@ def build_diagnostics_report():
     return json.dumps(report, ensure_ascii=False, indent=2)
 
 
+def _diagnostics_report_payload(report=None):
+    raw = build_diagnostics_report() if report is None else report
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str):
+        return {}
+    try:
+        payload = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _diagnostics_value(value, empty="未记录"):
+    if isinstance(value, bool):
+        return "是" if value else "否"
+    if value is None or value == "":
+        return empty
+    return str(value)
+
+
+def _diagnostics_source_label(source):
+    source = source if isinstance(source, dict) else {}
+    name = str(source.get("source") or "").strip() or "未记录"
+    suffixes = []
+    if source.get("cached"):
+        suffixes.append("缓存")
+    if source.get("ok") is False:
+        suffixes.append("异常")
+    error = str(source.get("error") or "").strip()
+    text = name
+    if suffixes:
+        text += "（" + "、".join(suffixes) + "）"
+    if error:
+        text += "，错误：" + error
+    return text
+
+
+def build_diagnostics_clipboard_text(report=None):
+    payload = _diagnostics_report_payload(report)
+    fetch_status = payload.get("fetch_status") if isinstance(payload.get("fetch_status"), dict) else {}
+    source_health = payload.get("source_health") if isinstance(payload.get("source_health"), dict) else {}
+    quality = source_health.get("quality") if isinstance(source_health.get("quality"), dict) else {}
+    settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
+    price_history_state = payload.get("price_history") if isinstance(payload.get("price_history"), dict) else {}
+    paths = payload.get("paths") if isinstance(payload.get("paths"), dict) else {}
+    sources = fetch_status.get("sources") if isinstance(fetch_status.get("sources"), dict) else {}
+    source_summary = source_health.get("summary") if isinstance(source_health.get("summary"), dict) else {}
+    logs = payload.get("logs")
+    log_count = len(logs) if isinstance(logs, list) else len(str(logs or "").splitlines()) if logs else 0
+    with lock:
+        kline_count = len(klines_5min)
+
+    provider = settings.get("risk_assistant_provider") or DEFAULT_SETTINGS["risk_assistant_provider"]
+    if provider == "deepseek":
+        model = settings.get("deepseek_model") or DEFAULT_SETTINGS["deepseek_model"]
+    else:
+        model = settings.get("openai_compatible_model") or DEFAULT_SETTINGS["openai_compatible_model"]
+    risk_enabled = "开启" if settings.get("risk_assistant_enabled") else "关闭"
+    quality_label = quality.get("label") or "未评估"
+    quality_score = quality.get("score")
+    quality_text = f"{quality_label} / {quality_score}分" if quality_score is not None else quality_label
+    quality_reasons = quality.get("reasons") if isinstance(quality.get("reasons"), list) else []
+
+    lines = [
+        "GoldMonitor 诊断摘要",
+        f"生成时间: {_diagnostics_value(payload.get('generated_at'))}",
+        f"版本: {_diagnostics_value(payload.get('version'))}",
+        f"运行平台: {_diagnostics_value(settings.get('platform') or sys.platform)}",
+        "",
+        "行情状态",
+        f"- 状态: {_diagnostics_value(fetch_status.get('message'))}（{_diagnostics_value(fetch_status.get('status'))}）",
+        f"- 金价源: {_diagnostics_source_label(sources.get('gold'))}",
+        f"- 汇率源: {_diagnostics_source_label(sources.get('forex'))}",
+        f"- 行情质量: {quality_text}",
+        f"- 数据源统计: 正常 {source_summary.get('ok', 0)}，异常 {source_summary.get('failed', 0)}，缓存 {source_summary.get('cached', 0)}",
+        f"- 历史样本数: {price_history_state.get('total', 0)}",
+        f"- 5 分钟 K 线样本数: {kline_count}",
+        "",
+        "风险分析",
+        f"- 状态: {risk_enabled}",
+        f"- 模型: {provider} / {model}",
+        f"- 历史记录数: {payload.get('risk_history_count', 0)}",
+        "",
+        "悬浮条",
+        f"- 状态: {'开启' if settings.get('floating_price_enabled') else '关闭'}",
+        f"- 置顶: {'开启' if settings.get('floating_price_always_on_top') else '关闭'}",
+        f"- 显示模式: {_diagnostics_value(settings.get('floating_price_display_mode'))}",
+        f"- 透明度: {_diagnostics_value(settings.get('floating_price_opacity'))}",
+        "",
+        "存储与日志",
+        f"- 导出目录: {_diagnostics_value(paths.get('exports'))}",
+        f"- 数据目录: {_diagnostics_value(paths.get('appdata'))}",
+        f"- 最近日志: {log_count} 行",
+    ]
+    if quality_reasons:
+        lines.extend(["", "数据质量提示", *[f"- {item}" for item in quality_reasons[:5]]])
+    lines.extend([
+        "",
+        "排查建议",
+        "- 若行情状态异常，先点击重新获取行情，并检查网络或数据源状态。",
+        "- 若风险分析失败，先在设置中测试模型，并确认 API Key、模型和接口地址可用。",
+        "- 如需完整原始结构，请使用“生成诊断”导出 JSON 文件。",
+    ])
+    return "\n".join(lines)
+
+
 def show_alert_dialog(title, message):
     if not get_settings_snapshot().get("alert_dialog_enabled", True):
         return
@@ -4747,6 +4859,18 @@ def on_get_diagnostics():
         })
     except OSError:
         emit("diagnostics_ready", {"ok": False, "message": "诊断报告导出失败，请检查导出目录权限。"})
+
+
+@socketio.on("copy_diagnostics")
+def on_copy_diagnostics():
+    try:
+        emit("diagnostics_copy_ready", {
+            "ok": True,
+            "content": build_diagnostics_clipboard_text(),
+        })
+    except Exception:
+        logging.exception("failed to build diagnostics clipboard text")
+        emit("diagnostics_copy_ready", {"ok": False, "message": "诊断摘要生成失败，请稍后重试。"})
 
 
 @socketio.on("open_exports_folder")
