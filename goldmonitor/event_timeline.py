@@ -138,9 +138,31 @@ def build_event_price_summary(points):
     }
 
 
+def build_price_timeline_series(points):
+    series = []
+    for point in list(points or []):
+        if not isinstance(point, dict):
+            continue
+        parsed = parse_iso_datetime(point.get("timestamp"))
+        if not parsed:
+            continue
+        usd = format_number(point.get("usd"))
+        rmb = format_number(point.get("rmb"))
+        if usd is None and rmb is None:
+            continue
+        series.append({
+            "timestamp": parsed.isoformat(timespec="seconds"),
+            "usd": usd,
+            "rmb": rmb,
+        })
+    series.sort(key=lambda item: item.get("timestamp", ""))
+    return series
+
+
 def build_price_summary_timeline_event(points, start_time, end_time):
     points = list(points or [])
     summary = build_event_price_summary(points)
+    series = build_price_timeline_series(points)
     total = len(points)
     rmb = summary.get("rmb", {})
     if total:
@@ -158,6 +180,7 @@ def build_price_summary_timeline_event(points, start_time, end_time):
         {
             "points": total,
             "summary": summary,
+            "series": series,
             "range_start": start_time.isoformat(timespec="seconds"),
             "range_end": end_time.isoformat(timespec="seconds"),
         },
@@ -294,6 +317,14 @@ def build_news_timeline_events(start_time, end_time, news_items=None, news_key=N
     return events, skipped
 
 
+def is_initial_fetch_waiting_status(fetch_status):
+    if not isinstance(fetch_status, dict):
+        return False
+    message = str(fetch_status.get("message") or "").strip()
+    error = str(fetch_status.get("error") or "").strip()
+    return not error and "等待首次行情" in message
+
+
 def build_data_status_timeline_events(
     start_time,
     end_time,
@@ -308,7 +339,7 @@ def build_data_status_timeline_events(
     now = now_factory()
 
     fetch_status = fetch_status if isinstance(fetch_status, dict) else {}
-    if fetch_status.get("ok") is False or fetch_status.get("error"):
+    if not is_initial_fetch_waiting_status(fetch_status) and (fetch_status.get("ok") is False or fetch_status.get("error")):
         event = make_timeline_event(
             "data_status",
             now.isoformat(timespec="seconds"),
@@ -513,6 +544,139 @@ def build_price_chart_events(items, timeline_event_builder):
     return chart_events
 
 
+def report_number(value):
+    formatted = format_number(value)
+    return "--" if formatted is None else str(formatted)
+
+
+def report_price_direction(price_summary, key="rmb", label="RMB/克"):
+    item = price_summary.get(key, {}) if isinstance(price_summary, dict) else {}
+    points = item.get("points") or 0
+    start = format_number(item.get("start"))
+    end = format_number(item.get("end"))
+    change = format_number(item.get("change"))
+    change_pct = format_number(item.get("change_pct"), digits=4)
+    if points < 2 or start is None or end is None:
+        return f"{label}样本不足，暂不判断整体方向。"
+    if change is None:
+        change = format_number(end - start)
+    if change and change > 0:
+        direction = "整体上行"
+    elif change and change < 0:
+        direction = "整体下行"
+    else:
+        direction = "整体持平"
+    return (
+        f"{label}{direction}：{report_number(start)} -> {report_number(end)}，"
+        f"变动 {report_number(change)}（{report_number(change_pct)}%）。"
+    )
+
+
+def review_report_price_series(events):
+    for event in events:
+        if not isinstance(event, dict) or event.get("type") != "price_summary":
+            continue
+        payload = event.get("payload", {})
+        raw_series = payload.get("series") if isinstance(payload, dict) else []
+        if isinstance(raw_series, list):
+            return build_price_timeline_series(raw_series)
+    return []
+
+
+def build_alert_followup_report_lines(events, price_series):
+    alerts = [
+        event for event in events
+        if isinstance(event, dict) and event.get("type") == "alert"
+    ]
+    if not alerts:
+        return ["暂无告警事件。"]
+    if not price_series:
+        return ["暂无可用价格序列，无法复盘告警后走势。"]
+
+    parsed_series = []
+    for point in price_series:
+        parsed = parse_iso_datetime(point.get("timestamp")) if isinstance(point, dict) else None
+        if parsed:
+            parsed_series.append((parsed, point))
+    parsed_series.sort(key=lambda item: item[0])
+    if not parsed_series:
+        return ["暂无可用价格序列，无法复盘告警后走势。"]
+
+    lines = []
+    for alert in alerts:
+        alert_time = parse_iso_datetime(alert.get("timestamp"))
+        title = alert.get("title") or "价格预警"
+        if not alert_time:
+            lines.append(f"- {title}：告警时间无效，无法复盘后续走势。")
+            continue
+
+        baseline = None
+        followup = None
+        for point_time, point in parsed_series:
+            if point_time <= alert_time:
+                baseline = point
+            if point_time >= alert_time:
+                if baseline is None:
+                    baseline = point
+                followup = point
+
+        if baseline is None:
+            lines.append(f"- {title}：告警前后暂无可用价格样本。")
+            continue
+        if followup is None:
+            lines.append(f"- {title}：告警后暂无新的价格样本。")
+            continue
+
+        start_rmb = format_number(baseline.get("rmb"))
+        end_rmb = format_number(followup.get("rmb"))
+        if start_rmb is None or end_rmb is None:
+            lines.append(f"- {title}：告警后暂无可用 RMB/克样本。")
+            continue
+
+        change = format_number(end_rmb - start_rmb)
+        lines.append(
+            f"- {title}：告警后 RMB/克 {report_number(start_rmb)} -> {report_number(end_rmb)}，"
+            f"变动 {report_number(change)}。"
+        )
+    return lines
+
+
+def build_data_quality_report_lines(events, summary, price_series):
+    data_status_events = [
+        event for event in events
+        if isinstance(event, dict) and event.get("type") == "data_status"
+    ]
+    skipped = summary.get("skipped", 0) if isinstance(summary, dict) else 0
+    lines = [
+        f"- 价格序列样本：{len(price_series)} 个；跳过记录：{skipped}。",
+    ]
+    if data_status_events:
+        lines.append(f"- 记录到 {len(data_status_events)} 条数据状态事件，需结合行情源、缓存和多源价差判断可信度。")
+        latest = sorted(data_status_events, key=lambda item: item.get("timestamp", ""))[-1]
+        lines.append(
+            f"- 最近数据状态：{latest.get('timestamp', '--')} "
+            f"{latest.get('title', '')}：{latest.get('summary', '')}"
+        )
+    else:
+        lines.append("- 未记录数据状态异常，当前报告未发现行情源、缓存或多源价差异常事件。")
+
+    risk_quality_scores = []
+    for event in events:
+        if not isinstance(event, dict) or event.get("type") != "risk_analysis":
+            continue
+        payload = event.get("payload", {})
+        quality = payload.get("data_quality") if isinstance(payload, dict) else {}
+        score = quality.get("score") if isinstance(quality, dict) else None
+        score = format_number(score)
+        if score is not None:
+            risk_quality_scores.append(score)
+    if risk_quality_scores:
+        lines.append(f"- 风险分析数据质量评分：{', '.join(str(score) for score in risk_quality_scores)}。")
+    else:
+        lines.append("- 本次范围内暂无风险分析数据质量评分。")
+    return lines
+
+
 def build_review_report(timeline_state):
     range_info = timeline_state.get("range", {}) if isinstance(timeline_state, dict) else {}
     summary = timeline_state.get("summary", {}) if isinstance(timeline_state, dict) else {}
@@ -520,6 +684,7 @@ def build_review_report(timeline_state):
     events = timeline_state.get("events", []) if isinstance(timeline_state, dict) else []
     if not isinstance(events, list):
         events = []
+    price_series = review_report_price_series(events)
 
     lines = [
         "# GoldMonitor 复盘报告",
@@ -528,6 +693,10 @@ def build_review_report(timeline_state):
         f"- 开始：{range_info.get('start', '--')}",
         f"- 结束：{range_info.get('end', '--')}",
         f"- 范围：最近 {range_info.get('minutes', '--')} 分钟",
+        "",
+        "## 复盘结论",
+        f"- {report_price_direction(price_summary)}",
+        f"- 本次复盘记录 {summary.get('total', 0)} 条事件，跳过 {summary.get('skipped', 0)} 条无法解析记录。",
         "",
         "## 价格摘要",
     ]
@@ -576,8 +745,12 @@ def build_review_report(timeline_state):
             lines.append(f"- {event.get('timestamp', '--')} {event.get('title', '')}：{event.get('summary', '')}")
 
     add_section("预警回顾", "alert", "暂无预警。")
+    lines.extend(["", "## 告警后走势"])
+    lines.extend(build_alert_followup_report_lines(events, price_series))
     add_section("风险分析记录", "risk_analysis", "暂无风险分析记录。")
     add_section("新闻回顾", "news", "暂无相关新闻。")
+    lines.extend(["", "## 数据质量结论"])
+    lines.extend(build_data_quality_report_lines(events, summary, price_series))
     add_section("数据状态", "data_status", "暂无数据状态异常。")
 
     return "\n".join(lines) + "\n"
