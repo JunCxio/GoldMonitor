@@ -532,6 +532,19 @@ for required in (
         raise SystemExit(f"static/app.js missing config import preview contract: {required}")
 
 for required in (
+    'id="setExportDir"',
+    'id="exportDirStatus"',
+    'onclick="resetExportDirField()"',
+    "function applyExportDirSetting",
+    "function resetExportDirField",
+    "export_dir_effective",
+    "export_dir_default",
+    "export_dir: document.getElementById('setExportDir').value.trim()",
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing custom export directory contract: {required}")
+
+for required in (
     'onclick="copyDiagnostics()"',
     'id="diagnosticsCopyFallback"',
     "function copyDiagnostics",

@@ -127,6 +127,9 @@ let appSettings = {
   alert_cooldown_minutes: 30,
   alert_quiet_start: '',
   alert_quiet_end: '',
+  export_dir: '',
+  export_dir_default: '',
+  export_dir_effective: '',
   email_subject_template: '[金价预警·{level}] {title}',
   email_body_template: '',
   risk_assistant_enabled: true,
@@ -1661,6 +1664,7 @@ function applySettings(data) {
   document.getElementById('setRiskMaxTokens').value = appSettings.risk_assistant_max_tokens || 1200;
   document.getElementById('setRiskCooldownSeconds').value = appSettings.risk_assistant_cooldown_seconds || 15;
   document.getElementById('setRiskCacheMinutes').value = appSettings.risk_assistant_cache_minutes ?? 10;
+  applyExportDirSetting();
   const modelTestStatus = document.getElementById('riskModelTestStatus');
   if (modelTestStatus) {
     modelTestStatus.textContent = '';
@@ -1670,6 +1674,26 @@ function applySettings(data) {
   updateRiskButtonState();
   renderAlertRules();
   scheduleAutoUpdateCheck();
+}
+
+function applyExportDirSetting() {
+  const input = document.getElementById('setExportDir');
+  const status = document.getElementById('exportDirStatus');
+  if (!input || !status) return;
+  const configured = appSettings.export_dir || '';
+  const effective = appSettings.export_dir_effective || appSettings.export_dir_default || '';
+  input.value = configured;
+  status.textContent = configured
+    ? '当前导出目录：' + effective
+    : '当前使用默认导出目录：' + (effective || '未记录');
+}
+
+function resetExportDirField() {
+  const input = document.getElementById('setExportDir');
+  const status = document.getElementById('exportDirStatus');
+  if (!input) return;
+  input.value = '';
+  if (status) status.textContent = '保存后将使用默认导出目录：' + (appSettings.export_dir_default || appSettings.export_dir_effective || '未记录');
 }
 
 function renderDeepseekModelOptions(selected) {
@@ -1783,6 +1807,7 @@ function saveSettings() {
     risk_assistant_max_tokens: document.getElementById('setRiskMaxTokens').value.trim(),
     risk_assistant_cooldown_seconds: document.getElementById('setRiskCooldownSeconds').value.trim(),
     risk_assistant_cache_minutes: document.getElementById('setRiskCacheMinutes').value.trim(),
+    export_dir: document.getElementById('setExportDir').value.trim(),
   };
   pendingSettingsSave = true;
   settingsSaveFailed = false;

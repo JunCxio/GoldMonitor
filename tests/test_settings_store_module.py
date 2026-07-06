@@ -53,6 +53,7 @@ DEFAULTS = {
     "risk_assistant_max_tokens": 1200,
     "risk_assistant_cooldown_seconds": 15,
     "risk_assistant_cache_minutes": 10,
+    "export_dir": "",
 }
 
 OPTIONS = {
@@ -95,6 +96,7 @@ def test_normalize_settings_clamps_invalid_values_and_removes_legacy_update_keys
         "risk_assistant_max_tokens": "9000",
         "risk_assistant_cooldown_seconds": "-5",
         "risk_assistant_cache_minutes": "90",
+        "export_dir": " ~/GoldMonitorExports ",
         "update_manifest_url": "legacy",
         "update_auto_check_interval_hours": 1,
     }, DEFAULTS, OPTIONS)
@@ -120,6 +122,7 @@ def test_normalize_settings_clamps_invalid_values_and_removes_legacy_update_keys
     assert normalized["risk_assistant_max_tokens"] == 4000
     assert normalized["risk_assistant_cooldown_seconds"] == 0
     assert normalized["risk_assistant_cache_minutes"] == 60
+    assert normalized["export_dir"] == "~/GoldMonitorExports"
     assert "update_manifest_url" not in normalized
     assert "update_auto_check_interval_hours" not in normalized
 

@@ -131,6 +131,7 @@ def normalize_settings(raw, defaults, options=None):
         0,
         60,
     )
+    data["export_dir"] = str(data.get("export_dir") or "").strip()
     return data
 
 
