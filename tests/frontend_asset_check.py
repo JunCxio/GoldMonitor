@@ -128,6 +128,16 @@ for required in (
     if required not in template + js:
         raise SystemExit(f"frontend missing native export directory picker contract: {required}")
 
+for required in (
+    "function setOpsExportStatus",
+    "openExportsFolder()",
+    "data.error_detail",
+    "data.export_dir_check",
+    "打开目录",
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing export diagnostics loop contract: {required}")
+
 settings_updated_handler = "socket.on('settings_updated', data => {"
 settings_updated_pos = js.find(settings_updated_handler)
 settings_failed_pos = js.find("if (settingsSaveFailed)", settings_updated_pos)

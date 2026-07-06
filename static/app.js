@@ -816,31 +816,31 @@ socket.on('review_report_error', data => {
 socket.on('config_backup_ready', data => {
   if (!data) return;
   if (data.ok === false) {
-    setOpsStatus(data.message || '配置导出失败。', false);
+    setOpsExportStatus(data, '配置已导出', '配置导出失败。');
     return;
   }
   if (data.saved_path) {
-    setOpsStatus('配置已导出：' + data.saved_path, true);
+    setOpsExportStatus(data, '配置已导出', '配置导出失败。');
     return;
   }
   if (!data.content) return;
   downloadText(data.filename || 'GoldMonitor-config.json', data.content, 'application/json;charset=utf-8');
-  setOpsStatus('配置已导出，文件名：' + (data.filename || 'GoldMonitor-config.json') + '。', true);
+  setOpsExportStatus({ ...data, filename: data.filename || 'GoldMonitor-config.json' }, '配置已导出', '配置导出失败。');
 });
 
 socket.on('diagnostics_ready', data => {
   if (!data) return;
   if (data.ok === false) {
-    setOpsStatus(data.message || '诊断报告导出失败。', false);
+    setOpsExportStatus(data, '诊断报告已导出', '诊断报告导出失败。');
     return;
   }
   if (data.saved_path) {
-    setOpsStatus('诊断报告已导出：' + data.saved_path, true);
+    setOpsExportStatus(data, '诊断报告已导出', '诊断报告导出失败。');
     return;
   }
   if (!data.content) return;
   downloadText(data.filename || 'GoldMonitor-diagnostics.json', data.content, 'application/json;charset=utf-8');
-  setOpsStatus('诊断报告已导出，文件名：' + (data.filename || 'GoldMonitor-diagnostics.json') + '。', true);
+  setOpsExportStatus({ ...data, filename: data.filename || 'GoldMonitor-diagnostics.json' }, '诊断报告已导出', '诊断报告导出失败。');
 });
 
 function hideDiagnosticsCopyFallback() {
@@ -1425,6 +1425,41 @@ function setOpsStatus(message, ok) {
   if (!el) return;
   el.textContent = message || '';
   el.style.color = ok ? 'var(--down)' : 'var(--up)';
+}
+
+function setOpsExportStatus(data, successLabel, fallbackMessage) {
+  const el = document.getElementById('opsStatus');
+  if (!el) return;
+  const payload = data && typeof data === 'object' ? data : {};
+  const ok = payload.ok !== false;
+  el.style.color = ok ? 'var(--down)' : 'var(--up)';
+  if (ok) {
+    const savedPath = payload.saved_path || '';
+    const filename = payload.filename || '';
+    let message = successLabel || '导出已完成';
+    if (savedPath) {
+      message += '：' + savedPath;
+    } else if (filename) {
+      message += '，文件名：' + filename + '。';
+    } else {
+      message += '。';
+    }
+    el.innerHTML = [
+      '<span>' + escapeHtml(message) + '</span>',
+      savedPath ? '<button class="btn-clear-sm btn-muted-sm export-dir-action" type="button" onclick="openExportsFolder()">打开目录</button>' : '',
+    ].join('');
+    return;
+  }
+  const detail = data && data.error_detail && typeof data.error_detail === 'object' ? data.error_detail : {};
+  const dirCheck = data && data.export_dir_check && typeof data.export_dir_check === 'object' ? data.export_dir_check : {};
+  const message = detail.message || payload.message || fallbackMessage || '导出失败。';
+  const extra = dirCheck.message && dirCheck.message !== message ? dirCheck.message : '';
+  const error = detail.error ? '底层错误：' + detail.error : '';
+  const actions = Array.isArray(dirCheck.actions) ? dirCheck.actions.map(exportDirActionButton).filter(Boolean) : [];
+  el.innerHTML = [
+    '<span>' + escapeHtml([message, extra, error].filter(Boolean).join(' ')) + '</span>',
+    actions.length ? '<span class="export-dir-actions">' + actions.join('') + '</span>' : '',
+  ].join('');
 }
 
 function exportConfig() {
