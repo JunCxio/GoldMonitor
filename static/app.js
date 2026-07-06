@@ -127,6 +127,9 @@ let appSettings = {
   alert_cooldown_minutes: 30,
   alert_quiet_start: '',
   alert_quiet_end: '',
+  export_dir: '',
+  export_dir_default: '',
+  export_dir_effective: '',
   email_subject_template: '[金价预警·{level}] {title}',
   email_body_template: '',
   risk_assistant_enabled: true,
@@ -1661,6 +1664,7 @@ function applySettings(data) {
   document.getElementById('setRiskMaxTokens').value = appSettings.risk_assistant_max_tokens || 1200;
   document.getElementById('setRiskCooldownSeconds').value = appSettings.risk_assistant_cooldown_seconds || 15;
   document.getElementById('setRiskCacheMinutes').value = appSettings.risk_assistant_cache_minutes ?? 10;
+  applyExportDirSetting();
   const modelTestStatus = document.getElementById('riskModelTestStatus');
   if (modelTestStatus) {
     modelTestStatus.textContent = '';
@@ -1670,6 +1674,64 @@ function applySettings(data) {
   updateRiskButtonState();
   renderAlertRules();
   scheduleAutoUpdateCheck();
+}
+
+function applyExportDirSetting() {
+  const input = document.getElementById('setExportDir');
+  const status = document.getElementById('exportDirStatus');
+  if (!input || !status) return;
+  const configured = appSettings.export_dir || '';
+  const effective = appSettings.export_dir_effective || appSettings.export_dir_default || '';
+  input.value = configured;
+  status.textContent = configured
+    ? '当前导出目录：' + effective
+    : '当前使用默认导出目录：' + (effective || '未记录');
+}
+
+function resetExportDirField() {
+  const input = document.getElementById('setExportDir');
+  const status = document.getElementById('exportDirStatus');
+  if (!input) return;
+  input.value = '';
+  if (status) status.textContent = '保存后将使用默认导出目录：' + (appSettings.export_dir_default || appSettings.export_dir_effective || '未记录');
+}
+
+function chooseExportDir() {
+  const input = document.getElementById('setExportDir');
+  const status = document.getElementById('exportDirStatus');
+  const button = document.getElementById('chooseExportDirButton');
+  const picker = window.pywebview && window.pywebview.api && window.pywebview.api.choose_export_dir;
+  if (!input) return;
+  if (typeof picker !== 'function') {
+    const message = '当前浏览器模式不支持系统目录选择器，请手动输入导出目录。';
+    if (status) status.textContent = message;
+    setOpsStatus(message, false);
+    return;
+  }
+
+  if (status) status.textContent = '正在打开系统目录选择器...';
+  if (button) button.disabled = true;
+  Promise.resolve(picker.call(window.pywebview.api))
+    .then(data => {
+      const message = data && data.message ? data.message : '目录选择完成。';
+      if (!data || !data.ok) {
+        if (status) status.textContent = message;
+        if (!data || !data.cancelled) setOpsStatus(message, false);
+        return;
+      }
+      input.value = data.path || '';
+      const savedMessage = message + '，保存后生效。';
+      if (status) status.textContent = savedMessage;
+      setOpsStatus('已选择导出目录，保存后生效。', true);
+    })
+    .catch(() => {
+      const message = '无法打开系统目录选择器，请手动输入导出目录。';
+      if (status) status.textContent = message;
+      setOpsStatus(message, false);
+    })
+    .finally(() => {
+      if (button) button.disabled = false;
+    });
 }
 
 function renderDeepseekModelOptions(selected) {
@@ -1783,6 +1845,7 @@ function saveSettings() {
     risk_assistant_max_tokens: document.getElementById('setRiskMaxTokens').value.trim(),
     risk_assistant_cooldown_seconds: document.getElementById('setRiskCooldownSeconds').value.trim(),
     risk_assistant_cache_minutes: document.getElementById('setRiskCacheMinutes').value.trim(),
+    export_dir: document.getElementById('setExportDir').value.trim(),
   };
   pendingSettingsSave = true;
   settingsSaveFailed = false;

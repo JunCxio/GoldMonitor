@@ -255,6 +255,7 @@ DEFAULT_SETTINGS = {
     "risk_assistant_max_tokens": RISK_ASSISTANT_MAX_TOKENS,
     "risk_assistant_cooldown_seconds": 15,
     "risk_assistant_cache_minutes": 10,
+    "export_dir": "",
 }
 SECRET_SETTING_KEYS = ("smtp_password", "deepseek_api_key", "openai_compatible_api_key")
 CREDENTIAL_SERVICE_NAME = "GoldMonitor"
@@ -639,12 +640,15 @@ def mask_secret(value):
 
 def public_settings_snapshot(settings=None):
     snapshot = dict(settings or get_settings_snapshot())
-    return settings_store_core.build_public_settings_snapshot(
+    public = settings_store_core.build_public_settings_snapshot(
         snapshot,
         SECRET_SETTING_KEYS,
         platform=_runtime_platform(),
         platform_capabilities=platform_capabilities(),
     )
+    public["export_dir_default"] = EXPORT_DIR
+    public["export_dir_effective"] = resolve_export_dir(snapshot)
+    return public
 
 
 def diagnostic_settings_snapshot(settings=None):
@@ -1629,13 +1633,82 @@ def preview_config_backup(payload):
     )
 
 
+def resolve_export_dir(settings=None):
+    if settings is None:
+        settings = get_settings_snapshot()
+    raw_dir = settings.get("export_dir") if isinstance(settings, dict) else ""
+    export_dir = str(raw_dir or "").strip()
+    if not export_dir:
+        return EXPORT_DIR
+    return os.path.abspath(os.path.expandvars(os.path.expanduser(export_dir)))
+
+
+def _export_dir_dialog_initial_dir(settings=None):
+    export_dir = resolve_export_dir(settings)
+    if os.path.isdir(export_dir):
+        return export_dir
+    parent = os.path.dirname(export_dir)
+    if parent and os.path.isdir(parent):
+        return parent
+    return os.path.expanduser("~")
+
+
+def _normalize_export_dir_selection(selection):
+    if not selection:
+        return ""
+    selected = selection[0] if isinstance(selection, (list, tuple)) else selection
+    selected_dir = str(selected or "").strip()
+    if not selected_dir:
+        return ""
+    return os.path.abspath(os.path.expandvars(os.path.expanduser(selected_dir)))
+
+
+def build_export_dir_picker_payload(dialog, settings=None):
+    initial_dir = _export_dir_dialog_initial_dir(settings)
+    selected_dir = _normalize_export_dir_selection(dialog(initial_dir))
+    if not selected_dir:
+        return {
+            "ok": False,
+            "cancelled": True,
+            "message": "已取消选择导出目录。",
+        }
+    return {
+        "ok": True,
+        "path": selected_dir,
+        "message": f"已选择导出目录：{selected_dir}",
+    }
+
+
+def choose_export_dir_for_desktop():
+    window = _window_instance
+    if not window:
+        return {
+            "ok": False,
+            "message": "当前不是桌面窗口模式，请手动输入导出目录。",
+        }
+    try:
+        import webview
+
+        def open_folder_dialog(initial_dir):
+            return window.create_file_dialog(webview.FOLDER_DIALOG, directory=initial_dir)
+
+        return build_export_dir_picker_payload(open_folder_dialog)
+    except Exception:
+        logging.warning("打开导出目录选择器失败", exc_info=True)
+        return {
+            "ok": False,
+            "message": "无法打开系统目录选择器，请手动输入导出目录。",
+        }
+
+
 def save_export_file(filename, content):
-    return support_files_core.save_export_file(EXPORT_DIR, filename, content)
+    return support_files_core.save_export_file(resolve_export_dir(), filename, content)
 
 
 def open_exports_folder():
-    os.makedirs(EXPORT_DIR, exist_ok=True)
-    plan = support_files_core.build_open_folder_plan(EXPORT_DIR, os_name=os.name, sys_platform=sys.platform)
+    export_dir = resolve_export_dir()
+    os.makedirs(export_dir, exist_ok=True)
+    plan = support_files_core.build_open_folder_plan(export_dir, os_name=os.name, sys_platform=sys.platform)
     if plan["kind"] == "startfile":
         os.startfile(plan["path"])  # type: ignore[attr-defined]
         return
@@ -1689,7 +1762,7 @@ def build_diagnostics_report():
         "portfolio_alerts": PORTFOLIO_ALERTS_PATH,
         "market_cache": MARKET_CACHE_PATH,
         "update_dir": UPDATE_DIR,
-        "exports": EXPORT_DIR,
+        "exports": resolve_export_dir(),
         "news": NEWS_CACHE_PATH,
         "risk_analysis_history": RISK_ANALYSIS_HISTORY_PATH,
         "price_history": PRICE_HISTORY_PATH,
@@ -4924,11 +4997,12 @@ def on_copy_diagnostics():
 
 @socketio.on("open_exports_folder")
 def on_open_exports_folder():
+    export_dir = resolve_export_dir()
     try:
         open_exports_folder()
-        emit("exports_folder_opened", {"ok": True, "message": f"已打开导出目录：{EXPORT_DIR}"})
+        emit("exports_folder_opened", {"ok": True, "message": f"已打开导出目录：{export_dir}"})
     except Exception:
-        emit("exports_folder_opened", {"ok": False, "message": f"无法自动打开导出目录：{EXPORT_DIR}"})
+        emit("exports_folder_opened", {"ok": False, "message": f"无法自动打开导出目录：{export_dir}"})
 
 
 @socketio.on("test_alert")
@@ -6240,6 +6314,11 @@ def ask_close_choice():
 
 
 # ---------- 桌面原生窗口 ----------
+class DesktopBridge:
+    def choose_export_dir(self):
+        return choose_export_dir_for_desktop()
+
+
 def start_desktop_window(start_hidden=False):
     """使用 pywebview 创建原生桌面窗口"""
     global _window_instance, _window_hwnd
@@ -6323,6 +6402,7 @@ def start_desktop_window(start_hidden=False):
             easy_drag=False,
             on_top=False,
             maximized=not start_hidden,  # 启动即最大化
+            js_api=DesktopBridge(),
         )
 
         _window_instance.events.shown += on_shown
