@@ -1718,10 +1718,16 @@ function renderExportDirStatus(check, fallbackText) {
   ].join('');
 }
 
+function clearSettingsMessage() {
+  const message = document.getElementById('settingsMessage');
+  if (message) message.textContent = '';
+}
+
 function resetExportDirField() {
   const input = document.getElementById('setExportDir');
   if (!input) return;
   input.value = '';
+  clearSettingsMessage();
   renderExportDirStatus(null, '保存后将使用默认导出目录：' + (appSettings.export_dir_default || appSettings.export_dir_effective || '未记录'));
 }
 
@@ -1736,6 +1742,7 @@ function chooseExportDir() {
   const button = document.getElementById('chooseExportDirButton');
   const picker = window.pywebview && window.pywebview.api && window.pywebview.api.choose_export_dir;
   if (!input) return;
+  clearSettingsMessage();
   if (typeof picker !== 'function') {
     const message = '当前浏览器模式不支持系统目录选择器，请手动输入导出目录。';
     if (status) status.textContent = message;
