@@ -125,6 +125,12 @@ def test_timeline_state_aggregates_injected_sources_without_side_effects():
     assert state["summary"]["by_type"]["risk_analysis"] == 1
     assert state["summary"]["by_type"]["news"] == 1
     assert state["summary"]["by_type"]["data_status"] == 2
+    price_event = next(event for event in state["events"] if event["type"] == "price_summary")
+    assert price_event["payload"]["series"] == [
+        {"timestamp": points[0]["timestamp"], "usd": 2300.0, "rmb": 540.0},
+        {"timestamp": points[1]["timestamp"], "usd": 2301.0, "rmb": 541.0},
+        {"timestamp": points[2]["timestamp"], "usd": 2302.0, "rmb": 542.0},
+    ]
 
     alert_event = next(event for event in state["events"] if event["type"] == "alert")
     assert alert_event["payload"]["message"] == "国内金价达到上涨关注条件"
@@ -144,6 +150,39 @@ def test_timeline_state_aggregates_injected_sources_without_side_effects():
 
     data_sources = {event["source"] for event in state["events"] if event["type"] == "data_status"}
     assert data_sources == {"source_health", "source_comparison"}
+
+
+def test_initial_fetch_waiting_status_is_not_reported_as_data_issue():
+    from goldmonitor.event_timeline import build_event_timeline_state, build_review_report
+
+    base = fixed_now() - timedelta(minutes=15)
+    points = [
+        {
+            "timestamp": (base + timedelta(minutes=i * 5)).isoformat(timespec="seconds"),
+            "usd": 2300.0 + i,
+            "rmb": 540.0 + i,
+        }
+        for i in range(3)
+    ]
+
+    state = build_event_timeline_state(
+        minutes=60,
+        limit=300,
+        price_points=points,
+        fetch_status={
+            "ok": False,
+            "status": "error",
+            "message": "正在等待首次行情数据返回",
+            "error": "",
+            "retryable": True,
+        },
+        now_factory=fixed_now,
+    )
+
+    assert state["summary"]["by_type"]["data_status"] == 0
+    report = build_review_report(state)
+    assert "正在等待首次行情数据返回" not in report
+    assert "未记录数据状态异常" in report
 
 
 def test_review_report_and_filename_are_stable_for_export():
@@ -166,6 +205,12 @@ def test_review_report_and_filename_are_stable_for_export():
                 "timestamp": "2026-06-08T12:00:00",
                 "title": "价格摘要",
                 "summary": "范围内共有 2 个价格点。",
+                "payload": {
+                    "series": [
+                        {"timestamp": "2026-06-08T11:00:00", "usd": 2300.0, "rmb": 540.0},
+                        {"timestamp": "2026-06-08T11:45:00", "usd": 2310.0, "rmb": 542.0},
+                    ]
+                },
             },
             {
                 "type": "alert",
@@ -173,14 +218,26 @@ def test_review_report_and_filename_are_stable_for_export():
                 "title": "价格预警",
                 "summary": "国内金价达到上涨关注条件",
             },
+            {
+                "type": "data_status",
+                "timestamp": "2026-06-08T11:40:00",
+                "title": "缓存行情",
+                "summary": "实时金价源不可用，使用缓存",
+            },
         ],
     }
 
     report = build_review_report(state)
     assert "# GoldMonitor 复盘报告" in report
     assert "## 时间范围" in report
+    assert "## 复盘结论" in report
+    assert "RMB/克整体上行" in report
     assert "- 事件总数：2" in report
     assert "## 预警回顾" in report
+    assert "## 告警后走势" in report
+    assert "价格预警：告警后 RMB/克 540.0 -> 542.0" in report
+    assert "## 数据质量结论" in report
+    assert "记录到 1 条数据状态事件" in report
     assert "国内金价达到上涨关注条件" in report
 
     assert review_report_filename(now=fixed_now()) == "GoldMonitor-review-report-20260608-120000.md"

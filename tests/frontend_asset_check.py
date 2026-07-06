@@ -430,6 +430,36 @@ for required in (
         raise SystemExit(f"static/app.css missing portfolio editor sizing contract: {required}")
 
 for required in (
+    "let pendingTimelineFocus = null;",
+    "function timelineRangeForTimestamp",
+    "function eventMatchesTimelineFocus",
+    "function openEventTimelineAround",
+    "function openAlertTimelineFromLog",
+    "function openRiskTimelineFromHistory",
+    "function handleAlertLogTimelineClick",
+    "function handleRiskHistoryTimelineClick",
+    "pendingTimelineFocus = {",
+    "eventTimelineTypes = EVENT_TIMELINE_TYPE_DEFS.map(item => item.type)",
+    "openEventTimelineAround(entry.timestamp || entry.time, 'alert', entry.id)",
+    "openEventTimelineAround(item.analysis_time || (item.snapshot && item.snapshot.analysis_time), 'risk_analysis', item.id)",
+    "data-log-timeline-id",
+    "data-risk-timeline-index",
+    "label: '复盘'",
+    "risk-history-review",
+    "查看复盘",
+):
+    if required not in js:
+        raise SystemExit(f"static/app.js missing timeline deep-link contract: {required}")
+
+for required in (
+    ".risk-history-main",
+    ".risk-history-review",
+    ".timeline-event.active",
+):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing timeline deep-link selector: {required}")
+
+for required in (
     ".portfolio-detail-focus-head",
     ".portfolio-detail-actions",
     ".portfolio-detail-action-trigger",
@@ -503,14 +533,42 @@ for required in (
 
 for required in (
     'onclick="copyDiagnostics()"',
+    'id="diagnosticsCopyFallback"',
     "function copyDiagnostics",
+    "function copyTextToClipboard",
+    "function showDiagnosticsCopyFallback",
     "socket.emit('copy_diagnostics')",
     "diagnostics_copy_ready",
     "navigator.clipboard.writeText",
+    "document.execCommand('copy')",
     "诊断摘要已复制",
+    "自动复制失败，已展示诊断摘要，可手动复制。",
 ):
     if required not in template + js:
         raise SystemExit(f"frontend missing diagnostics copy contract: {required}")
+
+for required in (
+    'id="opsUpdateStatus"',
+    'id="opsUpdateMeta"',
+    'onclick="checkUpdateFromOps()"',
+    'onclick="openUpdateFromOps()"',
+    "function renderOpsUpdateStatus",
+    "function checkUpdateFromOps",
+    "function openUpdateFromOps",
+    "let opsUpdateStatus",
+    "renderOpsUpdateStatus(data)",
+    "copyDiagnostics()",
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing update diagnostics loop contract: {required}")
+
+for required in (
+    ".ops-update-card",
+    ".ops-update-status",
+    ".ops-update-meta",
+):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing ops update selector: {required}")
 
 for required in (
     "update_alert_log_handling",

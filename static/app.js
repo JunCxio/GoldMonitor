@@ -93,6 +93,7 @@ let eventTimelineState = { events: [], summary: {}, filters: {}, range: {}, pric
 let eventTimelineRange = 60;
 let eventTimelineTypes = ['price_summary', 'alert', 'risk_analysis', 'news', 'data_status'];
 let selectedTimelineEventId = null;
+let pendingTimelineFocus = null;
 const EVENT_TIMELINE_TYPE_DEFS = [
   { type: 'price_summary', label: '价格摘要' },
   { type: 'alert', label: '预警' },
@@ -151,6 +152,7 @@ let pendingConfigImportPayload = null;
 let pendingConfigImportPreview = null;
 let autoUpdateTimer = null;
 let lastAutoUpdateCheckAt = 0;
+let opsUpdateStatus = null;
 const AUTO_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 function autoUpdateIntervalMs() {
   return AUTO_UPDATE_CHECK_INTERVAL_MS;
@@ -836,6 +838,51 @@ socket.on('diagnostics_ready', data => {
   setOpsStatus('诊断报告已导出，文件名：' + (data.filename || 'GoldMonitor-diagnostics.json') + '。', true);
 });
 
+function hideDiagnosticsCopyFallback() {
+  const fallback = document.getElementById('diagnosticsCopyFallback');
+  if (!fallback) return;
+  fallback.value = '';
+  fallback.hidden = true;
+}
+
+function showDiagnosticsCopyFallback(content) {
+  const fallback = document.getElementById('diagnosticsCopyFallback');
+  if (!fallback) return;
+  fallback.value = content;
+  fallback.hidden = false;
+  requestAnimationFrame(() => {
+    fallback.focus();
+    fallback.select();
+  });
+}
+
+function copyTextWithSelection(content) {
+  const textarea = document.createElement('textarea');
+  textarea.value = content;
+  textarea.setAttribute('readonly', 'readonly');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  textarea.style.top = '0';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  try {
+    return document.execCommand('copy');
+  } catch (error) {
+    return false;
+  } finally {
+    textarea.remove();
+  }
+}
+
+function copyTextToClipboard(content) {
+  const fallbackCopy = () => Promise.resolve(copyTextWithSelection(content));
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(content).then(() => true).catch(fallbackCopy);
+  }
+  return fallbackCopy();
+}
+
 socket.on('diagnostics_copy_ready', data => {
   if (!data) return;
   if (data.ok === false) {
@@ -847,13 +894,20 @@ socket.on('diagnostics_copy_ready', data => {
     setOpsStatus('诊断摘要为空，无法复制。', false);
     return;
   }
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(content)
-      .then(() => setOpsStatus('诊断摘要已复制。', true))
-      .catch(() => setOpsStatus('复制失败，请生成诊断报告后手动复制。', false));
-    return;
-  }
-  setOpsStatus('当前环境不支持自动复制，请生成诊断报告后手动复制。', false);
+  copyTextToClipboard(content)
+    .then(copied => {
+      if (copied) {
+        hideDiagnosticsCopyFallback();
+        setOpsStatus('诊断摘要已复制。', true);
+        return;
+      }
+      showDiagnosticsCopyFallback(content);
+      setOpsStatus('自动复制失败，已展示诊断摘要，可手动复制。', false);
+    })
+    .catch(() => {
+      showDiagnosticsCopyFallback(content);
+      setOpsStatus('自动复制失败，已展示诊断摘要，可手动复制。', false);
+    });
 });
 
 socket.on('exports_folder_opened', data => {
@@ -1132,6 +1186,70 @@ function setTimelineStatus(message, type) {
   el.className = 'timeline-status' + (type ? ' ' + type : '');
 }
 
+function timelineDateFromValue(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  let date = new Date(raw);
+  if (!Number.isNaN(date.getTime())) return date;
+  date = new Date(raw.replace(' ', 'T'));
+  if (!Number.isNaN(date.getTime())) return date;
+  if (/^\d{1,2}:\d{2}/.test(raw)) {
+    const today = new Date();
+    const dateText = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+    date = new Date(dateText + 'T' + raw);
+    if (!Number.isNaN(date.getTime())) return date;
+  }
+  return null;
+}
+
+function timelineRangeForTimestamp(timestamp) {
+  const date = timelineDateFromValue(timestamp);
+  if (!date) return eventTimelineRange || 60;
+  const diffMinutes = Math.max(0, Math.ceil((Date.now() - date.getTime()) / 60000));
+  if (diffMinutes <= 60) return 60;
+  if (diffMinutes <= 240) return 240;
+  if (diffMinutes <= 1440) return 1440;
+  return 10080;
+}
+
+function timelineFocusTimeKey(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^\d{1,2}:\d{2}/.test(raw)) return raw.slice(0, 8);
+  return raw.replace('T', ' ').slice(0, 19);
+}
+
+function eventMatchesTimelineFocus(event, focus) {
+  if (!event || !focus) return false;
+  if (focus.type && event.type !== focus.type) return false;
+  const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
+  if (focus.sourceId && String(payload.id || '') === String(focus.sourceId)) return true;
+  const eventTime = timelineFocusTimeKey(event.timestamp);
+  const focusTime = timelineFocusTimeKey(focus.timestamp);
+  if (!eventTime || !focusTime) return false;
+  if (eventTime === focusTime) return true;
+  if (focusTime.length <= 8 && eventTime.slice(11, 19).startsWith(focusTime.slice(0, 5))) return true;
+  return false;
+}
+
+function openEventTimelineAround(timestamp, type, sourceId) {
+  pendingTimelineFocus = {
+    type: type || '',
+    sourceId: sourceId == null ? '' : String(sourceId),
+    timestamp: timestamp || '',
+  };
+  selectedTimelineEventId = null;
+  eventTimelineRange = timelineRangeForTimestamp(timestamp);
+  eventTimelineTypes = EVENT_TIMELINE_TYPE_DEFS.map(item => item.type);
+  const rangeSelect = document.getElementById('timelineRange');
+  if (rangeSelect) rangeSelect.value = String(eventTimelineRange);
+  document.getElementById('historyBackdrop').classList.add('show');
+  renderTimelineTypeFilters();
+  switchHistoryView('timeline', true);
+  refreshHistory();
+  refreshEventTimeline();
+}
+
 function refreshEventTimeline() {
   setTimelineStatus('正在加载事件时间轴...', '');
   socket.emit('get_event_timeline', {
@@ -1144,11 +1262,23 @@ function refreshEventTimeline() {
 function applyEventTimeline(data) {
   eventTimelineState = Object.assign({ events: [], summary: {}, filters: {}, range: {}, price_summary: {} }, data || {});
   const events = Array.isArray(eventTimelineState.events) ? eventTimelineState.events : [];
-  if (selectedTimelineEventId && !events.some(event => event.id === selectedTimelineEventId)) {
+  let focusMissing = false;
+  if (pendingTimelineFocus) {
+    const focused = events.find(event => eventMatchesTimelineFocus(event, pendingTimelineFocus));
+    if (focused) selectedTimelineEventId = focused.id;
+    else focusMissing = true;
+    pendingTimelineFocus = null;
+  } else if (selectedTimelineEventId && !events.some(event => event.id === selectedTimelineEventId)) {
     selectedTimelineEventId = null;
   }
-  setTimelineStatus('', '');
+  setTimelineStatus(focusMissing ? '已打开复盘时间轴，未在当前范围找到对应事件。' : '', focusMissing ? 'fail' : '');
   renderEventTimeline();
+  if (selectedTimelineEventId) {
+    requestAnimationFrame(() => {
+      const active = document.querySelector('#timelineList .timeline-event.active');
+      if (active) active.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+  }
 }
 
 function timelineEventTime(timestamp) {
@@ -1360,6 +1490,7 @@ function exportDiagnostics() {
 }
 
 function copyDiagnostics() {
+  hideDiagnosticsCopyFallback();
   setOpsStatus('正在生成诊断摘要...', true);
   socket.emit('copy_diagnostics');
 }
@@ -2116,10 +2247,13 @@ function renderRiskHistory() {
       ? ' · 历史' + (evidence.history_points ?? 0) + '/K线' + (evidence.kline_points ?? 0)
       : '';
     return [
-      '<button class="risk-history-item" type="button" onclick="openRiskHistoryItem(' + index + ')">',
+      '<div class="risk-history-item">',
+      '<button class="risk-history-main" type="button" onclick="openRiskHistoryItem(' + index + ')">',
       '<div class="risk-history-time">' + escapeHtml(item.analysis_time || '--') + escapeHtml(quality) + escapeHtml(samples) + '</div>',
       '<div class="risk-history-text">' + escapeHtml(firstLine) + '</div>',
       '</button>',
+      '<button class="btn-clear-sm btn-muted-sm risk-history-review" type="button" data-risk-timeline-index="' + index + '" onclick="window.openRiskTimelineFromHistory(' + index + ')">查看复盘</button>',
+      '</div>',
     ].join('');
   }).join('');
 }
@@ -2133,6 +2267,22 @@ function openRiskHistoryItem(index) {
   const usageText = formatRiskUsage(item.usage || null);
   applyRiskStatus(usageText ? '已打开历史分析。' + usageText : '已打开历史分析。', '');
 }
+
+function openRiskTimelineFromHistory(index) {
+  const item = riskAnalysisHistory[index];
+  if (!item) return;
+  openEventTimelineAround(item.analysis_time || (item.snapshot && item.snapshot.analysis_time), 'risk_analysis', item.id);
+}
+
+function handleRiskHistoryTimelineClick(event) {
+  const button = event.target && event.target.closest ? event.target.closest('[data-risk-timeline-index]') : null;
+  if (!button) return;
+  event.preventDefault();
+  event.stopPropagation();
+  openRiskTimelineFromHistory(Number(button.getAttribute('data-risk-timeline-index')));
+}
+
+document.addEventListener('click', handleRiskHistoryTimelineClick, true);
 
 function clearRiskHistory() {
   if (riskAnalysisRunning) return;
@@ -2181,6 +2331,32 @@ function onUpdateBackdrop(event) {
   if (event.target.id === 'updateBackdrop') closeUpdate();
 }
 
+function renderOpsUpdateStatus(data) {
+  opsUpdateStatus = data || opsUpdateStatus || null;
+  const statusEl = document.getElementById('opsUpdateStatus');
+  const metaEl = document.getElementById('opsUpdateMeta');
+  if (!statusEl || !metaEl) return;
+  const state = opsUpdateStatus && opsUpdateStatus.state ? opsUpdateStatus.state : '';
+  const message = opsUpdateStatus && opsUpdateStatus.message ? opsUpdateStatus.message : '尚未检查更新。';
+  const current = opsUpdateStatus && opsUpdateStatus.current_version ? '当前版本 ' + opsUpdateStatus.current_version : '';
+  const latest = opsUpdateStatus && opsUpdateStatus.latest_version ? '最新版本 ' + opsUpdateStatus.latest_version : '';
+  const checked = opsUpdateStatus && opsUpdateStatus.checked_at ? '检查时间 ' + String(opsUpdateStatus.checked_at).replace('T', ' ') : '';
+  statusEl.textContent = message;
+  statusEl.dataset.state = state || 'unknown';
+  const meta = [current, latest, checked].filter(Boolean).join(' · ');
+  if (meta) metaEl.textContent = meta;
+}
+
+function checkUpdateFromOps() {
+  renderOpsUpdateStatus({ state: 'checking', message: '正在检查更新...' });
+  requestUpdateCheck(true);
+  setOpsStatus('正在检查更新...', true);
+}
+
+function openUpdateFromOps() {
+  openUpdate();
+}
+
 function checkUpdate() {
   requestUpdateCheck(false);
 }
@@ -2189,6 +2365,7 @@ function requestUpdateCheck(silent) {
   pendingUpdateInfo = null;
   document.getElementById('updateButton').classList.remove('update-ready');
   document.getElementById('installUpdateButton').disabled = true;
+  renderOpsUpdateStatus({ state: 'checking', message: '正在检查更新...' });
   if (!silent) {
     document.getElementById('updateStatus').textContent = '正在检查更新...';
     document.getElementById('updateMeta').textContent = '';
@@ -2212,6 +2389,7 @@ function scheduleAutoUpdateCheck() {
 }
 
 function applyUpdateStatus(data) {
+  renderOpsUpdateStatus(data);
   const statusEl = document.getElementById('updateStatus');
   const metaEl = document.getElementById('updateMeta');
   const notesEl = document.getElementById('updateNotes');
@@ -5438,7 +5616,8 @@ function renderNotificationBadges(entry) {
 
 function renderLogActionButton(action, extraClass) {
   const classes = ['btn-clear-sm', action.buttonClass || 'btn-muted-sm', extraClass || ''].filter(Boolean).join(' ');
-  return '<button class="' + escapeHtml(classes) + '" type="button" onclick="' + action.onclick + '">' + escapeHtml(action.label) + '</button>';
+  const attrs = action.attrs || '';
+  return '<button class="' + escapeHtml(classes) + '" type="button" onclick="' + action.onclick + '"' + attrs + '>' + escapeHtml(action.label) + '</button>';
 }
 
 function renderLogEntryActions(actions) {
@@ -5464,6 +5643,12 @@ function buildLogEntry(entry) {
   const hasNotificationIssue = alertNotificationIssues(entry).length > 0;
   const logMessage = entry.message || '达到预警条件';
   const handlingNote = entry.handling_note ? '<span class="log-note">处理备注：' + escapeHtml(entry.handling_note) + '</span>' : '';
+  const timelineAction = {
+    label: '复盘',
+    buttonClass: 'btn-muted-sm',
+    onclick: "window.openAlertTimelineFromLog(decodeURIComponent('" + encodedId + "'))",
+    attrs: ' data-log-timeline-id="' + encodedId + '"',
+  };
   const actions = [
     { label: '分析', buttonClass: 'btn-risk-sm', onclick: "analyzeAlertFromLog(decodeURIComponent('" + encodedId + "'))" },
   ];
@@ -5483,7 +5668,7 @@ function buildLogEntry(entry) {
     '<span class="log-time">' + escapeHtml(entry.time || entry.timestamp || '') + '</span>',
     '<span class="log-level ' + escapeHtml(entry.type || '') + '">' + escapeHtml(alertLevelLabel(entry.type)) + '</span>',
     '</span>',
-    renderLogEntryActions(actions),
+    '<span class="log-action-row">' + renderLogActionButton(timelineAction, 'log-action-direct log-review-direct') + renderLogEntryActions(actions) + '</span>',
     '</span>',
     '<span class="log-meta">',
     '<span class="log-msg ' + escapeHtml(entry.type || '') + '" title="' + escapeHtml(logMessage) + '">' + escapeHtml(logMessage) + '</span>',
@@ -5566,6 +5751,22 @@ function analyzeAlertFromLog(id) {
   analyzeActiveAlert();
 }
 
+function openAlertTimelineFromLog(id) {
+  const entry = alertEntries.find(item => item.id === id);
+  if (!entry) return;
+  openEventTimelineAround(entry.timestamp || entry.time, 'alert', entry.id);
+}
+
+function handleAlertLogTimelineClick(event) {
+  const button = event.target && event.target.closest ? event.target.closest('[data-log-timeline-id]') : null;
+  if (!button) return;
+  event.preventDefault();
+  event.stopPropagation();
+  openAlertTimelineFromLog(decodeURIComponent(button.getAttribute('data-log-timeline-id') || ''));
+}
+
+document.addEventListener('click', handleAlertLogTimelineClick, true);
+
 function resendAlertNotification(id) {
   const status = document.getElementById('alertLogStatus');
   status.textContent = '正在重新提交通知...';
@@ -5590,6 +5791,10 @@ function clearAlertLog() {
   if (!confirm('确定清空当前警报记录吗？')) return;
   socket.emit('clear_alert_log');
 }
+
+window.openEventTimelineAround = openEventTimelineAround;
+window.openAlertTimelineFromLog = openAlertTimelineFromLog;
+window.openRiskTimelineFromHistory = openRiskTimelineFromHistory;
 
 // ========== 标题闪烁 ==========
 let flashTimer = null;
