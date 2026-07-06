@@ -284,6 +284,7 @@ WATCH_TARGET_NOTE_LIMIT = 200
 lock = threading.RLock()
 settings_lock = threading.RLock()
 risk_history_lock = threading.RLock()
+last_update_status_lock = threading.RLock()
 price_usd = None
 price_rmb = None
 previous_usd = None
@@ -347,6 +348,7 @@ source_health = {}
 source_price_samples = {}
 source_comparison_state = {}
 last_source_comparison_probe_at = 0.0
+last_update_status = {}
 _credential_test_store = None
 _alert_dialog_lock = threading.Lock()
 _alert_dialog_active = False
@@ -1513,6 +1515,43 @@ def get_update_status(expose_download=False):
     )
 
 
+PUBLIC_UPDATE_STATUS_KEYS = (
+    "state",
+    "current_version",
+    "latest_version",
+    "checked_at",
+    "message",
+    "notes",
+    "progress_percent",
+    "downloaded_bytes",
+    "total_bytes",
+)
+
+
+def public_update_status(status=None):
+    status = status if isinstance(status, dict) else {}
+    return {key: status[key] for key in PUBLIC_UPDATE_STATUS_KEYS if key in status}
+
+
+def record_update_status(status):
+    snapshot = public_update_status(status)
+    with last_update_status_lock:
+        last_update_status.clear()
+        last_update_status.update(snapshot)
+    return dict(snapshot)
+
+
+def get_last_update_status():
+    with last_update_status_lock:
+        return dict(last_update_status)
+
+
+def emit_update_status(status):
+    safe_status = record_update_status(status)
+    emit("update_status", safe_status)
+    return safe_status
+
+
 def download_update_installer(update_info, progress_callback=None):
     os.makedirs(UPDATE_DIR, exist_ok=True)
     installer_path = os.path.join(UPDATE_DIR, UPDATE_INSTALLER_NAME)
@@ -1693,6 +1732,7 @@ def build_diagnostics_report():
         "price_history": price_history_state,
         "watch_targets": watch_targets_state,
         "risk_history_count": risk_history_count,
+        "last_update_status": get_last_update_status(),
         "recent_alerts": recent_alerts,
         "logs": read_log_tail(),
     }
@@ -1752,6 +1792,8 @@ def build_diagnostics_clipboard_text(report=None):
     paths = payload.get("paths") if isinstance(payload.get("paths"), dict) else {}
     sources = fetch_status.get("sources") if isinstance(fetch_status.get("sources"), dict) else {}
     source_summary = source_health.get("summary") if isinstance(source_health.get("summary"), dict) else {}
+    update_status = payload.get("last_update_status") if isinstance(payload.get("last_update_status"), dict) else get_last_update_status()
+    update_message = update_status.get("message") or ("尚未检查更新" if not update_status else "更新状态未知")
     logs = payload.get("logs")
     log_count = len(logs) if isinstance(logs, list) else len(str(logs or "").splitlines()) if logs else 0
     with lock:
@@ -1787,6 +1829,13 @@ def build_diagnostics_clipboard_text(report=None):
         f"- 状态: {risk_enabled}",
         f"- 模型: {provider} / {model}",
         f"- 历史记录数: {payload.get('risk_history_count', 0)}",
+        "",
+        "更新状态",
+        f"- 当前版本: {_diagnostics_value(update_status.get('current_version') or payload.get('version'))}",
+        f"- 最新版本: {_diagnostics_value(update_status.get('latest_version'))}",
+        f"- 检查状态: {_diagnostics_value(update_status.get('state'), '尚未检查')}",
+        f"- 检查时间: {_diagnostics_value(update_status.get('checked_at'))}",
+        f"- 状态说明: {update_message}",
         "",
         "悬浮条",
         f"- 状态: {'开启' if settings.get('floating_price_enabled') else '关闭'}",
@@ -4902,17 +4951,19 @@ def on_test_alert(data=None):
 @socketio.on("check_update")
 def on_check_update():
     try:
-        emit("update_status", get_update_status())
+        emit_update_status(get_update_status())
     except ValueError as exc:
-        emit("update_status", {
+        emit_update_status({
             "state": "error",
             "current_version": APP_VERSION,
+            "checked_at": datetime.now().isoformat(timespec="seconds"),
             "message": str(exc),
         })
     except Exception:
-        emit("update_status", {
+        emit_update_status({
             "state": "error",
             "current_version": APP_VERSION,
+            "checked_at": datetime.now().isoformat(timespec="seconds"),
             "message": "检查更新失败，请确认网络连接后重试。",
         })
 
@@ -4922,7 +4973,7 @@ def on_install_update(data=None):
     try:
         status = get_update_status(expose_download=True)
         if status.get("state") != "available":
-            emit("update_status", status)
+            emit_update_status(status)
             return
         update_info = {
             "version": status["latest_version"],
@@ -4930,55 +4981,62 @@ def on_install_update(data=None):
             "notes": status.get("notes", ""),
             "sha256": status["sha256"],
         }
-        emit("update_status", {
+        emit_update_status({
             "state": "downloading",
             "current_version": APP_VERSION,
             "latest_version": update_info["version"],
+            "checked_at": datetime.now().isoformat(timespec="seconds"),
             "message": "正在下载更新安装包...",
             "progress_percent": 0,
         })
 
         def emit_progress(received_bytes, total_bytes):
             percent = int(received_bytes / total_bytes * 100) if total_bytes else None
-            socketio.emit("update_status", {
+            status = record_update_status({
                 "state": "downloading",
                 "current_version": APP_VERSION,
                 "latest_version": update_info["version"],
+                "checked_at": datetime.now().isoformat(timespec="seconds"),
                 "message": "正在下载更新安装包...",
                 "downloaded_bytes": received_bytes,
                 "total_bytes": total_bytes,
                 "progress_percent": percent,
-            }, room=request.sid)
+            })
+            socketio.emit("update_status", status, room=request.sid)
 
         try:
             installer_path = download_update_installer(update_info, progress_callback=emit_progress)
         except TypeError:
             installer_path = download_update_installer(update_info)
-        emit("update_status", {
+        emit_update_status({
             "state": "installing",
             "current_version": APP_VERSION,
             "latest_version": update_info["version"],
+            "checked_at": datetime.now().isoformat(timespec="seconds"),
             "message": "安装包已下载，正在启动更新程序。",
             "progress_percent": 100,
         })
         launch_update_installer(installer_path)
-        emit("update_status", {
+        emit_update_status({
             "state": "installer_opened",
             "current_version": APP_VERSION,
             "latest_version": update_info["version"],
+            "checked_at": datetime.now().isoformat(timespec="seconds"),
             "message": "安装程序已打开，请按提示完成更新。安装过程中当前程序可能会被关闭。",
             "progress_percent": 100,
         })
     except ValueError as exc:
-        emit("update_status", {
+        emit_update_status({
             "state": "error",
             "current_version": APP_VERSION,
+            "checked_at": datetime.now().isoformat(timespec="seconds"),
             "message": str(exc),
         })
     except Exception:
-        emit("update_status", {
+        emit_update_status({
             "state": "error",
             "current_version": APP_VERSION,
+            "checked_at": datetime.now().isoformat(timespec="seconds"),
             "message": "更新失败，请稍后重试或手动下载安装包。",
         })
 

@@ -513,6 +513,29 @@ for required in (
         raise SystemExit(f"frontend missing diagnostics copy contract: {required}")
 
 for required in (
+    'id="opsUpdateStatus"',
+    'id="opsUpdateMeta"',
+    'onclick="checkUpdateFromOps()"',
+    'onclick="openUpdateFromOps()"',
+    "function renderOpsUpdateStatus",
+    "function checkUpdateFromOps",
+    "function openUpdateFromOps",
+    "let opsUpdateStatus",
+    "renderOpsUpdateStatus(data)",
+    "copyDiagnostics()",
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing update diagnostics loop contract: {required}")
+
+for required in (
+    ".ops-update-card",
+    ".ops-update-status",
+    ".ops-update-meta",
+):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing ops update selector: {required}")
+
+for required in (
     "update_alert_log_handling",
     "alert_log_handling_updated",
     "function updateAlertHandling",

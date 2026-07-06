@@ -144,6 +144,12 @@
   .update-progress span { display:block; height:100%; width:0%; background:linear-gradient(90deg, #f0c64a, var(--gold)); transition:width 0.18s ease; }
   .update-install { padding:9px 20px; }
   .update-install:disabled, .btn-set:disabled, .settings-save:disabled, .price-retry:disabled, .risk-open:disabled { opacity:0.48; cursor:not-allowed; transform:none; box-shadow:none; filter:none; }
+  .ops-update-card { align-items:flex-end; max-width:min(520px, 100%); }
+  .ops-update-copy { min-width:180px; max-width:100%; flex:1 1 220px; text-align:left; }
+  .ops-update-status { color:var(--text); font-size:0.8rem; line-height:1.35; white-space:normal; overflow-wrap:anywhere; }
+  .ops-update-status[data-state="error"] { color:var(--up); }
+  .ops-update-status[data-state="available"] { color:var(--gold); }
+  .ops-update-meta { margin-top:4px; color:var(--text-dim); font-size:0.72rem; line-height:1.35; white-space:normal; overflow-wrap:anywhere; }
   .confirm-modal { width:min(460px, 100%); }
   .close-choice-copy { color:var(--text); font-size:0.92rem; line-height:1.65; }
   .dialog-check { margin-top:16px; display:flex; align-items:center; gap:10px; color:var(--text-dim); font-size:0.82rem; cursor:pointer; }

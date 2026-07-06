@@ -138,6 +138,27 @@ if any(key in update_status for key in ("manifest_url", "url", "sha256")):
 if install_status.get("url") != WINDOWS_ASSET_URL or install_status.get("sha256") != "a" * 64:
     raise SystemExit("install update status must keep backend-only installer metadata")
 
+app.record_update_status({
+    "state": "error",
+    "current_version": app.APP_VERSION,
+    "latest_version": "9.9.9",
+    "checked_at": "2026-07-06T10:00:00",
+    "message": "检查更新失败：网络异常",
+    "url": WINDOWS_ASSET_URL,
+    "sha256": "a" * 64,
+    "manifest_url": app.DEFAULT_UPDATE_MANIFEST_URL,
+})
+snapshot = app.get_last_update_status()
+if snapshot.get("url") or snapshot.get("sha256") or snapshot.get("manifest_url"):
+    raise SystemExit(f"last update status must hide installer metadata, got: {snapshot}")
+if snapshot.get("state") != "error" or "网络异常" not in snapshot.get("message", ""):
+    raise SystemExit(f"last update status must keep user-facing failure details, got: {snapshot}")
+diagnostics_copy = app.build_diagnostics_clipboard_text()
+if "更新状态" not in diagnostics_copy or "网络异常" not in diagnostics_copy:
+    raise SystemExit(f"diagnostics copy must include update failure summary, got: {diagnostics_copy}")
+if WINDOWS_ASSET_URL in diagnostics_copy or "sha256" in diagnostics_copy or app.DEFAULT_UPDATE_MANIFEST_URL in diagnostics_copy:
+    raise SystemExit("diagnostics copy must not leak update installer metadata")
+
 original_os_name = app.os.name
 original_popen = app.subprocess.Popen
 original_exit = app.os._exit

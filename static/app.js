@@ -151,6 +151,7 @@ let pendingConfigImportPayload = null;
 let pendingConfigImportPreview = null;
 let autoUpdateTimer = null;
 let lastAutoUpdateCheckAt = 0;
+let opsUpdateStatus = null;
 const AUTO_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 function autoUpdateIntervalMs() {
   return AUTO_UPDATE_CHECK_INTERVAL_MS;
@@ -2181,6 +2182,32 @@ function onUpdateBackdrop(event) {
   if (event.target.id === 'updateBackdrop') closeUpdate();
 }
 
+function renderOpsUpdateStatus(data) {
+  opsUpdateStatus = data || opsUpdateStatus || null;
+  const statusEl = document.getElementById('opsUpdateStatus');
+  const metaEl = document.getElementById('opsUpdateMeta');
+  if (!statusEl || !metaEl) return;
+  const state = opsUpdateStatus && opsUpdateStatus.state ? opsUpdateStatus.state : '';
+  const message = opsUpdateStatus && opsUpdateStatus.message ? opsUpdateStatus.message : '尚未检查更新。';
+  const current = opsUpdateStatus && opsUpdateStatus.current_version ? '当前版本 ' + opsUpdateStatus.current_version : '';
+  const latest = opsUpdateStatus && opsUpdateStatus.latest_version ? '最新版本 ' + opsUpdateStatus.latest_version : '';
+  const checked = opsUpdateStatus && opsUpdateStatus.checked_at ? '检查时间 ' + String(opsUpdateStatus.checked_at).replace('T', ' ') : '';
+  statusEl.textContent = message;
+  statusEl.dataset.state = state || 'unknown';
+  const meta = [current, latest, checked].filter(Boolean).join(' · ');
+  if (meta) metaEl.textContent = meta;
+}
+
+function checkUpdateFromOps() {
+  renderOpsUpdateStatus({ state: 'checking', message: '正在检查更新...' });
+  requestUpdateCheck(true);
+  setOpsStatus('正在检查更新...', true);
+}
+
+function openUpdateFromOps() {
+  openUpdate();
+}
+
 function checkUpdate() {
   requestUpdateCheck(false);
 }
@@ -2189,6 +2216,7 @@ function requestUpdateCheck(silent) {
   pendingUpdateInfo = null;
   document.getElementById('updateButton').classList.remove('update-ready');
   document.getElementById('installUpdateButton').disabled = true;
+  renderOpsUpdateStatus({ state: 'checking', message: '正在检查更新...' });
   if (!silent) {
     document.getElementById('updateStatus').textContent = '正在检查更新...';
     document.getElementById('updateMeta').textContent = '';
@@ -2212,6 +2240,7 @@ function scheduleAutoUpdateCheck() {
 }
 
 function applyUpdateStatus(data) {
+  renderOpsUpdateStatus(data);
   const statusEl = document.getElementById('updateStatus');
   const metaEl = document.getElementById('updateMeta');
   const notesEl = document.getElementById('updateNotes');
