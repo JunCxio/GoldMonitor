@@ -180,6 +180,27 @@ def test_open_exports_folder_error_includes_diagnostics(monkeypatch, tmp_path):
     client.disconnect()
 
 
+def test_open_exports_folder_success_includes_export_dir(monkeypatch, tmp_path):
+    import app
+
+    export_dir = tmp_path / "exports"
+    monkeypatch.setattr(app, "EXPORT_DIR", str(export_dir))
+    monkeypatch.setattr(app, "app_settings", {**app.DEFAULT_SETTINGS, "export_dir": ""})
+    monkeypatch.setattr(app, "open_exports_folder", lambda: None)
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+
+    client.emit("open_exports_folder")
+    events = client.get_received()
+    payload = next(event["args"][0] for event in events if event["name"] == "exports_folder_opened")
+
+    assert payload["ok"] is True
+    assert payload["export_dir"] == str(export_dir)
+    assert "已打开导出目录" in payload["message"]
+    client.disconnect()
+
+
 def test_export_dir_check_reports_writable_directory(tmp_path):
     import app
 

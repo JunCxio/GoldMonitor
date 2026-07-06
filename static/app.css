@@ -117,6 +117,21 @@
   .settings-input.smtp-port { max-width:100px; }
   .settings-stack { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
   .settings-stack .settings-select { min-width:190px; }
+  .ops-recent-card { align-items:stretch; flex:1 1 420px; max-width:min(560px, 100%); }
+  .ops-recent-list { width:100%; display:grid; gap:6px; }
+  .ops-recent-empty { padding:9px 10px; border:1px solid var(--hairline); border-radius:8px; background:rgba(255,255,255,0.025); color:var(--text-dim); font-size:0.72rem; }
+  .ops-recent-item { min-width:0; padding:9px 10px; border:1px solid var(--hairline); border-radius:8px; background:rgba(255,255,255,0.025); }
+  .ops-recent-item.ok { border-color:rgba(55,211,139,0.24); }
+  .ops-recent-item.fail { border-color:rgba(255,91,91,0.3); background:rgba(255,91,91,0.045); }
+  .ops-recent-head { display:flex; align-items:center; gap:8px; min-width:0; }
+  .ops-recent-title { color:var(--text); font-size:0.76rem; font-weight:800; white-space:nowrap; }
+  .ops-recent-state { flex:0 0 auto; padding:2px 6px; border-radius:999px; font-size:0.62rem; font-weight:800; border:1px solid var(--hairline); }
+  .ops-recent-state.ok { color:var(--down); border-color:rgba(55,211,139,0.24); background:rgba(55,211,139,0.08); }
+  .ops-recent-state.fail { color:var(--up); border-color:rgba(255,91,91,0.28); background:rgba(255,91,91,0.08); }
+  .ops-recent-time { margin-left:auto; color:var(--text-dim); font-size:0.68rem; white-space:nowrap; }
+  .ops-recent-path, .ops-recent-message { margin-top:5px; color:var(--text-dim); font-size:0.7rem; line-height:1.4; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ops-recent-error { margin-top:6px; display:grid; gap:3px; color:var(--text-dim); font-size:0.7rem; line-height:1.45; overflow-wrap:anywhere; }
+  .ops-recent-error strong { color:var(--up); font-size:0.66rem; }
   .inline-check { min-height:32px; display:inline-flex; align-items:center; gap:6px; padding:6px 8px; border:1px solid var(--hairline); border-radius:8px; background:rgba(255,255,255,0.025); color:var(--text-dim); font-size:0.74rem; cursor:pointer; }
   .inline-check input { width:14px; height:14px; accent-color:var(--gold); }
   .risk-provider-row.hidden { display:none; }

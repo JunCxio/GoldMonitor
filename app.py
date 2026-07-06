@@ -5173,7 +5173,7 @@ def on_open_exports_folder():
     export_dir = resolve_export_dir()
     try:
         open_exports_folder()
-        emit("exports_folder_opened", {"ok": True, "message": f"已打开导出目录：{export_dir}"})
+        emit("exports_folder_opened", {"ok": True, "export_dir": export_dir, "message": f"已打开导出目录：{export_dir}"})
     except Exception as exc:
         emit("exports_folder_opened", build_open_exports_folder_error_payload(export_dir, exc))
 
