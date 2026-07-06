@@ -144,6 +144,34 @@ exports_folder_status_pos = js.find("setOpsExportStatus(data, '已打开导出�
 if not (exports_folder_pos >= 0 and exports_folder_status_pos > exports_folder_pos):
     raise SystemExit("exports folder failures must reuse export diagnostics status rendering")
 
+for required in (
+    "最近操作记录",
+    "id=\"recentOpsList\"",
+    "RECENT_OPS_LIMIT",
+    "function addRecentOpsRecord",
+    "function renderRecentOpsRecords",
+    "config_export",
+    "diagnostics_export",
+    "open_exports_folder",
+    "payload.export_dir",
+    "文件已保存到导出目录。",
+    "失败原因",
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing recent operations contract: {required}")
+
+config_backup_pos = js.find("socket.on('config_backup_ready', data => {")
+config_record_pos = js.find("addRecentOpsRecord('config_export'", config_backup_pos)
+diagnostics_ready_pos = js.find("socket.on('diagnostics_ready', data => {")
+diagnostics_record_pos = js.find("addRecentOpsRecord('diagnostics_export'", diagnostics_ready_pos)
+open_folder_record_pos = js.find("addRecentOpsRecord('open_exports_folder'", exports_folder_pos)
+if not (config_backup_pos >= 0 and config_record_pos > config_backup_pos):
+    raise SystemExit("config export results must be recorded in recent operations")
+if not (diagnostics_ready_pos >= 0 and diagnostics_record_pos > diagnostics_ready_pos):
+    raise SystemExit("diagnostics export results must be recorded in recent operations")
+if not (exports_folder_pos >= 0 and open_folder_record_pos > exports_folder_pos):
+    raise SystemExit("open export folder results must be recorded in recent operations")
+
 settings_updated_handler = "socket.on('settings_updated', data => {"
 settings_updated_pos = js.find(settings_updated_handler)
 settings_failed_pos = js.find("if (settingsSaveFailed)", settings_updated_pos)

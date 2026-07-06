@@ -39,6 +39,7 @@ let currentMode = 'rmb';
 let chartPeriod = 'realtime';
 let chart = null;
 const MAX_POINTS = 60;
+const RECENT_OPS_LIMIT = 5;
 const CHART_PERIODS = {
   realtime: { label: '价格走势', minutes: null, limit: 60, live: true },
   '1h': { label: '1小时走势', minutes: 60, limit: 360 },
@@ -153,6 +154,7 @@ let settingsSaveTimer = null;
 let pendingUpdateInfo = null;
 let pendingConfigImportPayload = null;
 let pendingConfigImportPreview = null;
+let recentOpsRecords = [];
 let autoUpdateTimer = null;
 let lastAutoUpdateCheckAt = 0;
 let opsUpdateStatus = null;
@@ -816,31 +818,39 @@ socket.on('review_report_error', data => {
 socket.on('config_backup_ready', data => {
   if (!data) return;
   if (data.ok === false) {
+    addRecentOpsRecord('config_export', data);
     setOpsExportStatus(data, '配置已导出', '配置导出失败。');
     return;
   }
   if (data.saved_path) {
+    addRecentOpsRecord('config_export', data);
     setOpsExportStatus(data, '配置已导出', '配置导出失败。');
     return;
   }
   if (!data.content) return;
-  downloadText(data.filename || 'GoldMonitor-config.json', data.content, 'application/json;charset=utf-8');
-  setOpsExportStatus({ ...data, filename: data.filename || 'GoldMonitor-config.json' }, '配置已导出', '配置导出失败。');
+  const fallbackData = { ...data, filename: data.filename || 'GoldMonitor-config.json' };
+  downloadText(fallbackData.filename, data.content, 'application/json;charset=utf-8');
+  addRecentOpsRecord('config_export', fallbackData);
+  setOpsExportStatus(fallbackData, '配置已导出', '配置导出失败。');
 });
 
 socket.on('diagnostics_ready', data => {
   if (!data) return;
   if (data.ok === false) {
+    addRecentOpsRecord('diagnostics_export', data);
     setOpsExportStatus(data, '诊断报告已导出', '诊断报告导出失败。');
     return;
   }
   if (data.saved_path) {
+    addRecentOpsRecord('diagnostics_export', data);
     setOpsExportStatus(data, '诊断报告已导出', '诊断报告导出失败。');
     return;
   }
   if (!data.content) return;
-  downloadText(data.filename || 'GoldMonitor-diagnostics.json', data.content, 'application/json;charset=utf-8');
-  setOpsExportStatus({ ...data, filename: data.filename || 'GoldMonitor-diagnostics.json' }, '诊断报告已导出', '诊断报告导出失败。');
+  const fallbackData = { ...data, filename: data.filename || 'GoldMonitor-diagnostics.json' };
+  downloadText(fallbackData.filename, data.content, 'application/json;charset=utf-8');
+  addRecentOpsRecord('diagnostics_export', fallbackData);
+  setOpsExportStatus(fallbackData, '诊断报告已导出', '诊断报告导出失败。');
 });
 
 function hideDiagnosticsCopyFallback() {
@@ -916,6 +926,7 @@ socket.on('diagnostics_copy_ready', data => {
 });
 
 socket.on('exports_folder_opened', data => {
+  addRecentOpsRecord('open_exports_folder', data || {});
   if (data && data.ok === false) {
     setOpsExportStatus(data, '已打开导出目录', '无法打开导出目录。');
     return;
@@ -1429,6 +1440,72 @@ function setOpsStatus(message, ok) {
   if (!el) return;
   el.textContent = message || '';
   el.style.color = ok ? 'var(--down)' : 'var(--up)';
+}
+
+function recentOpsTypeLabel(type) {
+  if (type === 'config_export') return '导出配置';
+  if (type === 'diagnostics_export') return '生成诊断';
+  if (type === 'open_exports_folder') return '打开目录';
+  return '运维操作';
+}
+
+function recentOpsTimeLabel(date) {
+  return date.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function addRecentOpsRecord(type, data) {
+  const payload = data && typeof data === 'object' ? data : {};
+  const detail = payload.error_detail && typeof payload.error_detail === 'object' ? payload.error_detail : {};
+  const dirCheck = payload.export_dir_check && typeof payload.export_dir_check === 'object' ? payload.export_dir_check : {};
+  const ok = payload.ok !== false;
+  const savedPath = payload.saved_path || '';
+  const path = savedPath || payload.export_dir || detail.export_dir || dirCheck.path || '';
+  const message = ok
+    ? (savedPath ? '文件已保存到导出目录。' : (type === 'open_exports_folder' ? '已打开导出目录。' : (payload.message || '操作完成。')))
+    : (detail.message || payload.message || '操作失败。');
+  const record = {
+    id: Date.now() + '-' + recentOpsRecords.length,
+    type,
+    label: recentOpsTypeLabel(type),
+    ok,
+    status: ok ? '成功' : '失败',
+    time: recentOpsTimeLabel(new Date()),
+    path,
+    message,
+    error: detail.error || '',
+    actions: !ok && Array.isArray(dirCheck.actions) ? dirCheck.actions : [],
+  };
+  recentOpsRecords = [record, ...recentOpsRecords].slice(0, RECENT_OPS_LIMIT);
+  renderRecentOpsRecords();
+}
+
+function renderRecentOpsRecords() {
+  const list = document.getElementById('recentOpsList');
+  if (!list) return;
+  if (!recentOpsRecords.length) {
+    list.innerHTML = '<div class="ops-recent-empty">暂无操作记录</div>';
+    return;
+  }
+  list.innerHTML = recentOpsRecords.map(record => {
+    const stateClass = record.ok ? 'ok' : 'fail';
+    const actions = Array.isArray(record.actions) ? record.actions.map(exportDirActionButton).filter(Boolean).join('') : '';
+    const path = record.path ? '<div class="ops-recent-path" title="' + escapeHtml(record.path) + '">' + escapeHtml(record.path) + '</div>' : '';
+    const failure = !record.ok
+      ? '<div class="ops-recent-error"><strong>失败原因</strong><span>' + escapeHtml([record.message, record.error ? '底层错误：' + record.error : ''].filter(Boolean).join(' ')) + '</span></div>'
+      : '';
+    return [
+      '<div class="ops-recent-item ' + stateClass + '">',
+      '<div class="ops-recent-head">',
+      '<span class="ops-recent-title">' + escapeHtml(record.label) + '</span>',
+      '<span class="ops-recent-state ' + stateClass + '">' + escapeHtml(record.status) + '</span>',
+      '<span class="ops-recent-time">' + escapeHtml(record.time) + '</span>',
+      '</div>',
+      path,
+      record.ok ? '<div class="ops-recent-message" title="' + escapeHtml(record.message) + '">' + escapeHtml(record.message) + '</div>' : failure,
+      actions ? '<div class="export-dir-actions">' + actions + '</div>' : '',
+      '</div>',
+    ].join('');
+  }).join('');
 }
 
 function setOpsExportStatus(data, successLabel, fallbackMessage) {
