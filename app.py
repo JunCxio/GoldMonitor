@@ -17,6 +17,7 @@ import secrets
 import requests
 from flask import Flask, jsonify, render_template, request, send_from_directory
 from flask_socketio import SocketIO, emit
+from goldmonitor import alert_profiles as alert_profiles_core
 from goldmonitor import app_state as app_state_core
 from goldmonitor import desktop_ui as desktop_ui_core
 from goldmonitor import event_timeline as event_timeline_core
@@ -124,6 +125,7 @@ def _run_macos_osascript(script, wait=False, timeout=4):
 APPDATA_DIR = os.path.join(_default_appdata_root(), "GoldMonitor")
 SETTINGS_PATH = os.path.join(APPDATA_DIR, "settings.json")
 THRESHOLDS_PATH = os.path.join(APPDATA_DIR, "thresholds.json")
+ALERT_PROFILES_PATH = os.path.join(APPDATA_DIR, "alert_profiles.json")
 WATCH_TARGETS_PATH = os.path.join(APPDATA_DIR, "watch_targets.json")
 PORTFOLIO_POSITIONS_PATH = os.path.join(APPDATA_DIR, "portfolio_positions.json")
 PORTFOLIO_TRANSACTIONS_PATH = os.path.join(APPDATA_DIR, "portfolio_transactions.json")
@@ -327,6 +329,7 @@ for m in THRESHOLD_MODES:
 
 # 波动率预警
 volatility_config = {"percent": None, "minutes": 10, "enabled": False}
+alert_profiles = []
 last_volatility_check = None
 watch_targets = []
 portfolio_positions = []
@@ -683,6 +686,43 @@ def save_thresholds(data=None):
         thresholds,
         current_volatility_config=volatility_config,
     ).save(data)
+
+
+def _alert_profile_store():
+    return alert_profiles_core.AlertProfileStore(
+        ALERT_PROFILES_PATH,
+        dict(thresholds),
+        dict(volatility_config),
+        get_settings_snapshot(),
+        now_factory=datetime.now,
+    )
+
+
+def load_alert_profiles():
+    return _alert_profile_store().load()
+
+
+def save_alert_profiles(items=None):
+    items = alert_profiles if items is None else items
+    return _alert_profile_store().save(items)
+
+
+def get_alert_profiles_state(items=None):
+    current_items = alert_profiles if items is None else items
+    return alert_profiles_core.alert_profiles_state(
+        current_items,
+        thresholds=dict(thresholds),
+        volatility_config=dict(volatility_config),
+        settings=get_settings_snapshot(),
+    )
+
+
+def _find_alert_profile(profile_id):
+    target_id = str(profile_id or "").strip()
+    for item in alert_profiles:
+        if item.get("id") == target_id:
+            return item
+    return None
 
 
 def _coerce_watch_target_bool(value, default=False):
@@ -1902,6 +1942,7 @@ def build_diagnostics_report():
         "appdata": APPDATA_DIR,
         "settings": SETTINGS_PATH,
         "thresholds": THRESHOLDS_PATH,
+        "alert_profiles": ALERT_PROFILES_PATH,
         "watch_targets": WATCH_TARGETS_PATH,
         "portfolio_positions": PORTFOLIO_POSITIONS_PATH,
         "portfolio_transactions": PORTFOLIO_TRANSACTIONS_PATH,
@@ -2326,6 +2367,7 @@ def initialize_market_cache():
 
 app_settings = load_settings()
 apply_persisted_threshold_state(load_thresholds())
+alert_profiles = load_alert_profiles()
 watch_targets = load_watch_targets()
 portfolio_positions = load_portfolio_positions()
 portfolio_transactions = load_portfolio_transactions()
@@ -4343,6 +4385,7 @@ def on_connect(auth=None):
                 "open_rmb": today_open_rmb, "high_rmb": today_high_rmb, "low_rmb": today_low_rmb,
             },
         )
+        state["alert_profiles"] = get_alert_profiles_state()
     state["news"] = get_news_state()
     state["risk_analysis_history"] = get_risk_analysis_history_state()
     emit("init_state", state)
@@ -4450,6 +4493,189 @@ def on_set_volatility(data):
             return
         volatility_config = saved_thresholds["volatility_config"]
         socketio.emit("volatility_updated", volatility_config)
+
+
+def _restore_alert_profile_apply_state(
+    previous_thresholds,
+    previous_volatility_config,
+    previous_settings,
+    previous_alert_cooldown_state,
+):
+    global volatility_config, alert_cooldown_state
+    try:
+        restored_thresholds = save_thresholds({
+            **previous_thresholds,
+            "volatility_config": previous_volatility_config,
+        })
+        apply_persisted_threshold_state(restored_thresholds)
+    except OSError:
+        thresholds.clear()
+        thresholds.update(previous_thresholds)
+        volatility_config = dict(previous_volatility_config)
+
+    try:
+        save_settings(previous_settings)
+    except OSError:
+        with settings_lock:
+            app_settings.clear()
+            app_settings.update(previous_settings)
+
+    alert_cooldown_state = dict(previous_alert_cooldown_state)
+
+
+@socketio.on("save_alert_profile")
+def on_save_alert_profile(data=None):
+    global alert_profiles
+    try:
+        with lock:
+            profile = alert_profiles_core.build_profile_from_state(
+                data,
+                dict(thresholds),
+                dict(volatility_config),
+                get_settings_snapshot(),
+                now_factory=datetime.now,
+            )
+            profile_id = str((data or {}).get("id") or "").strip() if isinstance(data, dict) else ""
+            existing = _find_alert_profile(profile_id)
+            if existing:
+                profile["id"] = existing["id"]
+                profile["created_at"] = existing.get("created_at") or profile.get("created_at")
+                profile["last_applied_at"] = existing.get("last_applied_at", "")
+                next_items = [
+                    profile if item.get("id") == existing["id"] else item
+                    for item in alert_profiles
+                ]
+            else:
+                next_items = list(alert_profiles) + [profile]
+            alert_profiles = save_alert_profiles(next_items)
+            state = get_alert_profiles_state()
+    except ValueError as exc:
+        emit("alert_profile_error", {"message": str(exc)})
+        return
+    except OSError:
+        emit("alert_profile_error", {"message": "预警策略模板保存失败，请检查配置目录权限。"})
+        return
+    socketio.emit("alert_profiles_updated", state)
+
+
+@socketio.on("rename_alert_profile")
+def on_rename_alert_profile(data=None):
+    global alert_profiles
+    profile_id = data.get("id") if isinstance(data, dict) else None
+    with lock:
+        existing = _find_alert_profile(profile_id)
+        if not existing:
+            emit("alert_profile_error", {"message": "未找到预警策略模板"})
+            return
+        updated = dict(existing)
+        if "name" in data:
+            name = str(data.get("name") or "").strip()
+            if not name:
+                emit("alert_profile_error", {"message": "模板名称不能为空"})
+                return
+            updated["name"] = name
+        if "description" in data:
+            updated["description"] = data.get("description", "")
+        next_items = [
+            updated if item.get("id") == existing["id"] else item
+            for item in alert_profiles
+        ]
+        try:
+            alert_profiles = save_alert_profiles(next_items)
+            state = get_alert_profiles_state()
+        except OSError:
+            emit("alert_profile_error", {"message": "预警策略模板保存失败，请检查配置目录权限。"})
+            return
+    socketio.emit("alert_profiles_updated", state)
+
+
+@socketio.on("delete_alert_profile")
+def on_delete_alert_profile(data=None):
+    global alert_profiles
+    profile_id = data.get("id") if isinstance(data, dict) else None
+    with lock:
+        existing = _find_alert_profile(profile_id)
+        if not existing:
+            emit("alert_profile_error", {"message": "未找到预警策略模板"})
+            return
+        next_items = [item for item in alert_profiles if item.get("id") != existing["id"]]
+        try:
+            alert_profiles = save_alert_profiles(next_items)
+            state = get_alert_profiles_state()
+        except OSError:
+            emit("alert_profile_error", {"message": "预警策略模板删除失败，请检查配置目录权限。"})
+            return
+    socketio.emit("alert_profiles_updated", state)
+
+
+@socketio.on("apply_alert_profile")
+def on_apply_alert_profile(data=None):
+    global alert_profiles, alert_cooldown_state
+    profile_id = data.get("id") if isinstance(data, dict) else None
+    with lock:
+        profile = _find_alert_profile(profile_id)
+        if not profile:
+            emit("alert_profile_error", {"message": "未找到预警策略模板"})
+            return
+
+        previous_thresholds = dict(thresholds)
+        previous_volatility_config = dict(volatility_config)
+        previous_settings = get_settings_snapshot()
+        previous_alert_cooldown_state = dict(alert_cooldown_state)
+        previous_profiles = list(alert_profiles)
+
+        try:
+            applied = alert_profiles_core.apply_profile_to_state(
+                profile,
+                previous_thresholds,
+                previous_volatility_config,
+                previous_settings,
+            )
+        except ValueError:
+            emit("alert_profile_error", {"message": "未找到预警策略模板"})
+            return
+
+        try:
+            saved_thresholds = save_thresholds({
+                **applied["thresholds"],
+                "volatility_config": applied["volatility_config"],
+            })
+            saved_settings, startup_error = apply_settings(applied["settings"])
+            apply_persisted_threshold_state(saved_thresholds)
+
+            applied_at = datetime.now().isoformat(timespec="seconds")
+            next_profiles = []
+            for item in alert_profiles:
+                if item.get("id") == profile["id"]:
+                    updated = dict(item)
+                    updated["last_applied_at"] = applied_at
+                    next_profiles.append(updated)
+                else:
+                    next_profiles.append(item)
+            alert_profiles = save_alert_profiles(next_profiles)
+            alert_cooldown_state = {}
+
+            thresholds_state = dict(thresholds)
+            volatility_state = dict(volatility_config)
+            settings_state = public_settings_snapshot(saved_settings)
+            profiles_state = get_alert_profiles_state()
+        except OSError:
+            alert_profiles = previous_profiles
+            _restore_alert_profile_apply_state(
+                previous_thresholds,
+                previous_volatility_config,
+                previous_settings,
+                previous_alert_cooldown_state,
+            )
+            emit("alert_profile_error", {"message": "预警策略模板应用失败，请检查配置目录权限。"})
+            return
+
+    if startup_error:
+        logging.warning("应用预警策略模板时自启动设置失败: %s", startup_error)
+    socketio.emit("thresholds_updated", thresholds_state)
+    socketio.emit("volatility_updated", volatility_state)
+    socketio.emit("settings_updated", settings_state)
+    socketio.emit("alert_profiles_updated", profiles_state)
 
 
 @socketio.on("set_watch_target")
