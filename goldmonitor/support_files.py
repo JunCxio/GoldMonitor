@@ -5,6 +5,9 @@ from datetime import datetime
 from goldmonitor.data_contracts import item_payload_metadata
 
 
+ALERT_PROFILE_IMPORT_LIMIT = 20
+
+
 def read_log_tail(log_path, max_lines=120):
     if not os.path.exists(log_path):
         return []
@@ -41,6 +44,9 @@ def json_payload_metadata(path):
 
 
 def build_config_backup(app_version, settings, thresholds, alert_profiles=None, now_factory=None):
+    if callable(alert_profiles) and now_factory is None:
+        now_factory = alert_profiles
+        alert_profiles = None
     now_factory = now_factory or datetime.now
     return {
         "app": "GoldMonitor",
@@ -70,6 +76,31 @@ def _secret_action(settings_payload, key):
     return "import"
 
 
+def _alert_profiles_preview(payload):
+    if not isinstance(payload, list):
+        return 0, []
+    valid_count = 0
+    indexes_by_id = {}
+    ignored = []
+    for index, item in enumerate(payload):
+        if not isinstance(item, dict) or not str(item.get("name") or "").strip():
+            ignored.append(str(index))
+            continue
+        profile_id = str(item.get("id") or "").strip()
+        if profile_id.startswith("profile-") and len(profile_id) > len("profile-"):
+            if profile_id in indexes_by_id:
+                ignored.append(str(indexes_by_id[profile_id]))
+                indexes_by_id[profile_id] = index
+                continue
+        if valid_count >= ALERT_PROFILE_IMPORT_LIMIT:
+            ignored.append(str(index))
+            continue
+        if profile_id.startswith("profile-") and len(profile_id) > len("profile-"):
+            indexes_by_id[profile_id] = index
+        valid_count += 1
+    return valid_count, sorted(set(ignored), key=int)
+
+
 def build_config_import_preview(payload, settings_defaults, threshold_keys, secret_keys):
     if not isinstance(payload, dict):
         return {
@@ -88,6 +119,7 @@ def build_config_import_preview(payload, settings_defaults, threshold_keys, secr
     alert_profiles_payload = payload.get("alert_profiles")
     settings_keys, ignored_settings = _section_preview(settings_payload, settings_defaults)
     threshold_keys_found, ignored_thresholds = _section_preview(thresholds_payload, threshold_keys)
+    alert_profiles_count, ignored_alert_profiles = _alert_profiles_preview(alert_profiles_payload)
 
     sections = []
     missing_sections = []
@@ -100,7 +132,8 @@ def build_config_import_preview(payload, settings_defaults, threshold_keys, secr
     else:
         missing_sections.append("thresholds")
     if isinstance(alert_profiles_payload, list):
-        sections.append("alert_profiles")
+        if alert_profiles_count:
+            sections.append("alert_profiles")
     else:
         missing_sections.append("alert_profiles")
 
@@ -114,7 +147,7 @@ def build_config_import_preview(payload, settings_defaults, threshold_keys, secr
         "ignored": {
             "settings": ignored_settings,
             "thresholds": ignored_thresholds,
-            "alert_profiles": [],
+            "alert_profiles": ignored_alert_profiles,
         },
         "secret_actions": {
             key: _secret_action(settings_payload, key)
@@ -123,7 +156,7 @@ def build_config_import_preview(payload, settings_defaults, threshold_keys, secr
         "counts": {
             "settings": len(settings_keys),
             "thresholds": len(threshold_keys_found),
-            "alert_profiles": len(alert_profiles_payload) if isinstance(alert_profiles_payload, list) else 0,
+            "alert_profiles": alert_profiles_count,
         },
         "message": message,
     }

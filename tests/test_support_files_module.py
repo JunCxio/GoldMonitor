@@ -69,6 +69,20 @@ def test_config_backup_and_export_file_sanitize_outputs():
         assert Path(saved).read_text(encoding="utf-8") == "hello"
 
 
+def test_config_backup_keeps_positional_now_factory_compatibility():
+    from goldmonitor.support_files import build_config_backup
+
+    backup = build_config_backup(
+        "1.0.0",
+        {"smtp_password": ""},
+        {"upper_warning_rmb": 888.88},
+        fixed_now,
+    )
+
+    assert backup["exported_at"] == "2026-06-12T10:00:00"
+    assert backup["alert_profiles"] == []
+
+
 def test_config_import_preview_reports_sections_ignored_keys_and_secret_actions():
     from goldmonitor.support_files import build_config_import_preview
 
@@ -145,6 +159,57 @@ def test_config_import_preview_accepts_alert_profiles_only_backup():
     assert preview["sections"] == ["alert_profiles"]
     assert preview["missing_sections"] == ["settings", "thresholds"]
     assert preview["counts"]["alert_profiles"] == 1
+
+
+def test_config_import_preview_rejects_invalid_alert_profiles_only_backup():
+    from goldmonitor.support_files import build_config_import_preview
+
+    preview = build_config_import_preview(
+        {
+            "alert_profiles": [
+                {"id": "profile-empty-name", "name": ""},
+                {"id": "profile-missing-name"},
+                "bad-profile",
+            ],
+        },
+        settings_defaults={"smtp_server": ""},
+        threshold_keys={"upper_warning_rmb"},
+        secret_keys={"smtp_password"},
+    )
+
+    assert preview["ok"] is False
+    assert preview["importable"] is False
+    assert preview["sections"] == []
+    assert preview["missing_sections"] == ["settings", "thresholds"]
+    assert preview["ignored"]["alert_profiles"] == ["0", "1", "2"]
+    assert preview["counts"]["alert_profiles"] == 0
+    assert preview["message"] == "备份中没有可导入的配置"
+
+
+def test_config_import_preview_counts_importable_alert_profiles_after_dedup_and_limit():
+    from goldmonitor.support_files import build_config_import_preview
+
+    profiles = [{"id": "profile-duplicate", "name": "重复模板 1"}]
+    profiles.append({"id": "profile-duplicate", "name": "重复模板 2"})
+    profiles.extend(
+        {"id": f"profile-{index}", "name": f"模板 {index}"}
+        for index in range(25)
+    )
+
+    preview = build_config_import_preview(
+        {"alert_profiles": profiles},
+        settings_defaults={"smtp_server": ""},
+        threshold_keys={"upper_warning_rmb"},
+        secret_keys={"smtp_password"},
+    )
+
+    assert preview["ok"] is True
+    assert preview["importable"] is True
+    assert preview["sections"] == ["alert_profiles"]
+    assert preview["counts"]["alert_profiles"] == 20
+    assert "0" in preview["ignored"]["alert_profiles"]
+    assert "1" not in preview["ignored"]["alert_profiles"]
+    assert "21" in preview["ignored"]["alert_profiles"]
 
 
 def test_open_exports_folder_plan_matches_platforms():

@@ -1921,6 +1921,120 @@ def open_exports_folder():
     subprocess.Popen(plan["args"], **plan["kwargs"])
 
 
+def _normalize_alert_profiles_for_import(alert_profiles_payload):
+    if not isinstance(alert_profiles_payload, list):
+        return None
+    return _alert_profile_store().normalize(alert_profiles_payload, existing_items=alert_profiles)
+
+
+def _alert_profiles_payload_for_import(alert_profiles_payload):
+    if not isinstance(alert_profiles_payload, list):
+        return []
+    current_thresholds = dict(thresholds)
+    current_volatility_config = dict(volatility_config)
+    current_settings = get_settings_snapshot()
+    prepared = []
+    for item in alert_profiles_payload:
+        if not isinstance(item, dict):
+            prepared.append(item)
+            continue
+        next_item = dict(item)
+        raw_thresholds = next_item.get("thresholds")
+        if isinstance(raw_thresholds, dict):
+            next_item["thresholds"] = {**current_thresholds, **raw_thresholds}
+        else:
+            next_item["thresholds"] = dict(current_thresholds)
+        raw_volatility_config = next_item.get("volatility_config")
+        if isinstance(raw_volatility_config, dict):
+            next_item["volatility_config"] = {**current_volatility_config, **raw_volatility_config}
+        else:
+            next_item["volatility_config"] = dict(current_volatility_config)
+        raw_settings = next_item.get("settings")
+        if isinstance(raw_settings, dict):
+            next_item["settings"] = {**current_settings, **raw_settings}
+        else:
+            next_item["settings"] = dict(current_settings)
+        prepared.append(next_item)
+    return prepared
+
+
+def _snapshot_config_import_files(restore_settings, restore_thresholds, restore_alert_profiles):
+    paths = []
+    if restore_settings:
+        paths.append(SETTINGS_PATH)
+    if restore_thresholds:
+        paths.append(THRESHOLDS_PATH)
+    if restore_alert_profiles:
+        paths.append(ALERT_PROFILES_PATH)
+
+    snapshots = {}
+    for path in paths:
+        try:
+            with open(path, "rb") as f:
+                snapshots[path] = {"exists": True, "content": f.read()}
+        except FileNotFoundError:
+            snapshots[path] = {"exists": False, "content": b""}
+    return snapshots
+
+
+def _restore_config_import_files(snapshots):
+    rollback_ok = True
+    for path, snapshot in snapshots.items():
+        try:
+            if snapshot.get("exists"):
+                os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+                with open(path, "wb") as f:
+                    f.write(snapshot.get("content", b""))
+            elif os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            rollback_ok = False
+    return rollback_ok
+
+
+def _restore_config_import_state(
+    previous_settings,
+    previous_thresholds,
+    previous_volatility_config,
+    previous_alert_profiles,
+    restore_settings,
+    restore_thresholds,
+    restore_alert_profiles,
+):
+    global volatility_config, alert_profiles
+    rollback_ok = True
+    if restore_settings:
+        try:
+            save_settings(previous_settings)
+        except OSError:
+            rollback_ok = False
+            with settings_lock:
+                app_settings.clear()
+                app_settings.update(previous_settings)
+
+    if restore_thresholds:
+        try:
+            restored_thresholds = save_thresholds({
+                **previous_thresholds,
+                "volatility_config": previous_volatility_config,
+            })
+            apply_persisted_threshold_state(restored_thresholds)
+        except OSError:
+            rollback_ok = False
+            thresholds.clear()
+            thresholds.update(previous_thresholds)
+            volatility_config = dict(previous_volatility_config)
+
+    if restore_alert_profiles:
+        try:
+            alert_profiles = save_alert_profiles(previous_alert_profiles)
+        except OSError:
+            rollback_ok = False
+            alert_profiles = list(previous_alert_profiles)
+
+    return rollback_ok
+
+
 def restore_config_backup(payload):
     global alert_profiles
     if not isinstance(payload, dict):
@@ -1934,23 +2048,73 @@ def restore_config_backup(payload):
         and not isinstance(alert_profiles_payload, list)
     ):
         raise ValueError("备份中没有可导入的配置")
+
+    normalized_alert_profiles = _normalize_alert_profiles_for_import(alert_profiles_payload)
+    has_importable_alert_profiles = bool(normalized_alert_profiles)
+    if (
+        not isinstance(settings_payload, dict)
+        and not isinstance(thresholds_payload, dict)
+        and not has_importable_alert_profiles
+    ):
+        raise ValueError("备份中没有可导入的配置")
+
+    previous_settings = get_settings_snapshot()
+    previous_thresholds = dict(thresholds)
+    previous_volatility_config = dict(volatility_config)
+    previous_alert_profiles = list(alert_profiles)
+    restore_settings = isinstance(settings_payload, dict)
+    restore_thresholds = isinstance(thresholds_payload, dict)
+    restore_alert_profiles = bool(normalized_alert_profiles)
+    file_snapshots = _snapshot_config_import_files(
+        restore_settings,
+        restore_thresholds,
+        restore_alert_profiles,
+    )
+
     imported = []
-    if isinstance(settings_payload, dict):
-        updated, startup_error = apply_settings(settings_payload_for_import(settings_payload))
-        if startup_error:
-            logging.warning("导入配置时自启动设置失败: %s", startup_error)
-        imported.append("settings")
-        socketio.emit("settings_updated", public_settings_snapshot(updated))
-    if isinstance(thresholds_payload, dict):
-        normalized = save_thresholds(thresholds_payload)
-        apply_persisted_threshold_state(normalized)
-        imported.append("thresholds")
-        socketio.emit("thresholds_updated", thresholds)
-        socketio.emit("volatility_updated", volatility_config)
-    if isinstance(alert_profiles_payload, list):
-        alert_profiles = save_alert_profiles(alert_profiles_payload)
-        imported.append("alert_profiles")
-        socketio.emit("alert_profiles_updated", get_alert_profiles_state())
+    settings_event = None
+    thresholds_event = None
+    volatility_event = None
+    alert_profiles_event = None
+    try:
+        if isinstance(settings_payload, dict):
+            updated, startup_error = apply_settings(settings_payload_for_import(settings_payload))
+            if startup_error:
+                logging.warning("导入配置时自启动设置失败: %s", startup_error)
+            imported.append("settings")
+            settings_event = public_settings_snapshot(updated)
+        if isinstance(thresholds_payload, dict):
+            normalized = save_thresholds(thresholds_payload)
+            apply_persisted_threshold_state(normalized)
+            imported.append("thresholds")
+            thresholds_event = dict(thresholds)
+            volatility_event = dict(volatility_config)
+        if normalized_alert_profiles:
+            alert_profiles = save_alert_profiles(_alert_profiles_payload_for_import(alert_profiles_payload))
+            imported.append("alert_profiles")
+            alert_profiles_event = get_alert_profiles_state()
+    except OSError:
+        rollback_ok = _restore_config_import_state(
+            previous_settings,
+            previous_thresholds,
+            previous_volatility_config,
+            previous_alert_profiles,
+            restore_settings,
+            restore_thresholds,
+            restore_alert_profiles,
+        )
+        files_rollback_ok = _restore_config_import_files(file_snapshots)
+        if not rollback_ok or not files_rollback_ok:
+            logging.warning("配置导入失败后回滚未完全成功，请检查配置目录权限。")
+        raise
+
+    if settings_event is not None:
+        socketio.emit("settings_updated", settings_event)
+    if thresholds_event is not None:
+        socketio.emit("thresholds_updated", thresholds_event)
+        socketio.emit("volatility_updated", volatility_event)
+    if alert_profiles_event is not None:
+        socketio.emit("alert_profiles_updated", alert_profiles_event)
     return {"ok": True, "imported": imported}
 
 
