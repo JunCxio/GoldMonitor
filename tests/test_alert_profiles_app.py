@@ -12,6 +12,13 @@ def _threshold_defaults(app):
     return {key: None for key in app.thresholds}
 
 
+def _saved_profile(app, client, name="买入观察"):
+    client.emit("save_alert_profile", {"name": name, "description": "回调时提醒"})
+    events = client.get_received()
+    saved_state = _event_payload(events, "alert_profiles_updated")
+    return saved_state["items"][0]
+
+
 def _prepare_state(monkeypatch, tmp_path):
     import app
 
@@ -50,6 +57,19 @@ def _prepare_state(monkeypatch, tmp_path):
     return app
 
 
+def _set_non_profile_runtime_state(app):
+    app.thresholds["upper_warning_rmb"] = 610.0
+    app.thresholds["upper_critical_rmb"] = None
+    app.thresholds["lower_warning_usd"] = None
+    app.volatility_config = {"enabled": False, "percent": None, "minutes": 10}
+    app.app_settings["alert_sound_enabled"] = False
+    app.app_settings["alert_cooldown_minutes"] = 5
+    app.app_settings["smtp_server"] = "smtp.latest.example.com"
+    app.app_settings["startup_enabled"] = True
+    app.app_settings["floating_price_enabled"] = True
+    app.alert_cooldown_state = {"upper_warning_rmb": {"last_sent_at": "2026-07-09T09:00:00"}}
+
+
 def test_alert_profile_socket_save_apply_rename_delete_flow(monkeypatch, tmp_path):
     app = _prepare_state(monkeypatch, tmp_path)
 
@@ -58,12 +78,9 @@ def test_alert_profile_socket_save_apply_rename_delete_flow(monkeypatch, tmp_pat
     initial_state = _event_payload(initial_events, "init_state")
     assert initial_state["alert_profiles"]["items"] == []
 
-    client.emit("save_alert_profile", {"name": "买入观察", "description": "回调时提醒"})
-    events = client.get_received()
-    saved_state = _event_payload(events, "alert_profiles_updated")
-    profile = saved_state["items"][0]
+    profile = _saved_profile(app, client)
 
-    assert saved_state["total"] == 1
+    assert len(app.alert_profiles) == 1
     assert profile["name"] == "买入观察"
     assert profile["description"] == "回调时提醒"
     assert profile["thresholds"]["upper_warning_rmb"] == 700.0
@@ -74,14 +91,18 @@ def test_alert_profile_socket_save_apply_rename_delete_flow(monkeypatch, tmp_pat
     assert Path(app.ALERT_PROFILES_PATH).exists()
 
     profile_id = profile["id"]
-    app.thresholds["upper_warning_rmb"] = 610.0
-    app.thresholds["upper_critical_rmb"] = None
-    app.thresholds["lower_warning_usd"] = None
-    app.volatility_config = {"enabled": False, "percent": None, "minutes": 10}
-    app.app_settings["alert_sound_enabled"] = False
-    app.app_settings["alert_cooldown_minutes"] = 5
+    _set_non_profile_runtime_state(app)
     app.app_settings["smtp_server"] = "smtp.example.com"
-    app.alert_cooldown_state = {"upper_warning_rmb": {"last_sent_at": "2026-07-09T09:00:00"}}
+    monkeypatch.setattr(
+        app,
+        "set_startup_enabled",
+        lambda enabled: (_ for _ in ()).throw(AssertionError("profile apply must not change startup")),
+    )
+    monkeypatch.setattr(
+        app,
+        "apply_floating_price_settings",
+        lambda settings: (_ for _ in ()).throw(AssertionError("profile apply must not apply floating settings")),
+    )
 
     client.emit("apply_alert_profile", {"id": profile_id})
     events = client.get_received()
@@ -96,6 +117,8 @@ def test_alert_profile_socket_save_apply_rename_delete_flow(monkeypatch, tmp_pat
     assert app.get_settings_snapshot()["alert_sound_enabled"] is True
     assert app.get_settings_snapshot()["alert_cooldown_minutes"] == 45
     assert app.get_settings_snapshot()["smtp_server"] == "smtp.example.com"
+    assert app.get_settings_snapshot()["startup_enabled"] is True
+    assert app.get_settings_snapshot()["floating_price_enabled"] is True
     assert app.alert_cooldown_state == {}
     assert Path(app.THRESHOLDS_PATH).exists()
     assert Path(app.SETTINGS_PATH).exists()
@@ -134,4 +157,104 @@ def test_alert_profile_socket_invalid_inputs_emit_errors(monkeypatch, tmp_path):
     client.emit("apply_alert_profile", {"id": "profile-missing"})
     events = client.get_received()
     assert _event_payload(events, "alert_profile_error")["message"] == "未找到预警策略模板"
+    client.disconnect()
+
+
+def test_apply_alert_profile_preserves_latest_unrelated_settings(monkeypatch, tmp_path):
+    app = _prepare_state(monkeypatch, tmp_path)
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+    profile = _saved_profile(app, client, name="保留设置")
+
+    original_save_thresholds = app.save_thresholds
+
+    def save_thresholds_with_concurrent_settings_change(data=None):
+        app.app_settings["smtp_server"] = "changed.example.com"
+        app.app_settings["export_dir"] = "/tmp/changed"
+        return original_save_thresholds(data)
+
+    app.app_settings["smtp_server"] = "before-apply.example.com"
+    app.app_settings["export_dir"] = "/tmp/before-apply"
+    monkeypatch.setattr(app, "save_thresholds", save_thresholds_with_concurrent_settings_change)
+
+    client.emit("apply_alert_profile", {"id": profile["id"]})
+    client.get_received()
+
+    settings = app.get_settings_snapshot()
+    assert settings["alert_cooldown_minutes"] == 45
+    assert settings["smtp_server"] == "changed.example.com"
+    assert settings["export_dir"] == "/tmp/changed"
+    client.disconnect()
+
+
+def test_apply_alert_profile_settings_save_failure_rolls_back_runtime_state(monkeypatch, tmp_path):
+    app = _prepare_state(monkeypatch, tmp_path)
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+    profile = _saved_profile(app, client, name="回滚设置")
+
+    _set_non_profile_runtime_state(app)
+    previous_thresholds = dict(app.thresholds)
+    previous_volatility_config = dict(app.volatility_config)
+    previous_settings = app.get_settings_snapshot()
+    previous_alert_cooldown_state = dict(app.alert_cooldown_state)
+    previous_profiles = [dict(item) for item in app.alert_profiles]
+
+    def fail_save_alert_profile_settings(applied_settings):
+        raise OSError("settings unavailable")
+
+    monkeypatch.setattr(
+        app,
+        "save_alert_profile_settings",
+        fail_save_alert_profile_settings,
+        raising=False,
+    )
+
+    client.emit("apply_alert_profile", {"id": profile["id"]})
+    events = client.get_received()
+
+    assert _event_payload(events, "alert_profile_error")["message"] == "预警策略模板应用失败，请检查配置目录权限。"
+    assert app.thresholds == previous_thresholds
+    assert app.volatility_config == previous_volatility_config
+    assert app.get_settings_snapshot() == previous_settings
+    assert app.alert_cooldown_state == previous_alert_cooldown_state
+    assert app.alert_profiles == previous_profiles
+    client.disconnect()
+
+
+def test_apply_alert_profile_rollback_failure_emits_partial_write_warning(monkeypatch, tmp_path):
+    app = _prepare_state(monkeypatch, tmp_path)
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+    profile = _saved_profile(app, client, name="回滚失败")
+
+    def fail_save_alert_profile_settings(applied_settings):
+        raise OSError("settings unavailable")
+
+    original_save_thresholds = app.save_thresholds
+    save_threshold_calls = {"count": 0}
+
+    def save_thresholds_with_failed_rollback(data=None):
+        save_threshold_calls["count"] += 1
+        if save_threshold_calls["count"] == 2:
+            raise OSError("threshold rollback unavailable")
+        return original_save_thresholds(data)
+
+    monkeypatch.setattr(
+        app,
+        "save_alert_profile_settings",
+        fail_save_alert_profile_settings,
+        raising=False,
+    )
+    monkeypatch.setattr(app, "save_thresholds", save_thresholds_with_failed_rollback)
+
+    client.emit("apply_alert_profile", {"id": profile["id"]})
+    events = client.get_received()
+
+    assert _event_payload(events, "alert_profile_error")["message"] == (
+        "预警策略模板应用失败，且部分配置可能已写入，请导出诊断后检查配置目录权限。"
+    )
     client.disconnect()

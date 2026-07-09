@@ -717,6 +717,24 @@ def get_alert_profiles_state(items=None):
     )
 
 
+def _alert_profile_settings_update(applied_settings):
+    if not isinstance(applied_settings, dict):
+        return {}
+    return {
+        key: applied_settings[key]
+        for key in alert_profiles_core.ALERT_PROFILE_SETTING_KEYS
+        if key in applied_settings
+    }
+
+
+def save_alert_profile_settings(applied_settings):
+    update = _alert_profile_settings_update(applied_settings)
+    with settings_lock:
+        current = dict(app_settings)
+        current.update(update)
+        return save_settings(current)
+
+
 def _find_alert_profile(profile_id):
     target_id = str(profile_id or "").strip()
     for item in alert_profiles:
@@ -4502,6 +4520,7 @@ def _restore_alert_profile_apply_state(
     previous_alert_cooldown_state,
 ):
     global volatility_config, alert_cooldown_state
+    rollback_ok = True
     try:
         restored_thresholds = save_thresholds({
             **previous_thresholds,
@@ -4509,6 +4528,7 @@ def _restore_alert_profile_apply_state(
         })
         apply_persisted_threshold_state(restored_thresholds)
     except OSError:
+        rollback_ok = False
         thresholds.clear()
         thresholds.update(previous_thresholds)
         volatility_config = dict(previous_volatility_config)
@@ -4516,11 +4536,13 @@ def _restore_alert_profile_apply_state(
     try:
         save_settings(previous_settings)
     except OSError:
+        rollback_ok = False
         with settings_lock:
             app_settings.clear()
             app_settings.update(previous_settings)
 
     alert_cooldown_state = dict(previous_alert_cooldown_state)
+    return rollback_ok
 
 
 @socketio.on("save_alert_profile")
@@ -4640,7 +4662,7 @@ def on_apply_alert_profile(data=None):
                 **applied["thresholds"],
                 "volatility_config": applied["volatility_config"],
             })
-            saved_settings, startup_error = apply_settings(applied["settings"])
+            saved_settings = save_alert_profile_settings(applied["settings"])
             apply_persisted_threshold_state(saved_thresholds)
 
             applied_at = datetime.now().isoformat(timespec="seconds")
@@ -4661,17 +4683,19 @@ def on_apply_alert_profile(data=None):
             profiles_state = get_alert_profiles_state()
         except OSError:
             alert_profiles = previous_profiles
-            _restore_alert_profile_apply_state(
+            rollback_ok = _restore_alert_profile_apply_state(
                 previous_thresholds,
                 previous_volatility_config,
                 previous_settings,
                 previous_alert_cooldown_state,
             )
-            emit("alert_profile_error", {"message": "预警策略模板应用失败，请检查配置目录权限。"})
+            if rollback_ok:
+                message = "预警策略模板应用失败，请检查配置目录权限。"
+            else:
+                message = "预警策略模板应用失败，且部分配置可能已写入，请导出诊断后检查配置目录权限。"
+            emit("alert_profile_error", {"message": message})
             return
 
-    if startup_error:
-        logging.warning("应用预警策略模板时自启动设置失败: %s", startup_error)
     socketio.emit("thresholds_updated", thresholds_state)
     socketio.emit("volatility_updated", volatility_state)
     socketio.emit("settings_updated", settings_state)
