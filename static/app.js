@@ -56,6 +56,19 @@ const ALERT_RULE_DEFS = [
   { type: 'lower_warning', title: '下跌关注', direction: '低于或等于', emailKey: 'email_warning_enabled', badgeClass: 'warn' },
   { type: 'lower_critical', title: '下跌警告', direction: '低于或等于', emailKey: 'email_critical_enabled', badgeClass: 'crit' },
 ];
+const ALERT_PROFILE_SETTING_KEYS = [
+  'alert_sound_enabled',
+  'alert_dialog_enabled',
+  'alert_cooldown_minutes',
+  'alert_quiet_start',
+  'alert_quiet_end',
+  'email_warning_enabled',
+  'email_critical_enabled',
+  'email_volatility_enabled',
+  'webhook_warning_enabled',
+  'webhook_critical_enabled',
+  'webhook_volatility_enabled',
+];
 
 let historyUsd = { labels: [], prices: [] };
 let historyRmb = { labels: [], prices: [] };
@@ -66,6 +79,8 @@ let latestData = null;
 let allThresholds = {};
 let volConfig = { percent: null, minutes: 10, enabled: false };
 let activeAlertRule = null;
+let alertProfiles = { items: [], total: 0, current_profile_id: '' };
+let pendingAlertProfileApply = false;
 let watchTargets = [];
 let portfolioState = { items: [], transactions: [], total: 0, rmb_summary: {}, usd_summary: {}, prices: {}, review: { rmb: {}, usd: {} }, alerts: { items: [], total: 0, enabled: 0, triggered: 0 }, import_backup: { available: false } };
 let portfolioView = 'positions';
@@ -449,6 +464,7 @@ socket.on('init_state', data => {
   klines5min = data.klines_5min || [];
   allThresholds = data.thresholds || {};
   volConfig = data.volatility_config || { percent: null, minutes: 10, enabled: false };
+  applyAlertProfiles(data.alert_profiles || {});
   applyWatchTargets(data.watch_targets || []);
   applyPortfolio(data.portfolio || {});
   if (data.settings) applySettings(data.settings);
@@ -587,6 +603,7 @@ socket.on('show_close_dialog', data => {
 socket.on('thresholds_updated', data => {
   allThresholds = data;
   updateThresholdInputs();
+  clearCurrentAlertProfileMatch();
 });
 
 socket.on('volatility_updated', data => {
@@ -596,6 +613,18 @@ socket.on('volatility_updated', data => {
     enabled: !!data.enabled,
   };
   updateVolUI();
+  clearCurrentAlertProfileMatch();
+});
+
+socket.on('alert_profiles_updated', data => {
+  pendingAlertProfileApply = false;
+  applyAlertProfiles(data || {});
+  setAlertProfileStatus('预警策略模板已更新。', 'ok');
+});
+
+socket.on('alert_profile_error', data => {
+  pendingAlertProfileApply = false;
+  setAlertProfileStatus((data && data.message) || '预警策略模板操作失败。', 'fail');
 });
 
 socket.on('watch_targets_updated', data => {
@@ -668,12 +697,15 @@ socket.on('settings_updated', data => {
     clearTimeout(settingsSaveTimer);
     settingsSaveTimer = null;
   }
+  const shouldClearProfileMatch = alertProfileSettingsChanged(data || {});
   if (settingsSaveFailed) {
     appSettings = Object.assign({}, appSettings, data || {});
+    if (shouldClearProfileMatch) clearCurrentAlertProfileMatch();
     pendingSettingsSave = false;
     return;
   }
   applySettings(data || {});
+  if (shouldClearProfileMatch) clearCurrentAlertProfileMatch();
   document.getElementById('settingsMessage').textContent = '';
   if (pendingSettingsSave) closeSettings();
   pendingSettingsSave = false;
@@ -1551,6 +1583,7 @@ function exportConfig() {
 function configImportSectionLabel(section) {
   if (section === 'settings') return '通用设置';
   if (section === 'thresholds') return '预警阈值';
+  if (section === 'alert_profiles') return '预警策略模板';
   return section || '未知配置';
 }
 
@@ -2933,6 +2966,128 @@ function initChart() {
 }
 
 // ========== 阈值 ==========
+function normalizeAlertProfiles(data) {
+  const items = Array.isArray(data && data.items) ? data.items : [];
+  return {
+    items,
+    total: Number.isFinite(Number(data && data.total)) ? Number(data.total) : items.length,
+    current_profile_id: data && data.current_profile_id ? String(data.current_profile_id) : '',
+  };
+}
+
+function applyAlertProfiles(data) {
+  alertProfiles = normalizeAlertProfiles(data);
+  renderAlertProfiles();
+}
+
+function alertProfileSettingsChanged(data) {
+  if (!data || !alertProfiles.current_profile_id) return false;
+  return ALERT_PROFILE_SETTING_KEYS.some(key => Object.prototype.hasOwnProperty.call(data, key) && appSettings[key] !== data[key]);
+}
+
+function clearCurrentAlertProfileMatch() {
+  if (pendingAlertProfileApply) return;
+  if (!alertProfiles.current_profile_id) return;
+  alertProfiles = Object.assign({}, alertProfiles, { current_profile_id: '' });
+  renderAlertProfiles();
+}
+
+function setAlertProfileStatus(message, type) {
+  const el = document.getElementById('alertProfilesStatus');
+  if (!el) return;
+  el.textContent = message || '';
+  el.className = 'alert-profiles-status' + (type ? ' ' + type : '');
+}
+
+function alertProfileSummary(item) {
+  const thresholds = item && item.thresholds ? item.thresholds : {};
+  const thresholdCount = Object.keys(thresholds).filter(key => thresholds[key] != null).length;
+  const vol = item && item.volatility_config;
+  const volText = vol && vol.enabled && vol.percent != null ? '波动 ' + vol.percent + '%' : '波动关闭';
+  return thresholdCount + ' 个价格阈值 · ' + volText;
+}
+
+function renderAlertProfiles() {
+  const list = document.getElementById('alertProfilesList');
+  const meta = document.getElementById('alertProfilesMeta');
+  if (!list || !meta) return;
+  const items = alertProfiles.items || [];
+  meta.textContent = items.length ? items.length + ' 个模板' : '暂无模板';
+  if (!items.length) {
+    list.innerHTML = '<div class="alert-profiles-empty">保存当前预警配置后，可按场景一键切换。</div>';
+    return;
+  }
+  list.innerHTML = items.map(item => {
+    const idArg = escapeHtml(JSON.stringify(String(item.id || '')));
+    const active = alertProfiles.current_profile_id && alertProfiles.current_profile_id === item.id;
+    const description = item.description ? '<div class="alert-profile-desc">' + escapeHtml(item.description) + '</div>' : '';
+    const applied = item.last_applied_at ? ' · 上次应用 ' + String(item.last_applied_at).replace('T', ' ').slice(0, 16) : '';
+    return [
+      '<div class="alert-profile-item' + (active ? ' active' : '') + '">',
+      '<div class="alert-profile-main">',
+      '<div class="alert-profile-name">' + escapeHtml(item.name || '未命名模板') + (active ? '<span>当前</span>' : '') + '</div>',
+      description,
+      '<div class="alert-profile-meta">' + escapeHtml(alertProfileSummary(item) + applied) + '</div>',
+      '</div>',
+      '<div class="alert-profile-actions">',
+      '<button class="btn-clear-sm" type="button" onclick="applyAlertProfile(' + idArg + ')">应用</button>',
+      '<button class="btn-clear-sm" type="button" onclick="renameAlertProfile(' + idArg + ')">重命名</button>',
+      '<button class="btn-clear-sm" type="button" onclick="deleteAlertProfile(' + idArg + ')">删除</button>',
+      '</div>',
+      '</div>',
+    ].join('');
+  }).join('');
+}
+
+function saveCurrentAlertProfile() {
+  const name = window.prompt('模板名称', alertProfiles.items.length ? '策略模板 ' + (alertProfiles.items.length + 1) : '买入观察');
+  if (name == null) return;
+  const trimmed = name.trim();
+  if (!trimmed) {
+    setAlertProfileStatus('模板名称不能为空。', 'fail');
+    return;
+  }
+  const description = window.prompt('模板说明（可选）', '') || '';
+  setAlertProfileStatus('正在保存预警策略模板...', '');
+  socket.emit('save_alert_profile', { name: trimmed, description: description.trim() });
+}
+
+function applyAlertProfile(id) {
+  if (!id) return;
+  pendingAlertProfileApply = true;
+  setAlertProfileStatus('正在应用预警策略模板...', '');
+  socket.emit('apply_alert_profile', { id });
+}
+
+function renameAlertProfile(id) {
+  const item = (alertProfiles.items || []).find(profile => profile.id === id);
+  if (!item) {
+    setAlertProfileStatus('未找到预警策略模板。', 'fail');
+    return;
+  }
+  const name = window.prompt('模板名称', item.name || '');
+  if (name == null) return;
+  const trimmed = name.trim();
+  if (!trimmed) {
+    setAlertProfileStatus('模板名称不能为空。', 'fail');
+    return;
+  }
+  const description = window.prompt('模板说明（可选）', item.description || '') || '';
+  setAlertProfileStatus('正在更新预警策略模板...', '');
+  socket.emit('rename_alert_profile', { id, name: trimmed, description: description.trim() });
+}
+
+function deleteAlertProfile(id) {
+  const item = (alertProfiles.items || []).find(profile => profile.id === id);
+  if (!item) {
+    setAlertProfileStatus('未找到预警策略模板。', 'fail');
+    return;
+  }
+  if (!window.confirm('删除预警策略模板“' + (item.name || '未命名模板') + '”？')) return;
+  setAlertProfileStatus('正在删除预警策略模板...', '');
+  socket.emit('delete_alert_profile', { id });
+}
+
 function formatAlertRuleValue(value, unit) {
   if (value == null || value === '') return '未设置';
   return unit + Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });

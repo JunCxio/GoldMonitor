@@ -616,9 +616,67 @@ for required in (
     "pendingConfigImportPayload",
     "function renderConfigImportPreview",
     "再次点击导入确认",
+    "if (section === 'alert_profiles') return '预警策略模板';",
 ):
     if required not in js:
         raise SystemExit(f"static/app.js missing config import preview contract: {required}")
+
+for required in (
+    'id="alertProfilesPanel"',
+    'id="alertProfilesList"',
+    'id="alertProfilesMeta"',
+    'id="alertProfilesStatus"',
+    "预警策略模板",
+    "saveCurrentAlertProfile()",
+):
+    if required not in template:
+        raise SystemExit(f"template missing alert profile UI contract: {required}")
+
+for required in (
+    "let alertProfiles",
+    "function normalizeAlertProfiles",
+    "function applyAlertProfiles",
+    "function alertProfileSettingsChanged",
+    "function clearCurrentAlertProfileMatch",
+    "function renderAlertProfiles",
+    "function alertProfileSummary",
+    "function saveCurrentAlertProfile",
+    "function applyAlertProfile",
+    "function renameAlertProfile",
+    "function deleteAlertProfile",
+    "alert_profiles_updated",
+    "alert_profile_error",
+    "save_alert_profile",
+    "apply_alert_profile",
+    "rename_alert_profile",
+    "delete_alert_profile",
+    "data.alert_profiles || {}",
+    "ALERT_PROFILE_SETTING_KEYS",
+):
+    if required not in js:
+        raise SystemExit(f"static/app.js missing alert profile UI contract: {required}")
+
+for required in (
+    ".alert-profiles",
+    ".alert-profiles-head",
+    ".alert-profiles-list",
+    ".alert-profile-item",
+    ".alert-profile-actions",
+    ".alert-profiles-status",
+):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing alert profile selector: {required}")
+
+for handler in (
+    "socket.on('thresholds_updated', data => {",
+    "socket.on('volatility_updated', data => {",
+    "socket.on('settings_updated', data => {",
+):
+    handler_pos = js.find(handler)
+    next_handler_pos = js.find("socket.on(", handler_pos + len(handler))
+    handler_body = js[handler_pos:next_handler_pos if next_handler_pos >= 0 else len(js)] if handler_pos >= 0 else ""
+    if "clearCurrentAlertProfileMatch();" not in handler_body:
+        raise SystemExit(f"{handler} must clear stale alert profile current marker")
 
 for required in (
     'id="setExportDir"',

@@ -103,6 +103,17 @@
         <div class="card-outer threshold-card">
           <div class="card-inner">
             <h3>预警阈值 <span class="threshold-unit" id="thresholdUnit">(RMB/克)</span></h3>
+            <div class="alert-profiles" id="alertProfilesPanel">
+              <div class="alert-profiles-head">
+                <div>
+                  <div class="alert-profiles-title">预警策略模板</div>
+                  <div class="alert-profiles-meta" id="alertProfilesMeta">暂无模板</div>
+                </div>
+                <button class="btn-clear-sm" type="button" onclick="saveCurrentAlertProfile()">保存当前</button>
+              </div>
+              <div class="alert-profiles-list" id="alertProfilesList"></div>
+              <div class="alert-profiles-status" id="alertProfilesStatus"></div>
+            </div>
             <div class="alert-rules-list" id="alertRulesList"></div>
             <div class="watch-targets">
               <div class="watch-target-head">
