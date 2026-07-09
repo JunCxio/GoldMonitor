@@ -6,6 +6,7 @@ GoldMonitor 是一个黄金价格监控工具，提供 Windows 桌面版和 macO
 
 - 实时获取 XAU/USD、人民币克价和 USD/CNY 汇率，展示数据源、更新时间、缓存状态和日内统计。
 - 支持上涨、下跌、关键价位和短时波动提醒，可分别控制弹窗、声音和邮件通知。
+- 支持预警策略模板，可保存价格阈值、波动提醒、冷却、静默和通知级别，并按场景一键切换。
 - 支持目标价观察清单，可维护多个人民币克价或国际金价目标，触发后进入现有警报记录和通知链路。
 - 支持持仓看板，可维护人民币克价和国际金价持仓，展示成本、市值、浮动盈亏，并导出 CSV。
 - 警报记录会显示邮件和 Webhook 的通知投递状态，便于排查通知是否触发。
@@ -61,6 +62,7 @@ macOS 用户可下载 `GoldMonitor-macOS.dmg`，打开后把 `GoldMonitor.app` �
 
 - `settings.json`：通用设置、邮件通知、Webhook 通知和风险分析设置。
 - `thresholds.json`：价格阈值和波动提醒配置。
+- `alert_profiles.json`：预警策略模板，保存价格阈值、波动提醒和提醒行为白名单，不包含 SMTP、Webhook URL 或密钥。
 - `watch_targets.json`：目标价观察清单。
 - `portfolio_positions.json`：本地持仓记录。
 - `market_cache.json`：最近可用金价与汇率缓存。
