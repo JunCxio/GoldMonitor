@@ -40,7 +40,7 @@ def json_payload_metadata(path):
         }
 
 
-def build_config_backup(app_version, settings, thresholds, now_factory=None):
+def build_config_backup(app_version, settings, thresholds, alert_profiles=None, now_factory=None):
     now_factory = now_factory or datetime.now
     return {
         "app": "GoldMonitor",
@@ -48,6 +48,7 @@ def build_config_backup(app_version, settings, thresholds, now_factory=None):
         "exported_at": now_factory().isoformat(timespec="seconds"),
         "settings": settings,
         "thresholds": thresholds,
+        "alert_profiles": list(alert_profiles or []),
     }
 
 
@@ -75,15 +76,16 @@ def build_config_import_preview(payload, settings_defaults, threshold_keys, secr
             "ok": False,
             "importable": False,
             "sections": [],
-            "missing_sections": ["settings", "thresholds"],
-            "ignored": {"settings": [], "thresholds": []},
+            "missing_sections": ["settings", "thresholds", "alert_profiles"],
+            "ignored": {"settings": [], "thresholds": [], "alert_profiles": []},
             "secret_actions": {},
-            "counts": {"settings": 0, "thresholds": 0},
+            "counts": {"settings": 0, "thresholds": 0, "alert_profiles": 0},
             "message": "备份文件格式无效",
         }
 
     settings_payload = payload.get("settings")
     thresholds_payload = payload.get("thresholds")
+    alert_profiles_payload = payload.get("alert_profiles")
     settings_keys, ignored_settings = _section_preview(settings_payload, settings_defaults)
     threshold_keys_found, ignored_thresholds = _section_preview(thresholds_payload, threshold_keys)
 
@@ -97,6 +99,10 @@ def build_config_import_preview(payload, settings_defaults, threshold_keys, secr
         sections.append("thresholds")
     else:
         missing_sections.append("thresholds")
+    if isinstance(alert_profiles_payload, list):
+        sections.append("alert_profiles")
+    else:
+        missing_sections.append("alert_profiles")
 
     importable = bool(sections)
     message = "配置导入预检通过" if importable else "备份中没有可导入的配置"
@@ -108,6 +114,7 @@ def build_config_import_preview(payload, settings_defaults, threshold_keys, secr
         "ignored": {
             "settings": ignored_settings,
             "thresholds": ignored_thresholds,
+            "alert_profiles": [],
         },
         "secret_actions": {
             key: _secret_action(settings_payload, key)
@@ -116,6 +123,7 @@ def build_config_import_preview(payload, settings_defaults, threshold_keys, secr
         "counts": {
             "settings": len(settings_keys),
             "thresholds": len(threshold_keys_found),
+            "alert_profiles": len(alert_profiles_payload) if isinstance(alert_profiles_payload, list) else 0,
         },
         "message": message,
     }

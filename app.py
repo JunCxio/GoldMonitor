@@ -1682,6 +1682,7 @@ def build_config_backup():
             **{key: thresholds.get(key) for key in thresholds},
             "volatility_config": dict(volatility_config),
         },
+        alert_profiles=get_alert_profiles_state().get("items", []),
         now_factory=datetime.now,
     )
 
@@ -1921,11 +1922,17 @@ def open_exports_folder():
 
 
 def restore_config_backup(payload):
+    global alert_profiles
     if not isinstance(payload, dict):
         raise ValueError("备份文件格式无效")
     settings_payload = payload.get("settings")
     thresholds_payload = payload.get("thresholds")
-    if not isinstance(settings_payload, dict) and not isinstance(thresholds_payload, dict):
+    alert_profiles_payload = payload.get("alert_profiles")
+    if (
+        not isinstance(settings_payload, dict)
+        and not isinstance(thresholds_payload, dict)
+        and not isinstance(alert_profiles_payload, list)
+    ):
         raise ValueError("备份中没有可导入的配置")
     imported = []
     if isinstance(settings_payload, dict):
@@ -1940,6 +1947,10 @@ def restore_config_backup(payload):
         imported.append("thresholds")
         socketio.emit("thresholds_updated", thresholds)
         socketio.emit("volatility_updated", volatility_config)
+    if isinstance(alert_profiles_payload, list):
+        alert_profiles = save_alert_profiles(alert_profiles_payload)
+        imported.append("alert_profiles")
+        socketio.emit("alert_profiles_updated", get_alert_profiles_state())
     return {"ok": True, "imported": imported}
 
 
