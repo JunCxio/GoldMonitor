@@ -164,3 +164,25 @@ def test_readme_uses_canonical_contribution_and_security_entries():
     assert "python3.12 -m venv .venv" in readme
     assert "tests\\gold_cache_check.py" not in readme
     assert "tests/gold_cache_check.py" not in readme
+
+
+def test_workflows_use_node_24_action_versions():
+    for relative_path in (
+        ".github/workflows/ci.yml",
+        ".github/workflows/release.yml",
+    ):
+        workflow = read_text(relative_path)
+        assert "actions/checkout@v4" not in workflow
+        assert "actions/setup-python@v5" not in workflow
+        assert "actions/checkout@v5" in workflow
+        assert "actions/setup-python@v6" in workflow
+
+
+def test_docs_directory_is_not_ignored_by_repository_rules():
+    ignore_rules = {
+        line.strip()
+        for line in read_text(".gitignore").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    assert "docs/" not in ignore_rules
+    assert ".DS_Store" in ignore_rules
