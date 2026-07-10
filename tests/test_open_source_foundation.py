@@ -59,12 +59,20 @@ def test_community_docs_define_contribution_and_private_reporting():
     conduct = read_text("CODE_OF_CONDUCT.md")
 
     assert "python scripts/run_checks.py" in contributing
+    assert "py -3.12 -m venv .venv" in contributing
+    assert "python3.12 -m venv .venv" in contributing
     assert "Conventional Commits" in contributing
     assert "API Key" in contributing
     assert "SMTP 授权码" in contributing
     assert "Webhook URL" in contributing
-    assert "security/advisories/new" in security
+    assert (
+        "https://github.com/JunCxio/GoldMonitor/security/advisories/new" in security
+    )
     assert "公开 Issue" in security
+    assert "吊销或轮换" in security
+    assert "重新协商" in security
     assert "Contributor Covenant 2.1" in conduct
     assert "行为准则举报" in conduct
-    assert "security/advisories/new" in conduct
+    assert (
+        "https://github.com/JunCxio/GoldMonitor/security/advisories/new" in conduct
+    )

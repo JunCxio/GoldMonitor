@@ -15,14 +15,14 @@ GoldMonitor 当前不承诺 Linux 桌面运行兼容性。
 Windows：
 
 ```powershell
-python -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\pip.exe install -r requirements.txt pyinstaller
 ```
 
 macOS：
 
 ```bash
-python3 -m venv .venv
+python3.12 -m venv .venv
 .venv/bin/pip install -r requirements.txt pyinstaller
 ```
 
@@ -64,7 +64,7 @@ macOS：
 - ci: 修改持续集成
 - chore: 维护性变更
 
-Commit 信息保持简洁、专业，不添加生成工具或额外署名声明。
+Commit 信息保持简洁、专业，不添加生成工具署名或其他额外署名声明。
 
 ## Pull Request
 
@@ -82,6 +82,6 @@ Pull Request 需要说明：
 
 - API Key、SMTP 授权码和 Webhook URL。
 - settings.json、系统凭据、用户持仓和风险分析历史。
-- 未脱敏的诊断报告、日志和本地路径个人信息。
+- 未脱敏的诊断报告、日志和可识别个人身份的本地路径信息。
 
 安全漏洞不要提交公开 Issue，请遵循 SECURITY.md。
