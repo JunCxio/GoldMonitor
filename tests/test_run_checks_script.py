@@ -2,33 +2,94 @@ import sys
 from types import SimpleNamespace
 
 
+EXPECTED_COMPILE_TARGETS = (
+    "app.py",
+    "setup_gui.py",
+    "tests/risk_contract_check.py",
+    "tests/update_logic_check.py",
+    "tests/startup_contract_check.py",
+    "tests/frontend_asset_check.py",
+    "tests/alert_log_ui_contract_check.py",
+    "tests/test_single_instance_app.py",
+    "tests/test_update_app.py",
+    "tests/test_portfolio_module.py",
+    "tests/test_risk_analysis_module.py",
+    "tests/test_market_data_module.py",
+    "tests/test_settings_store_module.py",
+    "tests/test_notifications_module.py",
+    "tests/test_event_timeline_module.py",
+    "tests/test_update_manager_module.py",
+    "tests/test_platform_module.py",
+    "tests/test_news_module.py",
+    "tests/test_targets_module.py",
+    "tests/test_support_files_module.py",
+    "tests/test_desktop_ui_module.py",
+    "tests/test_verify_release_assets_script.py",
+    "tests/test_open_source_foundation.py",
+    "tests/test_run_checks_script.py",
+    "scripts/verify_release_assets.py",
+    "scripts/run_checks.py",
+)
+
+EXPECTED_PYTHON_CHECKS = (
+    "tests/risk_contract_check.py",
+    "tests/gold_cache_check.py",
+    "tests/price_fetch_with_cache_check.py",
+    "tests/fetch_status_check.py",
+    "tests/threshold_persistence_check.py",
+    "tests/socket_connect_check.py",
+    "tests/news_logic_check.py",
+    "tests/forex_cache_check.py",
+    "tests/startup_contract_check.py",
+    "tests/update_logic_check.py",
+    "tests/port_selection_check.py",
+    "tests/event_timeline_review_check.py",
+    "tests/engineering_foundation_check.py",
+    "tests/test_storage_modules.py",
+    "tests/test_portfolio_module.py",
+    "tests/test_risk_analysis_module.py",
+    "tests/test_market_data_module.py",
+    "tests/test_settings_store_module.py",
+    "tests/test_notifications_module.py",
+    "tests/test_event_timeline_module.py",
+    "tests/test_update_manager_module.py",
+    "tests/test_platform_module.py",
+    "tests/test_news_module.py",
+    "tests/test_targets_module.py",
+    "tests/test_support_files_module.py",
+    "tests/test_desktop_ui_module.py",
+    "tests/alert_log_ui_contract_check.py",
+    "tests/frontend_asset_check.py",
+)
+
+EXPECTED_RELEASE_PYTEST_TARGETS = (
+    "tests/test_single_instance_app.py",
+    "tests/test_update_app.py",
+    "tests/test_verify_release_assets_script.py",
+)
+
+
+def expected_darwin_commands():
+    return [
+        [sys.executable, "-m", "py_compile", *EXPECTED_COMPILE_TARGETS],
+        *[[sys.executable, path] for path in EXPECTED_PYTHON_CHECKS],
+        [sys.executable, "-m", "pytest", *EXPECTED_RELEASE_PYTEST_TARGETS],
+        [sys.executable, "-m", "pytest", "-q"],
+    ]
+
+
 def test_build_check_commands_preserves_existing_release_checks():
     from scripts.run_checks import build_check_commands
 
     commands = build_check_commands("darwin")
 
-    assert commands[0][:3] == [sys.executable, "-m", "py_compile"]
-    assert [sys.executable, "tests/risk_contract_check.py"] in commands
-    assert [sys.executable, "tests/gold_cache_check.py"] in commands
-    assert [sys.executable, "tests/engineering_foundation_check.py"] in commands
-    assert [sys.executable, "tests/alert_log_ui_contract_check.py"] in commands
-    assert [sys.executable, "tests/frontend_asset_check.py"] in commands
-    assert commands[-2] == [
-        sys.executable,
-        "-m",
-        "pytest",
-        "tests/test_single_instance_app.py",
-        "tests/test_update_app.py",
-        "tests/test_verify_release_assets_script.py",
-    ]
-    assert commands[-1] == [sys.executable, "-m", "pytest", "-q"]
+    assert commands == expected_darwin_commands()
 
 
 def test_windows_commands_include_existing_powershell_contract():
     from scripts.run_checks import build_check_commands
 
     windows_commands = build_check_commands("win32")
-    macos_commands = build_check_commands("darwin")
     powershell_command = [
         "powershell",
         "-NoProfile",
@@ -37,13 +98,18 @@ def test_windows_commands_include_existing_powershell_contract():
         "-File",
         "tests/contract_checks.ps1",
     ]
+    darwin_commands = expected_darwin_commands()
+    expected_windows_commands = [
+        darwin_commands[0],
+        powershell_command,
+        *darwin_commands[1:],
+    ]
 
-    assert powershell_command in windows_commands
-    assert powershell_command not in macos_commands
+    assert windows_commands == expected_windows_commands
 
 
 def test_run_checks_stops_at_first_failure_and_reports_command(capsys):
-    from scripts.run_checks import run_checks
+    from scripts.run_checks import ROOT, run_checks
 
     commands = [
         ["python", "first.py"],
@@ -61,8 +127,29 @@ def test_run_checks_stops_at_first_failure_and_reports_command(capsys):
 
     assert exit_code == 9
     assert [item[0] for item in calls] == commands[:2]
+    assert [item[1] for item in calls] == [ROOT, ROOT]
+    assert all(item[2] is False for item in calls)
     assert "检查失败 (9)" in captured.err
     assert "python second.py" in captured.err
+
+
+def test_run_checks_reports_os_error_without_traceback(capsys):
+    from scripts.run_checks import run_checks
+
+    def fake_runner(command, cwd, check):
+        raise FileNotFoundError("tool missing")
+
+    exit_code = run_checks(
+        commands=[["missing-tool", "--check"]],
+        runner=fake_runner,
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "检查失败 (1)" in captured.err
+    assert "missing-tool --check" in captured.err
+    assert "tool missing" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_run_checks_returns_zero_after_all_commands_pass():

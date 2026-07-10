@@ -109,7 +109,15 @@ def run_checks(commands=None, runner=None):
     for command in commands:
         display = command_text(command)
         print(f"$ {display}", flush=True)
-        result = runner(command, cwd=ROOT, check=False)
+        try:
+            result = runner(command, cwd=ROOT, check=False)
+        except OSError as error:
+            print(
+                f"检查失败 (1): {display}: {error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 1
         if result.returncode:
             print(
                 f"检查失败 ({result.returncode}): {display}",
