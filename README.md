@@ -196,3 +196,7 @@ GitHub Actions 会执行检查、构建 Windows EXE 和 macOS DMG、生成 `vers
 发布完成后，GitHub Actions 会继续运行发布资产验收，自动下载 `version.json`、Windows 安装包和 macOS DMG，并校验版本、下载地址和 SHA256。
 
 如果 `CHANGELOG.md` 中缺少当前版本说明，发布流程会失败。
+
+## 许可证
+
+GoldMonitor 使用 [MIT License](LICENSE) 发布。
