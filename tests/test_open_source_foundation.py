@@ -168,18 +168,27 @@ def test_readme_uses_canonical_contribution_and_security_entries():
 
 
 def test_workflows_use_node_24_action_versions():
+    def action_versions(workflow, action):
+        pattern = re.compile(
+            rf"^[ \t]*(?:-[ \t]+)?uses:[ \t]*(?P<quote>[\"']?)"
+            rf"{re.escape(action)}@(?P<version>[^\"'\s#]+)"
+            r"(?P=quote)[ \t]*(?:#.*)?$",
+            flags=re.MULTILINE,
+        )
+        return [
+            match.group("version")
+            for match in pattern.finditer(workflow)
+        ]
+
     for relative_path in (
         ".github/workflows/ci.yml",
         ".github/workflows/release.yml",
     ):
         workflow = read_text(relative_path)
-        checkout_versions = re.findall(
-            r"actions/checkout@([A-Za-z0-9._-]+)",
+        checkout_versions = action_versions(workflow, "actions/checkout")
+        setup_python_versions = action_versions(
             workflow,
-        )
-        setup_python_versions = re.findall(
-            r"actions/setup-python@([A-Za-z0-9._-]+)",
-            workflow,
+            "actions/setup-python",
         )
 
         assert checkout_versions
