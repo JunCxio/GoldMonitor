@@ -61,6 +61,8 @@ def test_community_docs_define_contribution_and_private_reporting():
     assert "python scripts/run_checks.py" in contributing
     assert "py -3.12 -m venv .venv" in contributing
     assert "python3.12 -m venv .venv" in contributing
+    assert r".\.venv\Scripts\python.exe app.py --web" in contributing
+    assert ".venv/bin/python app.py --web" in contributing
     assert "Conventional Commits" in contributing
     assert "API Key" in contributing
     assert "SMTP 授权码" in contributing

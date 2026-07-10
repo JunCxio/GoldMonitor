@@ -26,6 +26,22 @@ python3.12 -m venv .venv
 .venv/bin/pip install -r requirements.txt pyinstaller
 ```
 
+## 启动应用
+
+本地开发建议使用 Web 模式，便于直接查看日志和调试页面。
+
+Windows：
+
+```powershell
+.\.venv\Scripts\python.exe app.py --web
+```
+
+macOS：
+
+```bash
+.venv/bin/python app.py --web
+```
+
 ## 本地验证
 
 提交前运行：
