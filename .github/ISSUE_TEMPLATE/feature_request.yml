@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        请从用户问题和使用场景开始，不要求先设计技术实现。不要提交 API Key、SMTP 授权码、Webhook URL 或用户数据。
+        请从用户问题和使用场景开始，不要求先设计技术实现。不要提交 API Key、SMTP 授权码、Webhook URL、用户数据、可识别个人身份的本地路径信息或完整诊断数据。
   - type: textarea
     id: user-problem
     attributes:
@@ -44,5 +44,5 @@ body:
     attributes:
       label: 隐私确认
       options:
-        - label: 内容不包含 API Key、SMTP 授权码、Webhook URL 或用户数据。
+        - label: 内容不包含 API Key、SMTP 授权码、Webhook URL、用户数据、可识别个人身份的本地路径信息或完整诊断数据。
           required: true

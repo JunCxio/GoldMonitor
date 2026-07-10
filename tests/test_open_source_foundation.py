@@ -83,13 +83,24 @@ def test_issue_and_pull_request_templates_route_reports_safely():
     feature = read_text(".github/ISSUE_TEMPLATE/feature_request.yml")
     config = read_text(".github/ISSUE_TEMPLATE/config.yml")
     pull_request = read_text(".github/pull_request_template.md")
-    combined = "\n".join((bug, feature, config, pull_request))
+    privacy_markers = (
+        "API Key",
+        "SMTP 授权码",
+        "Webhook URL",
+        "本地路径",
+        "完整诊断数据",
+    )
+
+    for template in (bug, feature, pull_request):
+        for marker in privacy_markers:
+            assert marker in template
 
     assert "blank_issues_enabled: false" in config
-    assert "security/advisories/new" in config
-    assert "API Key" in combined
-    assert "SMTP 授权码" in combined
-    assert "Webhook URL" in combined
+    assert (
+        "https://github.com/JunCxio/GoldMonitor/security/advisories/new" in config
+    )
+    assert "本地路径" in config
+    assert "完整诊断数据" in config
     assert "复现步骤" in bug
     assert "用户问题" in feature
     assert "验证结果" in pull_request
