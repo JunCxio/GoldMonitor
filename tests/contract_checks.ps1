@@ -69,7 +69,7 @@ Assert-Contains -Path "app.py" -Pattern '--startup' -Message "app.py must suppor
 Assert-Contains -Path "app.py" -Pattern 'REQUEST_TIMEOUT' -Message "app.py must use a short network request timeout"
 Assert-NotContains -Path "app.py" -Pattern 'cors_allowed_origins\s*=\s*"\*"' -Message "Socket.IO must not allow every browser origin"
 Assert-Contains -Path "app.py" -Pattern 'SOCKET_ACCESS_TOKEN' -Message "Socket.IO clients must use a per-process access token"
-Assert-Contains -Path "templates\index.html" -Pattern 'auth:\s*\{\s*token:\s*SOCKET_ACCESS_TOKEN\s*\}' -Message "frontend must send the Socket.IO access token"
+Assert-Contains -Path "static\app.js" -Pattern 'auth:\s*\{\s*token:\s*SOCKET_ACCESS_TOKEN\s*\}' -Message "frontend must send the Socket.IO access token"
 Assert-Contains -Path "app.py" -Pattern 'APP_USER_MODEL_ID\s*=\s*"GoldMonitor\.App"' -Message "app.py must define the Windows AppUserModelID"
 Assert-Contains -Path "app.py" -Pattern 'MACOS_LAUNCH_AGENT_ID' -Message "app.py must define the macOS LaunchAgent identifier"
 Assert-Contains -Path "app.py" -Pattern 'create_macos_status_item' -Message "app.py must expose a macOS menu bar status item"

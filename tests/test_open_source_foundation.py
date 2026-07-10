@@ -42,6 +42,21 @@ def test_pull_request_ci_runs_supported_platform_checks():
     assert "softprops/action-gh-release" not in workflow
 
 
+def test_windows_contract_checks_socket_token_in_frontend_asset():
+    contract_checks = read_text("tests/contract_checks.ps1")
+
+    assert (
+        'Assert-Contains -Path "static\\app.js" -Pattern '
+        "'auth:\\s*\\{\\s*token:\\s*SOCKET_ACCESS_TOKEN\\s*\\}'"
+        in contract_checks
+    )
+    assert (
+        'Assert-Contains -Path "templates\\index.html" -Pattern '
+        "'auth:\\s*\\{\\s*token:\\s*SOCKET_ACCESS_TOKEN\\s*\\}'"
+        not in contract_checks
+    )
+
+
 def test_release_workflow_reuses_unified_check_entry():
     workflow = read_text(".github/workflows/release.yml")
 
