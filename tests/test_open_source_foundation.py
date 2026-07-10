@@ -224,3 +224,15 @@ def test_docs_directory_is_not_ignored_by_repository_rules():
         f"stderr: {ignore_result.stderr}"
     )
     assert ".DS_Store" in ignore_rules
+
+
+def test_dependabot_updates_python_and_actions_weekly():
+    config = read_text(".github/dependabot.yml")
+    assert "version: 2" in config
+    assert 'package-ecosystem: "pip"' in config
+    assert 'package-ecosystem: "github-actions"' in config
+    assert config.count('interval: "weekly"') == 2
+    assert config.count('target-branch: "main"') == 2
+    assert config.count('applies-to: "version-updates"') == 2
+    assert config.count('prefix: "chore"') == 2
+    assert config.count('include: "scope"') == 2
