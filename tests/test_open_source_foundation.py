@@ -51,3 +51,20 @@ def test_release_workflow_reuses_unified_check_entry():
     assert "python tests/frontend_asset_check.py" not in workflow
     assert "pyinstaller --clean --noconfirm GoldMonitor.spec" in workflow
     assert "PYTHON_BIN=python scripts/build_macos_dmg.sh" in workflow
+
+
+def test_community_docs_define_contribution_and_private_reporting():
+    contributing = read_text("CONTRIBUTING.md")
+    security = read_text("SECURITY.md")
+    conduct = read_text("CODE_OF_CONDUCT.md")
+
+    assert "python scripts/run_checks.py" in contributing
+    assert "Conventional Commits" in contributing
+    assert "API Key" in contributing
+    assert "SMTP 授权码" in contributing
+    assert "Webhook URL" in contributing
+    assert "security/advisories/new" in security
+    assert "公开 Issue" in security
+    assert "Contributor Covenant 2.1" in conduct
+    assert "行为准则举报" in conduct
+    assert "security/advisories/new" in conduct
