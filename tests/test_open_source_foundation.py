@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -55,6 +56,34 @@ def test_windows_contract_checks_socket_token_in_frontend_asset():
         "'auth:\\s*\\{\\s*token:\\s*SOCKET_ACCESS_TOKEN\\s*\\}'"
         not in contract_checks
     )
+
+
+def test_powershell_contract_literal_assertions_match_their_target_files():
+    assertion_pattern = re.compile(
+        r'^(Assert-(?:Not)?Contains) -Path "([^"]+)" -Pattern '
+        r"'((?:[^']|'')*)'"
+    )
+    failures = []
+
+    for line_number, line in enumerate(
+        read_text("tests/contract_checks.ps1").splitlines(),
+        start=1,
+    ):
+        match = assertion_pattern.match(line)
+        if not match:
+            continue
+
+        command, relative_path, pattern = match.groups()
+        content = read_text(relative_path.replace("\\", "/"))
+        pattern = pattern.replace("''", "'")
+        matched = re.search(pattern, content, flags=re.IGNORECASE) is not None
+        expected = command == "Assert-Contains"
+        if matched != expected:
+            failures.append(
+                f"line {line_number}: {command} {relative_path} {pattern!r}"
+            )
+
+    assert failures == []
 
 
 def test_release_workflow_reuses_unified_check_entry():
