@@ -20,9 +20,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - windows-latest
-          - macos-latest
+        include:
+          - os: windows-latest
+            constraints: constraints/windows-py312.txt
+          - os: macos-latest
+            constraints: constraints/macos-py312.txt
 
     steps:
       - name: Checkout
@@ -33,11 +35,14 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            ${{ matrix.constraints }}
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -c ${{ matrix.constraints }}
 
       - name: Run checks
         run: python scripts/run_checks.py

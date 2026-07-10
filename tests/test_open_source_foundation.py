@@ -10,6 +10,16 @@ def read_text(relative_path):
     return (ROOT / relative_path).read_text(encoding="utf-8")
 
 
+def requirement_lines(relative_path):
+    return [
+        line.strip()
+        for line in read_text(relative_path).splitlines()
+        if line.strip()
+        and not line.lstrip().startswith("#")
+        and not line.lstrip().startswith("--")
+    ]
+
+
 def test_repository_uses_confirmed_mit_license():
     license_path = ROOT / "LICENSE"
 
@@ -262,3 +272,35 @@ updates:
 '''
 
     assert config == expected
+
+
+def test_python_dependencies_are_locked_per_supported_platform():
+    assert requirement_lines("requirements-build.txt") == ["pyinstaller>=6.0,<7.0"]
+    pinned_requirement = re.compile(
+        r"^[A-Za-z0-9_.-]+(?:\[[^\]]+\])?==[^ ;]+(?:\s*;\s*.+)?$"
+    )
+    for relative_path in (
+        "constraints/windows-py312.txt",
+        "constraints/macos-py312.txt",
+    ):
+        lines = requirement_lines(relative_path)
+        assert lines
+        assert any(line.lower().startswith("pyinstaller==") for line in lines)
+        assert all(pinned_requirement.fullmatch(line) for line in lines)
+
+
+def test_ci_and_release_use_platform_constraints():
+    ci = read_text(".github/workflows/ci.yml")
+    release = read_text(".github/workflows/release.yml")
+    assert "constraints/windows-py312.txt" in ci
+    assert "constraints/macos-py312.txt" in ci
+    assert "pip install -r requirements.txt -c ${{ matrix.constraints }}" in ci
+    assert (
+        "pip install -r requirements.txt -r requirements-build.txt "
+        "-c constraints/windows-py312.txt"
+    ) in release
+    assert (
+        "pip install -r requirements.txt -r requirements-build.txt "
+        "-c constraints/macos-py312.txt"
+    ) in release
+    assert "pip install -r requirements.txt pyinstaller" not in release
