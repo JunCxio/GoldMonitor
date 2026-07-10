@@ -1,0 +1,72 @@
+name: Bug 报告
+description: 报告可复现的 GoldMonitor 缺陷
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先删除 API Key、SMTP 授权码、Webhook URL、用户数据和本地路径中的个人信息。安全漏洞请使用私密报告入口，不要提交公开 Issue。
+  - type: input
+    id: version
+    attributes:
+      label: GoldMonitor 版本
+      placeholder: 例如 1.0.5
+    validations:
+      required: true
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: 操作系统
+      options:
+        - Windows 10
+        - Windows 11
+        - macOS
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: 问题描述
+      description: 说明问题以及它对使用造成的影响。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      description: 提供能够稳定复现问题的最小步骤。
+      placeholder: |
+        1. 打开……
+        2. 配置……
+        3. 出现……
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期结果
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 脱敏后的诊断信息
+      description: 只粘贴与问题有关且已删除敏感内容的摘要。
+      render: shell
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 隐私确认
+      options:
+        - label: 我已删除 API Key、SMTP 授权码、Webhook URL、用户数据和个人路径信息。
+          required: true
+        - label: 这不是需要私密处理的安全漏洞。
+          required: true

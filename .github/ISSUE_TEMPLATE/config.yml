@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞私密报告
+    url: https://github.com/JunCxio/GoldMonitor/security/advisories/new
+    about: 不要公开披露漏洞细节、密钥或用户数据。

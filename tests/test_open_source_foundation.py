@@ -76,3 +76,34 @@ def test_community_docs_define_contribution_and_private_reporting():
     assert (
         "https://github.com/JunCxio/GoldMonitor/security/advisories/new" in conduct
     )
+
+
+def test_issue_and_pull_request_templates_route_reports_safely():
+    bug = read_text(".github/ISSUE_TEMPLATE/bug_report.yml")
+    feature = read_text(".github/ISSUE_TEMPLATE/feature_request.yml")
+    config = read_text(".github/ISSUE_TEMPLATE/config.yml")
+    pull_request = read_text(".github/pull_request_template.md")
+    combined = "\n".join((bug, feature, config, pull_request))
+
+    assert "blank_issues_enabled: false" in config
+    assert "security/advisories/new" in config
+    assert "API Key" in combined
+    assert "SMTP 授权码" in combined
+    assert "Webhook URL" in combined
+    assert "复现步骤" in bug
+    assert "用户问题" in feature
+    assert "验证结果" in pull_request
+    assert "隐私" in pull_request
+
+
+def test_readme_uses_canonical_contribution_and_security_entries():
+    readme = read_text("README.md")
+
+    assert "python scripts/run_checks.py" in readme
+    assert "[贡献指南](CONTRIBUTING.md)" in readme
+    assert "[安全策略](SECURITY.md)" in readme
+    assert "[MIT License](LICENSE)" in readme
+    assert "py -3.12 -m venv .venv" in readme
+    assert "python3.12 -m venv .venv" in readme
+    assert "tests\\gold_cache_check.py" not in readme
+    assert "tests/gold_cache_check.py" not in readme
