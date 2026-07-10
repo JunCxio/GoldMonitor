@@ -16,14 +16,14 @@ Windows：
 
 ```powershell
 py -3.12 -m venv .venv
-.\.venv\Scripts\pip.exe install -r requirements.txt pyinstaller
+.\.venv\Scripts\pip.exe install -r requirements.txt -r requirements-build.txt -c constraints\windows-py312.txt
 ```
 
 macOS：
 
 ```bash
 python3.12 -m venv .venv
-.venv/bin/pip install -r requirements.txt pyinstaller
+.venv/bin/pip install -r requirements.txt -r requirements-build.txt -c constraints/macos-py312.txt
 ```
 
 ## 启动应用
@@ -59,6 +59,17 @@ macOS：
 ```
 
 该命令执行 Python 语法检查、现有契约检查和完整 pytest。Windows 还会执行 tests/contract_checks.ps1。
+
+## 更新依赖锁定
+
+项目使用 uv 0.11.21 为 Python 3.12 分别生成 Windows 和 macOS constraints；开发环境及 CI/Release 仍使用 pip 安装依赖。
+
+```bash
+uv pip compile requirements.txt requirements-build.txt --python-version 3.12 --python-platform windows --output-file constraints/windows-py312.txt
+uv pip compile requirements.txt requirements-build.txt --python-version 3.12 --python-platform macos --output-file constraints/macos-py312.txt
+```
+
+全量升级依赖时，在上述命令末尾增加 `--upgrade`；只升级单个包时，增加 `--upgrade-package <包名>`。提交 Pull Request 时记录 `uv --version` 的输出，并确保 Windows 和 macOS 的 CI 均通过。
 
 ## 变更要求
 

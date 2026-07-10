@@ -14,10 +14,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -25,7 +25,7 @@ jobs:
         shell: powershell
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
+          pip install -r requirements.txt -r requirements-build.txt -c constraints/windows-py312.txt
 
       - name: Install Inno Setup
         shell: powershell
@@ -53,7 +53,7 @@ jobs:
           & $iscc .\installer\GoldMonitor.iss
 
       - name: Upload Windows assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-release
           path: release/GoldMonitorSetup.exe
@@ -64,17 +64,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
+          pip install -r requirements.txt -r requirements-build.txt -c constraints/macos-py312.txt
 
       - name: Run checks
         run: python scripts/run_checks.py
@@ -85,7 +85,7 @@ jobs:
           PYTHON_BIN=python scripts/build_macos_dmg.sh
 
       - name: Upload macOS assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-release
           path: release/GoldMonitor-macOS.dmg
@@ -99,15 +99,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Download release assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release
           merge-multiple: true
@@ -120,7 +120,7 @@ jobs:
             --release-dir release
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: GoldMonitor ${{ github.ref_name }}
@@ -138,10 +138,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 

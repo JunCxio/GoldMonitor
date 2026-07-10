@@ -1,4 +1,5 @@
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -7,6 +8,20 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def read_text(relative_path):
     return (ROOT / relative_path).read_text(encoding="utf-8")
+
+
+def requirement_lines(relative_path):
+    return [
+        line.strip()
+        for line in read_text(relative_path).splitlines()
+        if line.strip()
+        and not line.lstrip().startswith("#")
+    ]
+
+
+def canonical_requirement_name(line):
+    name = line.split("==", maxsplit=1)[0].split("[", maxsplit=1)[0]
+    return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def test_repository_uses_confirmed_mit_license():
@@ -164,3 +179,295 @@ def test_readme_uses_canonical_contribution_and_security_entries():
     assert "python3.12 -m venv .venv" in readme
     assert "tests\\gold_cache_check.py" not in readme
     assert "tests/gold_cache_check.py" not in readme
+
+
+def test_workflows_use_node_24_action_versions():
+    def action_versions(workflow, action):
+        pattern = re.compile(
+            rf"^[ \t]*(?:-[ \t]+)?uses:[ \t]*(?P<quote>[\"']?)"
+            rf"{re.escape(action)}@(?P<version>[^\"'\s#]+)"
+            r"(?P=quote)[ \t]*(?:#.*)?$",
+            flags=re.MULTILINE,
+        )
+        return [
+            match.group("version")
+            for match in pattern.finditer(workflow)
+        ]
+
+    workflow = "\n".join(
+        read_text(relative_path)
+        for relative_path in (
+            ".github/workflows/ci.yml",
+            ".github/workflows/release.yml",
+        )
+    )
+    expected_versions = {
+        "actions/checkout": "v7",
+        "actions/setup-python": "v6",
+        "actions/upload-artifact": "v7",
+        "actions/download-artifact": "v8",
+        "softprops/action-gh-release": "v3",
+    }
+
+    for action, expected_version in expected_versions.items():
+        versions = action_versions(workflow, action)
+
+        assert versions
+        assert set(versions) == {expected_version}
+
+
+def test_docs_directory_is_not_ignored_by_repository_rules():
+    ignore_result = subprocess.run(
+        [
+            "git",
+            "-c",
+            "core.excludesFile=/dev/null",
+            "check-ignore",
+            "--no-index",
+            "docs/.contract-probe",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    ignore_rules = {
+        line.strip()
+        for line in read_text(".gitignore").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+    assert ignore_result.returncode == 1, (
+        "docs/.contract-probe is ignored by repository rules:\n"
+        f"stdout: {ignore_result.stdout}\n"
+        f"stderr: {ignore_result.stderr}"
+    )
+    assert ".DS_Store" in ignore_rules
+
+
+def test_dependabot_updates_python_and_actions_weekly():
+    config = read_text('.github/dependabot.yml')
+    expected = '''version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "main"
+    open-pull-requests-limit: 5
+    groups:
+      python-dependencies:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "main"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+'''
+
+    assert config == expected
+
+
+def test_python_dependencies_are_locked_per_supported_platform():
+    assert requirement_lines("requirements-build.txt") == ["pyinstaller>=6.0,<7.0"]
+    pinned_requirement = re.compile(
+        r"^[A-Za-z0-9_.-]+(?:\[[^\]]+\])?==[^ ;]+(?:\s*;\s*.+)?$"
+    )
+    windows_lines = requirement_lines("constraints/windows-py312.txt")
+    macos_lines = requirement_lines("constraints/macos-py312.txt")
+
+    assert all(pinned_requirement.fullmatch(line) for line in windows_lines)
+    assert all(pinned_requirement.fullmatch(line) for line in macos_lines)
+
+    windows_names = {
+        canonical_requirement_name(line)
+        for line in windows_lines
+    }
+    macos_names = {
+        canonical_requirement_name(line)
+        for line in macos_lines
+    }
+
+    expected_windows_names = {
+        "altgraph",
+        "bidict",
+        "blinker",
+        "bottle",
+        "certifi",
+        "cffi",
+        "charset-normalizer",
+        "click",
+        "clr-loader",
+        "colorama",
+        "flask",
+        "flask-socketio",
+        "h11",
+        "idna",
+        "iniconfig",
+        "itsdangerous",
+        "jinja2",
+        "markupsafe",
+        "packaging",
+        "pefile",
+        "pillow",
+        "pluggy",
+        "proxy-tools",
+        "pycparser",
+        "pygments",
+        "pyinstaller",
+        "pyinstaller-hooks-contrib",
+        "pystray",
+        "pytest",
+        "python-engineio",
+        "python-socketio",
+        "pythonnet",
+        "pywebview",
+        "pywin32-ctypes",
+        "requests",
+        "setuptools",
+        "simple-websocket",
+        "six",
+        "typing-extensions",
+        "urllib3",
+        "werkzeug",
+        "win11toast",
+        "winrt-runtime",
+        "winrt-windows-data-xml-dom",
+        "winrt-windows-foundation",
+        "winrt-windows-foundation-collections",
+        "winrt-windows-globalization",
+        "winrt-windows-graphics-imaging",
+        "winrt-windows-media-core",
+        "winrt-windows-media-ocr",
+        "winrt-windows-media-playback",
+        "winrt-windows-media-speechsynthesis",
+        "winrt-windows-storage",
+        "winrt-windows-storage-streams",
+        "winrt-windows-ui-notifications",
+        "wsproto",
+    }
+    expected_macos_names = {
+        "altgraph",
+        "bidict",
+        "blinker",
+        "bottle",
+        "certifi",
+        "charset-normalizer",
+        "click",
+        "flask",
+        "flask-socketio",
+        "h11",
+        "idna",
+        "iniconfig",
+        "itsdangerous",
+        "jinja2",
+        "macholib",
+        "markupsafe",
+        "packaging",
+        "pluggy",
+        "proxy-tools",
+        "pygments",
+        "pyinstaller",
+        "pyinstaller-hooks-contrib",
+        "pyobjc-core",
+        "pyobjc-framework-cocoa",
+        "pyobjc-framework-quartz",
+        "pyobjc-framework-security",
+        "pyobjc-framework-uniformtypeidentifiers",
+        "pyobjc-framework-webkit",
+        "pytest",
+        "python-engineio",
+        "python-socketio",
+        "pywebview",
+        "requests",
+        "setuptools",
+        "simple-websocket",
+        "typing-extensions",
+        "urllib3",
+        "werkzeug",
+        "wsproto",
+    }
+
+    assert windows_names == expected_windows_names
+    assert macos_names == expected_macos_names
+
+
+def test_ci_and_release_use_platform_constraints():
+    ci = read_text(".github/workflows/ci.yml")
+    release = read_text(".github/workflows/release.yml")
+    assert "constraints/windows-py312.txt" in ci
+    assert "constraints/macos-py312.txt" in ci
+    assert re.search(
+        r"(?m)^[ \t]*- os: windows-latest\r?\n"
+        r"[ \t]+constraints: constraints/windows-py312\.txt$",
+        ci,
+    )
+    assert re.search(
+        r"(?m)^[ \t]*- os: macos-latest\r?\n"
+        r"[ \t]+constraints: constraints/macos-py312\.txt$",
+        ci,
+    )
+    assert "pip install -r requirements.txt -c ${{ matrix.constraints }}" in ci
+    assert (
+        "pip install -r requirements.txt -r requirements-build.txt "
+        "-c constraints/windows-py312.txt"
+    ) in release
+    assert (
+        "pip install -r requirements.txt -r requirements-build.txt "
+        "-c constraints/macos-py312.txt"
+    ) in release
+    assert "pip install -r requirements.txt pyinstaller" not in release
+
+
+def test_dependency_docs_use_reproducible_install_commands():
+    contributing = read_text("CONTRIBUTING.md")
+    readme = read_text("README.md")
+    windows_install = (
+        r".\.venv\Scripts\pip.exe install -r requirements.txt "
+        r"-r requirements-build.txt -c constraints\windows-py312.txt"
+    )
+    macos_install = (
+        ".venv/bin/pip install -r requirements.txt "
+        "-r requirements-build.txt -c constraints/macos-py312.txt"
+    )
+    windows_compile = (
+        "uv pip compile requirements.txt requirements-build.txt "
+        "--python-version 3.12 --python-platform windows "
+        "--output-file constraints/windows-py312.txt"
+    )
+    macos_compile = (
+        "uv pip compile requirements.txt requirements-build.txt "
+        "--python-version 3.12 --python-platform macos "
+        "--output-file constraints/macos-py312.txt"
+    )
+    for document in (contributing, readme):
+        assert windows_install in document
+        assert macos_install in document
+        assert "install -r requirements.txt pyinstaller" not in document
+    assert "uv 0.11.21" in contributing
+    assert windows_compile in contributing
+    assert macos_compile in contributing
+    assert "增加 `--upgrade`" in contributing
+    assert "--upgrade-package <包名>" in contributing
+    assert "记录 `uv --version` 的输出" in contributing
+    assert "Windows 和 macOS 的 CI 均通过" in contributing
+    assert "确保本地与 CI/Release 的依赖版本一致" in readme
+    assert (
+        "依赖锁定更新规则参见 [贡献指南]"
+        "(CONTRIBUTING.md#更新依赖锁定)"
+    ) in readme

@@ -94,13 +94,15 @@ macOS 可双击根目录中的 `GoldMonitor.command` 启动浏览器模式，也
 
 ```powershell
 py -3.12 -m venv .venv
-.\.venv\Scripts\pip.exe install -r requirements.txt pyinstaller
+.\.venv\Scripts\pip.exe install -r requirements.txt -r requirements-build.txt -c constraints\windows-py312.txt
 ```
 
 ```bash
 python3.12 -m venv .venv
-.venv/bin/pip install -r requirements.txt pyinstaller
+.venv/bin/pip install -r requirements.txt -r requirements-build.txt -c constraints/macos-py312.txt
 ```
+
+上述命令使用当前平台的 Python 3.12 constraints，确保本地与 CI/Release 的依赖版本一致。依赖锁定更新规则参见 [贡献指南](CONTRIBUTING.md#更新依赖锁定)。
 
 运行完整检查：
 

@@ -6,7 +6,6 @@
 .cursor/
 .codegraph/
 .worktrees/
-docs/
 
 __pycache__/
 *.py[cod]
