@@ -440,11 +440,29 @@ def test_dependency_docs_use_reproducible_install_commands():
         ".venv/bin/pip install -r requirements.txt "
         "-r requirements-build.txt -c constraints/macos-py312.txt"
     )
+    windows_compile = (
+        "uv pip compile requirements.txt requirements-build.txt "
+        "--python-version 3.12 --python-platform windows "
+        "--output-file constraints/windows-py312.txt"
+    )
+    macos_compile = (
+        "uv pip compile requirements.txt requirements-build.txt "
+        "--python-version 3.12 --python-platform macos "
+        "--output-file constraints/macos-py312.txt"
+    )
     for document in (contributing, readme):
         assert windows_install in document
         assert macos_install in document
         assert "install -r requirements.txt pyinstaller" not in document
     assert "uv 0.11.21" in contributing
-    assert "--python-platform windows" in contributing
-    assert "--python-platform macos" in contributing
+    assert windows_compile in contributing
+    assert macos_compile in contributing
+    assert "增加 `--upgrade`" in contributing
     assert "--upgrade-package <包名>" in contributing
+    assert "记录 `uv --version` 的输出" in contributing
+    assert "Windows 和 macOS 的 CI 均通过" in contributing
+    assert "确保本地与 CI/Release 的依赖版本一致" in readme
+    assert (
+        "依赖锁定更新规则参见 [贡献指南]"
+        "(CONTRIBUTING.md#更新依赖锁定)"
+    ) in readme

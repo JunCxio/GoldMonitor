@@ -102,7 +102,7 @@ python3.12 -m venv .venv
 .venv/bin/pip install -r requirements.txt -r requirements-build.txt -c constraints/macos-py312.txt
 ```
 
-上述命令使用当前平台的 Python 3.12 constraints，确保本地与 CI/Release 的依赖版本一致。依赖锁定更新规则参见[贡献指南](CONTRIBUTING.md#更新依赖锁定)。
+上述命令使用当前平台的 Python 3.12 constraints，确保本地与 CI/Release 的依赖版本一致。依赖锁定更新规则参见 [贡献指南](CONTRIBUTING.md#更新依赖锁定)。
 
 运行完整检查：
 
