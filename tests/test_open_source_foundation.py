@@ -174,14 +174,12 @@ def test_workflows_use_node_24_action_versions():
     ):
         workflow = read_text(relative_path)
         checkout_versions = re.findall(
-            r"^\s*uses:\s*actions/checkout@(\S+)\s*$",
+            r"actions/checkout@([A-Za-z0-9._-]+)",
             workflow,
-            flags=re.MULTILINE,
         )
         setup_python_versions = re.findall(
-            r"^\s*uses:\s*actions/setup-python@(\S+)\s*$",
+            r"actions/setup-python@([A-Za-z0-9._-]+)",
             workflow,
-            flags=re.MULTILINE,
         )
 
         assert checkout_versions
