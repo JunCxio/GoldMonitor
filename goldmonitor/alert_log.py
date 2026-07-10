@@ -5,6 +5,7 @@ import logging
 import os
 import secrets
 import sqlite3
+from contextlib import closing
 from datetime import datetime
 
 
@@ -104,7 +105,7 @@ class AlertLogStore:
             return None
         entry.update(normalized)
         payload = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"), default=str)
-        with self.connect_db() as conn:
+        with closing(self.connect_db()) as conn, conn:
             conn.execute(
                 """
                 INSERT INTO alert_log(timestamp, time, alert_type, mode, message, payload)
@@ -133,7 +134,7 @@ class AlertLogStore:
     def load_archive(self, limit=None):
         limit = self.memory_limit if limit is None else limit
         try:
-            with self.connect_db() as conn:
+            with closing(self.connect_db()) as conn:
                 rows = conn.execute(
                     "SELECT id, payload FROM alert_log ORDER BY id DESC LIMIT ?",
                     (max(1, int(limit)),),
@@ -156,7 +157,7 @@ class AlertLogStore:
 
     def clear_archive(self):
         try:
-            with self.connect_db() as conn:
+            with closing(self.connect_db()) as conn, conn:
                 conn.execute("DELETE FROM alert_log")
             return True
         except (OSError, sqlite3.Error) as exc:
@@ -209,7 +210,7 @@ class AlertLogStore:
             return False, None
 
         try:
-            with self.connect_db() as conn:
+            with closing(self.connect_db()) as conn, conn:
                 rows = conn.execute(
                     "SELECT id, payload FROM alert_log ORDER BY id DESC LIMIT ?",
                     (self.db_limit,),
