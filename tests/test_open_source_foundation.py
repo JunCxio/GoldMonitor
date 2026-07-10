@@ -24,3 +24,30 @@ def test_readme_declares_mit_license():
 
     assert "## 许可证" in readme
     assert "[MIT License](LICENSE)" in readme
+
+
+def test_pull_request_ci_runs_supported_platform_checks():
+    workflow = read_text(".github/workflows/ci.yml")
+
+    assert "pull_request:" in workflow
+    assert 'branches: ["main"]' in workflow
+    assert "contents: read" in workflow
+    assert "fail-fast: false" in workflow
+    assert "windows-latest" in workflow
+    assert "macos-latest" in workflow
+    assert 'python-version: "3.12"' in workflow
+    assert "python scripts/run_checks.py" in workflow
+    assert "cancel-in-progress: true" in workflow
+    assert "upload-artifact" not in workflow
+    assert "softprops/action-gh-release" not in workflow
+
+
+def test_release_workflow_reuses_unified_check_entry():
+    workflow = read_text(".github/workflows/release.yml")
+
+    assert workflow.count("python scripts/run_checks.py") == 2
+    assert "python -m py_compile app.py" not in workflow
+    assert "python tests/risk_contract_check.py" not in workflow
+    assert "python tests/frontend_asset_check.py" not in workflow
+    assert "pyinstaller --clean --noconfirm GoldMonitor.spec" in workflow
+    assert "PYTHON_BIN=python scripts/build_macos_dmg.sh" in workflow
