@@ -227,12 +227,38 @@ def test_docs_directory_is_not_ignored_by_repository_rules():
 
 
 def test_dependabot_updates_python_and_actions_weekly():
-    config = read_text(".github/dependabot.yml")
-    assert "version: 2" in config
-    assert 'package-ecosystem: "pip"' in config
-    assert 'package-ecosystem: "github-actions"' in config
-    assert config.count('interval: "weekly"') == 2
-    assert config.count('target-branch: "main"') == 2
-    assert config.count('applies-to: "version-updates"') == 2
-    assert config.count('prefix: "chore"') == 2
-    assert config.count('include: "scope"') == 2
+    config = read_text('.github/dependabot.yml')
+    expected = '''version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "main"
+    open-pull-requests-limit: 5
+    groups:
+      python-dependencies:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    target-branch: "main"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+'''
+
+    assert config == expected
