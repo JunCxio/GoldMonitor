@@ -1,4 +1,5 @@
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -172,17 +173,47 @@ def test_workflows_use_node_24_action_versions():
         ".github/workflows/release.yml",
     ):
         workflow = read_text(relative_path)
-        assert "actions/checkout@v4" not in workflow
-        assert "actions/setup-python@v5" not in workflow
-        assert "actions/checkout@v5" in workflow
-        assert "actions/setup-python@v6" in workflow
+        checkout_versions = re.findall(
+            r"^\s*uses:\s*actions/checkout@(\S+)\s*$",
+            workflow,
+            flags=re.MULTILINE,
+        )
+        setup_python_versions = re.findall(
+            r"^\s*uses:\s*actions/setup-python@(\S+)\s*$",
+            workflow,
+            flags=re.MULTILINE,
+        )
+
+        assert checkout_versions
+        assert setup_python_versions
+        assert set(checkout_versions) == {"v5"}
+        assert set(setup_python_versions) == {"v6"}
 
 
 def test_docs_directory_is_not_ignored_by_repository_rules():
+    ignore_result = subprocess.run(
+        [
+            "git",
+            "-c",
+            "core.excludesFile=/dev/null",
+            "check-ignore",
+            "--no-index",
+            "docs/.contract-probe",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     ignore_rules = {
         line.strip()
         for line in read_text(".gitignore").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     }
-    assert "docs/" not in ignore_rules
+
+    assert ignore_result.returncode == 1, (
+        "docs/.contract-probe is ignored by repository rules:\n"
+        f"stdout: {ignore_result.stdout}\n"
+        f"stderr: {ignore_result.stderr}"
+    )
     assert ".DS_Store" in ignore_rules
