@@ -69,30 +69,70 @@ Expected: 创建 Python 3.12 环境，按当前未锁定基线完成安装，统
 
 - [ ] **Step 1: 添加失败的 Actions 与 `.gitignore` 契约测试**
 
-在 `tests/test_open_source_foundation.py` 末尾追加：
+在 `tests/test_open_source_foundation.py` 文件头增加 `import subprocess`，并在末尾追加：
 
 ```python
 def test_workflows_use_node_24_action_versions():
-    for relative_path in (
-        ".github/workflows/ci.yml",
-        ".github/workflows/release.yml",
-    ):
-        workflow = read_text(relative_path)
+    def action_versions(workflow, action):
+        pattern = re.compile(
+            rf"^[ \t]*(?:-[ \t]+)?uses:[ \t]*(?P<quote>[\"']?)"
+            rf"{re.escape(action)}@(?P<version>[^\"'\s#]+)"
+            r"(?P=quote)[ \t]*(?:#.*)?$",
+            flags=re.MULTILINE,
+        )
+        return [
+            match.group("version")
+            for match in pattern.finditer(workflow)
+        ]
 
-        assert "actions/checkout@v4" not in workflow
-        assert "actions/setup-python@v5" not in workflow
-        assert "actions/checkout@v5" in workflow
-        assert "actions/setup-python@v6" in workflow
+    workflow = "\n".join(
+        read_text(relative_path)
+        for relative_path in (
+            ".github/workflows/ci.yml",
+            ".github/workflows/release.yml",
+        )
+    )
+    expected_versions = {
+        "actions/checkout": "v7",
+        "actions/setup-python": "v6",
+        "actions/upload-artifact": "v7",
+        "actions/download-artifact": "v8",
+        "softprops/action-gh-release": "v3",
+    }
+
+    for action, expected_version in expected_versions.items():
+        versions = action_versions(workflow, action)
+
+        assert versions
+        assert set(versions) == {expected_version}
 
 
 def test_docs_directory_is_not_ignored_by_repository_rules():
+    ignore_result = subprocess.run(
+        [
+            "git",
+            "-c",
+            "core.excludesFile=/dev/null",
+            "check-ignore",
+            "--no-index",
+            "docs/.contract-probe",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     ignore_rules = {
         line.strip()
         for line in read_text(".gitignore").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     }
 
-    assert "docs/" not in ignore_rules
+    assert ignore_result.returncode == 1, (
+        "docs/.contract-probe is ignored by repository rules:\n"
+        f"stdout: {ignore_result.stdout}\n"
+        f"stderr: {ignore_result.stderr}"
+    )
     assert ".DS_Store" in ignore_rules
 ```
 
@@ -107,18 +147,21 @@ Run:
   -q
 ```
 
-Expected: 2 failed；工作流仍引用 `checkout@v4`、`setup-python@v5`，`.gitignore` 仍包含 `docs/`。
+Expected: 1 failed、1 passed；Actions 契约发现 `checkout@v5`、`upload-artifact@v4`、`download-artifact@v4` 和 `action-gh-release@v2` 不符合稳定 Node.js 24 主版本映射，`setup-python@v6` 已符合要求，`.gitignore` 语义测试继续通过。
 
 - [ ] **Step 3: 升级官方 Actions 主版本**
 
 在 `.github/workflows/ci.yml` 和 `.github/workflows/release.yml` 中执行以下精确替换：
 
 ```text
-actions/checkout@v4      -> actions/checkout@v5
-actions/setup-python@v5  -> actions/setup-python@v6
+actions/checkout@v5      -> actions/checkout@v7
+actions/setup-python@v6  -> actions/setup-python@v6（保持）
+actions/upload-artifact@v4       -> actions/upload-artifact@v7
+actions/download-artifact@v4     -> actions/download-artifact@v8
+softprops/action-gh-release@v2   -> softprops/action-gh-release@v3
 ```
 
-保持 `actions/upload-artifact@v4`、`actions/download-artifact@v4` 和 `softprops/action-gh-release@v2` 不变。
+上述五个版本均为 2026-07-10 通过各 Action 官方仓库 `action.yml` 确认的稳定 Node.js 24 主版本；不得保留 Node.js 20 Action 或新旧主版本混用。
 
 - [ ] **Step 4: 删除整体文档忽略规则**
 
@@ -667,7 +710,7 @@ Expected: `git diff --check` 无输出；工作区干净；日志包含设计、
 逐项核对：
 
 ```text
-Actions: checkout@v5 / setup-python@v6
+Actions: checkout@v7 / setup-python@v6 / upload-artifact@v7 / download-artifact@v8 / action-gh-release@v3
 .gitignore: 不再包含 docs/
 Dependabot: pip + github-actions，每周，普通更新分组，chore(deps)
 Dependencies: requirements-build + Windows/macOS Python 3.12 constraints
@@ -727,7 +770,7 @@ Pull Request 描述：
 
 ## 变更范围
 
-- checkout/setup-python 升级到 Node.js 24 对应主版本
+- 所有 Node-based Actions 升级到 2026-07-10 官方稳定 Node.js 24 主版本：checkout@v7、setup-python@v6、upload-artifact@v7、download-artifact@v8、action-gh-release@v3
 - 删除 `.gitignore` 中整体 `docs/` 规则
 - 添加 pip 与 GitHub Actions 每周 Dependabot 更新
 - 添加构建依赖声明和双平台 constraints
@@ -759,7 +802,7 @@ Checks (windows-latest)
 Checks (macos-latest)
 ```
 
-Expected: 两个检查均为 success；工作流不再出现 checkout/setup-python 的 Node.js 20 弃用警告。
+Expected: 两个检查均为 success；所有 Node-based Actions 均使用已确认的 Node.js 24 主版本，工作流不再出现 Node.js 20 弃用警告。
 
 - [ ] **Step 4: 处理检查失败**
 

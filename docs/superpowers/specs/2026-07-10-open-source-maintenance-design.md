@@ -41,9 +41,13 @@ GoldMonitor 已完成 MIT 许可证、贡献指南、安全策略、社区模板
 
 修改 `.github/workflows/ci.yml` 和 `.github/workflows/release.yml`：
 
-- `actions/checkout@v4` 升级为 `actions/checkout@v5`。
-- `actions/setup-python@v5` 升级为 `actions/setup-python@v6`。
-- 已使用当前稳定主版本的 `actions/upload-artifact@v4`、`actions/download-artifact@v4` 和 `softprops/action-gh-release@v2` 保持不变。
+- `actions/checkout@v7`。
+- `actions/setup-python@v6`。
+- `actions/upload-artifact@v7`。
+- `actions/download-artifact@v8`。
+- `softprops/action-gh-release@v3`。
+
+上述版本是 2026-07-10 通过各 Action 官方仓库 `action.yml` 确认的稳定 Node.js 24 主版本。所有 Node-based Actions 一次性升级，避免工作流继续混用 Node.js 20 运行时。
 
 官方 Action 使用主版本标签，由 Dependabot 后续跟踪新主版本。本阶段不改为 Commit SHA 固定，以减少官方 Action 日常补丁升级的维护成本。
 
@@ -175,7 +179,8 @@ Private vulnerability reporting 已启用，本阶段只验证其状态，不重
 
 仓库级契约测试覆盖：
 
-- CI 和 Release 只使用 `actions/checkout@v5`、`actions/setup-python@v6`。
+- CI 和 Release 只使用 `actions/checkout@v7`、`actions/setup-python@v6`、`actions/upload-artifact@v7`、`actions/download-artifact@v8` 和 `softprops/action-gh-release@v3`。
+- 所有 Node-based Actions 均使用 2026-07-10 已确认的 Node.js 24 稳定主版本，不再保留 Node.js 20 Action。
 - `.gitignore` 不再忽略 `docs/`。
 - `.github/dependabot.yml` 同时配置 `pip` 和 `github-actions` 的每周检查。
 - Windows/macOS constraints 文件存在，非注释依赖均为精确版本或合规平台 marker。
@@ -197,7 +202,7 @@ GitHub 远端设置无法由 pytest 可靠模拟，因此以 API 返回和 GitHu
 
 ## 验收标准
 
-1. GitHub Actions 不再报告 checkout/setup-python 的 Node.js 20 弃用警告。
+1. GitHub Actions 中所有 Node-based Actions 均使用已确认的 Node.js 24 稳定主版本，不再报告 Node.js 20 弃用警告。
 2. 新建 `docs/` 下文件时，`git status` 能显示该文件。
 3. `main` 的常规推送不能绕过 Pull Request，强推和删除被禁止。
 4. Pull Request 必须通过 Windows 和 macOS 检查，且不要求第二名维护者批准。

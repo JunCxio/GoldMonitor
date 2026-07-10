@@ -194,21 +194,26 @@ def test_workflows_use_node_24_action_versions():
             for match in pattern.finditer(workflow)
         ]
 
-    for relative_path in (
-        ".github/workflows/ci.yml",
-        ".github/workflows/release.yml",
-    ):
-        workflow = read_text(relative_path)
-        checkout_versions = action_versions(workflow, "actions/checkout")
-        setup_python_versions = action_versions(
-            workflow,
-            "actions/setup-python",
+    workflow = "\n".join(
+        read_text(relative_path)
+        for relative_path in (
+            ".github/workflows/ci.yml",
+            ".github/workflows/release.yml",
         )
+    )
+    expected_versions = {
+        "actions/checkout": "v7",
+        "actions/setup-python": "v6",
+        "actions/upload-artifact": "v7",
+        "actions/download-artifact": "v8",
+        "softprops/action-gh-release": "v3",
+    }
 
-        assert checkout_versions
-        assert setup_python_versions
-        assert set(checkout_versions) == {"v5"}
-        assert set(setup_python_versions) == {"v6"}
+    for action, expected_version in expected_versions.items():
+        versions = action_versions(workflow, action)
+
+        assert versions
+        assert set(versions) == {expected_version}
 
 
 def test_docs_directory_is_not_ignored_by_repository_rules():
