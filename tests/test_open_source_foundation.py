@@ -427,3 +427,24 @@ def test_ci_and_release_use_platform_constraints():
         "-c constraints/macos-py312.txt"
     ) in release
     assert "pip install -r requirements.txt pyinstaller" not in release
+
+
+def test_dependency_docs_use_reproducible_install_commands():
+    contributing = read_text("CONTRIBUTING.md")
+    readme = read_text("README.md")
+    windows_install = (
+        r".\.venv\Scripts\pip.exe install -r requirements.txt "
+        r"-r requirements-build.txt -c constraints\windows-py312.txt"
+    )
+    macos_install = (
+        ".venv/bin/pip install -r requirements.txt "
+        "-r requirements-build.txt -c constraints/macos-py312.txt"
+    )
+    for document in (contributing, readme):
+        assert windows_install in document
+        assert macos_install in document
+        assert "install -r requirements.txt pyinstaller" not in document
+    assert "uv 0.11.21" in contributing
+    assert "--python-platform windows" in contributing
+    assert "--python-platform macos" in contributing
+    assert "--upgrade-package <包名>" in contributing
