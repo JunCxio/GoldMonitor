@@ -50,6 +50,33 @@ def test_macos_launch_agent_payload_is_deterministic():
     assert fallback["WorkingDirectory"] == "/Users/dev"
 
 
+def test_macos_paths_remain_posix_on_windows_hosts():
+    import ntpath
+    import goldmonitor.platform as platform_module
+
+    original_path_module = platform_module.os.path
+    platform_module.os.path = ntpath
+    try:
+        assert platform_module.build_macos_startup_arguments(
+            False,
+            "/usr/bin/python3",
+            "/tmp/app.py",
+        ) == ["/usr/bin/python3", "/tmp/app.py", "--startup"]
+        assert platform_module.macos_launch_agent_path(
+            "/Users/dev",
+            "com.example.gold",
+        ) == "/Users/dev/Library/LaunchAgents/com.example.gold.plist"
+        payload = platform_module.build_macos_launch_agent_payload(
+            "com.example.gold",
+            ["/Applications/GoldMonitor.app/Contents/MacOS/GoldMonitor", "--startup"],
+            "/Applications/GoldMonitor.app/Contents/MacOS/GoldMonitor",
+            "/Users/dev",
+        )
+        assert payload["WorkingDirectory"] == "/Applications/GoldMonitor.app/Contents/MacOS"
+    finally:
+        platform_module.os.path = original_path_module
+
+
 def test_startup_support_policy_matches_platform_contract():
     from goldmonitor.platform import startup_support_result
 

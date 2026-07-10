@@ -1,0 +1,137 @@
+import subprocess
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+COMPILE_TARGETS = (
+    "app.py",
+    "setup_gui.py",
+    "tests/risk_contract_check.py",
+    "tests/update_logic_check.py",
+    "tests/startup_contract_check.py",
+    "tests/frontend_asset_check.py",
+    "tests/alert_log_ui_contract_check.py",
+    "tests/test_single_instance_app.py",
+    "tests/test_update_app.py",
+    "tests/test_portfolio_module.py",
+    "tests/test_risk_analysis_module.py",
+    "tests/test_market_data_module.py",
+    "tests/test_settings_store_module.py",
+    "tests/test_notifications_module.py",
+    "tests/test_event_timeline_module.py",
+    "tests/test_update_manager_module.py",
+    "tests/test_platform_module.py",
+    "tests/test_news_module.py",
+    "tests/test_targets_module.py",
+    "tests/test_support_files_module.py",
+    "tests/test_desktop_ui_module.py",
+    "tests/test_verify_release_assets_script.py",
+    "tests/test_open_source_foundation.py",
+    "tests/test_run_checks_script.py",
+    "scripts/verify_release_assets.py",
+    "scripts/run_checks.py",
+)
+
+PYTHON_CHECKS = (
+    "tests/risk_contract_check.py",
+    "tests/gold_cache_check.py",
+    "tests/price_fetch_with_cache_check.py",
+    "tests/fetch_status_check.py",
+    "tests/threshold_persistence_check.py",
+    "tests/socket_connect_check.py",
+    "tests/news_logic_check.py",
+    "tests/forex_cache_check.py",
+    "tests/startup_contract_check.py",
+    "tests/update_logic_check.py",
+    "tests/port_selection_check.py",
+    "tests/event_timeline_review_check.py",
+    "tests/engineering_foundation_check.py",
+    "tests/test_storage_modules.py",
+    "tests/test_portfolio_module.py",
+    "tests/test_risk_analysis_module.py",
+    "tests/test_market_data_module.py",
+    "tests/test_settings_store_module.py",
+    "tests/test_notifications_module.py",
+    "tests/test_event_timeline_module.py",
+    "tests/test_update_manager_module.py",
+    "tests/test_platform_module.py",
+    "tests/test_news_module.py",
+    "tests/test_targets_module.py",
+    "tests/test_support_files_module.py",
+    "tests/test_desktop_ui_module.py",
+    "tests/alert_log_ui_contract_check.py",
+    "tests/frontend_asset_check.py",
+)
+
+RELEASE_PYTEST_TARGETS = (
+    "tests/test_single_instance_app.py",
+    "tests/test_update_app.py",
+    "tests/test_verify_release_assets_script.py",
+)
+
+WINDOWS_CONTRACT_COMMAND = (
+    "powershell",
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    "tests/contract_checks.ps1",
+)
+
+
+def build_check_commands(platform_name=None):
+    platform_name = platform_name or sys.platform
+    commands = [
+        [sys.executable, "-m", "py_compile", *COMPILE_TARGETS],
+    ]
+    if str(platform_name).lower().startswith("win"):
+        commands.append(list(WINDOWS_CONTRACT_COMMAND))
+    commands.extend([sys.executable, path] for path in PYTHON_CHECKS)
+    commands.append([
+        sys.executable,
+        "-m",
+        "pytest",
+        *RELEASE_PYTEST_TARGETS,
+    ])
+    commands.append([sys.executable, "-m", "pytest", "-q"])
+    return commands
+
+
+def command_text(command):
+    return subprocess.list2cmdline([str(part) for part in command])
+
+
+def run_checks(commands=None, runner=None):
+    commands = build_check_commands() if commands is None else commands
+    runner = runner or subprocess.run
+    for command in commands:
+        display = command_text(command)
+        print(f"$ {display}", flush=True)
+        try:
+            result = runner(command, cwd=ROOT, check=False)
+        except OSError as error:
+            print(
+                f"检查失败 (1): {display}: {error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 1
+        if result.returncode:
+            print(
+                f"检查失败 ({result.returncode}): {display}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return result.returncode or 1
+    print("GoldMonitor checks passed.", flush=True)
+    return 0
+
+
+def main():
+    return run_checks()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

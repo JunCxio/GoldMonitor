@@ -93,70 +93,30 @@ macOS 可双击根目录中的 `GoldMonitor.command` 启动浏览器模式，也
 脚本会创建 `.venv`，安装 Flask、Flask-SocketIO 和 requests，并把本地数据写入 `~/Library/Application Support/GoldMonitor`。源码目录下的 macOS 启动方式默认使用浏览器模式；Release 中的 `.app` 会以桌面窗口启动。
 
 ```powershell
-python -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\pip.exe install -r requirements.txt pyinstaller
 ```
 
 ```bash
-python3 -m venv .venv
+python3.12 -m venv .venv
 .venv/bin/pip install -r requirements.txt pyinstaller
 ```
 
-运行静态与契约检查：
+运行完整检查：
+
+Windows：
 
 ```powershell
-.\.venv\Scripts\python.exe -m py_compile app.py setup_gui.py tests\risk_contract_check.py tests\frontend_asset_check.py tests\test_portfolio_module.py tests\test_risk_analysis_module.py tests\test_market_data_module.py tests\test_settings_store_module.py tests\test_notifications_module.py tests\test_event_timeline_module.py tests\test_update_manager_module.py tests\test_platform_module.py tests\test_news_module.py tests\test_targets_module.py tests\test_support_files_module.py tests\test_desktop_ui_module.py tests\test_verify_release_assets_script.py scripts\verify_release_assets.py
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\contract_checks.ps1
-.\.venv\Scripts\python.exe tests\risk_contract_check.py
-.\.venv\Scripts\python.exe tests\engineering_foundation_check.py
-.\.venv\Scripts\python.exe tests\test_storage_modules.py
-.\.venv\Scripts\python.exe tests\test_portfolio_module.py
-.\.venv\Scripts\python.exe tests\test_risk_analysis_module.py
-.\.venv\Scripts\python.exe tests\test_market_data_module.py
-.\.venv\Scripts\python.exe tests\test_settings_store_module.py
-.\.venv\Scripts\python.exe tests\test_notifications_module.py
-.\.venv\Scripts\python.exe tests\test_event_timeline_module.py
-.\.venv\Scripts\python.exe tests\test_update_manager_module.py
-.\.venv\Scripts\python.exe tests\test_platform_module.py
-.\.venv\Scripts\python.exe tests\test_news_module.py
-.\.venv\Scripts\python.exe tests\test_targets_module.py
-.\.venv\Scripts\python.exe tests\test_support_files_module.py
-.\.venv\Scripts\python.exe tests\test_desktop_ui_module.py
-.\.venv\Scripts\python.exe -m pytest tests\test_verify_release_assets_script.py
-.\.venv\Scripts\python.exe tests\frontend_asset_check.py
+.\.venv\Scripts\python.exe scripts\run_checks.py
 ```
 
-完整检查：
+macOS：
 
-```powershell
-.\.venv\Scripts\python.exe tests\gold_cache_check.py
-.\.venv\Scripts\python.exe tests\price_fetch_with_cache_check.py
-.\.venv\Scripts\python.exe tests\fetch_status_check.py
-.\.venv\Scripts\python.exe tests\threshold_persistence_check.py
-.\.venv\Scripts\python.exe tests\socket_connect_check.py
-.\.venv\Scripts\python.exe tests\news_logic_check.py
-.\.venv\Scripts\python.exe tests\forex_cache_check.py
-.\.venv\Scripts\python.exe tests\startup_contract_check.py
-.\.venv\Scripts\python.exe tests\update_logic_check.py
-.\.venv\Scripts\python.exe tests\port_selection_check.py
-.\.venv\Scripts\python.exe tests\event_timeline_review_check.py
-.\.venv\Scripts\python.exe tests\engineering_foundation_check.py
-.\.venv\Scripts\python.exe tests\test_storage_modules.py
-.\.venv\Scripts\python.exe tests\test_portfolio_module.py
-.\.venv\Scripts\python.exe tests\test_risk_analysis_module.py
-.\.venv\Scripts\python.exe tests\test_market_data_module.py
-.\.venv\Scripts\python.exe tests\test_settings_store_module.py
-.\.venv\Scripts\python.exe tests\test_notifications_module.py
-.\.venv\Scripts\python.exe tests\test_event_timeline_module.py
-.\.venv\Scripts\python.exe tests\test_update_manager_module.py
-.\.venv\Scripts\python.exe tests\test_platform_module.py
-.\.venv\Scripts\python.exe tests\test_news_module.py
-.\.venv\Scripts\python.exe tests\test_targets_module.py
-.\.venv\Scripts\python.exe tests\test_support_files_module.py
-.\.venv\Scripts\python.exe tests\test_desktop_ui_module.py
-.\.venv\Scripts\python.exe -m pytest tests\test_verify_release_assets_script.py
-.\.venv\Scripts\python.exe tests\frontend_asset_check.py
+```bash
+.venv/bin/python scripts/run_checks.py
 ```
+
+该入口会执行 Python 语法检查、现有契约检查和完整 pytest；Windows 还会执行 PowerShell 契约检查。贡献要求参见 [贡献指南](CONTRIBUTING.md)。
 
 ## 本地打包
 
@@ -196,3 +156,15 @@ GitHub Actions 会执行检查、构建 Windows EXE 和 macOS DMG、生成 `vers
 发布完成后，GitHub Actions 会继续运行发布资产验收，自动下载 `version.json`、Windows 安装包和 macOS DMG，并校验版本、下载地址和 SHA256。
 
 如果 `CHANGELOG.md` 中缺少当前版本说明，发布流程会失败。
+
+## 参与贡献
+
+开发环境、测试要求、Commit 和 Pull Request 规范参见 [贡献指南](CONTRIBUTING.md)。
+
+## 安全问题
+
+安全漏洞不要提交公开 Issue，请按照 [安全策略](SECURITY.md) 使用私密报告入口。
+
+## 许可证
+
+GoldMonitor 使用 [MIT License](LICENSE) 发布。

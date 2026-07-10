@@ -6,6 +6,7 @@ import math
 import os
 import sqlite3
 import time
+from contextlib import closing
 from datetime import datetime, timedelta
 
 from goldmonitor.data_contracts import unwrap_item_payload, wrap_item_payload
@@ -87,7 +88,7 @@ class PriceHistoryStore:
         normalized = self.normalize(items)
         if not normalized:
             return []
-        with self.connect_db() as conn:
+        with closing(self.connect_db()) as conn, conn:
             conn.executemany(
                 """
                 INSERT OR REPLACE INTO price_history(timestamp, time, usd, rmb, rate)
@@ -111,7 +112,7 @@ class PriceHistoryStore:
     def load_from_db(self):
         if not os.path.exists(self.db_path()):
             return []
-        with self.connect_db() as conn:
+        with closing(self.connect_db()) as conn:
             rows = conn.execute(
                 """
                 SELECT usd, rmb, rate, time, timestamp
@@ -138,7 +139,7 @@ class PriceHistoryStore:
             where = "WHERE timestamp >= ?"
             params.append(cutoff.isoformat(timespec="seconds"))
         params.append(int(limit or self.export_limit))
-        with self.connect_db() as conn:
+        with closing(self.connect_db()) as conn:
             rows = conn.execute(
                 f"""
                 SELECT usd, rmb, rate, time, timestamp

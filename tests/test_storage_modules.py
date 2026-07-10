@@ -1,9 +1,49 @@
 import json
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+
+@contextmanager
+def track_sqlite_connections(module):
+    real_connect = module.sqlite3.connect
+    connections = []
+
+    class TrackingConnection:
+        def __init__(self, connection):
+            self.connection = connection
+            self.closed = False
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+        def __enter__(self):
+            self.connection.__enter__()
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return self.connection.__exit__(exc_type, exc_value, traceback)
+
+        def close(self):
+            self.closed = True
+            self.connection.close()
+
+    def tracking_connect(*args, **kwargs):
+        connection = TrackingConnection(real_connect(*args, **kwargs))
+        connections.append(connection)
+        return connection
+
+    module.sqlite3.connect = tracking_connect
+    try:
+        yield connections
+    finally:
+        module.sqlite3.connect = real_connect
+        for connection in connections:
+            if not connection.closed:
+                connection.close()
 
 
 def test_price_history_store_persists_versioned_json_and_sqlite():
@@ -113,6 +153,47 @@ def test_alert_log_store_updates_persisted_and_memory_entries():
         assert "queued:已提交:已提交" in csv_text
         assert "邮件:queued:已提交" in csv_text
         assert "Gold holds near highs" in csv_text
+
+
+def test_alert_log_store_closes_database_connections():
+    import goldmonitor.alert_log as alert_log_module
+
+    with track_sqlite_connections(alert_log_module) as connections:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = alert_log_module.AlertLogStore(tmp_dir, db_limit=10)
+            saved = store.save_entry({
+                "type": "warning",
+                "message": "连接关闭检查",
+                "timestamp": "2026-07-10T12:00:00",
+            })
+            store.load_archive(limit=5)
+            store.update_entry_payload(saved["id"], lambda entry: entry)
+            store.clear_archive()
+
+            assert len(connections) == 4
+            assert all(connection.closed for connection in connections)
+
+
+def test_price_history_store_closes_database_connections():
+    import goldmonitor.price_history as price_history_module
+
+    with track_sqlite_connections(price_history_module) as connections:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = price_history_module.PriceHistoryStore(
+                str(Path(tmp_dir) / "price_history.json"),
+                archive_limit=10,
+            )
+            store.upsert_points([{
+                "usd": 2350,
+                "rmb": 543,
+                "rate": 7.19,
+                "timestamp": "2026-07-10T12:00:00",
+            }])
+            store.load_from_db()
+            store.filter_from_db(limit=5)
+
+            assert len(connections) == 3
+            assert all(connection.closed for connection in connections)
 
 
 if __name__ == "__main__":

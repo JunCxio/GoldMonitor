@@ -1,4 +1,5 @@
 import os
+import posixpath
 import sys
 
 
@@ -40,7 +41,7 @@ def build_startup_command(executable):
 
 
 def macos_launch_agent_path(home_dir, launch_agent_id):
-    return os.path.join(home_dir, "Library", "LaunchAgents", f"{launch_agent_id}.plist")
+    return posixpath.join(home_dir, "Library", "LaunchAgents", f"{launch_agent_id}.plist")
 
 
 def build_macos_startup_arguments(frozen=None, executable=None, argv0=None):
@@ -49,11 +50,11 @@ def build_macos_startup_arguments(frozen=None, executable=None, argv0=None):
     argv0 = sys.argv[0] if argv0 is None else argv0
     if frozen:
         return [executable, "--startup"]
-    return [executable, os.path.abspath(argv0), "--startup"]
+    return [executable, posixpath.abspath(argv0), "--startup"]
 
 
 def build_macos_launch_agent_payload(launch_agent_id, program_arguments, executable, home_dir):
-    working_directory = os.path.dirname(executable) or home_dir
+    working_directory = posixpath.dirname(executable) or home_dir
     return {
         "Label": launch_agent_id,
         "ProgramArguments": list(program_arguments),

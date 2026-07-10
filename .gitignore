@@ -5,6 +5,7 @@
 .claude/
 .cursor/
 .codegraph/
+.worktrees/
 docs/
 
 __pycache__/
