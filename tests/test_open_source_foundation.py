@@ -16,8 +16,12 @@ def requirement_lines(relative_path):
         for line in read_text(relative_path).splitlines()
         if line.strip()
         and not line.lstrip().startswith("#")
-        and not line.lstrip().startswith("--")
     ]
+
+
+def canonical_requirement_name(line):
+    name = line.split("==", maxsplit=1)[0].split("[", maxsplit=1)[0]
+    return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def test_repository_uses_confirmed_mit_license():
@@ -279,14 +283,41 @@ def test_python_dependencies_are_locked_per_supported_platform():
     pinned_requirement = re.compile(
         r"^[A-Za-z0-9_.-]+(?:\[[^\]]+\])?==[^ ;]+(?:\s*;\s*.+)?$"
     )
-    for relative_path in (
-        "constraints/windows-py312.txt",
-        "constraints/macos-py312.txt",
-    ):
-        lines = requirement_lines(relative_path)
-        assert lines
-        assert any(line.lower().startswith("pyinstaller==") for line in lines)
-        assert all(pinned_requirement.fullmatch(line) for line in lines)
+    windows_lines = requirement_lines("constraints/windows-py312.txt")
+    macos_lines = requirement_lines("constraints/macos-py312.txt")
+
+    assert all(pinned_requirement.fullmatch(line) for line in windows_lines)
+    assert all(pinned_requirement.fullmatch(line) for line in macos_lines)
+
+    windows_names = {
+        canonical_requirement_name(line)
+        for line in windows_lines
+    }
+    macos_names = {
+        canonical_requirement_name(line)
+        for line in macos_lines
+    }
+
+    assert len(windows_names) == 56
+    assert {
+        "pyinstaller",
+        "win11toast",
+        "pystray",
+        "pillow",
+    } <= windows_names
+    assert not any(name.startswith("pyobjc-") for name in windows_names)
+
+    assert len(macos_names) == 39
+    assert {
+        "pyinstaller",
+        "pyobjc-core",
+        "pyobjc-framework-cocoa",
+        "pyobjc-framework-quartz",
+        "pyobjc-framework-security",
+        "pyobjc-framework-uniformtypeidentifiers",
+        "pyobjc-framework-webkit",
+    } <= macos_names
+    assert {"win11toast", "pystray", "pillow"}.isdisjoint(macos_names)
 
 
 def test_ci_and_release_use_platform_constraints():
@@ -294,6 +325,16 @@ def test_ci_and_release_use_platform_constraints():
     release = read_text(".github/workflows/release.yml")
     assert "constraints/windows-py312.txt" in ci
     assert "constraints/macos-py312.txt" in ci
+    assert re.search(
+        r"(?m)^[ \t]*- os: windows-latest\r?\n"
+        r"[ \t]+constraints: constraints/windows-py312\.txt$",
+        ci,
+    )
+    assert re.search(
+        r"(?m)^[ \t]*- os: macos-latest\r?\n"
+        r"[ \t]+constraints: constraints/macos-py312\.txt$",
+        ci,
+    )
     assert "pip install -r requirements.txt -c ${{ matrix.constraints }}" in ci
     assert (
         "pip install -r requirements.txt -r requirements-build.txt "
