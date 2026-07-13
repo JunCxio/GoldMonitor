@@ -735,11 +735,15 @@
       <div class="risk-history">
         <div class="risk-history-head">
           <div class="risk-history-title">分析历史</div>
-          <button class="settings-cancel risk-history-clear" id="riskClearHistoryButton" onclick="clearRiskHistory()">清空历史</button>
+          <div class="risk-history-actions">
+            <button class="settings-cancel risk-history-clear" id="riskCompareButton" type="button" onclick="compareSelectedRiskHistory()" disabled>对比所选</button>
+            <button class="settings-cancel risk-history-clear" id="riskClearHistoryButton" onclick="clearRiskHistory()">清空历史</button>
+          </div>
         </div>
         <div class="risk-history-list" id="riskHistoryList">
           <div class="risk-history-empty">暂无历史记录</div>
         </div>
+        <div class="risk-comparison" id="riskComparison" aria-live="polite" hidden></div>
       </div>
     </div>
     <div class="settings-foot">

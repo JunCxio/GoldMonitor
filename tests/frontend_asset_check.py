@@ -294,6 +294,48 @@ for required in (
         raise SystemExit(f"static/app.js missing risk evidence frontend contract: {required}")
 
 for required in (
+    'id="riskCompareButton"',
+    'id="riskComparison"',
+):
+    if required not in template:
+        raise SystemExit(f"template missing risk history comparison anchor: {required}")
+
+for required in (
+    "riskComparisonSelection",
+    "function toggleRiskComparisonItem",
+    "function compareSelectedRiskHistory",
+    "function renderRiskComparison",
+    "记录一",
+    "记录二",
+    "data-side-label",
+):
+    if required not in js:
+        raise SystemExit(f"static/app.js missing risk history comparison contract: {required}")
+
+if not re.search(r"riskComparisonSelection\.length\s*(?:>=\s*2|>\s*1)", js):
+    raise SystemExit("risk history comparison must limit selection to two entries")
+
+apply_risk_history_pos = js.find("function applyRiskHistory")
+next_function_pos = js.find("\nfunction ", apply_risk_history_pos + 1)
+risk_history_block = js[apply_risk_history_pos:next_function_pos if next_function_pos >= 0 else len(js)]
+if apply_risk_history_pos < 0 or not re.search(r"riskComparisonSelection\s*=\s*\[\s*\]", risk_history_block):
+    raise SystemExit("applyRiskHistory must reset transient risk comparison selection")
+
+compare_risk_history_pos = js.find("function compareSelectedRiskHistory")
+next_function_pos = js.find("\nfunction ", compare_risk_history_pos + 1)
+compare_risk_history_block = js[
+    compare_risk_history_pos:next_function_pos if next_function_pos >= 0 else len(js)
+]
+if compare_risk_history_pos < 0:
+    raise SystemExit("static/app.js must implement risk history comparison")
+for forbidden in ("socket.emit", "requestRiskAnalysis"):
+    if forbidden in compare_risk_history_block:
+        raise SystemExit(f"risk history comparison must remain frontend-only: {forbidden}")
+
+if "不会调用模型" not in template + js:
+    raise SystemExit("risk history comparison UI must state that comparison does not call the model")
+
+for required in (
     ".risk-diagnostic",
     ".risk-diagnostic.show",
     ".risk-diagnostic-title",
@@ -306,6 +348,15 @@ for required in (
 ):
     if required not in css:
         raise SystemExit(f"static/app.css missing risk evidence selector: {required}")
+
+if ".risk-comparison-row" not in css:
+    raise SystemExit("static/app.css missing risk history comparison row selector")
+
+if "content:attr(data-side-label)" not in css:
+    raise SystemExit("static/app.css must render risk comparison side labels from row attributes")
+
+if not re.search(r"@media\s*\([^)]*max-width[^)]*\)[\s\S]*?\.risk-comparison-row", css):
+    raise SystemExit("static/app.css must adapt risk history comparison rows for mobile widths")
 
 for required in (
     "function selectedRiskPrice",
