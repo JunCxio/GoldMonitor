@@ -22,6 +22,7 @@ from goldmonitor import app_state as app_state_core
 from goldmonitor import desktop_ui as desktop_ui_core
 from goldmonitor import daily_digest as daily_digest_core
 from goldmonitor import event_timeline as event_timeline_core
+from goldmonitor import market_adapters as market_adapters_core
 from goldmonitor import market_data as market_data_core
 from goldmonitor import news as news_core
 from goldmonitor import notifications as notifications_core
@@ -3054,6 +3055,7 @@ def get_source_health_state():
         source_health=state,
         comparison=comparison,
     )
+    state["adapters"] = get_market_adapter_catalog()
     return state
 
 
@@ -3097,6 +3099,84 @@ def get_source_comparison_state():
     return build_source_comparison_state()
 
 
+def build_market_adapter_registry():
+    """构建行情源注册表；抓取函数在调用时解析，以保留可替换的兼容入口。"""
+    adapter = market_adapters_core.MarketSourceAdapter
+    return market_adapters_core.MarketAdapterRegistry([
+        adapter(
+            key="sina_gold",
+            name="新浪贵金属",
+            category="gold",
+            priority=10,
+            cache_source="新浪贵金属",
+            provides_forex_rate=False,
+            fetcher=lambda: fetch_sina_gold_result(),
+        ),
+        adapter(
+            key="eastmoney_gold",
+            name="东方财富",
+            category="gold",
+            priority=20,
+            cache_source="东方财富",
+            provides_forex_rate=False,
+            fetcher=lambda: fetch_eastmoney_gold_result(),
+        ),
+        adapter(
+            key="goldprice",
+            name="GoldPrice",
+            category="gold",
+            priority=30,
+            cache_source="GoldPrice",
+            provides_forex_rate=True,
+            fetcher=lambda: fetch_goldprice_data_result(),
+        ),
+        adapter(
+            key="stooq_gold",
+            name="Stooq",
+            category="gold",
+            priority=40,
+            cache_source="Stooq",
+            provides_forex_rate=False,
+            fetcher=lambda: fetch_gold_data_result(GOLD_URL, "Stooq 金价源"),
+        ),
+        adapter(
+            key="sina_forex",
+            name="新浪",
+            category="forex",
+            priority=10,
+            cache_source="新浪",
+            provides_forex_rate=False,
+            fetcher=lambda: fetch_sina_forex_result(),
+        ),
+        adapter(
+            key="frankfurter_forex",
+            name="Frankfurter",
+            category="forex",
+            priority=20,
+            cache_source="Frankfurter",
+            provides_forex_rate=False,
+            fetcher=lambda: fetch_frankfurter_forex_result(),
+        ),
+        adapter(
+            key="stooq_forex",
+            name="Stooq",
+            category="forex",
+            priority=30,
+            cache_source="Stooq",
+            provides_forex_rate=False,
+            fetcher=lambda: fetch_csv_price_result(FOREX_URL, "Stooq 汇率源"),
+        ),
+    ])
+
+
+def get_market_adapter_catalog():
+    registry = build_market_adapter_registry()
+    return {
+        "gold": registry.catalog("gold"),
+        "forex": registry.catalog("forex"),
+    }
+
+
 def refresh_source_comparison(primary_data=None, primary_source="", primary_cached=False):
     global source_comparison_state, last_source_comparison_probe_at
     if primary_data is not None and primary_source:
@@ -3106,19 +3186,11 @@ def refresh_source_comparison(primary_data=None, primary_source="", primary_cach
     should_probe = now_monotonic - last_source_comparison_probe_at >= SOURCE_COMPARISON_REFRESH_SECONDS
     if should_probe:
         last_source_comparison_probe_at = now_monotonic
-        probes = [
-            ("新浪贵金属", lambda: fetch_sina_gold_result()[0]),
-            ("东方财富", lambda: fetch_eastmoney_gold_result()[0]),
-            ("GoldPrice", lambda: fetch_goldprice_data_result()[0]),
-            ("Stooq", lambda: fetch_gold_data_result(GOLD_URL, "Stooq 金价源")[0]),
-        ]
-        for name, getter in probes:
+        for adapter in build_market_adapter_registry().category_adapters("gold"):
+            name = adapter.cache_source
             if name == primary_source:
                 continue
-            try:
-                data = getter()
-            except Exception:
-                data = None
+            data = adapter.fetch().value
             if data is not None:
                 record_source_price_sample(name, data)
 
@@ -3136,29 +3208,23 @@ def fetch_gold_data(url):
 
 def fetch_gold_data_result(url, source_label="数据源"):
     """从 Stooq CSV 解析完整 OHLC 数据，并返回用户可读的失败原因。"""
-    started_at = time.monotonic()
-    try:
-        resp = requests.get(url, timeout=REQUEST_TIMEOUT, proxies=REQ_PROXY)
-        resp.raise_for_status()
-        data, error = market_data_core.parse_stooq_ohlc_csv(resp.text, source_label)
-        if error:
-            record_source_health(source_label, "gold" if "金价" in source_label else "forex", False, error, started_at)
-            return None, error
-        record_source_health(source_label, "gold" if "金价" in source_label else "forex", True, "", started_at)
-        return data, ""
-    except requests.Timeout:
-        error = f"{source_label}请求超时"
-    except requests.ConnectionError:
-        error = f"{source_label}网络连接失败"
-    except requests.HTTPError as exc:
-        code = exc.response.status_code if exc.response is not None else "未知"
-        error = f"{source_label}HTTP错误 {code}"
-    except requests.RequestException as exc:
-        error = f"{source_label}请求失败: {exc}"
-    except (ValueError, IndexError):
-        error = f"{source_label}返回格式异常"
-    record_source_health(source_label, "gold" if "金价" in source_label else "forex", False, error, started_at)
-    return None, error
+    result = market_adapters_core.fetch_http_source(
+        url,
+        source_label,
+        lambda payload: market_data_core.parse_stooq_ohlc_csv(payload, source_label),
+        timeout=REQUEST_TIMEOUT,
+        proxies=REQ_PROXY,
+        requests_module=requests,
+    )
+    category = "gold" if "金价" in source_label else "forex"
+    record_source_health(
+        source_label,
+        category,
+        result.value is not None,
+        result.error,
+        result.started_at,
+    )
+    return result.value, result.error
 
 
 def fetch_csv_price(url):
@@ -3233,32 +3299,26 @@ def parse_sina_forex(text):
 
 
 def fetch_sina_forex_result():
-    started_at = time.monotonic()
-    try:
-        resp = requests.get(
-            SINA_FOREX_URL,
-            timeout=REQUEST_TIMEOUT,
-            proxies=REQ_PROXY,
-            headers={
-                "User-Agent": BROWSER_USER_AGENT,
-                "Referer": "https://finance.sina.com.cn/",
-            },
-        )
-        resp.raise_for_status()
-        rate, error = parse_sina_forex(resp.text)
-        record_source_health("新浪汇率", "forex", rate is not None, error, started_at)
-        return rate, error
-    except requests.Timeout:
-        error = "新浪汇率请求超时"
-    except requests.ConnectionError:
-        error = "新浪汇率网络连接失败"
-    except requests.HTTPError as exc:
-        code = exc.response.status_code if exc.response is not None else "未知"
-        error = f"新浪汇率HTTP错误 {code}"
-    except requests.RequestException as exc:
-        error = f"新浪汇率请求失败: {exc}"
-    record_source_health("新浪汇率", "forex", False, error, started_at)
-    return None, error
+    result = market_adapters_core.fetch_http_source(
+        SINA_FOREX_URL,
+        "新浪汇率",
+        parse_sina_forex,
+        headers={
+            "User-Agent": BROWSER_USER_AGENT,
+            "Referer": "https://finance.sina.com.cn/",
+        },
+        timeout=REQUEST_TIMEOUT,
+        proxies=REQ_PROXY,
+        requests_module=requests,
+    )
+    record_source_health(
+        "新浪汇率",
+        "forex",
+        result.value is not None,
+        result.error,
+        result.started_at,
+    )
+    return result.value, result.error
 
 
 def parse_frankfurter_forex(payload):
@@ -3266,68 +3326,45 @@ def parse_frankfurter_forex(payload):
 
 
 def fetch_frankfurter_forex_result():
-    started_at = time.monotonic()
-    try:
-        resp = requests.get(
-            FRANKFURTER_FOREX_URL,
-            timeout=REQUEST_TIMEOUT,
-            proxies=REQ_PROXY,
-            headers={"User-Agent": HTTP_USER_AGENT},
-        )
-        resp.raise_for_status()
-        rate, error = parse_frankfurter_forex(resp.json())
-        record_source_health("Frankfurter", "forex", rate is not None, error, started_at)
-        return rate, error
-    except requests.Timeout:
-        error = "Frankfurter 请求超时"
-    except requests.ConnectionError:
-        error = "Frankfurter 网络连接失败"
-    except requests.HTTPError as exc:
-        code = exc.response.status_code if exc.response is not None else "未知"
-        error = f"Frankfurter HTTP错误 {code}"
-    except requests.RequestException as exc:
-        error = f"Frankfurter 请求失败: {exc}"
-    except (ValueError, json.JSONDecodeError):
-        error = "Frankfurter 返回格式异常"
-    record_source_health("Frankfurter", "forex", False, error, started_at)
-    return None, error
+    result = market_adapters_core.fetch_http_source(
+        FRANKFURTER_FOREX_URL,
+        "Frankfurter",
+        parse_frankfurter_forex,
+        "json",
+        headers={"User-Agent": HTTP_USER_AGENT},
+        timeout=REQUEST_TIMEOUT,
+        proxies=REQ_PROXY,
+        requests_module=requests,
+    )
+    record_source_health(
+        "Frankfurter",
+        "forex",
+        result.value is not None,
+        result.error,
+        result.started_at,
+    )
+    return result.value, result.error
 
 
 def fetch_usdcny_rate_result():
     errors = []
-    for source, fetcher in (
-        ("新浪", fetch_sina_forex_result),
-        ("Frankfurter", fetch_frankfurter_forex_result),
-    ):
-        rate, error = fetcher()
+    for adapter in build_market_adapter_registry().category_adapters("forex"):
+        result = adapter.fetch()
+        rate = result.value
+        error = result.error
         if rate is not None:
             now_iso = datetime.now().isoformat()
             try:
-                return save_usdcny_cache(rate, source, now_iso), ""
+                return save_usdcny_cache(rate, adapter.cache_source, now_iso), ""
             except (OSError, ValueError) as exc:
                 return {
                     "value": rate,
-                    "source": source,
+                    "source": adapter.cache_source,
                     "timestamp": now_iso,
                     "cached": False,
                 }, f"汇率缓存保存失败: {exc}"
         if error:
             errors.append(error)
-
-    stooq_rate, stooq_error = fetch_csv_price_result(FOREX_URL, "Stooq 汇率源")
-    if stooq_rate is not None:
-        now_iso = datetime.now().isoformat()
-        try:
-            return save_usdcny_cache(stooq_rate, "Stooq", now_iso), ""
-        except (OSError, ValueError) as exc:
-            return {
-                "value": stooq_rate,
-                "source": "Stooq",
-                "timestamp": now_iso,
-                "cached": False,
-            }, f"汇率缓存保存失败: {exc}"
-    if stooq_error:
-        errors.append(stooq_error)
 
     cached = load_valid_usdcny_cache()
     if cached:
@@ -3341,32 +3378,26 @@ def parse_sina_gold(text):
 
 
 def fetch_sina_gold_result():
-    started_at = time.monotonic()
-    try:
-        resp = requests.get(
-            SINA_GOLD_URL,
-            timeout=REQUEST_TIMEOUT,
-            proxies=REQ_PROXY,
-            headers={
-                "User-Agent": BROWSER_USER_AGENT,
-                "Referer": "https://finance.sina.com.cn/futures/quotes/XAU.shtml",
-            },
-        )
-        resp.raise_for_status()
-        data, error = parse_sina_gold(resp.text)
-        record_source_health("新浪贵金属", "gold", data is not None, error, started_at)
-        return data, error
-    except requests.Timeout:
-        error = "新浪贵金属请求超时"
-    except requests.ConnectionError:
-        error = "新浪贵金属网络连接失败"
-    except requests.HTTPError as exc:
-        code = exc.response.status_code if exc.response is not None else "未知"
-        error = f"新浪贵金属HTTP错误 {code}"
-    except requests.RequestException as exc:
-        error = f"新浪贵金属请求失败: {exc}"
-    record_source_health("新浪贵金属", "gold", False, error, started_at)
-    return None, error
+    result = market_adapters_core.fetch_http_source(
+        SINA_GOLD_URL,
+        "新浪贵金属",
+        parse_sina_gold,
+        headers={
+            "User-Agent": BROWSER_USER_AGENT,
+            "Referer": "https://finance.sina.com.cn/futures/quotes/XAU.shtml",
+        },
+        timeout=REQUEST_TIMEOUT,
+        proxies=REQ_PROXY,
+        requests_module=requests,
+    )
+    record_source_health(
+        "新浪贵金属",
+        "gold",
+        result.value is not None,
+        result.error,
+        result.started_at,
+    )
+    return result.value, result.error
 
 
 def parse_eastmoney_gold(payload):
@@ -3376,34 +3407,27 @@ def parse_eastmoney_gold(payload):
 
 def fetch_eastmoney_gold_result():
     """从东方财富公开行情接口获取 XAU/USD，并返回用户可读的失败原因。"""
-    started_at = time.monotonic()
-    try:
-        resp = requests.get(
-            EASTMONEY_GOLD_URL,
-            timeout=REQUEST_TIMEOUT,
-            proxies=REQ_PROXY,
-            headers={
-                "User-Agent": HTTP_USER_AGENT,
-                "Referer": "https://hf-wap.eastmoney.com/quote/stock/122.xau.html",
-            },
-        )
-        resp.raise_for_status()
-        data, error = parse_eastmoney_gold(resp.json())
-        record_source_health("东方财富", "gold", data is not None, error, started_at)
-        return data, error
-    except requests.Timeout:
-        error = "东方财富请求超时"
-    except requests.ConnectionError:
-        error = "东方财富网络连接失败"
-    except requests.HTTPError as exc:
-        code = exc.response.status_code if exc.response is not None else "未知"
-        error = f"东方财富HTTP错误 {code}"
-    except requests.RequestException as exc:
-        error = f"东方财富请求失败: {exc}"
-    except (ValueError, json.JSONDecodeError):
-        error = "东方财富返回格式异常"
-    record_source_health("东方财富", "gold", False, error, started_at)
-    return None, error
+    result = market_adapters_core.fetch_http_source(
+        EASTMONEY_GOLD_URL,
+        "东方财富",
+        parse_eastmoney_gold,
+        "json",
+        headers={
+            "User-Agent": HTTP_USER_AGENT,
+            "Referer": "https://hf-wap.eastmoney.com/quote/stock/122.xau.html",
+        },
+        timeout=REQUEST_TIMEOUT,
+        proxies=REQ_PROXY,
+        requests_module=requests,
+    )
+    record_source_health(
+        "东方财富",
+        "gold",
+        result.value is not None,
+        result.error,
+        result.started_at,
+    )
+    return result.value, result.error
 
 
 def parse_goldprice_rates(payload):
@@ -3413,84 +3437,55 @@ def parse_goldprice_rates(payload):
 
 def fetch_goldprice_data_result():
     """从 GoldPrice.org 公开接口获取实时金价，并返回用户可读的失败原因。"""
-    started_at = time.monotonic()
-    try:
-        resp = requests.get(
-            GOLDPRICE_URL,
-            timeout=REQUEST_TIMEOUT,
-            proxies=REQ_PROXY,
-            headers={"User-Agent": HTTP_USER_AGENT},
-        )
-        resp.raise_for_status()
-        data, rate, error = parse_goldprice_rates(resp.json())
-        record_source_health("GoldPrice", "gold", data is not None, error, started_at)
-        return data, rate, error
-    except requests.Timeout:
-        error = "GoldPrice 请求超时"
-    except requests.ConnectionError:
-        error = "GoldPrice 网络连接失败"
-    except requests.HTTPError as exc:
-        code = exc.response.status_code if exc.response is not None else "未知"
-        error = f"GoldPrice HTTP错误 {code}"
-    except requests.RequestException as exc:
-        error = f"GoldPrice 请求失败: {exc}"
-    except (ValueError, json.JSONDecodeError):
-        error = "GoldPrice 返回格式异常"
-    record_source_health("GoldPrice", "gold", False, error, started_at)
-    return None, None, error
+    result = market_adapters_core.fetch_http_source(
+        GOLDPRICE_URL,
+        "GoldPrice",
+        parse_goldprice_rates,
+        "json",
+        headers={"User-Agent": HTTP_USER_AGENT},
+        timeout=REQUEST_TIMEOUT,
+        proxies=REQ_PROXY,
+        requests_module=requests,
+    )
+    record_source_health(
+        "GoldPrice",
+        "gold",
+        result.value is not None,
+        result.error,
+        result.started_at,
+    )
+    return result.value, result.auxiliary_rate, result.error
 
 
 def fetch_market_data_result():
     """按优先级获取行情数据，避免单一接口失败导致应用一直无数据。"""
-    sina_data, sina_error = fetch_sina_gold_result()
-    if sina_data is not None:
+    errors = []
+    for adapter in build_market_adapter_registry().category_adapters("gold"):
+        result = adapter.fetch()
+        data = result.value
+        if data is None:
+            if result.error:
+                errors.append(result.error)
+            continue
         try:
-            save_xauusd_cache(sina_data, "新浪贵金属")
+            save_xauusd_cache(data, adapter.cache_source)
         except (OSError, ValueError):
             pass
-        rate_info, forex_error = fetch_usdcny_rate_result()
-        return sina_data, rate_info, "新浪贵金属", "", forex_error
-
-    eastmoney_data, eastmoney_error = fetch_eastmoney_gold_result()
-    if eastmoney_data is not None:
-        try:
-            save_xauusd_cache(eastmoney_data, "东方财富")
-        except (OSError, ValueError):
-            pass
-        rate_info, forex_error = fetch_usdcny_rate_result()
-        return eastmoney_data, rate_info, "东方财富", "", forex_error
-
-    goldprice_data, goldprice_rate, goldprice_error = fetch_goldprice_data_result()
-    if goldprice_data is not None:
-        try:
-            save_xauusd_cache(goldprice_data, "GoldPrice")
-        except (OSError, ValueError):
-            pass
-        if goldprice_rate is not None:
+        if result.auxiliary_rate is not None:
             now_iso = datetime.now().isoformat()
             try:
-                rate_info = save_usdcny_cache(goldprice_rate, "GoldPrice", now_iso)
-                return goldprice_data, rate_info, "GoldPrice", "", ""
+                rate_info = save_usdcny_cache(result.auxiliary_rate, adapter.cache_source, now_iso)
+                return data, rate_info, adapter.cache_source, "", ""
             except (OSError, ValueError) as exc:
-                return goldprice_data, {
-                    "value": goldprice_rate,
-                    "source": "GoldPrice",
+                return data, {
+                    "value": result.auxiliary_rate,
+                    "source": adapter.cache_source,
                     "timestamp": now_iso,
                     "cached": False,
-                }, "GoldPrice", "", f"汇率缓存保存失败: {exc}"
+                }, adapter.cache_source, "", f"汇率缓存保存失败: {exc}"
         rate_info, forex_error = fetch_usdcny_rate_result()
-        return goldprice_data, rate_info, "GoldPrice", "", forex_error
+        return data, rate_info, adapter.cache_source, "", forex_error
 
-    stooq_data, stooq_gold_error = fetch_gold_data_result(GOLD_URL, "Stooq 金价源")
-    if stooq_data is not None:
-        try:
-            save_xauusd_cache(stooq_data, "Stooq")
-        except (OSError, ValueError):
-            pass
-        rate_info, forex_error = fetch_usdcny_rate_result()
-        return stooq_data, rate_info, "Stooq", "", forex_error
-
-    errors = [error for error in (sina_error, eastmoney_error, goldprice_error, stooq_gold_error) if error]
     rate_info, forex_error = fetch_usdcny_rate_result()
     cached_gold = load_valid_xauusd_cache()
     gold_error = "；".join(errors) or "所有金价接口均不可用"
