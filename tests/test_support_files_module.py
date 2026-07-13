@@ -56,6 +56,7 @@ def test_config_backup_and_export_file_sanitize_outputs():
             now_factory=fixed_now,
         )
         assert backup == {
+            "schema_version": 1,
             "app": "GoldMonitor",
             "version": "1.0.0",
             "exported_at": "2026-06-12T10:00:00",
@@ -81,6 +82,76 @@ def test_config_backup_keeps_positional_now_factory_compatibility():
 
     assert backup["exported_at"] == "2026-06-12T10:00:00"
     assert backup["alert_profiles"] == []
+
+
+def test_config_backup_normalization_migrates_legacy_payload_without_mutating_input():
+    from goldmonitor.support_files import normalize_config_backup
+
+    payload = {
+        "app": "GoldMonitor",
+        "version": "0.9.0",
+        "settings": {"smtp_server": "smtp.example.com"},
+    }
+
+    normalized, metadata = normalize_config_backup(payload)
+
+    assert "schema_version" not in payload
+    assert normalized == {**payload, "schema_version": 1}
+    assert metadata == {
+        "schema_version": 0,
+        "expected_schema_version": 1,
+        "format": "legacy_dict",
+        "needs_migration": True,
+        "source_app_version": "0.9.0",
+    }
+
+
+def test_config_backup_normalization_accepts_current_version():
+    from goldmonitor.support_files import normalize_config_backup
+
+    payload = {
+        "schema_version": 1,
+        "version": "1.0.0",
+        "thresholds": {"upper_warning_rmb": 700},
+    }
+
+    normalized, metadata = normalize_config_backup(payload)
+
+    assert normalized == payload
+    assert normalized is not payload
+    assert metadata == {
+        "schema_version": 1,
+        "expected_schema_version": 1,
+        "format": "versioned_dict",
+        "needs_migration": False,
+        "source_app_version": "1.0.0",
+    }
+
+
+def test_config_backup_normalization_rejects_invalid_and_future_versions():
+    from goldmonitor.support_files import ConfigBackupFormatError, normalize_config_backup
+
+    for invalid_version in (None, True, 0, -1, "1", 1.0):
+        try:
+            normalize_config_backup({"schema_version": invalid_version})
+        except ConfigBackupFormatError as exc:
+            assert exc.metadata["format"] == "invalid_version"
+            assert exc.metadata["expected_schema_version"] == 1
+        else:
+            raise AssertionError(f"schema_version={invalid_version!r} should be rejected")
+
+    try:
+        normalize_config_backup({"schema_version": 2, "version": "2.0.0"})
+    except ConfigBackupFormatError as exc:
+        assert exc.metadata == {
+            "schema_version": 2,
+            "expected_schema_version": 1,
+            "format": "unsupported_version",
+            "needs_migration": False,
+            "source_app_version": "2.0.0",
+        }
+    else:
+        raise AssertionError("future config backup version should be rejected")
 
 
 def test_config_import_preview_reports_sections_ignored_keys_and_secret_actions():
@@ -124,6 +195,11 @@ def test_config_import_preview_reports_sections_ignored_keys_and_secret_actions(
         "smtp_password": "clear",
     }
     assert preview["counts"] == {"settings": 3, "thresholds": 2, "alert_profiles": 1}
+    assert preview["schema_version"] == 0
+    assert preview["expected_schema_version"] == 1
+    assert preview["format"] == "legacy_dict"
+    assert preview["needs_migration"] is True
+    assert preview["source_app_version"] == ""
 
 
 def test_config_import_preview_rejects_payload_without_importable_sections():
@@ -142,6 +218,91 @@ def test_config_import_preview_rejects_payload_without_importable_sections():
     assert preview["missing_sections"] == ["settings", "thresholds", "alert_profiles"]
     assert preview["counts"]["alert_profiles"] == 0
     assert preview["message"] == "备份中没有可导入的配置"
+
+
+def test_config_import_preview_rejects_empty_or_unknown_only_sections():
+    from goldmonitor.support_files import build_config_import_preview
+
+    preview = build_config_import_preview(
+        {
+            "schema_version": 1,
+            "version": "1.2.0",
+            "settings": {"unknown_setting": True},
+            "thresholds": {},
+            "alert_profiles": [],
+        },
+        settings_defaults={"smtp_server": ""},
+        threshold_keys={"upper_warning_rmb"},
+        secret_keys={"smtp_password"},
+    )
+
+    assert preview["ok"] is False
+    assert preview["importable"] is False
+    assert preview["sections"] == []
+    assert preview["missing_sections"] == []
+    assert preview["ignored"]["settings"] == ["unknown_setting"]
+    assert preview["counts"] == {"settings": 0, "thresholds": 0, "alert_profiles": 0}
+    assert preview["schema_version"] == 1
+    assert preview["expected_schema_version"] == 1
+    assert preview["format"] == "versioned_dict"
+    assert preview["needs_migration"] is False
+    assert preview["source_app_version"] == "1.2.0"
+
+
+def test_config_import_preview_rejects_invalid_and_future_schema_versions():
+    from goldmonitor.support_files import build_config_import_preview
+
+    invalid = build_config_import_preview(
+        {"schema_version": "1", "settings": {"smtp_server": "smtp.example.com"}},
+        settings_defaults={"smtp_server": ""},
+        threshold_keys={"upper_warning_rmb"},
+        secret_keys={"smtp_password"},
+    )
+    assert invalid["ok"] is False
+    assert invalid["importable"] is False
+    assert invalid["format"] == "invalid_version"
+    assert invalid["message"] == "备份文件版本无效"
+
+    future = build_config_import_preview(
+        {"schema_version": 2, "settings": {"smtp_server": "smtp.example.com"}},
+        settings_defaults={"smtp_server": ""},
+        threshold_keys={"upper_warning_rmb"},
+        secret_keys={"smtp_password"},
+    )
+    assert future["ok"] is False
+    assert future["importable"] is False
+    assert future["schema_version"] == 2
+    assert future["expected_schema_version"] == 1
+    assert future["format"] == "unsupported_version"
+    assert future["needs_migration"] is False
+
+
+def test_config_import_preview_only_accepts_plaintext_secrets_from_legacy_backup():
+    from goldmonitor.support_files import build_config_import_preview
+
+    legacy = build_config_import_preview(
+        {"settings": {"smtp_password": "legacy-secret"}},
+        settings_defaults={"smtp_server": "", "smtp_password": ""},
+        threshold_keys={"upper_warning_rmb"},
+        secret_keys={"smtp_password"},
+    )
+    assert legacy["ok"] is True
+    assert legacy["sections"] == ["settings"]
+    assert legacy["counts"]["settings"] == 1
+    assert legacy["secret_actions"]["smtp_password"] == "import"
+
+    versioned = build_config_import_preview(
+        {"schema_version": 1, "settings": {"smtp_password": "injected-secret"}},
+        settings_defaults={"smtp_server": "", "smtp_password": ""},
+        threshold_keys={"upper_warning_rmb"},
+        secret_keys={"smtp_password"},
+    )
+    assert versioned["ok"] is False
+    assert versioned["importable"] is False
+    assert versioned["sections"] == []
+    assert versioned["ignored"]["settings"] == ["smtp_password"]
+    assert versioned["counts"]["settings"] == 0
+    assert versioned["secret_actions"]["smtp_password"] == "preserve_existing"
 
 
 def test_config_import_preview_accepts_alert_profiles_only_backup():

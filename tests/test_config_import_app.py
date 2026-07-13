@@ -2,7 +2,31 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+
+def test_build_config_backup_exports_only_restorable_non_secret_settings(monkeypatch):
+    import app
+
+    settings = dict(app.DEFAULT_SETTINGS)
+    settings.update({
+        "smtp_password": "smtp-secret",
+        "deepseek_api_key": "deepseek-secret",
+        "openai_compatible_api_key": "compatible-secret",
+    })
+    monkeypatch.setattr(app, "app_settings", settings)
+
+    backup = app.build_config_backup()
+
+    assert backup["schema_version"] == 1
+    assert set(backup["settings"]) == set(app.DEFAULT_SETTINGS) - set(app.SECRET_SETTING_KEYS)
+    assert not set(app.SECRET_SETTING_KEYS) & set(backup["settings"])
+    assert "smtp_password_configured" not in backup["settings"]
+    assert "deepseek_api_key_masked" not in backup["settings"]
+    assert "platform_capabilities" not in backup["settings"]
+    assert "export_dir_effective" not in backup["settings"]
 
 
 def test_preview_import_config_socket_event_reports_summary_without_saving(monkeypatch, tmp_path):
@@ -255,7 +279,19 @@ def test_import_config_rolls_back_settings_when_threshold_save_fails(monkeypatch
     monkeypatch.setattr(app, "thresholds", {key: None for key in app.thresholds})
     monkeypatch.setattr(app, "volatility_config", {"enabled": False, "percent": None, "minutes": 10})
     monkeypatch.setattr(app, "alert_profiles", [], raising=False)
-    monkeypatch.setattr(app, "set_startup_enabled", lambda enabled: (True, ""))
+    startup_calls = []
+    floating_calls = []
+
+    def record_startup(enabled):
+        startup_calls.append(enabled)
+        return True, ""
+
+    monkeypatch.setattr(app, "set_startup_enabled", record_startup)
+    monkeypatch.setattr(
+        app,
+        "apply_floating_price_settings",
+        lambda settings=None: floating_calls.append(settings),
+    )
 
     original_smtp_server = "smtp.old.example.com"
     app.app_settings["smtp_server"] = original_smtp_server
@@ -283,8 +319,150 @@ def test_import_config_rolls_back_settings_when_threshold_save_fails(monkeypatch
     assert "thresholds_updated" not in emitted_names
     assert app.app_settings["smtp_server"] == original_smtp_server
     assert app.thresholds["upper_warning_rmb"] is None
+    assert startup_calls == []
+    assert floating_calls == []
     monkeypatch.setattr(app, "save_thresholds", real_save_thresholds)
     client.disconnect()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"schema_version": 1, "settings": {}, "thresholds": {}, "alert_profiles": []},
+        {
+            "schema_version": 1,
+            "settings": {"unknown_setting": True},
+            "thresholds": {"unknown_threshold": 1},
+        },
+    ],
+)
+def test_import_config_rejects_empty_or_unknown_only_sections(monkeypatch, tmp_path, payload):
+    import app
+
+    monkeypatch.setattr(app, "SETTINGS_PATH", str(tmp_path / "settings.json"))
+    monkeypatch.setattr(app, "THRESHOLDS_PATH", str(tmp_path / "thresholds.json"))
+    monkeypatch.setattr(app, "ALERT_PROFILES_PATH", str(tmp_path / "alert_profiles.json"), raising=False)
+    monkeypatch.setattr(app, "app_settings", dict(app.DEFAULT_SETTINGS))
+    monkeypatch.setattr(app, "thresholds", {key: None for key in app.thresholds})
+    monkeypatch.setattr(app, "volatility_config", {"enabled": False, "percent": None, "minutes": 10})
+    monkeypatch.setattr(app, "alert_profiles", [], raising=False)
+
+    preview = app.preview_config_backup(payload)
+
+    assert preview["ok"] is False
+    assert preview["importable"] is False
+    assert preview["sections"] == []
+    with pytest.raises(ValueError, match="备份中没有可导入的配置"):
+        app.restore_config_backup(payload)
+    assert not Path(app.SETTINGS_PATH).exists()
+    assert not Path(app.THRESHOLDS_PATH).exists()
+    assert not Path(app.ALERT_PROFILES_PATH).exists()
+
+
+def test_import_config_rejects_future_schema_in_preview_and_restore():
+    import app
+
+    payload = {
+        "schema_version": 2,
+        "settings": {"smtp_server": "smtp.example.com"},
+    }
+
+    preview = app.preview_config_backup(payload)
+
+    assert preview["ok"] is False
+    assert preview["importable"] is False
+    assert preview["schema_version"] == 2
+    assert preview["expected_schema_version"] == 1
+    with pytest.raises(ValueError, match="版本"):
+        app.restore_config_backup(payload)
+
+
+def test_import_config_preserves_secrets_in_versioned_backup(monkeypatch, tmp_path):
+    import app
+
+    monkeypatch.setattr(app, "SETTINGS_PATH", str(tmp_path / "settings.json"))
+    current_settings = dict(app.DEFAULT_SETTINGS)
+    current_settings.update({
+        "smtp_server": "smtp.old.example.com",
+        "smtp_password": "smtp-existing-secret",
+        "deepseek_api_key": "deepseek-existing-secret",
+    })
+    credential_store = {
+        "smtp_password": "smtp-existing-secret",
+        "deepseek_api_key": "deepseek-existing-secret",
+    }
+    monkeypatch.setattr(app, "app_settings", current_settings)
+    monkeypatch.setattr(app, "_credential_test_store", credential_store)
+    monkeypatch.setattr(app, "set_startup_enabled", lambda enabled: (True, ""))
+    monkeypatch.setattr(app, "apply_floating_price_settings", lambda settings=None: None)
+    payload = {
+        "schema_version": 1,
+        "settings": {
+            "smtp_server": "smtp.new.example.com",
+            "smtp_password": "smtp-injected-secret",
+            "deepseek_api_key": "deepseek-injected-secret",
+        },
+    }
+
+    preview = app.preview_config_backup(payload)
+    result = app.restore_config_backup(payload)
+
+    assert preview["ok"] is True
+    assert preview["counts"]["settings"] == 1
+    assert preview["ignored"]["settings"] == ["deepseek_api_key", "smtp_password"]
+    assert preview["secret_actions"]["smtp_password"] == "preserve_existing"
+    assert result == {"ok": True, "imported": ["settings"]}
+    assert app.app_settings["smtp_server"] == "smtp.new.example.com"
+    assert app.app_settings["smtp_password"] == "smtp-existing-secret"
+    assert app.app_settings["deepseek_api_key"] == "deepseek-existing-secret"
+    assert credential_store["smtp_password"] == "smtp-existing-secret"
+    assert credential_store["deepseek_api_key"] == "deepseek-existing-secret"
+
+
+def test_import_config_rejects_versioned_plaintext_secrets_only(monkeypatch, tmp_path):
+    import app
+
+    monkeypatch.setattr(app, "SETTINGS_PATH", str(tmp_path / "settings.json"))
+    monkeypatch.setattr(app, "app_settings", dict(app.DEFAULT_SETTINGS))
+    payload = {
+        "schema_version": 1,
+        "settings": {"smtp_password": "smtp-injected-secret"},
+    }
+
+    preview = app.preview_config_backup(payload)
+
+    assert preview["ok"] is False
+    assert preview["importable"] is False
+    assert preview["ignored"]["settings"] == ["smtp_password"]
+    with pytest.raises(ValueError, match="备份中没有可导入的配置"):
+        app.restore_config_backup(payload)
+    assert not Path(app.SETTINGS_PATH).exists()
+
+
+def test_import_config_accepts_plaintext_secrets_from_legacy_backup(monkeypatch, tmp_path):
+    import app
+
+    monkeypatch.setattr(app, "SETTINGS_PATH", str(tmp_path / "settings.json"))
+    monkeypatch.setattr(app, "app_settings", dict(app.DEFAULT_SETTINGS))
+    monkeypatch.setattr(app, "_credential_test_store", {})
+    monkeypatch.setattr(app, "set_startup_enabled", lambda enabled: (True, ""))
+    monkeypatch.setattr(app, "apply_floating_price_settings", lambda settings=None: None)
+    payload = {
+        "settings": {
+            "smtp_password": "legacy-smtp-secret",
+            "deepseek_api_key": "legacy-deepseek-secret",
+        },
+    }
+
+    preview = app.preview_config_backup(payload)
+    result = app.restore_config_backup(payload)
+
+    assert preview["schema_version"] == 0
+    assert preview["counts"]["settings"] == 2
+    assert preview["secret_actions"]["smtp_password"] == "import"
+    assert result == {"ok": True, "imported": ["settings"]}
+    assert app.app_settings["smtp_password"] == "legacy-smtp-secret"
+    assert app.app_settings["deepseek_api_key"] == "legacy-deepseek-secret"
 
 
 def test_import_config_rolls_back_files_when_alert_profiles_save_fails(monkeypatch, tmp_path):
@@ -297,7 +475,19 @@ def test_import_config_rolls_back_files_when_alert_profiles_save_fails(monkeypat
     monkeypatch.setattr(app, "thresholds", {key: None for key in app.thresholds})
     monkeypatch.setattr(app, "volatility_config", {"enabled": False, "percent": None, "minutes": 10})
     monkeypatch.setattr(app, "alert_profiles", [], raising=False)
-    monkeypatch.setattr(app, "set_startup_enabled", lambda enabled: (True, ""))
+    startup_calls = []
+    floating_calls = []
+
+    def record_startup(enabled):
+        startup_calls.append(enabled)
+        return True, ""
+
+    monkeypatch.setattr(app, "set_startup_enabled", record_startup)
+    monkeypatch.setattr(
+        app,
+        "apply_floating_price_settings",
+        lambda settings=None: floating_calls.append(settings),
+    )
 
     app.app_settings["smtp_server"] = "smtp.old.example.com"
     app.thresholds["upper_warning_rmb"] = 650.0
@@ -344,6 +534,8 @@ def test_import_config_rolls_back_files_when_alert_profiles_save_fails(monkeypat
     assert settings_payload["smtp_server"] == "smtp.old.example.com"
     assert thresholds_payload["upper_warning_rmb"] == 650.0
     assert profiles_payload["items"][0]["id"] == "profile-old"
+    assert startup_calls == []
+    assert floating_calls == []
     client.disconnect()
 
 

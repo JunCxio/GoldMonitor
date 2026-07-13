@@ -1518,12 +1518,18 @@ def set_startup_enabled(enabled):
         return False, str(exc)
 
 
-def apply_settings(data):
-    saved = save_settings(data)
+def _apply_startup_setting(saved):
     ok, error = set_startup_enabled(saved["startup_enabled"])
     if not ok:
+        saved = dict(saved)
         saved["startup_enabled"] = False
         saved = save_settings(saved)
+    return saved, error
+
+
+def apply_settings(data):
+    saved = save_settings(data)
+    saved, error = _apply_startup_setting(saved)
     apply_floating_price_settings(saved)
     return saved, error
 
@@ -1745,9 +1751,15 @@ def _json_payload_metadata(path):
 
 
 def build_config_backup():
+    settings_snapshot = get_settings_snapshot()
+    restorable_settings = {
+        key: settings_snapshot.get(key, default_value)
+        for key, default_value in DEFAULT_SETTINGS.items()
+        if key not in SECRET_SETTING_KEYS
+    }
     return support_files_core.build_config_backup(
         APP_VERSION,
-        public_settings_snapshot(),
+        restorable_settings,
         {
             **{key: thresholds.get(key) for key in thresholds},
             "volatility_config": dict(volatility_config),
@@ -2107,17 +2119,33 @@ def _restore_config_import_state(
 
 def restore_config_backup(payload):
     global alert_profiles
-    if not isinstance(payload, dict):
-        raise ValueError("备份文件格式无效")
-    settings_payload = payload.get("settings")
-    thresholds_payload = payload.get("thresholds")
-    alert_profiles_payload = payload.get("alert_profiles")
-    if (
-        not isinstance(settings_payload, dict)
-        and not isinstance(thresholds_payload, dict)
-        and not isinstance(alert_profiles_payload, list)
-    ):
-        raise ValueError("备份中没有可导入的配置")
+    normalized_payload, backup_metadata = support_files_core.normalize_config_backup(payload)
+    preview = preview_config_backup(payload)
+    if not preview.get("importable"):
+        raise ValueError(preview.get("message") or "备份中没有可导入的配置")
+
+    importable_sections = set(preview.get("sections") or [])
+    raw_settings_payload = normalized_payload.get("settings")
+    accepted_setting_keys = set(DEFAULT_SETTINGS)
+    if backup_metadata.get("schema_version") != 0:
+        accepted_setting_keys -= set(SECRET_SETTING_KEYS)
+    settings_payload = None
+    if "settings" in importable_sections and isinstance(raw_settings_payload, dict):
+        filtered_settings = {
+            key: value
+            for key, value in raw_settings_payload.items()
+            if key in accepted_setting_keys
+        }
+        if filtered_settings:
+            settings_payload = filtered_settings
+    thresholds_payload = (
+        normalized_payload.get("thresholds") if "thresholds" in importable_sections else None
+    )
+    alert_profiles_payload = (
+        normalized_payload.get("alert_profiles")
+        if "alert_profiles" in importable_sections
+        else None
+    )
 
     normalized_alert_profiles = _normalize_alert_profiles_for_import(alert_profiles_payload)
     has_importable_alert_profiles = bool(normalized_alert_profiles)
@@ -2142,17 +2170,15 @@ def restore_config_backup(payload):
     )
 
     imported = []
+    updated_settings = None
     settings_event = None
     thresholds_event = None
     volatility_event = None
     alert_profiles_event = None
     try:
         if isinstance(settings_payload, dict):
-            updated, startup_error = apply_settings(settings_payload_for_import(settings_payload))
-            if startup_error:
-                logging.warning("导入配置时自启动设置失败: %s", startup_error)
+            updated_settings = save_settings(settings_payload_for_import(settings_payload))
             imported.append("settings")
-            settings_event = public_settings_snapshot(updated)
         if isinstance(thresholds_payload, dict):
             normalized = save_thresholds(thresholds_payload)
             apply_persisted_threshold_state(normalized)
@@ -2163,6 +2189,11 @@ def restore_config_backup(payload):
             alert_profiles = save_alert_profiles(_alert_profiles_payload_for_import(alert_profiles_payload))
             imported.append("alert_profiles")
             alert_profiles_event = get_alert_profiles_state()
+        if updated_settings is not None:
+            updated_settings, startup_error = _apply_startup_setting(updated_settings)
+            if startup_error:
+                logging.warning("导入配置时自启动设置失败: %s", startup_error)
+            settings_event = public_settings_snapshot(updated_settings)
     except OSError:
         rollback_ok = _restore_config_import_state(
             previous_settings,
@@ -2178,6 +2209,8 @@ def restore_config_backup(payload):
             logging.warning("配置导入失败后回滚未完全成功，请检查配置目录权限。")
         raise
 
+    if updated_settings is not None:
+        apply_floating_price_settings(updated_settings)
     if settings_event is not None:
         socketio.emit("settings_updated", settings_event)
     if thresholds_event is not None:

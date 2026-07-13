@@ -176,6 +176,7 @@ let settingsSaveTimer = null;
 let pendingUpdateInfo = null;
 let pendingConfigImportPayload = null;
 let pendingConfigImportPreview = null;
+let configImportPreviewRequestPayload = null;
 let recentOpsRecords = [];
 let autoUpdateTimer = null;
 let lastAutoUpdateCheckAt = 0;
@@ -423,6 +424,9 @@ socket.on('connect', () => {
   document.getElementById('priceRetry').textContent = '重新获取';
 });
 socket.on('disconnect', () => {
+  configImportPreviewRequestPayload = null;
+  pendingConfigImportPayload = null;
+  pendingConfigImportPreview = null;
   document.getElementById('statusDot').classList.add('disconnected');
   document.getElementById('statusText').textContent = '本地服务已断开';
   document.getElementById('priceRetry').textContent = '重新连接';
@@ -1045,8 +1049,16 @@ socket.on('exports_folder_opened', data => {
 
 socket.on('config_import_previewed', data => {
   const text = document.getElementById('configImportText') ? document.getElementById('configImportText').value.trim() : '';
+  const previewedPayload = configImportPreviewRequestPayload;
+  configImportPreviewRequestPayload = null;
+  if (!previewedPayload || previewedPayload !== text) {
+    pendingConfigImportPayload = null;
+    pendingConfigImportPreview = null;
+    setOpsStatus('备份内容已变更，请重新预检。', false);
+    return;
+  }
   if (data && data.importable) {
-    pendingConfigImportPayload = text;
+    pendingConfigImportPayload = previewedPayload;
     pendingConfigImportPreview = data;
     setOpsStatus(renderConfigImportPreview(data), true);
     return;
@@ -1057,6 +1069,7 @@ socket.on('config_import_previewed', data => {
 });
 
 socket.on('config_import_result', data => {
+  configImportPreviewRequestPayload = null;
   pendingConfigImportPayload = null;
   pendingConfigImportPreview = null;
   setOpsStatus(data && data.message ? data.message : '配置导入完成。', !!(data && data.ok));
@@ -1862,17 +1875,38 @@ function configImportSecretActionLabel(action) {
   return '保留现有';
 }
 
+function configImportFormatText(data) {
+  const schemaVersion = Number(data && data.schema_version);
+  const expectedSchemaVersion = Number(data && data.expected_schema_version);
+  const format = data && typeof data.format === 'string' ? data.format.trim() : '';
+  const sourceAppVersion = data && typeof data.source_app_version === 'string'
+    ? data.source_app_version.trim()
+    : '';
+  if (data && data.needs_migration) {
+    return '旧版备份将在导入时迁移' + (sourceAppVersion ? '（来源版本 ' + sourceAppVersion + '）' : '');
+  }
+  const resolvedVersion = Number.isInteger(schemaVersion) && schemaVersion >= 0
+    ? schemaVersion
+    : (Number.isInteger(expectedSchemaVersion) && expectedSchemaVersion >= 0 ? expectedSchemaVersion : null);
+  const formatText = resolvedVersion !== null ? 'schema v' + resolvedVersion : (format || '当前格式');
+  return '当前备份格式：' + formatText + (sourceAppVersion ? '（来源版本 ' + sourceAppVersion + '）' : '');
+}
+
 function renderConfigImportPreview(data) {
   if (!data || data.ok === false || data.importable === false) {
     return (data && data.message) || '配置导入预检失败。';
   }
-  const sections = Array.isArray(data.sections) ? data.sections.map(configImportSectionLabel) : [];
+  const rawSections = Array.isArray(data.sections) ? data.sections : [];
+  const sections = rawSections.map(configImportSectionLabel);
   const ignored = data.ignored && typeof data.ignored === 'object' ? data.ignored : {};
-  const ignoredCount = []
+  const ignoredFieldCount = []
     .concat(Array.isArray(ignored.settings) ? ignored.settings : [])
     .concat(Array.isArray(ignored.thresholds) ? ignored.thresholds : [])
     .length;
-  const secretActions = data.secret_actions && typeof data.secret_actions === 'object' ? data.secret_actions : {};
+  const ignoredProfileCount = Array.isArray(ignored.alert_profiles) ? ignored.alert_profiles.length : 0;
+  const secretActions = rawSections.includes('settings') && data.secret_actions && typeof data.secret_actions === 'object'
+    ? data.secret_actions
+    : {};
   const secretSummary = Object.keys(secretActions).reduce((acc, key) => {
     const label = configImportSecretActionLabel(secretActions[key]);
     acc[label] = (acc[label] || 0) + 1;
@@ -1881,8 +1915,10 @@ function renderConfigImportPreview(data) {
   const secretText = Object.keys(secretSummary).map(label => label + ' ' + secretSummary[label] + ' 项').join('，');
   const parts = [
     '配置预检通过：将导入' + (sections.length ? sections.join('、') : '配置'),
+    configImportFormatText(data),
   ];
-  if (ignoredCount) parts.push('忽略不支持字段 ' + ignoredCount + ' 项');
+  if (ignoredFieldCount) parts.push('忽略不支持字段 ' + ignoredFieldCount + ' 项');
+  if (ignoredProfileCount) parts.push('忽略重复、无效或超限策略模板 ' + ignoredProfileCount + ' 项');
   if (secretText) parts.push('敏感字段：' + secretText);
   parts.push('再次点击导入确认');
   return parts.join('；') + '。';
@@ -1894,6 +1930,11 @@ function importConfig() {
     setOpsStatus('请先粘贴配置备份 JSON。', false);
     return;
   }
+  if (configImportPreviewRequestPayload !== null) {
+    const changed = configImportPreviewRequestPayload !== text;
+    setOpsStatus(changed ? '备份内容已变更，当前预检返回后请重新预检。' : '正在预检导入配置...', !changed);
+    return;
+  }
   if (pendingConfigImportPayload === text && pendingConfigImportPreview && pendingConfigImportPreview.importable) {
     setOpsStatus('正在导入配置...', true);
     socket.emit('import_config', { payload: text });
@@ -1903,8 +1944,25 @@ function importConfig() {
   }
   pendingConfigImportPayload = null;
   pendingConfigImportPreview = null;
+  configImportPreviewRequestPayload = text;
   setOpsStatus('正在预检导入配置...', true);
   socket.emit('preview_import_config', { payload: text });
+}
+
+function invalidateConfigImportPreviewOnInput() {
+  const hasPreviewState = configImportPreviewRequestPayload !== null
+    || pendingConfigImportPayload !== null
+    || pendingConfigImportPreview !== null;
+  if (!hasPreviewState) return;
+  configImportPreviewRequestPayload = null;
+  pendingConfigImportPayload = null;
+  pendingConfigImportPreview = null;
+  setOpsStatus('备份内容已变更，请重新预检。', false);
+}
+
+const configImportTextInput = document.getElementById('configImportText');
+if (configImportTextInput) {
+  configImportTextInput.addEventListener('input', invalidateConfigImportPreviewOnInput);
 }
 
 function exportDiagnostics() {

@@ -665,12 +665,45 @@ for required in (
     "preview_import_config",
     "config_import_previewed",
     "pendingConfigImportPayload",
+    "configImportPreviewRequestPayload",
     "function renderConfigImportPreview",
+    "function configImportFormatText",
+    "schema_version",
+    "expected_schema_version",
+    "needs_migration",
+    "source_app_version",
+    "当前备份格式：",
+    "旧版备份将在导入时迁移",
+    "备份内容已变更，请重新预检",
+    "function invalidateConfigImportPreviewOnInput",
+    "configImportTextInput.addEventListener('input', invalidateConfigImportPreviewOnInput)",
+    "ignored.alert_profiles",
+    "忽略重复、无效或超限策略模板",
     "再次点击导入确认",
     "if (section === 'alert_profiles') return '预警策略模板';",
 ):
     if required not in js:
         raise SystemExit(f"static/app.js missing config import preview contract: {required}")
+
+preview_response_pos = js.find("socket.on('config_import_previewed', data => {")
+preview_response_end = js.find("socket.on('config_import_result'", preview_response_pos)
+preview_response_block = js[preview_response_pos:preview_response_end]
+if not re.search(r"previewedPayload\s*!==\s*text", preview_response_block):
+    raise SystemExit("config import preview response must be rejected after the textarea changes")
+
+invalidate_preview_pos = js.find("function invalidateConfigImportPreviewOnInput")
+invalidate_preview_end = js.find("\nfunction ", invalidate_preview_pos + 1)
+invalidate_preview_block = js[
+    invalidate_preview_pos:invalidate_preview_end if invalidate_preview_end >= 0 else len(js)
+]
+for required in (
+    "configImportPreviewRequestPayload = null",
+    "pendingConfigImportPayload = null",
+    "pendingConfigImportPreview = null",
+    "备份内容已变更，请重新预检。",
+):
+    if invalidate_preview_pos < 0 or required not in invalidate_preview_block:
+        raise SystemExit(f"config import input must invalidate preview state immediately: {required}")
 
 for required in (
     'id="alertProfilesPanel"',
