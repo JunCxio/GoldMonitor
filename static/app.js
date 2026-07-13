@@ -137,6 +137,10 @@ let appSettings = {
   webhook_warning_enabled: true,
   webhook_critical_enabled: true,
   webhook_volatility_enabled: true,
+  daily_digest_enabled: false,
+  daily_digest_time: '20:00',
+  daily_digest_email_enabled: true,
+  daily_digest_webhook_enabled: false,
   email_warning_enabled: true,
   email_critical_enabled: true,
   email_volatility_enabled: true,
@@ -188,6 +192,7 @@ let deepseekModelOptions = ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-ch
 let latestPriceHistoryState = { items: [], stats: {}, total: 0 };
 let latestSourceHealthState = { items: [], summary: {} };
 let latestSourceComparisonState = { items: [], summary: {}, status: 'insufficient' };
+let dailyDigestStatusState = {};
 
 function chartUnitLabel() {
   return currentMode === 'usd' ? 'USD/oz' : 'RMB/克';
@@ -468,6 +473,7 @@ socket.on('init_state', data => {
   applyWatchTargets(data.watch_targets || []);
   applyPortfolio(data.portfolio || {});
   if (data.settings) applySettings(data.settings);
+  if (data.daily_digest_status) applyDailyDigestStatus(data.daily_digest_status);
   if (data.risk_analysis_history) applyRiskHistory(data.risk_analysis_history);
   if (data.source_comparison) renderSourceComparison(data.source_comparison);
   if (data.source_health) renderSourceHealth(data.source_health);
@@ -720,6 +726,31 @@ socket.on('settings_error', data => {
   settingsSaveFailed = true;
   document.getElementById('settingsMessage').textContent = data.message || '设置保存失败';
   if (data && data.export_dir_check) renderExportDirStatus(data.export_dir_check);
+});
+
+socket.on('daily_digest_status', data => {
+  applyDailyDigestStatus(data || {});
+});
+
+socket.on('daily_digest_previewed', data => {
+  const button = document.getElementById('btnPreviewDailyDigest');
+  if (button) button.disabled = false;
+  if (!data || data.ok === false) {
+    setDailyDigestStatus((data && data.message) || '生成摘要预览失败。', false);
+    return;
+  }
+  renderDailyDigestPreview(data);
+  setDailyDigestStatus('摘要预览已生成，未发送通知。', true);
+});
+
+socket.on('daily_digest_test_result', data => {
+  const button = document.getElementById('btnTestDailyDigest');
+  if (button) button.disabled = false;
+  if (data && data.digest) renderDailyDigestPreview(data.digest);
+  setDailyDigestStatus(
+    data && data.message ? '测试发送：' + data.message : '测试发送已完成。',
+    !!(data && data.ok)
+  );
 });
 
 socket.on('threshold_error', data => alert(data.message));
@@ -1723,6 +1754,74 @@ function applyPlatformLabels() {
   setRowHidden('floatingTopmostRow', menuBarMode);
 }
 
+function dailyDigestSelectedChannels() {
+  const channels = [];
+  if (appSettings.daily_digest_email_enabled !== false) channels.push('email');
+  if (appSettings.daily_digest_webhook_enabled) channels.push('webhook');
+  return channels;
+}
+
+function dailyDigestChannelText(channels) {
+  const labels = { email: '邮件', webhook: 'Webhook' };
+  const selected = Array.isArray(channels) ? channels : [];
+  return selected.length ? selected.map(channel => labels[channel] || channel).join('、') : '未选择';
+}
+
+function dailyDigestTimestamp(value) {
+  const text = String(value || '').trim();
+  return text ? text.replace('T', ' ').slice(0, 16) : '';
+}
+
+function setDailyDigestStatus(message, ok) {
+  const status = document.getElementById('dailyDigestStatus');
+  if (!status) return;
+  status.textContent = message || '';
+  status.className = 'test-email-status' + (ok === true ? ' ok' : ok === false ? ' fail' : '');
+}
+
+function applyDailyDigestStatus(data) {
+  const next = data && typeof data === 'object' ? data : {};
+  dailyDigestStatusState = Object.assign({}, dailyDigestStatusState, next, {
+    state: Object.assign({}, dailyDigestStatusState.state || {}, next.state || {}),
+    schedule: Object.assign({}, dailyDigestStatusState.schedule || {}, next.schedule || {}),
+  });
+  const enabled = dailyDigestStatusState.enabled != null
+    ? !!dailyDigestStatusState.enabled
+    : !!appSettings.daily_digest_enabled;
+  const time = dailyDigestStatusState.time || appSettings.daily_digest_time || '20:00';
+  const channels = Array.isArray(dailyDigestStatusState.channels)
+    ? dailyDigestStatusState.channels
+    : dailyDigestSelectedChannels();
+  const state = dailyDigestStatusState.state || {};
+  const schedule = dailyDigestStatusState.schedule || {};
+  const parts = [enabled ? '已启用，每日 ' + time : '未启用', '渠道：' + dailyDigestChannelText(channels)];
+  const completedAt = dailyDigestTimestamp(state.last_completed_at);
+  const testedAt = dailyDigestTimestamp(state.last_test_at);
+  if (completedAt) parts.push('最近计划执行：' + completedAt);
+  else if (enabled && schedule.reason === 'before_schedule') parts.push('等待今日计划时间');
+  else if (enabled && schedule.reason === 'due') parts.push('等待任务执行');
+  else if (enabled && schedule.reason === 'invalid_schedule') parts.push('发送时间无效');
+  if (testedAt) parts.push('最近测试：' + testedAt);
+  if (state.last_message) parts.push(state.last_message);
+  const okStatuses = ['queued'];
+  const failStatuses = ['partial', 'skipped'];
+  const statusFlag = okStatuses.includes(state.last_status)
+    ? true
+    : failStatuses.includes(state.last_status) || schedule.reason === 'invalid_schedule'
+      ? false
+      : null;
+  setDailyDigestStatus(parts.join('；'), statusFlag);
+}
+
+function renderDailyDigestPreview(data) {
+  const preview = document.getElementById('dailyDigestPreview');
+  if (!preview) return;
+  const digest = data && data.digest ? data.digest : (data || {});
+  const subject = String(digest.subject || '').trim();
+  const message = String(digest.message || '').trim();
+  preview.value = [subject, message].filter(Boolean).join('\n\n');
+}
+
 function applySettings(data) {
   appSettings = Object.assign({}, appSettings, data);
   applyPlatformLabels();
@@ -1767,6 +1866,15 @@ function applySettings(data) {
   document.getElementById('setWebhookWarning').checked = appSettings.webhook_warning_enabled !== false;
   document.getElementById('setWebhookCritical').checked = appSettings.webhook_critical_enabled !== false;
   document.getElementById('setWebhookVolatility').checked = appSettings.webhook_volatility_enabled !== false;
+  document.getElementById('setDailyDigestEnabled').checked = !!appSettings.daily_digest_enabled;
+  document.getElementById('setDailyDigestTime').value = appSettings.daily_digest_time || '20:00';
+  document.getElementById('setDailyDigestEmail').checked = appSettings.daily_digest_email_enabled !== false;
+  document.getElementById('setDailyDigestWebhook').checked = !!appSettings.daily_digest_webhook_enabled;
+  applyDailyDigestStatus(Object.assign({}, dailyDigestStatusState, {
+    enabled: !!appSettings.daily_digest_enabled,
+    time: appSettings.daily_digest_time || '20:00',
+    channels: dailyDigestSelectedChannels(),
+  }));
   document.getElementById('testEmailStatus').textContent = '';
   document.getElementById('testEmailStatus').className = 'test-email-status';
   const webhookStatus = document.getElementById('testWebhookStatus');
@@ -1957,7 +2065,7 @@ function testRiskModel() {
 }
 
 function switchSettingsTab(tab) {
-  const tabs = ['general', 'email', 'webhook', 'risk', 'ops'];
+  const tabs = ['general', 'email', 'webhook', 'digest', 'risk', 'ops'];
   tabs.forEach(name => {
     const active = tab === name;
     const suffix = name.charAt(0).toUpperCase() + name.slice(1);
@@ -1968,6 +2076,7 @@ function switchSettingsTab(tab) {
   const body = document.querySelector('#settingsBackdrop .settings-body');
   if (body) body.scrollTop = 0;
   if (tab === 'risk') refreshRiskModels();
+  if (tab === 'digest') socket.emit('get_daily_digest_status');
 }
 
 function openSettings() {
@@ -2021,6 +2130,10 @@ function saveSettings() {
     webhook_warning_enabled: document.getElementById('setWebhookWarning').checked,
     webhook_critical_enabled: document.getElementById('setWebhookCritical').checked,
     webhook_volatility_enabled: document.getElementById('setWebhookVolatility').checked,
+    daily_digest_enabled: document.getElementById('setDailyDigestEnabled').checked,
+    daily_digest_time: document.getElementById('setDailyDigestTime').value,
+    daily_digest_email_enabled: document.getElementById('setDailyDigestEmail').checked,
+    daily_digest_webhook_enabled: document.getElementById('setDailyDigestWebhook').checked,
     risk_assistant_enabled: document.getElementById('setRiskAssistantEnabled').checked,
     risk_assistant_provider: document.getElementById('setRiskAssistantProvider').value,
     risk_assistant_depth: document.getElementById('setRiskAssistantDepth').value,
@@ -2091,6 +2204,20 @@ socket.on('test_webhook_result', data => {
   statusEl.textContent = data && data.message ? data.message : 'Webhook 测试完成。';
   statusEl.className = 'test-email-status ' + (data && data.ok ? 'ok' : 'fail');
 });
+
+function previewDailyDigest() {
+  const button = document.getElementById('btnPreviewDailyDigest');
+  if (button) button.disabled = true;
+  setDailyDigestStatus('正在生成摘要预览...', null);
+  socket.emit('preview_daily_digest');
+}
+
+function testDailyDigest() {
+  const button = document.getElementById('btnTestDailyDigest');
+  if (button) button.disabled = true;
+  setDailyDigestStatus('正在测试发送每日摘要...', null);
+  socket.emit('test_daily_digest');
+}
 
 function testAlert() {
   const statusEl = document.getElementById('testAlertStatus');

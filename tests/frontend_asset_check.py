@@ -692,6 +692,34 @@ for required in (
         raise SystemExit(f"frontend missing custom export directory contract: {required}")
 
 for required in (
+    'id="settingsTabDigest"',
+    'id="settingsPanelDigest"',
+    'id="setDailyDigestEnabled"',
+    'id="setDailyDigestTime"',
+    'id="setDailyDigestEmail"',
+    'id="setDailyDigestWebhook"',
+    'id="btnPreviewDailyDigest"',
+    'id="btnTestDailyDigest"',
+    'id="dailyDigestStatus"',
+    'id="dailyDigestPreview"',
+    "function previewDailyDigest",
+    "function testDailyDigest",
+    "socket.emit('preview_daily_digest')",
+    "socket.emit('test_daily_digest')",
+    "socket.on('daily_digest_status'",
+    "socket.on('daily_digest_previewed'",
+    "socket.on('daily_digest_test_result'",
+    "if (data.daily_digest_status) applyDailyDigestStatus(data.daily_digest_status)",
+    "if (tab === 'digest') socket.emit('get_daily_digest_status')",
+    "daily_digest_enabled: document.getElementById('setDailyDigestEnabled').checked",
+    "daily_digest_time: document.getElementById('setDailyDigestTime').value",
+    "daily_digest_email_enabled: document.getElementById('setDailyDigestEmail').checked",
+    "daily_digest_webhook_enabled: document.getElementById('setDailyDigestWebhook').checked",
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing daily digest contract: {required}")
+
+for required in (
     'onclick="copyDiagnostics()"',
     'id="diagnosticsCopyFallback"',
     "function copyDiagnostics",

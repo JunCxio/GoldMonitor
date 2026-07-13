@@ -220,6 +220,7 @@
       <button class="settings-tab active" id="settingsTabGeneral" type="button" role="tab" aria-selected="true" aria-controls="settingsPanelGeneral" onclick="switchSettingsTab('general')">通用设置</button>
       <button class="settings-tab" id="settingsTabEmail" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelEmail" onclick="switchSettingsTab('email')">邮件通知</button>
       <button class="settings-tab" id="settingsTabWebhook" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelWebhook" onclick="switchSettingsTab('webhook')">Webhook</button>
+      <button class="settings-tab" id="settingsTabDigest" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelDigest" onclick="switchSettingsTab('digest')">摘要通知</button>
       <button class="settings-tab" id="settingsTabRisk" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelRisk" onclick="switchSettingsTab('risk')">风险分析</button>
       <button class="settings-tab" id="settingsTabOps" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelOps" onclick="switchSettingsTab('ops')">运维</button>
     </div>
@@ -450,6 +451,56 @@
           </div>
           <button class="settings-cancel btn-form" id="btnTestWebhook" onclick="testWebhook()">发送测试</button>
           <span class="test-email-status" id="testWebhookStatus"></span>
+        </div>
+      </div>
+      <div class="settings-panel" id="settingsPanelDigest" role="tabpanel" aria-labelledby="settingsTabDigest">
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">启用每日摘要</div>
+            <div class="setting-desc">每天按本地时间汇总最近 24 小时的行情、预警、风险分析、新闻、数据质量和持仓。</div>
+          </div>
+          <label class="switch"><input type="checkbox" id="setDailyDigestEnabled" aria-label="启用每日摘要"><span class="slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">发送时间</div>
+            <div class="setting-desc">程序在设定时间后启动时，会补发当天尚未完成的摘要。</div>
+          </div>
+          <input class="settings-input smtp-port" id="setDailyDigestTime" type="time" value="20:00" aria-label="每日摘要发送时间">
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">发送渠道</div>
+            <div class="setting-desc">邮件与 Webhook 可独立启用，并复用各自通知页中的连接配置。</div>
+          </div>
+          <div class="settings-stack">
+            <label class="inline-check"><input type="checkbox" id="setDailyDigestEmail"> 邮件</label>
+            <label class="inline-check"><input type="checkbox" id="setDailyDigestWebhook"> Webhook</label>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">任务状态</div>
+            <div class="setting-desc">显示当前计划、通知渠道和最近一次执行结果。</div>
+          </div>
+          <span class="test-email-status" id="dailyDigestStatus" aria-live="polite">状态尚未加载。</span>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">摘要预览</div>
+            <div class="setting-desc">预览不会发送通知，也不会占用当天的计划发送资格。</div>
+          </div>
+          <div class="settings-stack">
+            <button class="settings-cancel btn-form" id="btnPreviewDailyDigest" type="button" onclick="previewDailyDigest()">生成预览</button>
+            <button class="btn-set btn-form" id="btnTestDailyDigest" type="button" onclick="testDailyDigest()">测试发送</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">预览内容</div>
+            <div class="setting-desc">测试发送使用相同内容及已保存的渠道配置，但不会改变当天计划任务的完成状态。</div>
+          </div>
+          <textarea class="settings-textarea" id="dailyDigestPreview" aria-label="每日摘要预览内容" readonly placeholder="点击生成预览后显示摘要内容"></textarea>
         </div>
       </div>
       <div class="settings-panel" id="settingsPanelRisk" role="tabpanel" aria-labelledby="settingsTabRisk">

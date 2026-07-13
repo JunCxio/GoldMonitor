@@ -207,6 +207,84 @@ def test_summarize_notifications_prioritizes_muted_and_partial_failures():
     assert disabled["disabled"] == 2
 
 
+def test_generic_email_and_webhook_senders_preserve_digest_content():
+    from goldmonitor.notifications import send_email_message, send_webhook_payload
+
+    sent_mail = {}
+
+    class FakeServer:
+        def login(self, sender, password):
+            sent_mail["login"] = (sender, password)
+
+        def sendmail(self, sender, recipients, message):
+            sent_mail["message"] = (sender, recipients, message)
+
+        def quit(self):
+            sent_mail["quit"] = True
+
+    class FakeSmtp:
+        @staticmethod
+        def SMTP_SSL(server, port, timeout):
+            sent_mail["connect"] = (server, port, timeout)
+            return FakeServer()
+
+    settings = {
+        "smtp_server": "smtp.example.com",
+        "smtp_port": "465",
+        "smtp_encryption": "ssl",
+        "smtp_sender": "sender@example.com",
+        "smtp_password": "secret",
+        "smtp_recipient": "receiver@example.com",
+        "webhook_enabled": True,
+        "webhook_url": "https://example.com/hook",
+    }
+    error = send_email_message(
+        settings,
+        "[GoldMonitor] 每日摘要 2026-07-13",
+        "摘要正文",
+        smtp_module=FakeSmtp,
+        blocking=True,
+    )
+    assert error is None
+    assert sent_mail["connect"] == ("smtp.example.com", 465, 10)
+    from email import message_from_string
+    from email.header import decode_header
+
+    parsed_message = message_from_string(sent_mail["message"][2])
+    subject_bytes, subject_encoding = decode_header(parsed_message["Subject"])[0]
+    decoded_subject = (
+        subject_bytes.decode(subject_encoding or "utf-8")
+        if isinstance(subject_bytes, bytes)
+        else subject_bytes
+    )
+    assert "每日摘要 2026-07-13" in decoded_subject
+    assert parsed_message.get_payload(decode=True).decode("utf-8") == "摘要正文"
+
+    posted = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+    def fake_post(url, **kwargs):
+        posted["url"] = url
+        posted.update(kwargs)
+        return FakeResponse()
+
+    error = send_webhook_payload(
+        settings,
+        {"kind": "daily_summary", "message": "摘要正文"},
+        post=fake_post,
+        require_https_url=lambda value, label: None,
+        user_agent="GoldMonitor/1.0.5",
+        blocking=True,
+    )
+    assert error is None
+    assert posted["url"] == "https://example.com/hook"
+    assert posted["json"]["kind"] == "daily_summary"
+    assert posted["headers"]["User-Agent"] == "GoldMonitor/1.0.5"
+
+
 if __name__ == "__main__":
     failures = []
     for name, value in sorted(globals().items()):

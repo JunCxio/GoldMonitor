@@ -20,6 +20,7 @@ from flask_socketio import SocketIO, emit
 from goldmonitor import alert_profiles as alert_profiles_core
 from goldmonitor import app_state as app_state_core
 from goldmonitor import desktop_ui as desktop_ui_core
+from goldmonitor import daily_digest as daily_digest_core
 from goldmonitor import event_timeline as event_timeline_core
 from goldmonitor import market_data as market_data_core
 from goldmonitor import news as news_core
@@ -28,6 +29,7 @@ from goldmonitor import platform as platform_core
 from goldmonitor import portfolio as portfolio_core
 from goldmonitor import portfolio_alerts as portfolio_alerts_core
 from goldmonitor import risk_analysis as risk_analysis_core
+from goldmonitor import scheduler as scheduler_core
 from goldmonitor import settings_store as settings_store_core
 from goldmonitor import storage_manifest as storage_manifest_core
 from goldmonitor import support_files as support_files_core
@@ -139,6 +141,7 @@ NEWS_CACHE_PATH = os.path.join(APPDATA_DIR, "news.json")
 RISK_ANALYSIS_HISTORY_PATH = os.path.join(APPDATA_DIR, "risk_analysis_history.json")
 PRICE_HISTORY_PATH = os.path.join(APPDATA_DIR, "price_history.json")
 APP_LOG_PATH = os.path.join(APPDATA_DIR, "GoldMonitor.log")
+DAILY_DIGEST_STATE_PATH = os.path.join(APPDATA_DIR, "daily_digest_state.json")
 NEWS_REFRESH_INTERVAL = 15 * 60
 NEWS_LIMIT = 20
 RISK_ANALYSIS_HISTORY_LIMIT = 20
@@ -244,6 +247,10 @@ DEFAULT_SETTINGS = {
     "alert_quiet_end": "",
     "email_subject_template": DEFAULT_EMAIL_SUBJECT_TEMPLATE,
     "email_body_template": DEFAULT_EMAIL_BODY_TEMPLATE,
+    "daily_digest_enabled": False,
+    "daily_digest_time": "20:00",
+    "daily_digest_email_enabled": True,
+    "daily_digest_webhook_enabled": False,
     # 风险分析助手
     "risk_assistant_enabled": True,
     "risk_assistant_provider": "deepseek",
@@ -290,6 +297,7 @@ settings_lock = threading.RLock()
 risk_history_lock = threading.RLock()
 last_update_status_lock = threading.RLock()
 last_export_status_lock = threading.RLock()
+daily_digest_lock = threading.Lock()
 price_usd = None
 price_rmb = None
 previous_usd = None
@@ -359,6 +367,7 @@ last_export_status = {}
 _credential_test_store = None
 _alert_dialog_lock = threading.Lock()
 _alert_dialog_active = False
+_daily_digest_scheduler_started = False
 
 
 # ---------- 设置与系统集成 ----------
@@ -2147,6 +2156,7 @@ def build_diagnostics_report():
         "news": NEWS_CACHE_PATH,
         "risk_analysis_history": RISK_ANALYSIS_HISTORY_PATH,
         "price_history": PRICE_HISTORY_PATH,
+        "daily_digest_state": DAILY_DIGEST_STATE_PATH,
         "price_history_db": _price_history_db_path(),
         "alert_log_db": _alert_log_db_path(),
         "log": APP_LOG_PATH,
@@ -2161,7 +2171,7 @@ def build_diagnostics_report():
     data_schemas = {
         key: dict(item)
         for key, item in sorted(storage_manifest.items())
-        if item.get("schema") == "item_payload"
+        if item.get("schema") in {"item_payload", "versioned_object"}
     }
     report = {
         "app": APP_NAME,
@@ -2489,6 +2499,40 @@ class WebhookNotifier:
         )
 
 
+class DailyDigestEmailNotifier:
+    @staticmethod
+    def send(digest, timeout=10, blocking=False):
+        settings = get_settings_snapshot()
+        return notifications_core.send_email_message(
+            settings,
+            digest.get("subject", "GoldMonitor 每日摘要"),
+            digest.get("message", ""),
+            smtp_module=smtplib,
+            timeout=timeout,
+            blocking=blocking,
+            thread_factory=threading.Thread,
+            logger=logging,
+        )
+
+
+class DailyDigestWebhookNotifier:
+    @staticmethod
+    def send(digest, timeout=8, blocking=False):
+        settings = get_settings_snapshot()
+        return notifications_core.send_webhook_payload(
+            settings,
+            digest.get("payload") if isinstance(digest.get("payload"), dict) else {},
+            post=requests.post,
+            require_https_url=_require_https_url,
+            user_agent=HTTP_USER_AGENT,
+            proxies=REQ_PROXY,
+            timeout=timeout,
+            blocking=blocking,
+            thread_factory=threading.Thread,
+            logger=logging,
+        )
+
+
 def _notification_status(channel, label, status, message):
     return notifications_core.notification_status(channel, label, status, message)
 
@@ -2508,6 +2552,151 @@ def dispatch_alert(entry, title):
         webhook_sender=WebhookNotifier.send,
         logger=logging,
     )
+
+
+def _daily_digest_state_store(now_factory=None):
+    return daily_digest_core.DailyDigestStateStore(
+        DAILY_DIGEST_STATE_PATH,
+        now_factory=now_factory or datetime.now,
+    )
+
+
+def get_daily_digest_state():
+    return _daily_digest_state_store().load()
+
+
+def selected_daily_digest_channels(settings=None):
+    settings = settings or get_settings_snapshot()
+    channels = []
+    if settings.get("daily_digest_email_enabled", True):
+        channels.append("email")
+    if settings.get("daily_digest_webhook_enabled", False):
+        channels.append("webhook")
+    return channels
+
+
+def build_daily_digest_snapshot(now=None):
+    now = now or datetime.now()
+    timeline_state = build_event_timeline_state(
+        minutes=1440,
+        limit=EVENT_TIMELINE_MAX_LIMIT,
+        types=EVENT_TIMELINE_TYPES,
+    )
+    portfolio_state = build_portfolio_state()
+    source_health_state = get_source_health_state()
+    market_quality = (
+        source_health_state.get("quality")
+        if isinstance(source_health_state.get("quality"), dict)
+        else {}
+    )
+    return daily_digest_core.build_daily_digest(
+        timeline_state,
+        portfolio_state=portfolio_state,
+        market_quality=market_quality,
+        now=now,
+    )
+
+
+def daily_digest_status_payload(now=None):
+    now = now or datetime.now()
+    settings = get_settings_snapshot()
+    state = get_daily_digest_state()
+    decision = scheduler_core.daily_task_due(
+        settings.get("daily_digest_time", "20:00"),
+        state.get("last_completed_at", ""),
+        now=now,
+    )
+    return {
+        "enabled": bool(settings.get("daily_digest_enabled")),
+        "time": settings.get("daily_digest_time", "20:00"),
+        "channels": selected_daily_digest_channels(settings),
+        "state": state,
+        "schedule": decision,
+    }
+
+
+def _dispatch_daily_digest(digest, settings, blocking=False):
+    notifications = []
+    channels = selected_daily_digest_channels(settings)
+    if "email" in channels:
+        error = DailyDigestEmailNotifier.send(digest, blocking=blocking)
+        notifications.append(_notification_status(
+            "email",
+            "邮件",
+            "skipped" if error else "queued",
+            error or "已提交发送",
+        ))
+    if "webhook" in channels:
+        error = DailyDigestWebhookNotifier.send(digest, blocking=blocking)
+        notifications.append(_notification_status(
+            "webhook",
+            "Webhook",
+            "skipped" if error else "queued",
+            error or "已提交发送",
+        ))
+    return notifications
+
+
+def run_daily_digest_once(now=None, force=False, manual=False, blocking=False):
+    now = now or datetime.now()
+    settings = get_settings_snapshot()
+    with daily_digest_lock:
+        store = _daily_digest_state_store(now_factory=lambda: now)
+        state = store.load()
+        if not force:
+            if not settings.get("daily_digest_enabled", False):
+                return {
+                    "ok": False,
+                    "status": "disabled",
+                    "reason": "disabled",
+                    "message": "每日摘要未启用",
+                    "state": state,
+                }
+            decision = scheduler_core.daily_task_due(
+                settings.get("daily_digest_time", "20:00"),
+                state.get("last_completed_at", ""),
+                now=now,
+            )
+            if not decision.get("due"):
+                return {
+                    "ok": False,
+                    "status": "not_due",
+                    "reason": decision.get("reason", "not_due"),
+                    "message": "当前无需发送每日摘要",
+                    "schedule": decision,
+                    "state": state,
+                }
+
+        digest = build_daily_digest_snapshot(now=now)
+        channels = selected_daily_digest_channels(settings)
+        notifications = _dispatch_daily_digest(digest, settings, blocking=blocking) if channels else []
+        summary = _notification_summary(notifications)
+        sent = summary.get("queued", 0) > 0
+        if not channels:
+            summary = {
+                **summary,
+                "status": "skipped",
+                "label": "未选择渠道",
+                "message": "请至少选择一个每日摘要通知渠道",
+            }
+        state = store.record_result(
+            status=summary.get("status", "none"),
+            message=summary.get("message", ""),
+            channels=channels,
+            sent=sent,
+            manual=manual,
+        )
+        result = {
+            "ok": sent,
+            "status": summary.get("status", "none"),
+            "message": summary.get("message", ""),
+            "notifications": notifications,
+            "state": state,
+            "digest": digest,
+        }
+    if not manual:
+        socketio.emit("daily_digest_status", daily_digest_status_payload(now=now))
+    return result
 
 
 def emit_alert(entry, title):
@@ -4579,6 +4768,7 @@ def on_connect(auth=None):
             },
         )
         state["alert_profiles"] = get_alert_profiles_state()
+        state["daily_digest_status"] = daily_digest_status_payload()
     state["news"] = get_news_state()
     state["risk_analysis_history"] = get_risk_analysis_history_state()
     emit("init_state", state)
@@ -5317,6 +5507,48 @@ def on_test_webhook():
             socketio.emit("test_webhook_result", {"ok": False, "message": f"发送失败: {error}"})
         else:
             socketio.emit("test_webhook_result", {"ok": True, "message": "测试 Webhook 发送成功。"})
+
+    threading.Thread(target=_test, daemon=True).start()
+
+
+@socketio.on("preview_daily_digest")
+def on_preview_daily_digest():
+    try:
+        digest = build_daily_digest_snapshot()
+        emit("daily_digest_previewed", {"ok": True, **digest})
+    except Exception as exc:
+        logging.exception("生成每日摘要预览失败")
+        emit("daily_digest_previewed", {
+            "ok": False,
+            "message": f"生成摘要预览失败: {exc}",
+        })
+
+
+@socketio.on("get_daily_digest_status")
+def on_get_daily_digest_status():
+    emit("daily_digest_status", daily_digest_status_payload())
+
+
+@socketio.on("test_daily_digest")
+def on_test_daily_digest():
+    sid = request.sid
+
+    def _test():
+        try:
+            result = run_daily_digest_once(
+                force=True,
+                manual=True,
+                blocking=True,
+            )
+        except Exception as exc:
+            logging.exception("发送每日摘要测试失败")
+            result = {
+                "ok": False,
+                "status": "error",
+                "message": f"发送摘要测试失败: {exc}",
+            }
+        socketio.emit("daily_digest_test_result", result, room=sid)
+        socketio.emit("daily_digest_status", daily_digest_status_payload(), room=sid)
 
     threading.Thread(target=_test, daemon=True).start()
 
@@ -6752,6 +6984,23 @@ def start_news_fetching():
     threading.Thread(target=news_loop, daemon=True).start()
 
 
+def daily_digest_loop():
+    while True:
+        try:
+            run_daily_digest_once()
+        except Exception:
+            logging.exception("执行每日摘要任务失败")
+        time.sleep(30)
+
+
+def start_daily_digest_scheduler():
+    global _daily_digest_scheduler_started
+    if _daily_digest_scheduler_started:
+        return
+    _daily_digest_scheduler_started = True
+    threading.Thread(target=daily_digest_loop, daemon=True).start()
+
+
 def wait_for_server_ready(timeout=3.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -7052,12 +7301,14 @@ if __name__ == "__main__":
         update_floating_price()
         start_background_fetching()
         start_news_fetching()
+        start_daily_digest_scheduler()
         start_hidden = (os.name == "nt" or sys.platform == "darwin") and startup_mode and get_settings_snapshot().get("startup_to_tray", True)
         start_desktop_window(start_hidden=start_hidden)
     else:
         # Web 模式 (--web): Flask 主线程 + 浏览器
         start_background_fetching()
         start_news_fetching()
+        start_daily_digest_scheduler()
         web_url = f"http://{DEFAULT_HOST}:{server_port}"
         print(f"金价监控服务已启动 -> {web_url}")
         try:

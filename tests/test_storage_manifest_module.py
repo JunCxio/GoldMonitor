@@ -22,6 +22,7 @@ def test_storage_manifest_covers_current_persistent_paths():
             "news": str(tmp / "news.json"),
             "risk_analysis_history": str(tmp / "risk_analysis_history.json"),
             "price_history": str(tmp / "price_history.json"),
+            "daily_digest_state": str(tmp / "daily_digest_state.json"),
             "price_history_db": str(tmp / "price_history.sqlite3"),
             "alert_log_db": str(tmp / "alert_log.sqlite3"),
             "log": str(tmp / "GoldMonitor.log"),
@@ -73,6 +74,40 @@ def test_storage_manifest_marks_json_payload_metadata_and_missing_sqlite():
     assert manifest["price_history_db"]["format"] == "sqlite"
 
 
+def test_storage_manifest_reports_versioned_object_metadata():
+    from goldmonitor.storage_manifest import build_storage_manifest
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp = Path(tmp_dir)
+        state_path = tmp / "daily_digest_state.json"
+        state_path.write_text(
+            '{"schema_version":1,"last_status":"sent"}',
+            encoding="utf-8",
+        )
+
+        manifest = build_storage_manifest({"daily_digest_state": str(state_path)})
+
+        assert manifest["daily_digest_state"] == {
+            "key": "daily_digest_state",
+            "label": "每日摘要状态",
+            "path": str(state_path),
+            "kind": "json",
+            "schema": "versioned_object",
+            "exists": True,
+            "schema_version": 1,
+            "expected_schema_version": 1,
+            "format": "versioned_dict",
+            "needs_migration": False,
+        }
+
+        state_path.write_text("[]", encoding="utf-8")
+        invalid = build_storage_manifest({"daily_digest_state": str(state_path)})
+
+    assert invalid["daily_digest_state"]["exists"] is True
+    assert invalid["daily_digest_state"]["format"] == "invalid"
+    assert invalid["daily_digest_state"]["needs_migration"] is True
+
+
 def test_diagnostics_summary_uses_storage_manifest_when_provided():
     from goldmonitor.diagnostics import build_health_summary
 
@@ -121,6 +156,7 @@ def test_app_diagnostics_report_includes_complete_storage_manifest(monkeypatch, 
         "NEWS_CACHE_PATH": tmp_path / "news.json",
         "RISK_ANALYSIS_HISTORY_PATH": tmp_path / "risk_analysis_history.json",
         "PRICE_HISTORY_PATH": tmp_path / "price_history.json",
+        "DAILY_DIGEST_STATE_PATH": tmp_path / "daily_digest_state.json",
         "APP_LOG_PATH": tmp_path / "GoldMonitor.log",
     }
     for name, value in path_keys.items():
@@ -138,6 +174,7 @@ def test_app_diagnostics_report_includes_complete_storage_manifest(monkeypatch, 
         "news",
         "risk_analysis_history",
         "price_history",
+        "daily_digest_state",
         "price_history_db",
         "alert_log_db",
     }:
