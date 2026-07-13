@@ -28,6 +28,7 @@ from goldmonitor import notifications as notifications_core
 from goldmonitor import platform as platform_core
 from goldmonitor import portfolio as portfolio_core
 from goldmonitor import portfolio_alerts as portfolio_alerts_core
+from goldmonitor import review_notes as review_notes_core
 from goldmonitor import risk_analysis as risk_analysis_core
 from goldmonitor import scheduler as scheduler_core
 from goldmonitor import settings_store as settings_store_core
@@ -139,6 +140,7 @@ EXPORT_DIR = os.path.join(APPDATA_DIR, "exports")
 UPDATE_INSTALLER_NAME = "GoldMonitor-macOS.dmg" if sys.platform == "darwin" else "GoldMonitorSetup.exe"
 NEWS_CACHE_PATH = os.path.join(APPDATA_DIR, "news.json")
 RISK_ANALYSIS_HISTORY_PATH = os.path.join(APPDATA_DIR, "risk_analysis_history.json")
+REVIEW_NOTES_PATH = os.path.join(APPDATA_DIR, "review_notes.json")
 PRICE_HISTORY_PATH = os.path.join(APPDATA_DIR, "price_history.json")
 APP_LOG_PATH = os.path.join(APPDATA_DIR, "GoldMonitor.log")
 DAILY_DIGEST_STATE_PATH = os.path.join(APPDATA_DIR, "daily_digest_state.json")
@@ -151,7 +153,14 @@ PRICE_HISTORY_SAVE_INTERVAL_SECONDS = 60
 ALERT_LOG_MEMORY_LIMIT = 50
 ALERT_LOG_EXPORT_LIMIT = 1000
 ALERT_LOG_DB_LIMIT = 5000
-EVENT_TIMELINE_TYPES = ("price_summary", "alert", "risk_analysis", "news", "data_status")
+EVENT_TIMELINE_TYPES = (
+    "price_summary",
+    "alert",
+    "risk_analysis",
+    "news",
+    "data_status",
+    "review_note",
+)
 EVENT_TIMELINE_DEFAULT_MINUTES = 60
 EVENT_TIMELINE_ALLOWED_MINUTES = (60, 240, 1440, 10080)
 EVENT_TIMELINE_MAX_LIMIT = 500
@@ -298,6 +307,7 @@ risk_history_lock = threading.RLock()
 last_update_status_lock = threading.RLock()
 last_export_status_lock = threading.RLock()
 daily_digest_lock = threading.Lock()
+review_notes_lock = threading.RLock()
 price_usd = None
 price_rmb = None
 previous_usd = None
@@ -340,6 +350,7 @@ volatility_config = {"percent": None, "minutes": 10, "enabled": False}
 alert_profiles = []
 last_volatility_check = None
 watch_targets = []
+review_notes = []
 portfolio_positions = []
 portfolio_transactions = []
 portfolio_alerts = []
@@ -855,6 +866,55 @@ def reset_watch_target(target_id):
         watch_targets[index] = normalize_watch_target(updated, existing=watch_targets[index])
         watch_targets = save_watch_targets(watch_targets)
         return True, get_watch_targets_state()
+
+
+def _generate_review_note_id():
+    return review_notes_core.generate_review_note_id()
+
+
+def _review_note_store(now_factory=None):
+    return review_notes_core.ReviewNoteStore(
+        REVIEW_NOTES_PATH,
+        now_factory=now_factory or datetime.now,
+        id_factory=_generate_review_note_id,
+    )
+
+
+def load_review_notes():
+    return _review_note_store().load()
+
+
+def save_review_notes(items=None):
+    items = review_notes if items is None else items
+    return _review_note_store().save(items)
+
+
+def get_review_notes_state():
+    with review_notes_lock:
+        return review_notes_core.review_notes_state(review_notes)
+
+
+def upsert_review_note(data):
+    global review_notes
+    with review_notes_lock:
+        next_notes, note = review_notes_core.upsert_review_note(
+            review_notes,
+            data,
+            now_factory=datetime.now,
+            id_factory=_generate_review_note_id,
+        )
+        review_notes = save_review_notes(next_notes)
+        return get_review_notes_state(), note
+
+
+def delete_review_note_by_id(note_id):
+    global review_notes
+    with review_notes_lock:
+        next_notes, deleted = review_notes_core.delete_review_note(review_notes, note_id)
+        if not deleted:
+            return False, get_review_notes_state()
+        review_notes = save_review_notes(next_notes)
+        return True, get_review_notes_state()
 
 
 def _watch_target_price_for_mode(mode):
@@ -2155,6 +2215,7 @@ def build_diagnostics_report():
         "exports": resolve_export_dir(),
         "news": NEWS_CACHE_PATH,
         "risk_analysis_history": RISK_ANALYSIS_HISTORY_PATH,
+        "review_notes": REVIEW_NOTES_PATH,
         "price_history": PRICE_HISTORY_PATH,
         "daily_digest_state": DAILY_DIGEST_STATE_PATH,
         "price_history_db": _price_history_db_path(),
@@ -2751,6 +2812,7 @@ app_settings = load_settings()
 apply_persisted_threshold_state(load_thresholds())
 alert_profiles = load_alert_profiles()
 watch_targets = load_watch_targets()
+review_notes = load_review_notes()
 portfolio_positions = load_portfolio_positions()
 portfolio_transactions = load_portfolio_transactions()
 portfolio_import_backup = load_portfolio_import_backup()
@@ -3703,10 +3765,13 @@ def _event_timeline_sources():
         risk_items = list(risk_analysis_history[:RISK_ANALYSIS_HISTORY_LIMIT])
     with lock:
         current_news_items = list(news_items[:NEWS_LIMIT])
+    with review_notes_lock:
+        current_review_notes = list(review_notes)
     return {
         "alert_entries": alert_log_export_entries(limit=ALERT_LOG_EXPORT_LIMIT),
         "risk_items": risk_items,
         "news_items": current_news_items,
+        "review_notes": current_review_notes,
         "fetch_status": get_fetch_status(),
         "source_health_state": get_source_health_state(),
         "source_comparison_state": get_source_comparison_state(),
@@ -5636,6 +5701,38 @@ def on_get_event_timeline(data=None):
     except Exception as exc:
         logging.warning("事件时间轴生成失败: %s", exc)
         emit("event_timeline_error", {"message": "事件时间轴加载失败，请稍后重试。"})
+
+
+@socketio.on("save_review_note")
+def on_save_review_note(data=None):
+    try:
+        state, note = upsert_review_note(data)
+    except ValueError as exc:
+        emit("review_note_error", {"message": str(exc)})
+        return
+    except OSError:
+        emit("review_note_error", {"message": "复盘笔记保存失败，请检查配置目录权限。"})
+        return
+    emit("review_note_saved", {"ok": True, "note": note, "state": state})
+    socketio.emit("review_notes_updated", state)
+
+
+@socketio.on("delete_review_note")
+def on_delete_review_note(data=None):
+    note_id = data.get("id") if isinstance(data, dict) else ""
+    try:
+        deleted, state = delete_review_note_by_id(note_id)
+    except ValueError as exc:
+        emit("review_note_error", {"message": str(exc)})
+        return
+    except OSError:
+        emit("review_note_error", {"message": "复盘笔记删除失败，请检查配置目录权限。"})
+        return
+    if not deleted:
+        emit("review_note_error", {"message": "未找到复盘笔记。"})
+        return
+    emit("review_note_deleted", {"ok": True, "id": str(note_id), "state": state})
+    socketio.emit("review_notes_updated", state)
 
 
 @socketio.on("export_review_report")

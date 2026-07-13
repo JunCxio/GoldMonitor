@@ -21,6 +21,7 @@ def test_storage_manifest_covers_current_persistent_paths():
             "exports": str(tmp / "exports"),
             "news": str(tmp / "news.json"),
             "risk_analysis_history": str(tmp / "risk_analysis_history.json"),
+            "review_notes": str(tmp / "review_notes.json"),
             "price_history": str(tmp / "price_history.json"),
             "daily_digest_state": str(tmp / "daily_digest_state.json"),
             "price_history_db": str(tmp / "price_history.sqlite3"),
@@ -36,6 +37,11 @@ def test_storage_manifest_covers_current_persistent_paths():
     assert manifest["watch_targets"]["schema"] == "item_payload"
     assert manifest["watch_targets"]["expected_schema_version"] == 1
     assert manifest["portfolio_transactions"]["schema"] == "item_payload"
+    assert manifest["review_notes"]["schema"] == "item_payload"
+    assert manifest["review_notes"]["expected_schema_version"] == 1
+    assert manifest["daily_digest_state"]["schema"] == "versioned_object"
+    assert manifest["daily_digest_state"]["expected_schema_version"] == 1
+    assert manifest["daily_digest_state"]["format"] == "missing"
     assert manifest["price_history_db"]["kind"] == "sqlite"
     assert manifest["alert_log_db"]["kind"] == "sqlite"
     assert manifest["exports"]["kind"] == "directory"
@@ -155,6 +161,7 @@ def test_app_diagnostics_report_includes_complete_storage_manifest(monkeypatch, 
         "EXPORT_DIR": tmp_path / "exports",
         "NEWS_CACHE_PATH": tmp_path / "news.json",
         "RISK_ANALYSIS_HISTORY_PATH": tmp_path / "risk_analysis_history.json",
+        "REVIEW_NOTES_PATH": tmp_path / "review_notes.json",
         "PRICE_HISTORY_PATH": tmp_path / "price_history.json",
         "DAILY_DIGEST_STATE_PATH": tmp_path / "daily_digest_state.json",
         "APP_LOG_PATH": tmp_path / "GoldMonitor.log",
@@ -173,6 +180,7 @@ def test_app_diagnostics_report_includes_complete_storage_manifest(monkeypatch, 
         "portfolio_alerts",
         "news",
         "risk_analysis_history",
+        "review_notes",
         "price_history",
         "daily_digest_state",
         "price_history_db",
@@ -183,6 +191,11 @@ def test_app_diagnostics_report_includes_complete_storage_manifest(monkeypatch, 
         assert key in report["health_summary"]["storage"]
 
     assert report["storage_manifest"]["portfolio_transactions"]["schema"] == "item_payload"
+    assert report["storage_manifest"]["review_notes"]["schema"] == "item_payload"
+    assert report["storage_manifest"]["daily_digest_state"]["schema"] == "versioned_object"
+    assert report["storage_manifest"]["daily_digest_state"]["expected_schema_version"] == 1
     assert report["storage_manifest"]["price_history_db"]["kind"] == "sqlite"
     assert report["data_schemas"]["portfolio_transactions"]["expected_schema_version"] == 1
     assert report["data_schemas"]["portfolio_alerts"]["expected_schema_version"] == 1
+    assert report["data_schemas"]["review_notes"]["expected_schema_version"] == 1
+    assert report["data_schemas"]["daily_digest_state"]["expected_schema_version"] == 1

@@ -19,6 +19,7 @@ STORAGE_DEFINITIONS = (
     {"key": "exports", "label": "导出目录", "kind": "directory", "schema": "directory"},
     {"key": "news", "label": "新闻缓存", "kind": "json", "schema": "item_payload"},
     {"key": "risk_analysis_history", "label": "风险分析历史", "kind": "json", "schema": "item_payload"},
+    {"key": "review_notes", "label": "复盘笔记", "kind": "json", "schema": "item_payload"},
     {"key": "price_history", "label": "价格历史 JSON", "kind": "json", "schema": "item_payload"},
     {
         "key": "daily_digest_state",

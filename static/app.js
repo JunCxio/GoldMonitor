@@ -107,15 +107,18 @@ let activeWatchTargetId = null;
 let historyView = 'prices';
 let eventTimelineState = { events: [], summary: {}, filters: {}, range: {}, price_summary: {} };
 let eventTimelineRange = 60;
-let eventTimelineTypes = ['price_summary', 'alert', 'risk_analysis', 'news', 'data_status'];
+let eventTimelineTypes = ['price_summary', 'alert', 'risk_analysis', 'news', 'data_status', 'review_note'];
 let selectedTimelineEventId = null;
 let pendingTimelineFocus = null;
+let reviewNoteEditorState = { id: '', related_event_id: '', related_event_type: '', related_event_title: '' };
+let reviewNotesRefreshTimer = null;
 const EVENT_TIMELINE_TYPE_DEFS = [
   { type: 'price_summary', label: '价格摘要' },
   { type: 'alert', label: '预警' },
   { type: 'risk_analysis', label: '风险分析' },
   { type: 'news', label: '新闻' },
   { type: 'data_status', label: '数据状态' },
+  { type: 'review_note', label: '复盘笔记' },
 ];
 let appSettings = {
   platform: 'windows',
@@ -869,6 +872,48 @@ socket.on('event_timeline_error', data => {
   setTimelineStatus((data && data.message) || '事件时间轴加载失败。', 'fail');
 });
 
+socket.on('review_note_saved', data => {
+  setReviewNoteSaving(false);
+  if (data && data.ok === false) {
+    setReviewNoteEditorStatus(data.message || '复盘笔记保存失败。', 'fail');
+    return;
+  }
+  const note = data && (data.note || data.item) || {};
+  if (note.id) {
+    pendingTimelineFocus = {
+      type: 'review_note',
+      sourceId: String(note.id),
+      timestamp: note.timestamp || '',
+    };
+  }
+  closeReviewNoteEditor();
+  setTimelineStatus((data && data.message) || '复盘笔记已保存。', 'ok');
+  queueReviewNotesTimelineRefresh();
+});
+
+socket.on('review_note_deleted', data => {
+  if (data && data.ok === false) {
+    setTimelineStatus(data.message || '复盘笔记删除失败。', 'fail');
+    return;
+  }
+  selectedTimelineEventId = null;
+  closeReviewNoteEditor();
+  setTimelineStatus((data && data.message) || '复盘笔记已删除。', 'ok');
+  queueReviewNotesTimelineRefresh();
+});
+
+socket.on('review_note_error', data => {
+  setReviewNoteSaving(false);
+  const message = (data && data.message) || '复盘笔记操作失败。';
+  const editor = document.getElementById('reviewNoteEditor');
+  if (editor && !editor.hidden) setReviewNoteEditorStatus(message, 'fail');
+  else setTimelineStatus(message, 'fail');
+});
+
+socket.on('review_notes_updated', () => {
+  queueReviewNotesTimelineRefresh();
+});
+
 socket.on('review_report_exported', data => {
   const count = data && Number.isFinite(Number(data.count)) ? Number(data.count) : 0;
   setTimelineStatus(data && data.saved_path ? '已导出 ' + count + ' 条事件，保存至 ' + data.saved_path : '复盘报告已导出。', 'ok');
@@ -1184,6 +1229,7 @@ function openHistory() {
 
 function closeHistory() {
   document.getElementById('historyBackdrop').classList.remove('show');
+  closeReviewNoteEditor();
 }
 
 function onHistoryBackdrop(event) {
@@ -1229,6 +1275,180 @@ function refreshHistoryCurrentView() {
 function timelineTypeLabel(type) {
   const found = EVENT_TIMELINE_TYPE_DEFS.find(item => item.type === type);
   return found ? found.label : type;
+}
+
+function selectedTimelineEvent() {
+  const events = Array.isArray(eventTimelineState.events) ? eventTimelineState.events : [];
+  return events.find(item => item.id === selectedTimelineEventId) || null;
+}
+
+function reviewNoteIdFromEvent(event) {
+  if (!event) return '';
+  const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
+  return String(payload.note_id || payload.id || event.note_id || event.id || '');
+}
+
+function reviewNoteLocalInputValue(value) {
+  const parsed = timelineDateFromValue(value) || new Date();
+  const pad = number => String(number).padStart(2, '0');
+  return [
+    parsed.getFullYear(),
+    pad(parsed.getMonth() + 1),
+    pad(parsed.getDate()),
+  ].join('-') + 'T' + pad(parsed.getHours()) + ':' + pad(parsed.getMinutes());
+}
+
+function setReviewNoteEditorStatus(message, type) {
+  const el = document.getElementById('reviewNoteEditorStatus');
+  if (!el) return;
+  el.textContent = message || '';
+  el.className = 'review-note-editor-status' + (type ? ' ' + type : '');
+}
+
+function setReviewNoteSaving(saving) {
+  const button = document.getElementById('saveReviewNoteButton');
+  if (!button) return;
+  button.disabled = Boolean(saving);
+  button.textContent = saving ? '正在保存' : '保存笔记';
+}
+
+function setReviewNoteEditorRelation(state) {
+  const relation = document.getElementById('reviewNoteRelation');
+  if (!relation) return;
+  if (!state.related_event_id) {
+    relation.textContent = '独立笔记';
+    return;
+  }
+  relation.textContent = '关联：' + timelineTypeLabel(state.related_event_type) + ' · ' + (state.related_event_title || state.related_event_id);
+}
+
+function showReviewNoteEditor(options) {
+  const state = Object.assign({
+    id: '',
+    timestamp: '',
+    title: '',
+    content: '',
+    related_event_id: '',
+    related_event_type: '',
+    related_event_title: '',
+  }, options || {});
+  reviewNoteEditorState = {
+    id: String(state.id || ''),
+    related_event_id: String(state.related_event_id || ''),
+    related_event_type: String(state.related_event_type || ''),
+    related_event_title: String(state.related_event_title || ''),
+  };
+  const editor = document.getElementById('reviewNoteEditor');
+  const heading = document.getElementById('reviewNoteEditorHeading');
+  const timestamp = document.getElementById('reviewNoteTimestamp');
+  const title = document.getElementById('reviewNoteTitle');
+  const content = document.getElementById('reviewNoteContent');
+  if (!editor || !timestamp || !title || !content) return;
+  if (heading) heading.textContent = state.id ? '编辑复盘笔记' : '新增复盘笔记';
+  timestamp.value = reviewNoteLocalInputValue(state.timestamp);
+  title.value = state.title || '';
+  content.value = state.content || '';
+  setReviewNoteEditorRelation(reviewNoteEditorState);
+  setReviewNoteEditorStatus('', '');
+  setReviewNoteSaving(false);
+  editor.hidden = false;
+  requestAnimationFrame(() => content.focus());
+}
+
+function openReviewNoteEditor() {
+  showReviewNoteEditor({ timestamp: new Date() });
+}
+
+function openReviewNoteEditorFromSelectedEvent() {
+  const event = selectedTimelineEvent();
+  if (!event || event.type === 'review_note') {
+    setTimelineStatus('请先选择一条行情、预警、分析、新闻或数据事件。', 'fail');
+    return;
+  }
+  showReviewNoteEditor({
+    timestamp: event.timestamp || new Date(),
+    related_event_id: event.id,
+    related_event_type: event.type,
+    related_event_title: event.title || timelineTypeLabel(event.type),
+  });
+}
+
+function editSelectedReviewNote() {
+  const event = selectedTimelineEvent();
+  if (!event || event.type !== 'review_note') return;
+  const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
+  showReviewNoteEditor({
+    id: reviewNoteIdFromEvent(event),
+    timestamp: payload.timestamp || event.timestamp,
+    title: payload.title || event.title || '',
+    content: payload.content || event.summary || '',
+    related_event_id: payload.related_event_id || '',
+    related_event_type: payload.related_event_type || '',
+    related_event_title: payload.related_event_title || '',
+  });
+}
+
+function closeReviewNoteEditor() {
+  const editor = document.getElementById('reviewNoteEditor');
+  if (editor) editor.hidden = true;
+  reviewNoteEditorState = { id: '', related_event_id: '', related_event_type: '', related_event_title: '' };
+  setReviewNoteEditorStatus('', '');
+  setReviewNoteSaving(false);
+}
+
+function saveReviewNote() {
+  const timestamp = document.getElementById('reviewNoteTimestamp');
+  const title = document.getElementById('reviewNoteTitle');
+  const content = document.getElementById('reviewNoteContent');
+  if (!timestamp || !title || !content) return;
+  const payload = {
+    timestamp: timestamp.value.trim(),
+    title: title.value.trim(),
+    content: content.value.trim(),
+    related_event_id: reviewNoteEditorState.related_event_id,
+    related_event_type: reviewNoteEditorState.related_event_type,
+    related_event_title: reviewNoteEditorState.related_event_title,
+  };
+  if (!payload.timestamp) {
+    setReviewNoteEditorStatus('请选择笔记时间。', 'fail');
+    timestamp.focus();
+    return;
+  }
+  if (!payload.content) {
+    setReviewNoteEditorStatus('请输入笔记内容。', 'fail');
+    content.focus();
+    return;
+  }
+  if (payload.title.length > 80 || payload.content.length > 2000) {
+    setReviewNoteEditorStatus('标题最多 80 个字符，内容最多 2000 个字符。', 'fail');
+    return;
+  }
+  if (reviewNoteEditorState.id) payload.id = reviewNoteEditorState.id;
+  setReviewNoteSaving(true);
+  setReviewNoteEditorStatus('正在保存复盘笔记...', '');
+  socket.emit('save_review_note', payload);
+}
+
+function deleteSelectedReviewNote() {
+  const event = selectedTimelineEvent();
+  if (!event || event.type !== 'review_note') return;
+  const noteId = reviewNoteIdFromEvent(event);
+  if (!noteId) {
+    setTimelineStatus('缺少笔记标识，无法删除。', 'fail');
+    return;
+  }
+  if (!window.confirm('确定删除复盘笔记“' + (event.title || '未命名笔记') + '”？')) return;
+  setTimelineStatus('正在删除复盘笔记...', '');
+  socket.emit('delete_review_note', { id: noteId });
+}
+
+function queueReviewNotesTimelineRefresh() {
+  if (reviewNotesRefreshTimer) clearTimeout(reviewNotesRefreshTimer);
+  reviewNotesRefreshTimer = setTimeout(() => {
+    reviewNotesRefreshTimer = null;
+    const backdrop = document.getElementById('historyBackdrop');
+    if (historyView === 'timeline' && backdrop && backdrop.classList.contains('show')) refreshEventTimeline();
+  }, 80);
 }
 
 function renderTimelineTypeFilters() {
@@ -1306,7 +1526,7 @@ function eventMatchesTimelineFocus(event, focus) {
   if (!event || !focus) return false;
   if (focus.type && event.type !== focus.type) return false;
   const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
-  if (focus.sourceId && String(payload.id || '') === String(focus.sourceId)) return true;
+  if (focus.sourceId && [event.id, payload.id, payload.note_id].some(value => String(value || '') === String(focus.sourceId))) return true;
   const eventTime = timelineFocusTimeKey(event.timestamp);
   const focusTime = timelineFocusTimeKey(focus.timestamp);
   if (!eventTime || !focusTime) return false;
@@ -1378,12 +1598,12 @@ function renderTimelineSummary() {
   const range = eventTimelineState.range || {};
   const statItems = [
     ['事件', summary.total || 0],
-    ['跳过', summary.skipped || 0],
     ['预警', byType.alert || 0],
+    ['笔记', byType.review_note || 0],
     ['范围', range.minutes ? Math.round(Number(range.minutes) / 60) + 'h' : '--'],
   ];
   box.innerHTML = statItems.map(item => (
-    '<div class="history-stat"><div class="history-stat-label">' + escapeHtml(item[0]) + '</div><div class="history-stat-value">' + escapeHtml(item[1]) + '</div></div>'
+    '<div class="history-stat"><div class="history-stat-label">' + escapeHtml(item[0]) + '</div><div class="history-stat-value">' + escapeHtml(String(item[1])) + '</div></div>'
   )).join('');
 }
 
@@ -1400,7 +1620,9 @@ function renderTimelineList() {
     '<span class="timeline-event-time">' + escapeHtml(timelineEventTime(event.timestamp).slice(11) || '--') + '</span>',
     '<span class="timeline-event-main">',
     '<span class="timeline-event-title">' + escapeHtml(event.title || timelineTypeLabel(event.type)) + '</span>',
-    '<span class="timeline-event-summary">' + escapeHtml(event.summary || '暂无详情') + '</span>',
+    String(event.summary || '').trim() && String(event.summary || '').trim() !== String(event.title || '').trim()
+      ? '<span class="timeline-event-summary">' + escapeHtml(event.summary) + '</span>'
+      : '',
     '<span class="timeline-event-type">' + escapeHtml(timelineTypeLabel(event.type)) + '</span>',
     '</span>',
     '</button>',
@@ -1469,13 +1691,28 @@ function renderTimelineDetail() {
     cells.push(detailCell('价格点', payload.points));
     cells.push(detailCell('USD/oz', usd.start == null ? '' : usd.start + ' -> ' + usd.end));
     cells.push(detailCell('RMB/克', rmb.start == null ? '' : rmb.start + ' -> ' + rmb.end));
+  } else if (event.type === 'review_note') {
+    if (payload.updated_at) cells.push(detailCell('最后更新', timelineEventTime(payload.updated_at)));
+    if (payload.related_event_id) {
+      cells.push(detailCell('关联类型', timelineTypeLabel(payload.related_event_type)));
+      cells.push(detailCell('关联事件', payload.related_event_title || payload.related_event_id));
+    }
   }
+  const actions = event.type === 'review_note'
+    ? [
+      '<div class="timeline-detail-actions">',
+      '<button class="settings-cancel" type="button" onclick="editSelectedReviewNote()">编辑笔记</button>',
+      '<button class="dialog-danger" type="button" onclick="deleteSelectedReviewNote()">删除笔记</button>',
+      '</div>',
+    ].join('')
+    : '<div class="timeline-detail-actions"><button class="settings-cancel" type="button" onclick="openReviewNoteEditorFromSelectedEvent()">关联创建笔记</button></div>';
   detail.innerHTML = [
     '<div class="timeline-detail-title">' + escapeHtml(event.title || timelineTypeLabel(event.type)) + '</div>',
     '<div class="timeline-detail-meta">' + escapeHtml(timelineEventTime(event.timestamp)) + ' · ' + escapeHtml(event.source || '--') + '</div>',
     '<div class="timeline-detail-summary">' + escapeHtml(payload.message || payload.content || event.summary || '暂无详情') + '</div>',
     '<div class="timeline-detail-grid">' + cells.join('') + '</div>',
     extras,
+    actions,
   ].join('');
 }
 

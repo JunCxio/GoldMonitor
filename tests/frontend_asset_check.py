@@ -720,6 +720,51 @@ for required in (
         raise SystemExit(f"frontend missing daily digest contract: {required}")
 
 for required in (
+    'id="createReviewNoteButton"',
+    'id="reviewNoteEditor"',
+    'id="reviewNoteRelation"',
+    'id="reviewNoteTimestamp"',
+    'id="reviewNoteTitle"',
+    'id="reviewNoteContent"',
+    'id="reviewNoteEditorStatus"',
+    'id="saveReviewNoteButton"',
+    'maxlength="80"',
+    'maxlength="2000"',
+    "function openReviewNoteEditor",
+    "function closeReviewNoteEditor",
+    "function openReviewNoteEditorFromSelectedEvent",
+    "function editSelectedReviewNote",
+    "function deleteSelectedReviewNote",
+    "function saveReviewNote",
+    "socket.emit('save_review_note'",
+    "socket.emit('delete_review_note'",
+    "socket.on('review_note_saved'",
+    "socket.on('review_note_deleted'",
+    "socket.on('review_note_error'",
+    "socket.on('review_notes_updated'",
+    "type: 'review_note'",
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing review note contract: {required}")
+
+for required in (
+    ".review-note-editor",
+    ".review-note-fields",
+    ".review-note-editor-actions",
+    ".timeline-note-create",
+):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing review note selector: {required}")
+
+for required in (
+    'REVIEW_NOTES_PATH',
+    '@socketio.on("save_review_note")',
+    '@socketio.on("delete_review_note")',
+):
+    if required not in app_py:
+        raise SystemExit(f"app.py missing review note contract: {required}")
+
+for required in (
     'onclick="copyDiagnostics()"',
     'id="diagnosticsCopyFallback"',
     "function copyDiagnostics",

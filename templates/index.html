@@ -787,14 +787,45 @@
       </div>
       <div class="history-panel" id="historyPanelTimeline">
         <div class="timeline-toolbar">
-          <select id="timelineRange" onchange="setTimelineRange(this.value)" aria-label="复盘时间范围">
-            <option value="60">最近 1 小时</option>
-            <option value="240">最近 4 小时</option>
-            <option value="1440">最近 24 小时</option>
-            <option value="10080">最近 7 天</option>
-          </select>
+          <div class="timeline-toolbar-primary">
+            <select id="timelineRange" onchange="setTimelineRange(this.value)" aria-label="复盘时间范围">
+              <option value="60">最近 1 小时</option>
+              <option value="240">最近 4 小时</option>
+              <option value="1440">最近 24 小时</option>
+              <option value="10080">最近 7 天</option>
+            </select>
+            <button class="settings-cancel timeline-note-create" id="createReviewNoteButton" type="button" onclick="openReviewNoteEditor()">新增笔记</button>
+          </div>
           <div class="timeline-filter" id="timelineTypeFilters"></div>
         </div>
+        <section class="review-note-editor" id="reviewNoteEditor" aria-labelledby="reviewNoteEditorHeading" hidden>
+          <div class="review-note-editor-head">
+            <div>
+              <h3 id="reviewNoteEditorHeading">新增复盘笔记</h3>
+              <div class="review-note-relation" id="reviewNoteRelation">独立笔记</div>
+            </div>
+            <button class="settings-close review-note-editor-close" type="button" onclick="closeReviewNoteEditor()" aria-label="关闭笔记编辑器">×</button>
+          </div>
+          <div class="review-note-fields">
+            <label class="review-note-field review-note-time-field">
+              <span>时间</span>
+              <input id="reviewNoteTimestamp" type="datetime-local" step="60">
+            </label>
+            <label class="review-note-field review-note-title-field">
+              <span>标题</span>
+              <input id="reviewNoteTitle" type="text" maxlength="80" placeholder="可选，留空使用内容首行">
+            </label>
+            <label class="review-note-field review-note-content-field">
+              <span>内容</span>
+              <textarea id="reviewNoteContent" maxlength="2000" placeholder="记录依据、执行结果和后续观察事项"></textarea>
+            </label>
+          </div>
+          <div class="review-note-editor-actions">
+            <div class="review-note-editor-status" id="reviewNoteEditorStatus" role="status"></div>
+            <button class="settings-cancel" type="button" onclick="closeReviewNoteEditor()">取消</button>
+            <button class="settings-save" id="saveReviewNoteButton" type="button" onclick="saveReviewNote()">保存笔记</button>
+          </div>
+        </section>
         <div class="timeline-status" id="timelineStatus"></div>
         <div class="timeline-summary" id="timelineSummary"></div>
         <div class="timeline-layout">

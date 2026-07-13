@@ -27,7 +27,14 @@ def test_request_normalization_clamps_known_options_and_preserves_type_order():
     fallback = normalize_event_timeline_request({"minutes": "bad", "limit": 0, "types": []})
     assert fallback["minutes"] == 60
     assert fallback["limit"] == 300
-    assert fallback["types"] == ["price_summary", "alert", "risk_analysis", "news", "data_status"]
+    assert fallback["types"] == [
+        "price_summary",
+        "alert",
+        "risk_analysis",
+        "news",
+        "data_status",
+        "review_note",
+    ]
 
 
 def test_timeline_state_aggregates_injected_sources_without_side_effects():
@@ -113,18 +120,33 @@ def test_timeline_state_aggregates_injected_sources_without_side_effects():
             "message": "数据源价差 0.80% ，建议核对行情源",
             "updated_at": (base + timedelta(minutes=22)).isoformat(timespec="seconds"),
         },
+        review_notes=[
+            {
+                "id": "note-test-1",
+                "timestamp": (base + timedelta(minutes=25)).isoformat(timespec="seconds"),
+                "title": "观察回落原因",
+                "content": "记录美元回落与金价变化，后续核对预警是否有效。",
+                "related_event_id": "alert-test-1",
+                "related_event_type": "alert",
+                "related_event_title": "价格预警",
+                "created_at": (base + timedelta(minutes=25)).isoformat(timespec="seconds"),
+                "updated_at": (base + timedelta(minutes=25)).isoformat(timespec="seconds"),
+            },
+            {"id": "bad-note", "timestamp": "not-a-time", "content": "bad"},
+        ],
         now_factory=fixed_now,
     )
 
     assert state["range"]["minutes"] == 60
     assert state["price_summary"]["rmb"]["points"] == 3
-    assert state["summary"]["skipped"] == 4
+    assert state["summary"]["skipped"] == 5
     assert [event["timestamp"] for event in state["events"]] == sorted(event["timestamp"] for event in state["events"])
     assert state["summary"]["by_type"]["price_summary"] == 1
     assert state["summary"]["by_type"]["alert"] == 1
     assert state["summary"]["by_type"]["risk_analysis"] == 1
     assert state["summary"]["by_type"]["news"] == 1
     assert state["summary"]["by_type"]["data_status"] == 2
+    assert state["summary"]["by_type"]["review_note"] == 1
     price_event = next(event for event in state["events"] if event["type"] == "price_summary")
     assert price_event["payload"]["series"] == [
         {"timestamp": points[0]["timestamp"], "usd": 2300.0, "rmb": 540.0},
@@ -150,6 +172,10 @@ def test_timeline_state_aggregates_injected_sources_without_side_effects():
 
     data_sources = {event["source"] for event in state["events"] if event["type"] == "data_status"}
     assert data_sources == {"source_health", "source_comparison"}
+
+    note_event = next(event for event in state["events"] if event["type"] == "review_note")
+    assert note_event["title"] == "观察回落原因"
+    assert note_event["payload"]["related_event_id"] == "alert-test-1"
 
 
 def test_initial_fetch_waiting_status_is_not_reported_as_data_issue():
@@ -191,9 +217,16 @@ def test_review_report_and_filename_are_stable_for_export():
     state = {
         "range": {"start": "2026-06-08T11:00:00", "end": "2026-06-08T12:00:00", "minutes": 60},
         "summary": {
-            "total": 2,
+            "total": 4,
             "skipped": 1,
-            "by_type": {"price_summary": 1, "alert": 1, "risk_analysis": 0, "news": 0, "data_status": 0},
+            "by_type": {
+                "price_summary": 1,
+                "alert": 1,
+                "risk_analysis": 0,
+                "news": 0,
+                "data_status": 1,
+                "review_note": 1,
+            },
         },
         "price_summary": {
             "usd": {"points": 2, "start": 2300.0, "end": 2310.0, "high": 2310.0, "low": 2300.0, "change": 10.0, "change_pct": 0.4348},
@@ -224,6 +257,16 @@ def test_review_report_and_filename_are_stable_for_export():
                 "title": "缓存行情",
                 "summary": "实时金价源不可用，使用缓存",
             },
+            {
+                "type": "review_note",
+                "timestamp": "2026-06-08T11:50:00",
+                "title": "复盘上涨预警",
+                "summary": "上涨预警触发后价格继续走高。",
+                "payload": {
+                    "content": "上涨预警触发后价格继续走高，后续应继续观察数据源质量。",
+                    "related_event_title": "价格预警",
+                },
+            },
         ],
     }
 
@@ -232,13 +275,17 @@ def test_review_report_and_filename_are_stable_for_export():
     assert "## 时间范围" in report
     assert "## 复盘结论" in report
     assert "RMB/克整体上行" in report
-    assert "- 事件总数：2" in report
+    assert "- 事件总数：4" in report
     assert "## 预警回顾" in report
     assert "## 告警后走势" in report
     assert "价格预警：告警后 RMB/克 540.0 -> 542.0" in report
     assert "## 数据质量结论" in report
     assert "记录到 1 条数据状态事件" in report
     assert "国内金价达到上涨关注条件" in report
+    assert "- 复盘笔记：1" in report
+    assert "## 复盘笔记" in report
+    assert "上涨预警触发后价格继续走高，后续应继续观察数据源质量。" in report
+    assert "关联事件：价格预警" in report
 
     assert review_report_filename(now=fixed_now()) == "GoldMonitor-review-report-20260608-120000.md"
 
