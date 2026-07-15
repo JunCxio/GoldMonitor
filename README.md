@@ -1,6 +1,34 @@
 # GoldMonitor
 
-GoldMonitor 是一个黄金价格监控工具，提供 Windows 桌面版和 macOS DMG 安装包，用于查看实时金价、设置风险提醒、接收邮件通知、手动生成风险分析，并持续关注行情。
+<p align="center">
+  <img src="static/icon-256.png" width="104" alt="GoldMonitor 图标">
+</p>
+
+<p align="center">本地优先的黄金行情监控、风险预警与持仓复盘桌面工具。</p>
+
+<p align="center">
+  <a href="https://github.com/JunCxio/GoldMonitor/releases/latest">下载最新版本</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="CONTRIBUTING.md">参与贡献</a> ·
+  <a href="https://github.com/JunCxio/GoldMonitor/issues/new/choose">提交反馈</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/JunCxio/GoldMonitor/releases"><img src="https://img.shields.io/github/v/release/JunCxio/GoldMonitor?display_name=tag&label=Release" alt="最新发布版本"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/JunCxio/GoldMonitor?label=License" alt="MIT License"></a>
+  <a href="https://github.com/JunCxio/GoldMonitor/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/JunCxio/GoldMonitor/ci.yml?branch=main&label=CI" alt="持续集成状态"></a>
+</p>
+
+GoldMonitor 面向希望在本机持续观察金价、管理持仓并复盘交易决策的用户。数据和配置默认保存在本地；风险分析仅在用户手动触发时调用已配置的模型服务。
+
+![GoldMonitor 功能一览](docs/images/feature-overview.svg)
+
+## 适合的使用场景
+
+- 需要同时查看国际金价、人民币克价与 USD/CNY 汇率，并掌握数据来源和更新时间。
+- 希望按价格、短时波动或目标价接收桌面、邮件或 Webhook 提醒。
+- 需要在本地维护黄金持仓、流水、风险分析历史和复盘记录。
+- 希望使用免费、可审查、可自行构建的桌面工具，而不是把配置和历史上传到云端。
 
 ## 主要功能
 
@@ -32,7 +60,7 @@ GoldMonitor 是一个黄金价格监控工具，提供 Windows 桌面版和 macO
 
 行情源适配器是内部扩展接口，用于统一数据源元数据、请求结果和健康状态目录。当前版本不向用户开放数据源排序或禁用设置，也不改变实际请求来源、请求参数和失败回退顺序；新增或替换数据源时仍需通过解析、优先级、缓存和健康状态契约验证。
 
-## 下载
+## 快速开始
 
 最新安装包发布在 GitHub Releases：
 
