@@ -143,6 +143,110 @@ def build_email_message(settings, values, default_subject_template, default_body
     return msg
 
 
+def build_plain_email_message(settings, subject, body):
+    settings = settings or {}
+    sender = settings.get("smtp_sender", "").strip()
+    recipient = settings.get("smtp_recipient", "").strip()
+    msg = MIMEText(str(body or ""), "plain", "utf-8")
+    msg["Subject"] = str(subject or "")
+    msg["From"] = sender
+    msg["To"] = recipient
+    msg["Date"] = formatdate(localtime=True)
+    return msg
+
+
+def _smtp_delivery_config(settings):
+    settings = settings or {}
+    server = settings.get("smtp_server", "").strip()
+    port_str = settings.get("smtp_port", "465").strip()
+    encryption = settings.get("smtp_encryption", "ssl")
+    sender = settings.get("smtp_sender", "").strip()
+    password = settings.get("smtp_password", "")
+    recipient = settings.get("smtp_recipient", "").strip()
+    if not (server and port_str and sender and password and recipient):
+        return None, "SMTP 配置不完整，跳过邮件发送"
+    try:
+        port = int(port_str)
+    except ValueError:
+        return None, f"SMTP 端口格式无效: {port_str}"
+    return {
+        "server": server,
+        "port": port,
+        "encryption": encryption,
+        "sender": sender,
+        "password": password,
+        "recipient": recipient,
+    }, ""
+
+
+def _send_email_mime_message(
+    settings,
+    msg,
+    smtp_module,
+    timeout=10,
+    blocking=False,
+    thread_factory=None,
+    logger=None,
+):
+    logger = logger or logging.getLogger(__name__)
+    config, error = _smtp_delivery_config(settings)
+    if error:
+        return error
+
+    def _send():
+        try:
+            if config["encryption"] == "ssl":
+                server_obj = smtp_module.SMTP_SSL(config["server"], config["port"], timeout=timeout)
+            else:
+                server_obj = smtp_module.SMTP(config["server"], config["port"], timeout=timeout)
+                server_obj.starttls()
+            server_obj.login(config["sender"], config["password"])
+            server_obj.sendmail(config["sender"], [config["recipient"]], msg.as_string())
+            server_obj.quit()
+            return None
+        except Exception as exc:
+            return str(exc)
+
+    if blocking:
+        return _send()
+
+    def _send_async():
+        send_error = _send()
+        if send_error:
+            logger.warning("邮件通知发送失败: %s", send_error)
+
+    if thread_factory:
+        thread_factory(target=_send_async, daemon=True).start()
+    else:
+        _send_async()
+    return None
+
+
+def send_email_message(
+    settings,
+    subject,
+    body,
+    smtp_module,
+    timeout=10,
+    blocking=False,
+    thread_factory=None,
+    logger=None,
+):
+    try:
+        msg = build_plain_email_message(settings, subject, body)
+    except Exception as exc:
+        return f"构建邮件失败: {exc}"
+    return _send_email_mime_message(
+        settings,
+        msg,
+        smtp_module,
+        timeout=timeout,
+        blocking=blocking,
+        thread_factory=thread_factory,
+        logger=logger,
+    )
+
+
 def send_email_notification(
     settings,
     alert_type,
@@ -157,52 +261,19 @@ def send_email_notification(
     thread_factory=None,
     logger=None,
 ):
-    settings = settings or {}
-    logger = logger or logging.getLogger(__name__)
-    server = settings.get("smtp_server", "").strip()
-    port_str = settings.get("smtp_port", "465").strip()
-    encryption = settings.get("smtp_encryption", "ssl")
-    sender = settings.get("smtp_sender", "").strip()
-    password = settings.get("smtp_password", "")
-    recipient = settings.get("smtp_recipient", "").strip()
-    if not (server and port_str and sender and password and recipient):
-        return "SMTP 配置不完整，跳过邮件发送"
-    try:
-        port = int(port_str)
-    except ValueError:
-        return f"SMTP 端口格式无效: {port_str}"
     try:
         msg = build_email_message(settings, values, default_subject_template, default_body_template)
     except Exception as exc:
         return f"构建邮件失败: {exc}"
-
-    def _send():
-        try:
-            if encryption == "ssl":
-                server_obj = smtp_module.SMTP_SSL(server, port, timeout=timeout)
-            else:
-                server_obj = smtp_module.SMTP(server, port, timeout=timeout)
-                server_obj.starttls()
-            server_obj.login(sender, password)
-            server_obj.sendmail(sender, [recipient], msg.as_string())
-            server_obj.quit()
-            return None
-        except Exception as exc:
-            return str(exc)
-
-    if blocking:
-        return _send()
-
-    def _send_async():
-        error = _send()
-        if error:
-            logger.warning("邮件通知发送失败: %s", error)
-
-    if thread_factory:
-        thread_factory(target=_send_async, daemon=True).start()
-    else:
-        _send_async()
-    return None
+    return _send_email_mime_message(
+        settings,
+        msg,
+        smtp_module,
+        timeout=timeout,
+        blocking=blocking,
+        thread_factory=thread_factory,
+        logger=logger,
+    )
 
 
 def build_webhook_payload(alert_type, title, message, values, app_name, app_version):
@@ -239,6 +310,33 @@ def send_webhook_notification(
     thread_factory=None,
     logger=None,
 ):
+    payload = build_webhook_payload(alert_type, title, message, values, app_name, app_version)
+    return send_webhook_payload(
+        settings,
+        payload,
+        post=post,
+        require_https_url=require_https_url,
+        user_agent=user_agent,
+        proxies=proxies,
+        timeout=timeout,
+        blocking=blocking,
+        thread_factory=thread_factory,
+        logger=logger,
+    )
+
+
+def send_webhook_payload(
+    settings,
+    payload,
+    post,
+    require_https_url,
+    user_agent,
+    proxies=None,
+    timeout=8,
+    blocking=False,
+    thread_factory=None,
+    logger=None,
+):
     settings = settings or {}
     logger = logger or logging.getLogger(__name__)
     if not settings.get("webhook_enabled", False):
@@ -250,7 +348,6 @@ def send_webhook_notification(
         require_https_url(url, "Webhook 地址")
     except ValueError as exc:
         return str(exc)
-    payload = build_webhook_payload(alert_type, title, message, values, app_name, app_version)
 
     def _send():
         try:

@@ -294,6 +294,48 @@ for required in (
         raise SystemExit(f"static/app.js missing risk evidence frontend contract: {required}")
 
 for required in (
+    'id="riskCompareButton"',
+    'id="riskComparison"',
+):
+    if required not in template:
+        raise SystemExit(f"template missing risk history comparison anchor: {required}")
+
+for required in (
+    "riskComparisonSelection",
+    "function toggleRiskComparisonItem",
+    "function compareSelectedRiskHistory",
+    "function renderRiskComparison",
+    "记录一",
+    "记录二",
+    "data-side-label",
+):
+    if required not in js:
+        raise SystemExit(f"static/app.js missing risk history comparison contract: {required}")
+
+if not re.search(r"riskComparisonSelection\.length\s*(?:>=\s*2|>\s*1)", js):
+    raise SystemExit("risk history comparison must limit selection to two entries")
+
+apply_risk_history_pos = js.find("function applyRiskHistory")
+next_function_pos = js.find("\nfunction ", apply_risk_history_pos + 1)
+risk_history_block = js[apply_risk_history_pos:next_function_pos if next_function_pos >= 0 else len(js)]
+if apply_risk_history_pos < 0 or not re.search(r"riskComparisonSelection\s*=\s*\[\s*\]", risk_history_block):
+    raise SystemExit("applyRiskHistory must reset transient risk comparison selection")
+
+compare_risk_history_pos = js.find("function compareSelectedRiskHistory")
+next_function_pos = js.find("\nfunction ", compare_risk_history_pos + 1)
+compare_risk_history_block = js[
+    compare_risk_history_pos:next_function_pos if next_function_pos >= 0 else len(js)
+]
+if compare_risk_history_pos < 0:
+    raise SystemExit("static/app.js must implement risk history comparison")
+for forbidden in ("socket.emit", "requestRiskAnalysis"):
+    if forbidden in compare_risk_history_block:
+        raise SystemExit(f"risk history comparison must remain frontend-only: {forbidden}")
+
+if "不会调用模型" not in template + js:
+    raise SystemExit("risk history comparison UI must state that comparison does not call the model")
+
+for required in (
     ".risk-diagnostic",
     ".risk-diagnostic.show",
     ".risk-diagnostic-title",
@@ -306,6 +348,15 @@ for required in (
 ):
     if required not in css:
         raise SystemExit(f"static/app.css missing risk evidence selector: {required}")
+
+if ".risk-comparison-row" not in css:
+    raise SystemExit("static/app.css missing risk history comparison row selector")
+
+if "content:attr(data-side-label)" not in css:
+    raise SystemExit("static/app.css must render risk comparison side labels from row attributes")
+
+if not re.search(r"@media\s*\([^)]*max-width[^)]*\)[\s\S]*?\.risk-comparison-row", css):
+    raise SystemExit("static/app.css must adapt risk history comparison rows for mobile widths")
 
 for required in (
     "function selectedRiskPrice",
@@ -614,12 +665,45 @@ for required in (
     "preview_import_config",
     "config_import_previewed",
     "pendingConfigImportPayload",
+    "configImportPreviewRequestPayload",
     "function renderConfigImportPreview",
+    "function configImportFormatText",
+    "schema_version",
+    "expected_schema_version",
+    "needs_migration",
+    "source_app_version",
+    "当前备份格式：",
+    "旧版备份将在导入时迁移",
+    "备份内容已变更，请重新预检",
+    "function invalidateConfigImportPreviewOnInput",
+    "configImportTextInput.addEventListener('input', invalidateConfigImportPreviewOnInput)",
+    "ignored.alert_profiles",
+    "忽略重复、无效或超限策略模板",
     "再次点击导入确认",
     "if (section === 'alert_profiles') return '预警策略模板';",
 ):
     if required not in js:
         raise SystemExit(f"static/app.js missing config import preview contract: {required}")
+
+preview_response_pos = js.find("socket.on('config_import_previewed', data => {")
+preview_response_end = js.find("socket.on('config_import_result'", preview_response_pos)
+preview_response_block = js[preview_response_pos:preview_response_end]
+if not re.search(r"previewedPayload\s*!==\s*text", preview_response_block):
+    raise SystemExit("config import preview response must be rejected after the textarea changes")
+
+invalidate_preview_pos = js.find("function invalidateConfigImportPreviewOnInput")
+invalidate_preview_end = js.find("\nfunction ", invalidate_preview_pos + 1)
+invalidate_preview_block = js[
+    invalidate_preview_pos:invalidate_preview_end if invalidate_preview_end >= 0 else len(js)
+]
+for required in (
+    "configImportPreviewRequestPayload = null",
+    "pendingConfigImportPayload = null",
+    "pendingConfigImportPreview = null",
+    "备份内容已变更，请重新预检。",
+):
+    if invalidate_preview_pos < 0 or required not in invalidate_preview_block:
+        raise SystemExit(f"config import input must invalidate preview state immediately: {required}")
 
 for required in (
     'id="alertProfilesPanel"',
@@ -690,6 +774,79 @@ for required in (
 ):
     if required not in template + js:
         raise SystemExit(f"frontend missing custom export directory contract: {required}")
+
+for required in (
+    'id="settingsTabDigest"',
+    'id="settingsPanelDigest"',
+    'id="setDailyDigestEnabled"',
+    'id="setDailyDigestTime"',
+    'id="setDailyDigestEmail"',
+    'id="setDailyDigestWebhook"',
+    'id="btnPreviewDailyDigest"',
+    'id="btnTestDailyDigest"',
+    'id="dailyDigestStatus"',
+    'id="dailyDigestPreview"',
+    "function previewDailyDigest",
+    "function testDailyDigest",
+    "socket.emit('preview_daily_digest')",
+    "socket.emit('test_daily_digest')",
+    "socket.on('daily_digest_status'",
+    "socket.on('daily_digest_previewed'",
+    "socket.on('daily_digest_test_result'",
+    "if (data.daily_digest_status) applyDailyDigestStatus(data.daily_digest_status)",
+    "if (tab === 'digest') socket.emit('get_daily_digest_status')",
+    "daily_digest_enabled: document.getElementById('setDailyDigestEnabled').checked",
+    "daily_digest_time: document.getElementById('setDailyDigestTime').value",
+    "daily_digest_email_enabled: document.getElementById('setDailyDigestEmail').checked",
+    "daily_digest_webhook_enabled: document.getElementById('setDailyDigestWebhook').checked",
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing daily digest contract: {required}")
+
+for required in (
+    'id="createReviewNoteButton"',
+    'id="reviewNoteEditor"',
+    'id="reviewNoteRelation"',
+    'id="reviewNoteTimestamp"',
+    'id="reviewNoteTitle"',
+    'id="reviewNoteContent"',
+    'id="reviewNoteEditorStatus"',
+    'id="saveReviewNoteButton"',
+    'maxlength="80"',
+    'maxlength="2000"',
+    "function openReviewNoteEditor",
+    "function closeReviewNoteEditor",
+    "function openReviewNoteEditorFromSelectedEvent",
+    "function editSelectedReviewNote",
+    "function deleteSelectedReviewNote",
+    "function saveReviewNote",
+    "socket.emit('save_review_note'",
+    "socket.emit('delete_review_note'",
+    "socket.on('review_note_saved'",
+    "socket.on('review_note_deleted'",
+    "socket.on('review_note_error'",
+    "socket.on('review_notes_updated'",
+    "type: 'review_note'",
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing review note contract: {required}")
+
+for required in (
+    ".review-note-editor",
+    ".review-note-fields",
+    ".review-note-editor-actions",
+    ".timeline-note-create",
+):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing review note selector: {required}")
+
+for required in (
+    'REVIEW_NOTES_PATH',
+    '@socketio.on("save_review_note")',
+    '@socketio.on("delete_review_note")',
+):
+    if required not in app_py:
+        raise SystemExit(f"app.py missing review note contract: {required}")
 
 for required in (
     'onclick="copyDiagnostics()"',

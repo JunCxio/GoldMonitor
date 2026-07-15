@@ -107,15 +107,18 @@ let activeWatchTargetId = null;
 let historyView = 'prices';
 let eventTimelineState = { events: [], summary: {}, filters: {}, range: {}, price_summary: {} };
 let eventTimelineRange = 60;
-let eventTimelineTypes = ['price_summary', 'alert', 'risk_analysis', 'news', 'data_status'];
+let eventTimelineTypes = ['price_summary', 'alert', 'risk_analysis', 'news', 'data_status', 'review_note'];
 let selectedTimelineEventId = null;
 let pendingTimelineFocus = null;
+let reviewNoteEditorState = { id: '', related_event_id: '', related_event_type: '', related_event_title: '' };
+let reviewNotesRefreshTimer = null;
 const EVENT_TIMELINE_TYPE_DEFS = [
   { type: 'price_summary', label: '价格摘要' },
   { type: 'alert', label: '预警' },
   { type: 'risk_analysis', label: '风险分析' },
   { type: 'news', label: '新闻' },
   { type: 'data_status', label: '数据状态' },
+  { type: 'review_note', label: '复盘笔记' },
 ];
 let appSettings = {
   platform: 'windows',
@@ -137,6 +140,10 @@ let appSettings = {
   webhook_warning_enabled: true,
   webhook_critical_enabled: true,
   webhook_volatility_enabled: true,
+  daily_digest_enabled: false,
+  daily_digest_time: '20:00',
+  daily_digest_email_enabled: true,
+  daily_digest_webhook_enabled: false,
   email_warning_enabled: true,
   email_critical_enabled: true,
   email_volatility_enabled: true,
@@ -169,6 +176,7 @@ let settingsSaveTimer = null;
 let pendingUpdateInfo = null;
 let pendingConfigImportPayload = null;
 let pendingConfigImportPreview = null;
+let configImportPreviewRequestPayload = null;
 let recentOpsRecords = [];
 let autoUpdateTimer = null;
 let lastAutoUpdateCheckAt = 0;
@@ -183,11 +191,13 @@ let activeAlert = null;
 let mergedAlertCount = 0;
 let riskAnalysisRunning = false;
 let riskAnalysisHistory = [];
+let riskComparisonSelection = [];
 let pendingRiskForceTrigger = null;
 let deepseekModelOptions = ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'];
 let latestPriceHistoryState = { items: [], stats: {}, total: 0 };
 let latestSourceHealthState = { items: [], summary: {} };
 let latestSourceComparisonState = { items: [], summary: {}, status: 'insufficient' };
+let dailyDigestStatusState = {};
 
 function chartUnitLabel() {
   return currentMode === 'usd' ? 'USD/oz' : 'RMB/克';
@@ -414,6 +424,9 @@ socket.on('connect', () => {
   document.getElementById('priceRetry').textContent = '重新获取';
 });
 socket.on('disconnect', () => {
+  configImportPreviewRequestPayload = null;
+  pendingConfigImportPayload = null;
+  pendingConfigImportPreview = null;
   document.getElementById('statusDot').classList.add('disconnected');
   document.getElementById('statusText').textContent = '本地服务已断开';
   document.getElementById('priceRetry').textContent = '重新连接';
@@ -468,6 +481,7 @@ socket.on('init_state', data => {
   applyWatchTargets(data.watch_targets || []);
   applyPortfolio(data.portfolio || {});
   if (data.settings) applySettings(data.settings);
+  if (data.daily_digest_status) applyDailyDigestStatus(data.daily_digest_status);
   if (data.risk_analysis_history) applyRiskHistory(data.risk_analysis_history);
   if (data.source_comparison) renderSourceComparison(data.source_comparison);
   if (data.source_health) renderSourceHealth(data.source_health);
@@ -722,6 +736,31 @@ socket.on('settings_error', data => {
   if (data && data.export_dir_check) renderExportDirStatus(data.export_dir_check);
 });
 
+socket.on('daily_digest_status', data => {
+  applyDailyDigestStatus(data || {});
+});
+
+socket.on('daily_digest_previewed', data => {
+  const button = document.getElementById('btnPreviewDailyDigest');
+  if (button) button.disabled = false;
+  if (!data || data.ok === false) {
+    setDailyDigestStatus((data && data.message) || '生成摘要预览失败。', false);
+    return;
+  }
+  renderDailyDigestPreview(data);
+  setDailyDigestStatus('摘要预览已生成，未发送通知。', true);
+});
+
+socket.on('daily_digest_test_result', data => {
+  const button = document.getElementById('btnTestDailyDigest');
+  if (button) button.disabled = false;
+  if (data && data.digest) renderDailyDigestPreview(data.digest);
+  setDailyDigestStatus(
+    data && data.message ? '测试发送：' + data.message : '测试发送已完成。',
+    !!(data && data.ok)
+  );
+});
+
 socket.on('threshold_error', data => alert(data.message));
 
 socket.on('update_status', data => {
@@ -836,6 +875,48 @@ socket.on('event_timeline_updated', data => {
 
 socket.on('event_timeline_error', data => {
   setTimelineStatus((data && data.message) || '事件时间轴加载失败。', 'fail');
+});
+
+socket.on('review_note_saved', data => {
+  setReviewNoteSaving(false);
+  if (data && data.ok === false) {
+    setReviewNoteEditorStatus(data.message || '复盘笔记保存失败。', 'fail');
+    return;
+  }
+  const note = data && (data.note || data.item) || {};
+  if (note.id) {
+    pendingTimelineFocus = {
+      type: 'review_note',
+      sourceId: String(note.id),
+      timestamp: note.timestamp || '',
+    };
+  }
+  closeReviewNoteEditor();
+  setTimelineStatus((data && data.message) || '复盘笔记已保存。', 'ok');
+  queueReviewNotesTimelineRefresh();
+});
+
+socket.on('review_note_deleted', data => {
+  if (data && data.ok === false) {
+    setTimelineStatus(data.message || '复盘笔记删除失败。', 'fail');
+    return;
+  }
+  selectedTimelineEventId = null;
+  closeReviewNoteEditor();
+  setTimelineStatus((data && data.message) || '复盘笔记已删除。', 'ok');
+  queueReviewNotesTimelineRefresh();
+});
+
+socket.on('review_note_error', data => {
+  setReviewNoteSaving(false);
+  const message = (data && data.message) || '复盘笔记操作失败。';
+  const editor = document.getElementById('reviewNoteEditor');
+  if (editor && !editor.hidden) setReviewNoteEditorStatus(message, 'fail');
+  else setTimelineStatus(message, 'fail');
+});
+
+socket.on('review_notes_updated', () => {
+  queueReviewNotesTimelineRefresh();
 });
 
 socket.on('review_report_exported', data => {
@@ -968,8 +1049,16 @@ socket.on('exports_folder_opened', data => {
 
 socket.on('config_import_previewed', data => {
   const text = document.getElementById('configImportText') ? document.getElementById('configImportText').value.trim() : '';
+  const previewedPayload = configImportPreviewRequestPayload;
+  configImportPreviewRequestPayload = null;
+  if (!previewedPayload || previewedPayload !== text) {
+    pendingConfigImportPayload = null;
+    pendingConfigImportPreview = null;
+    setOpsStatus('备份内容已变更，请重新预检。', false);
+    return;
+  }
   if (data && data.importable) {
-    pendingConfigImportPayload = text;
+    pendingConfigImportPayload = previewedPayload;
     pendingConfigImportPreview = data;
     setOpsStatus(renderConfigImportPreview(data), true);
     return;
@@ -980,6 +1069,7 @@ socket.on('config_import_previewed', data => {
 });
 
 socket.on('config_import_result', data => {
+  configImportPreviewRequestPayload = null;
   pendingConfigImportPayload = null;
   pendingConfigImportPreview = null;
   setOpsStatus(data && data.message ? data.message : '配置导入完成。', !!(data && data.ok));
@@ -1153,6 +1243,7 @@ function openHistory() {
 
 function closeHistory() {
   document.getElementById('historyBackdrop').classList.remove('show');
+  closeReviewNoteEditor();
 }
 
 function onHistoryBackdrop(event) {
@@ -1198,6 +1289,180 @@ function refreshHistoryCurrentView() {
 function timelineTypeLabel(type) {
   const found = EVENT_TIMELINE_TYPE_DEFS.find(item => item.type === type);
   return found ? found.label : type;
+}
+
+function selectedTimelineEvent() {
+  const events = Array.isArray(eventTimelineState.events) ? eventTimelineState.events : [];
+  return events.find(item => item.id === selectedTimelineEventId) || null;
+}
+
+function reviewNoteIdFromEvent(event) {
+  if (!event) return '';
+  const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
+  return String(payload.note_id || payload.id || event.note_id || event.id || '');
+}
+
+function reviewNoteLocalInputValue(value) {
+  const parsed = timelineDateFromValue(value) || new Date();
+  const pad = number => String(number).padStart(2, '0');
+  return [
+    parsed.getFullYear(),
+    pad(parsed.getMonth() + 1),
+    pad(parsed.getDate()),
+  ].join('-') + 'T' + pad(parsed.getHours()) + ':' + pad(parsed.getMinutes());
+}
+
+function setReviewNoteEditorStatus(message, type) {
+  const el = document.getElementById('reviewNoteEditorStatus');
+  if (!el) return;
+  el.textContent = message || '';
+  el.className = 'review-note-editor-status' + (type ? ' ' + type : '');
+}
+
+function setReviewNoteSaving(saving) {
+  const button = document.getElementById('saveReviewNoteButton');
+  if (!button) return;
+  button.disabled = Boolean(saving);
+  button.textContent = saving ? '正在保存' : '保存笔记';
+}
+
+function setReviewNoteEditorRelation(state) {
+  const relation = document.getElementById('reviewNoteRelation');
+  if (!relation) return;
+  if (!state.related_event_id) {
+    relation.textContent = '独立笔记';
+    return;
+  }
+  relation.textContent = '关联：' + timelineTypeLabel(state.related_event_type) + ' · ' + (state.related_event_title || state.related_event_id);
+}
+
+function showReviewNoteEditor(options) {
+  const state = Object.assign({
+    id: '',
+    timestamp: '',
+    title: '',
+    content: '',
+    related_event_id: '',
+    related_event_type: '',
+    related_event_title: '',
+  }, options || {});
+  reviewNoteEditorState = {
+    id: String(state.id || ''),
+    related_event_id: String(state.related_event_id || ''),
+    related_event_type: String(state.related_event_type || ''),
+    related_event_title: String(state.related_event_title || ''),
+  };
+  const editor = document.getElementById('reviewNoteEditor');
+  const heading = document.getElementById('reviewNoteEditorHeading');
+  const timestamp = document.getElementById('reviewNoteTimestamp');
+  const title = document.getElementById('reviewNoteTitle');
+  const content = document.getElementById('reviewNoteContent');
+  if (!editor || !timestamp || !title || !content) return;
+  if (heading) heading.textContent = state.id ? '编辑复盘笔记' : '新增复盘笔记';
+  timestamp.value = reviewNoteLocalInputValue(state.timestamp);
+  title.value = state.title || '';
+  content.value = state.content || '';
+  setReviewNoteEditorRelation(reviewNoteEditorState);
+  setReviewNoteEditorStatus('', '');
+  setReviewNoteSaving(false);
+  editor.hidden = false;
+  requestAnimationFrame(() => content.focus());
+}
+
+function openReviewNoteEditor() {
+  showReviewNoteEditor({ timestamp: new Date() });
+}
+
+function openReviewNoteEditorFromSelectedEvent() {
+  const event = selectedTimelineEvent();
+  if (!event || event.type === 'review_note') {
+    setTimelineStatus('请先选择一条行情、预警、分析、新闻或数据事件。', 'fail');
+    return;
+  }
+  showReviewNoteEditor({
+    timestamp: event.timestamp || new Date(),
+    related_event_id: event.id,
+    related_event_type: event.type,
+    related_event_title: event.title || timelineTypeLabel(event.type),
+  });
+}
+
+function editSelectedReviewNote() {
+  const event = selectedTimelineEvent();
+  if (!event || event.type !== 'review_note') return;
+  const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
+  showReviewNoteEditor({
+    id: reviewNoteIdFromEvent(event),
+    timestamp: payload.timestamp || event.timestamp,
+    title: payload.title || event.title || '',
+    content: payload.content || event.summary || '',
+    related_event_id: payload.related_event_id || '',
+    related_event_type: payload.related_event_type || '',
+    related_event_title: payload.related_event_title || '',
+  });
+}
+
+function closeReviewNoteEditor() {
+  const editor = document.getElementById('reviewNoteEditor');
+  if (editor) editor.hidden = true;
+  reviewNoteEditorState = { id: '', related_event_id: '', related_event_type: '', related_event_title: '' };
+  setReviewNoteEditorStatus('', '');
+  setReviewNoteSaving(false);
+}
+
+function saveReviewNote() {
+  const timestamp = document.getElementById('reviewNoteTimestamp');
+  const title = document.getElementById('reviewNoteTitle');
+  const content = document.getElementById('reviewNoteContent');
+  if (!timestamp || !title || !content) return;
+  const payload = {
+    timestamp: timestamp.value.trim(),
+    title: title.value.trim(),
+    content: content.value.trim(),
+    related_event_id: reviewNoteEditorState.related_event_id,
+    related_event_type: reviewNoteEditorState.related_event_type,
+    related_event_title: reviewNoteEditorState.related_event_title,
+  };
+  if (!payload.timestamp) {
+    setReviewNoteEditorStatus('请选择笔记时间。', 'fail');
+    timestamp.focus();
+    return;
+  }
+  if (!payload.content) {
+    setReviewNoteEditorStatus('请输入笔记内容。', 'fail');
+    content.focus();
+    return;
+  }
+  if (payload.title.length > 80 || payload.content.length > 2000) {
+    setReviewNoteEditorStatus('标题最多 80 个字符，内容最多 2000 个字符。', 'fail');
+    return;
+  }
+  if (reviewNoteEditorState.id) payload.id = reviewNoteEditorState.id;
+  setReviewNoteSaving(true);
+  setReviewNoteEditorStatus('正在保存复盘笔记...', '');
+  socket.emit('save_review_note', payload);
+}
+
+function deleteSelectedReviewNote() {
+  const event = selectedTimelineEvent();
+  if (!event || event.type !== 'review_note') return;
+  const noteId = reviewNoteIdFromEvent(event);
+  if (!noteId) {
+    setTimelineStatus('缺少笔记标识，无法删除。', 'fail');
+    return;
+  }
+  if (!window.confirm('确定删除复盘笔记“' + (event.title || '未命名笔记') + '”？')) return;
+  setTimelineStatus('正在删除复盘笔记...', '');
+  socket.emit('delete_review_note', { id: noteId });
+}
+
+function queueReviewNotesTimelineRefresh() {
+  if (reviewNotesRefreshTimer) clearTimeout(reviewNotesRefreshTimer);
+  reviewNotesRefreshTimer = setTimeout(() => {
+    reviewNotesRefreshTimer = null;
+    const backdrop = document.getElementById('historyBackdrop');
+    if (historyView === 'timeline' && backdrop && backdrop.classList.contains('show')) refreshEventTimeline();
+  }, 80);
 }
 
 function renderTimelineTypeFilters() {
@@ -1275,7 +1540,7 @@ function eventMatchesTimelineFocus(event, focus) {
   if (!event || !focus) return false;
   if (focus.type && event.type !== focus.type) return false;
   const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
-  if (focus.sourceId && String(payload.id || '') === String(focus.sourceId)) return true;
+  if (focus.sourceId && [event.id, payload.id, payload.note_id].some(value => String(value || '') === String(focus.sourceId))) return true;
   const eventTime = timelineFocusTimeKey(event.timestamp);
   const focusTime = timelineFocusTimeKey(focus.timestamp);
   if (!eventTime || !focusTime) return false;
@@ -1347,12 +1612,12 @@ function renderTimelineSummary() {
   const range = eventTimelineState.range || {};
   const statItems = [
     ['事件', summary.total || 0],
-    ['跳过', summary.skipped || 0],
     ['预警', byType.alert || 0],
+    ['笔记', byType.review_note || 0],
     ['范围', range.minutes ? Math.round(Number(range.minutes) / 60) + 'h' : '--'],
   ];
   box.innerHTML = statItems.map(item => (
-    '<div class="history-stat"><div class="history-stat-label">' + escapeHtml(item[0]) + '</div><div class="history-stat-value">' + escapeHtml(item[1]) + '</div></div>'
+    '<div class="history-stat"><div class="history-stat-label">' + escapeHtml(item[0]) + '</div><div class="history-stat-value">' + escapeHtml(String(item[1])) + '</div></div>'
   )).join('');
 }
 
@@ -1369,7 +1634,9 @@ function renderTimelineList() {
     '<span class="timeline-event-time">' + escapeHtml(timelineEventTime(event.timestamp).slice(11) || '--') + '</span>',
     '<span class="timeline-event-main">',
     '<span class="timeline-event-title">' + escapeHtml(event.title || timelineTypeLabel(event.type)) + '</span>',
-    '<span class="timeline-event-summary">' + escapeHtml(event.summary || '暂无详情') + '</span>',
+    String(event.summary || '').trim() && String(event.summary || '').trim() !== String(event.title || '').trim()
+      ? '<span class="timeline-event-summary">' + escapeHtml(event.summary) + '</span>'
+      : '',
     '<span class="timeline-event-type">' + escapeHtml(timelineTypeLabel(event.type)) + '</span>',
     '</span>',
     '</button>',
@@ -1438,13 +1705,28 @@ function renderTimelineDetail() {
     cells.push(detailCell('价格点', payload.points));
     cells.push(detailCell('USD/oz', usd.start == null ? '' : usd.start + ' -> ' + usd.end));
     cells.push(detailCell('RMB/克', rmb.start == null ? '' : rmb.start + ' -> ' + rmb.end));
+  } else if (event.type === 'review_note') {
+    if (payload.updated_at) cells.push(detailCell('最后更新', timelineEventTime(payload.updated_at)));
+    if (payload.related_event_id) {
+      cells.push(detailCell('关联类型', timelineTypeLabel(payload.related_event_type)));
+      cells.push(detailCell('关联事件', payload.related_event_title || payload.related_event_id));
+    }
   }
+  const actions = event.type === 'review_note'
+    ? [
+      '<div class="timeline-detail-actions">',
+      '<button class="settings-cancel" type="button" onclick="editSelectedReviewNote()">编辑笔记</button>',
+      '<button class="dialog-danger" type="button" onclick="deleteSelectedReviewNote()">删除笔记</button>',
+      '</div>',
+    ].join('')
+    : '<div class="timeline-detail-actions"><button class="settings-cancel" type="button" onclick="openReviewNoteEditorFromSelectedEvent()">关联创建笔记</button></div>';
   detail.innerHTML = [
     '<div class="timeline-detail-title">' + escapeHtml(event.title || timelineTypeLabel(event.type)) + '</div>',
     '<div class="timeline-detail-meta">' + escapeHtml(timelineEventTime(event.timestamp)) + ' · ' + escapeHtml(event.source || '--') + '</div>',
     '<div class="timeline-detail-summary">' + escapeHtml(payload.message || payload.content || event.summary || '暂无详情') + '</div>',
     '<div class="timeline-detail-grid">' + cells.join('') + '</div>',
     extras,
+    actions,
   ].join('');
 }
 
@@ -1593,17 +1875,38 @@ function configImportSecretActionLabel(action) {
   return '保留现有';
 }
 
+function configImportFormatText(data) {
+  const schemaVersion = Number(data && data.schema_version);
+  const expectedSchemaVersion = Number(data && data.expected_schema_version);
+  const format = data && typeof data.format === 'string' ? data.format.trim() : '';
+  const sourceAppVersion = data && typeof data.source_app_version === 'string'
+    ? data.source_app_version.trim()
+    : '';
+  if (data && data.needs_migration) {
+    return '旧版备份将在导入时迁移' + (sourceAppVersion ? '（来源版本 ' + sourceAppVersion + '）' : '');
+  }
+  const resolvedVersion = Number.isInteger(schemaVersion) && schemaVersion >= 0
+    ? schemaVersion
+    : (Number.isInteger(expectedSchemaVersion) && expectedSchemaVersion >= 0 ? expectedSchemaVersion : null);
+  const formatText = resolvedVersion !== null ? 'schema v' + resolvedVersion : (format || '当前格式');
+  return '当前备份格式：' + formatText + (sourceAppVersion ? '（来源版本 ' + sourceAppVersion + '）' : '');
+}
+
 function renderConfigImportPreview(data) {
   if (!data || data.ok === false || data.importable === false) {
     return (data && data.message) || '配置导入预检失败。';
   }
-  const sections = Array.isArray(data.sections) ? data.sections.map(configImportSectionLabel) : [];
+  const rawSections = Array.isArray(data.sections) ? data.sections : [];
+  const sections = rawSections.map(configImportSectionLabel);
   const ignored = data.ignored && typeof data.ignored === 'object' ? data.ignored : {};
-  const ignoredCount = []
+  const ignoredFieldCount = []
     .concat(Array.isArray(ignored.settings) ? ignored.settings : [])
     .concat(Array.isArray(ignored.thresholds) ? ignored.thresholds : [])
     .length;
-  const secretActions = data.secret_actions && typeof data.secret_actions === 'object' ? data.secret_actions : {};
+  const ignoredProfileCount = Array.isArray(ignored.alert_profiles) ? ignored.alert_profiles.length : 0;
+  const secretActions = rawSections.includes('settings') && data.secret_actions && typeof data.secret_actions === 'object'
+    ? data.secret_actions
+    : {};
   const secretSummary = Object.keys(secretActions).reduce((acc, key) => {
     const label = configImportSecretActionLabel(secretActions[key]);
     acc[label] = (acc[label] || 0) + 1;
@@ -1612,8 +1915,10 @@ function renderConfigImportPreview(data) {
   const secretText = Object.keys(secretSummary).map(label => label + ' ' + secretSummary[label] + ' 项').join('，');
   const parts = [
     '配置预检通过：将导入' + (sections.length ? sections.join('、') : '配置'),
+    configImportFormatText(data),
   ];
-  if (ignoredCount) parts.push('忽略不支持字段 ' + ignoredCount + ' 项');
+  if (ignoredFieldCount) parts.push('忽略不支持字段 ' + ignoredFieldCount + ' 项');
+  if (ignoredProfileCount) parts.push('忽略重复、无效或超限策略模板 ' + ignoredProfileCount + ' 项');
   if (secretText) parts.push('敏感字段：' + secretText);
   parts.push('再次点击导入确认');
   return parts.join('；') + '。';
@@ -1625,6 +1930,11 @@ function importConfig() {
     setOpsStatus('请先粘贴配置备份 JSON。', false);
     return;
   }
+  if (configImportPreviewRequestPayload !== null) {
+    const changed = configImportPreviewRequestPayload !== text;
+    setOpsStatus(changed ? '备份内容已变更，当前预检返回后请重新预检。' : '正在预检导入配置...', !changed);
+    return;
+  }
   if (pendingConfigImportPayload === text && pendingConfigImportPreview && pendingConfigImportPreview.importable) {
     setOpsStatus('正在导入配置...', true);
     socket.emit('import_config', { payload: text });
@@ -1634,8 +1944,25 @@ function importConfig() {
   }
   pendingConfigImportPayload = null;
   pendingConfigImportPreview = null;
+  configImportPreviewRequestPayload = text;
   setOpsStatus('正在预检导入配置...', true);
   socket.emit('preview_import_config', { payload: text });
+}
+
+function invalidateConfigImportPreviewOnInput() {
+  const hasPreviewState = configImportPreviewRequestPayload !== null
+    || pendingConfigImportPayload !== null
+    || pendingConfigImportPreview !== null;
+  if (!hasPreviewState) return;
+  configImportPreviewRequestPayload = null;
+  pendingConfigImportPayload = null;
+  pendingConfigImportPreview = null;
+  setOpsStatus('备份内容已变更，请重新预检。', false);
+}
+
+const configImportTextInput = document.getElementById('configImportText');
+if (configImportTextInput) {
+  configImportTextInput.addEventListener('input', invalidateConfigImportPreviewOnInput);
 }
 
 function exportDiagnostics() {
@@ -1723,6 +2050,74 @@ function applyPlatformLabels() {
   setRowHidden('floatingTopmostRow', menuBarMode);
 }
 
+function dailyDigestSelectedChannels() {
+  const channels = [];
+  if (appSettings.daily_digest_email_enabled !== false) channels.push('email');
+  if (appSettings.daily_digest_webhook_enabled) channels.push('webhook');
+  return channels;
+}
+
+function dailyDigestChannelText(channels) {
+  const labels = { email: '邮件', webhook: 'Webhook' };
+  const selected = Array.isArray(channels) ? channels : [];
+  return selected.length ? selected.map(channel => labels[channel] || channel).join('、') : '未选择';
+}
+
+function dailyDigestTimestamp(value) {
+  const text = String(value || '').trim();
+  return text ? text.replace('T', ' ').slice(0, 16) : '';
+}
+
+function setDailyDigestStatus(message, ok) {
+  const status = document.getElementById('dailyDigestStatus');
+  if (!status) return;
+  status.textContent = message || '';
+  status.className = 'test-email-status' + (ok === true ? ' ok' : ok === false ? ' fail' : '');
+}
+
+function applyDailyDigestStatus(data) {
+  const next = data && typeof data === 'object' ? data : {};
+  dailyDigestStatusState = Object.assign({}, dailyDigestStatusState, next, {
+    state: Object.assign({}, dailyDigestStatusState.state || {}, next.state || {}),
+    schedule: Object.assign({}, dailyDigestStatusState.schedule || {}, next.schedule || {}),
+  });
+  const enabled = dailyDigestStatusState.enabled != null
+    ? !!dailyDigestStatusState.enabled
+    : !!appSettings.daily_digest_enabled;
+  const time = dailyDigestStatusState.time || appSettings.daily_digest_time || '20:00';
+  const channels = Array.isArray(dailyDigestStatusState.channels)
+    ? dailyDigestStatusState.channels
+    : dailyDigestSelectedChannels();
+  const state = dailyDigestStatusState.state || {};
+  const schedule = dailyDigestStatusState.schedule || {};
+  const parts = [enabled ? '已启用，每日 ' + time : '未启用', '渠道：' + dailyDigestChannelText(channels)];
+  const completedAt = dailyDigestTimestamp(state.last_completed_at);
+  const testedAt = dailyDigestTimestamp(state.last_test_at);
+  if (completedAt) parts.push('最近计划执行：' + completedAt);
+  else if (enabled && schedule.reason === 'before_schedule') parts.push('等待今日计划时间');
+  else if (enabled && schedule.reason === 'due') parts.push('等待任务执行');
+  else if (enabled && schedule.reason === 'invalid_schedule') parts.push('发送时间无效');
+  if (testedAt) parts.push('最近测试：' + testedAt);
+  if (state.last_message) parts.push(state.last_message);
+  const okStatuses = ['queued'];
+  const failStatuses = ['partial', 'skipped'];
+  const statusFlag = okStatuses.includes(state.last_status)
+    ? true
+    : failStatuses.includes(state.last_status) || schedule.reason === 'invalid_schedule'
+      ? false
+      : null;
+  setDailyDigestStatus(parts.join('；'), statusFlag);
+}
+
+function renderDailyDigestPreview(data) {
+  const preview = document.getElementById('dailyDigestPreview');
+  if (!preview) return;
+  const digest = data && data.digest ? data.digest : (data || {});
+  const subject = String(digest.subject || '').trim();
+  const message = String(digest.message || '').trim();
+  preview.value = [subject, message].filter(Boolean).join('\n\n');
+}
+
 function applySettings(data) {
   appSettings = Object.assign({}, appSettings, data);
   applyPlatformLabels();
@@ -1767,6 +2162,15 @@ function applySettings(data) {
   document.getElementById('setWebhookWarning').checked = appSettings.webhook_warning_enabled !== false;
   document.getElementById('setWebhookCritical').checked = appSettings.webhook_critical_enabled !== false;
   document.getElementById('setWebhookVolatility').checked = appSettings.webhook_volatility_enabled !== false;
+  document.getElementById('setDailyDigestEnabled').checked = !!appSettings.daily_digest_enabled;
+  document.getElementById('setDailyDigestTime').value = appSettings.daily_digest_time || '20:00';
+  document.getElementById('setDailyDigestEmail').checked = appSettings.daily_digest_email_enabled !== false;
+  document.getElementById('setDailyDigestWebhook').checked = !!appSettings.daily_digest_webhook_enabled;
+  applyDailyDigestStatus(Object.assign({}, dailyDigestStatusState, {
+    enabled: !!appSettings.daily_digest_enabled,
+    time: appSettings.daily_digest_time || '20:00',
+    channels: dailyDigestSelectedChannels(),
+  }));
   document.getElementById('testEmailStatus').textContent = '';
   document.getElementById('testEmailStatus').className = 'test-email-status';
   const webhookStatus = document.getElementById('testWebhookStatus');
@@ -1957,7 +2361,7 @@ function testRiskModel() {
 }
 
 function switchSettingsTab(tab) {
-  const tabs = ['general', 'email', 'webhook', 'risk', 'ops'];
+  const tabs = ['general', 'email', 'webhook', 'digest', 'risk', 'ops'];
   tabs.forEach(name => {
     const active = tab === name;
     const suffix = name.charAt(0).toUpperCase() + name.slice(1);
@@ -1968,6 +2372,7 @@ function switchSettingsTab(tab) {
   const body = document.querySelector('#settingsBackdrop .settings-body');
   if (body) body.scrollTop = 0;
   if (tab === 'risk') refreshRiskModels();
+  if (tab === 'digest') socket.emit('get_daily_digest_status');
 }
 
 function openSettings() {
@@ -2021,6 +2426,10 @@ function saveSettings() {
     webhook_warning_enabled: document.getElementById('setWebhookWarning').checked,
     webhook_critical_enabled: document.getElementById('setWebhookCritical').checked,
     webhook_volatility_enabled: document.getElementById('setWebhookVolatility').checked,
+    daily_digest_enabled: document.getElementById('setDailyDigestEnabled').checked,
+    daily_digest_time: document.getElementById('setDailyDigestTime').value,
+    daily_digest_email_enabled: document.getElementById('setDailyDigestEmail').checked,
+    daily_digest_webhook_enabled: document.getElementById('setDailyDigestWebhook').checked,
     risk_assistant_enabled: document.getElementById('setRiskAssistantEnabled').checked,
     risk_assistant_provider: document.getElementById('setRiskAssistantProvider').value,
     risk_assistant_depth: document.getElementById('setRiskAssistantDepth').value,
@@ -2091,6 +2500,20 @@ socket.on('test_webhook_result', data => {
   statusEl.textContent = data && data.message ? data.message : 'Webhook 测试完成。';
   statusEl.className = 'test-email-status ' + (data && data.ok ? 'ok' : 'fail');
 });
+
+function previewDailyDigest() {
+  const button = document.getElementById('btnPreviewDailyDigest');
+  if (button) button.disabled = true;
+  setDailyDigestStatus('正在生成摘要预览...', null);
+  socket.emit('preview_daily_digest');
+}
+
+function testDailyDigest() {
+  const button = document.getElementById('btnTestDailyDigest');
+  if (button) button.disabled = true;
+  setDailyDigestStatus('正在测试发送每日摘要...', null);
+  socket.emit('test_daily_digest');
+}
 
 function testAlert() {
   const statusEl = document.getElementById('testAlertStatus');
@@ -2480,13 +2903,26 @@ function renderRiskStructured(structured) {
 
 function applyRiskHistory(data) {
   riskAnalysisHistory = Array.isArray(data && data.items) ? data.items : [];
+  riskComparisonSelection = [];
+  const comparison = document.getElementById('riskComparison');
+  if (comparison) {
+    comparison.innerHTML = '';
+    comparison.hidden = true;
+  }
   renderRiskHistory();
 }
 
 function renderRiskHistory() {
   const list = document.getElementById('riskHistoryList');
   const clearBtn = document.getElementById('riskClearHistoryButton');
+  const compareBtn = document.getElementById('riskCompareButton');
   if (clearBtn) clearBtn.disabled = riskAnalysisHistory.length === 0;
+  if (compareBtn) {
+    compareBtn.disabled = riskComparisonSelection.length !== 2;
+    compareBtn.textContent = riskComparisonSelection.length
+      ? '对比所选（' + riskComparisonSelection.length + '/2）'
+      : '对比所选';
+  }
   if (!riskAnalysisHistory.length) {
     list.innerHTML = '<div class="risk-history-empty">暂无历史记录</div>';
     return;
@@ -2499,16 +2935,208 @@ function renderRiskHistory() {
     const samples = evidence.history_points != null || evidence.kline_points != null
       ? ' · 历史' + (evidence.history_points ?? 0) + '/K线' + (evidence.kline_points ?? 0)
       : '';
+    const selectedForComparison = riskComparisonSelection.includes(index);
     return [
-      '<div class="risk-history-item">',
+      '<div class="risk-history-item' + (selectedForComparison ? ' selected' : '') + '">',
       '<button class="risk-history-main" type="button" onclick="openRiskHistoryItem(' + index + ')">',
       '<div class="risk-history-time">' + escapeHtml(item.analysis_time || '--') + escapeHtml(quality) + escapeHtml(samples) + '</div>',
       '<div class="risk-history-text">' + escapeHtml(firstLine) + '</div>',
       '</button>',
+      '<button class="btn-clear-sm btn-muted-sm risk-history-compare" type="button" aria-pressed="' + String(selectedForComparison) + '" onclick="toggleRiskComparisonItem(' + index + ')">' + (selectedForComparison ? '已选' : '选择对比') + '</button>',
       '<button class="btn-clear-sm btn-muted-sm risk-history-review" type="button" data-risk-timeline-index="' + index + '" onclick="window.openRiskTimelineFromHistory(' + index + ')">查看复盘</button>',
       '</div>',
     ].join('');
   }).join('');
+}
+
+function clearRenderedRiskComparison() {
+  const comparison = document.getElementById('riskComparison');
+  if (!comparison) return;
+  comparison.innerHTML = '';
+  comparison.hidden = true;
+}
+
+function toggleRiskComparisonItem(index) {
+  if (!Number.isInteger(index) || !riskAnalysisHistory[index]) return;
+  const selectedIndex = riskComparisonSelection.indexOf(index);
+  if (selectedIndex >= 0) {
+    riskComparisonSelection.splice(selectedIndex, 1);
+    clearRenderedRiskComparison();
+    applyRiskStatus('已取消该条对比选择。', '');
+    renderRiskHistory();
+    return;
+  }
+  if (riskComparisonSelection.length >= 2) {
+    applyRiskStatus('最多选择两条风险分析，请先取消一条已选记录。', 'error');
+    return;
+  }
+  riskComparisonSelection.push(index);
+  clearRenderedRiskComparison();
+  applyRiskStatus(
+    riskComparisonSelection.length === 2 ? '已选择两条风险分析，可以开始对比。' : '已选择一条风险分析，请再选择一条。',
+    ''
+  );
+  renderRiskHistory();
+}
+
+function riskComparisonValue(value) {
+  if (value === null || value === undefined || value === '') return '暂无';
+  if (typeof value === 'number' && !Number.isFinite(value)) return '暂无';
+  return String(value);
+}
+
+function riskComparisonNumber(value, suffix) {
+  if (value === null || value === undefined || value === '') return '暂无';
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '暂无';
+  return number.toLocaleString('en-US', { maximumFractionDigits: 4 }) + (suffix || '');
+}
+
+function riskComparisonSource(snapshot, sourceKey, cachedKey) {
+  const source = snapshot && snapshot[sourceKey];
+  if (!source) return '暂无';
+  const cached = snapshot[cachedKey];
+  const state = cached === true ? '缓存' : cached === false ? '实时' : '状态暂无';
+  return String(source) + ' · ' + state;
+}
+
+function riskComparisonQuality(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return '暂无';
+  const marketQuality = snapshot.market_quality && Object.keys(snapshot.market_quality).length
+    ? snapshot.market_quality
+    : null;
+  const quality = marketQuality || (snapshot.data_quality && Object.keys(snapshot.data_quality).length ? snapshot.data_quality : null);
+  if (!quality) return '暂无';
+  const score = riskComparisonValue(quality.score);
+  const label = riskComparisonValue(quality.label || quality.level);
+  if (score === '暂无' && label === '暂无') return '暂无';
+  if (score === '暂无') return label;
+  if (label === '暂无') return score + '分';
+  return score + '分 · ' + label;
+}
+
+function riskComparisonSamples(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return '暂无';
+  const values = [
+    ['历史', snapshot.history_points, '点'],
+    ['K线', snapshot.kline_points, '根'],
+    ['资讯', snapshot.news_count, '条'],
+  ].filter(item => item[1] !== null && item[1] !== undefined && item[1] !== '');
+  if (!values.length) return '暂无';
+  return values.map(item => item[0] + ' ' + riskComparisonNumber(item[1], item[2])).join(' · ');
+}
+
+function riskComparisonEntryTime(item) {
+  if (!item || typeof item !== 'object') return '';
+  return item.analysis_time || (item.snapshot && item.snapshot.analysis_time) || '';
+}
+
+function riskComparisonParsedTime(item) {
+  const value = riskComparisonEntryTime(item);
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function riskComparisonRow(field, label, earlierValue, laterValue, sideLabels) {
+  const earlierText = riskComparisonValue(earlierValue);
+  const laterText = riskComparisonValue(laterValue);
+  const changedClass = earlierText === laterText ? '' : ' changed';
+  const labels = sideLabels || { earlier: '较早', later: '较新' };
+  return [
+    '<div class="risk-comparison-row' + changedClass + '" data-field="' + escapeHtml(field) + '">',
+    '<div class="risk-comparison-label">' + escapeHtml(label) + '</div>',
+    '<div class="risk-comparison-value" data-side="earlier" data-side-label="' + escapeHtml(labels.earlier) + '">' + escapeHtml(earlierText) + '</div>',
+    '<div class="risk-comparison-value" data-side="later" data-side-label="' + escapeHtml(labels.later) + '">' + escapeHtml(laterText) + '</div>',
+    '</div>',
+  ].join('');
+}
+
+function renderRiskComparison(earlier, later, sideLabels) {
+  const comparison = document.getElementById('riskComparison');
+  if (!comparison) return;
+  const labels = sideLabels || { earlier: '较早', later: '较新' };
+  const earlierSnapshot = earlier && earlier.snapshot && typeof earlier.snapshot === 'object' ? earlier.snapshot : {};
+  const laterSnapshot = later && later.snapshot && typeof later.snapshot === 'object' ? later.snapshot : {};
+  const earlierStructured = earlier && earlier.structured && typeof earlier.structured === 'object' ? earlier.structured : {};
+  const laterStructured = later && later.structured && typeof later.structured === 'object' ? later.structured : {};
+  const earlierScorecard = earlierSnapshot.risk_scorecard && typeof earlierSnapshot.risk_scorecard === 'object' ? earlierSnapshot.risk_scorecard : {};
+  const laterScorecard = laterSnapshot.risk_scorecard && typeof laterSnapshot.risk_scorecard === 'object' ? laterSnapshot.risk_scorecard : {};
+  const structuredFields = [
+    ['risk_level', '风险等级'],
+    ['trend_direction', '趋势方向'],
+    ['data_credibility', '数据可信度'],
+    ['main_factors', '主要影响因素'],
+    ['watch_range', '观察价格区间'],
+    ['follow_up', '后续关注'],
+  ];
+  const scorecardFields = [
+    ['overall_risk', '总体风险'],
+    ['trend_strength', '趋势强度'],
+    ['volatility_risk', '波动风险'],
+    ['fx_impact', '汇率影响'],
+    ['event_risk', '事件风险'],
+    ['data_credibility', '数据可信度'],
+  ];
+  const snapshotFields = [
+    ['price_rmb', '人民币克价', item => riskComparisonNumber(item.price_rmb, ' 元/克')],
+    ['price_usd', '国际金价', item => riskComparisonNumber(item.price_usd, ' 美元/盎司')],
+    ['usdcny_rate', '美元人民币汇率', item => riskComparisonNumber(item.usdcny_rate, '')],
+    ['gold_source', '金价来源', item => riskComparisonSource(item, 'gold_source', 'gold_cached')],
+    ['rate_source', '汇率来源', item => riskComparisonSource(item, 'rate_source', 'rate_cached')],
+    ['quality', '行情质量', item => riskComparisonQuality(item)],
+    ['samples', '样本规模', item => riskComparisonSamples(item)],
+  ];
+  const section = (title, rows) => [
+    '<section class="risk-comparison-section">',
+    '<div class="risk-comparison-title">' + escapeHtml(title) + '</div>',
+    '<div class="risk-comparison-grid">' + rows.join('') + '</div>',
+    '</section>',
+  ].join('');
+  const earlierProvider = [earlier.provider, earlier.model].filter(Boolean).join(' / ') || '暂无';
+  const laterProvider = [later.provider, later.model].filter(Boolean).join(' / ') || '暂无';
+  comparison.innerHTML = [
+    '<div class="risk-comparison-head">',
+    '<div class="risk-block-title">风险分析对比</div>',
+    '<div class="risk-comparison-sides">',
+    '<div class="risk-comparison-side" data-side="earlier"><strong>' + escapeHtml(labels.earlier) + '</strong><span>' + escapeHtml(riskComparisonValue(riskComparisonEntryTime(earlier))) + '</span><span>' + escapeHtml(earlierProvider) + '</span></div>',
+    '<div class="risk-comparison-side" data-side="later"><strong>' + escapeHtml(labels.later) + '</strong><span>' + escapeHtml(riskComparisonValue(riskComparisonEntryTime(later))) + '</span><span>' + escapeHtml(laterProvider) + '</span></div>',
+    '</div>',
+    '</div>',
+    section('结构化字段', structuredFields.map(item => riskComparisonRow(item[0], item[1], earlierStructured[item[0]], laterStructured[item[0]], labels))),
+    section('风险评分卡', scorecardFields.map(item => riskComparisonRow(item[0], item[1], earlierScorecard[item[0]], laterScorecard[item[0]], labels))),
+    section('行情快照', snapshotFields.map(item => riskComparisonRow(item[0], item[1], item[2](earlierSnapshot), item[2](laterSnapshot), labels))),
+  ].join('');
+  comparison.hidden = false;
+}
+
+function compareSelectedRiskHistory() {
+  if (riskComparisonSelection.length !== 2) {
+    applyRiskStatus('请选择两条风险分析后再对比。', 'error');
+    return;
+  }
+  const selected = riskComparisonSelection.map(index => riskAnalysisHistory[index]);
+  if (selected.some(item => !item)) {
+    riskComparisonSelection = [];
+    clearRenderedRiskComparison();
+    renderRiskHistory();
+    applyRiskStatus('所选历史记录已更新，请重新选择两条风险分析。', 'error');
+    return;
+  }
+  let earlier = selected[0];
+  let later = selected[1];
+  const earlierTime = riskComparisonParsedTime(earlier);
+  const laterTime = riskComparisonParsedTime(later);
+  const timesAreComparable = earlierTime !== null && laterTime !== null;
+  const sideLabels = timesAreComparable
+    ? { earlier: '较早', later: '较新' }
+    : { earlier: '记录一', later: '记录二' };
+  if (timesAreComparable && earlierTime > laterTime) {
+    earlier = selected[1];
+    later = selected[0];
+  }
+  renderRiskComparison(earlier, later, sideLabels);
+  applyRiskStatus('已生成本地风险分析对比，不会调用模型。', '');
 }
 
 function openRiskHistoryItem(index) {

@@ -1,7 +1,14 @@
 from datetime import datetime, timedelta
 
 
-EVENT_TIMELINE_TYPES = ("price_summary", "alert", "risk_analysis", "news", "data_status")
+EVENT_TIMELINE_TYPES = (
+    "price_summary",
+    "alert",
+    "risk_analysis",
+    "news",
+    "data_status",
+    "review_note",
+)
 EVENT_TIMELINE_DEFAULT_MINUTES = 60
 EVENT_TIMELINE_ALLOWED_MINUTES = (60, 240, 1440, 10080)
 EVENT_TIMELINE_MAX_LIMIT = 500
@@ -398,6 +405,40 @@ def build_data_status_timeline_events(
     return events, skipped
 
 
+def build_review_note_timeline_events(start_time, end_time, review_notes=None):
+    events = []
+    skipped = 0
+    for index, item in enumerate(list(review_notes or [])):
+        if not isinstance(item, dict):
+            skipped += 1
+            continue
+        event_time = parse_iso_datetime(item.get("timestamp"))
+        if not event_time:
+            skipped += 1
+            continue
+        if event_time < start_time or event_time > end_time:
+            continue
+        content = str(item.get("content") or "").strip()
+        if not content:
+            skipped += 1
+            continue
+        note_id = str(item.get("id") or index)
+        title = str(item.get("title") or "复盘笔记").strip() or "复盘笔记"
+        summary = " ".join(content.split())[:180]
+        event = make_timeline_event(
+            "review_note",
+            event_time.isoformat(timespec="seconds"),
+            title[:80],
+            summary,
+            "review_notes",
+            dict(item),
+            event_id=f"review-note-{note_id}",
+        )
+        if event:
+            events.append(event)
+    return events, skipped
+
+
 def build_event_timeline_events(
     start_time,
     end_time,
@@ -408,6 +449,7 @@ def build_event_timeline_events(
     fetch_status=None,
     source_health_state=None,
     source_comparison_state=None,
+    review_notes=None,
     today_date=None,
     news_key=None,
     now_factory=None,
@@ -444,6 +486,14 @@ def build_event_timeline_events(
         )
         events.extend(built)
         skipped += count
+    if "review_note" in selected:
+        built, count = build_review_note_timeline_events(
+            start_time,
+            end_time,
+            review_notes=review_notes,
+        )
+        events.extend(built)
+        skipped += count
 
     events.sort(key=lambda item: item.get("timestamp", ""))
     return events, skipped
@@ -460,6 +510,7 @@ def build_event_timeline_state(
     fetch_status=None,
     source_health_state=None,
     source_comparison_state=None,
+    review_notes=None,
     today_date=None,
     news_key=None,
     now_factory=None,
@@ -479,6 +530,7 @@ def build_event_timeline_state(
         fetch_status=fetch_status,
         source_health_state=source_health_state,
         source_comparison_state=source_comparison_state,
+        review_notes=review_notes,
         today_date=today_date,
         news_key=news_key,
         now_factory=now_factory,
@@ -721,6 +773,7 @@ def build_review_report(timeline_state):
         f"- 风险分析：{by_type.get('risk_analysis', 0)}",
         f"- 新闻：{by_type.get('news', 0)}",
         f"- 数据状态：{by_type.get('data_status', 0)}",
+        f"- 复盘笔记：{by_type.get('review_note', 0)}",
         "",
         "## 关键事件",
     ])
@@ -749,6 +802,26 @@ def build_review_report(timeline_state):
     lines.extend(build_alert_followup_report_lines(events, price_series))
     add_section("风险分析记录", "risk_analysis", "暂无风险分析记录。")
     add_section("新闻回顾", "news", "暂无相关新闻。")
+    lines.extend(["", "## 复盘笔记"])
+    note_events = [
+        event
+        for event in events
+        if isinstance(event, dict) and event.get("type") == "review_note"
+    ]
+    if not note_events:
+        lines.append("暂无复盘笔记。")
+    else:
+        for event in note_events:
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            content = str(payload.get("content") or event.get("summary") or "").strip()
+            lines.extend([
+                f"### {event.get('timestamp', '--')} {event.get('title', '复盘笔记')}",
+                content or "暂无内容。",
+            ])
+            related_title = str(payload.get("related_event_title") or "").strip()
+            if related_title:
+                lines.append(f"- 关联事件：{related_title}")
+            lines.append("")
     lines.extend(["", "## 数据质量结论"])
     lines.extend(build_data_quality_report_lines(events, summary, price_series))
     add_section("数据状态", "data_status", "暂无数据状态异常。")

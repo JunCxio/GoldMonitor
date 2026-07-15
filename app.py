@@ -20,14 +20,18 @@ from flask_socketio import SocketIO, emit
 from goldmonitor import alert_profiles as alert_profiles_core
 from goldmonitor import app_state as app_state_core
 from goldmonitor import desktop_ui as desktop_ui_core
+from goldmonitor import daily_digest as daily_digest_core
 from goldmonitor import event_timeline as event_timeline_core
+from goldmonitor import market_adapters as market_adapters_core
 from goldmonitor import market_data as market_data_core
 from goldmonitor import news as news_core
 from goldmonitor import notifications as notifications_core
 from goldmonitor import platform as platform_core
 from goldmonitor import portfolio as portfolio_core
 from goldmonitor import portfolio_alerts as portfolio_alerts_core
+from goldmonitor import review_notes as review_notes_core
 from goldmonitor import risk_analysis as risk_analysis_core
+from goldmonitor import scheduler as scheduler_core
 from goldmonitor import settings_store as settings_store_core
 from goldmonitor import storage_manifest as storage_manifest_core
 from goldmonitor import support_files as support_files_core
@@ -50,7 +54,7 @@ app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 OFFICIAL_UPDATE_HOST = "github.com"
@@ -137,8 +141,10 @@ EXPORT_DIR = os.path.join(APPDATA_DIR, "exports")
 UPDATE_INSTALLER_NAME = "GoldMonitor-macOS.dmg" if sys.platform == "darwin" else "GoldMonitorSetup.exe"
 NEWS_CACHE_PATH = os.path.join(APPDATA_DIR, "news.json")
 RISK_ANALYSIS_HISTORY_PATH = os.path.join(APPDATA_DIR, "risk_analysis_history.json")
+REVIEW_NOTES_PATH = os.path.join(APPDATA_DIR, "review_notes.json")
 PRICE_HISTORY_PATH = os.path.join(APPDATA_DIR, "price_history.json")
 APP_LOG_PATH = os.path.join(APPDATA_DIR, "GoldMonitor.log")
+DAILY_DIGEST_STATE_PATH = os.path.join(APPDATA_DIR, "daily_digest_state.json")
 NEWS_REFRESH_INTERVAL = 15 * 60
 NEWS_LIMIT = 20
 RISK_ANALYSIS_HISTORY_LIMIT = 20
@@ -148,7 +154,14 @@ PRICE_HISTORY_SAVE_INTERVAL_SECONDS = 60
 ALERT_LOG_MEMORY_LIMIT = 50
 ALERT_LOG_EXPORT_LIMIT = 1000
 ALERT_LOG_DB_LIMIT = 5000
-EVENT_TIMELINE_TYPES = ("price_summary", "alert", "risk_analysis", "news", "data_status")
+EVENT_TIMELINE_TYPES = (
+    "price_summary",
+    "alert",
+    "risk_analysis",
+    "news",
+    "data_status",
+    "review_note",
+)
 EVENT_TIMELINE_DEFAULT_MINUTES = 60
 EVENT_TIMELINE_ALLOWED_MINUTES = (60, 240, 1440, 10080)
 EVENT_TIMELINE_MAX_LIMIT = 500
@@ -244,6 +257,10 @@ DEFAULT_SETTINGS = {
     "alert_quiet_end": "",
     "email_subject_template": DEFAULT_EMAIL_SUBJECT_TEMPLATE,
     "email_body_template": DEFAULT_EMAIL_BODY_TEMPLATE,
+    "daily_digest_enabled": False,
+    "daily_digest_time": "20:00",
+    "daily_digest_email_enabled": True,
+    "daily_digest_webhook_enabled": False,
     # 风险分析助手
     "risk_assistant_enabled": True,
     "risk_assistant_provider": "deepseek",
@@ -290,6 +307,8 @@ settings_lock = threading.RLock()
 risk_history_lock = threading.RLock()
 last_update_status_lock = threading.RLock()
 last_export_status_lock = threading.RLock()
+daily_digest_lock = threading.Lock()
+review_notes_lock = threading.RLock()
 price_usd = None
 price_rmb = None
 previous_usd = None
@@ -332,6 +351,7 @@ volatility_config = {"percent": None, "minutes": 10, "enabled": False}
 alert_profiles = []
 last_volatility_check = None
 watch_targets = []
+review_notes = []
 portfolio_positions = []
 portfolio_transactions = []
 portfolio_alerts = []
@@ -359,6 +379,7 @@ last_export_status = {}
 _credential_test_store = None
 _alert_dialog_lock = threading.Lock()
 _alert_dialog_active = False
+_daily_digest_scheduler_started = False
 
 
 # ---------- 设置与系统集成 ----------
@@ -846,6 +867,55 @@ def reset_watch_target(target_id):
         watch_targets[index] = normalize_watch_target(updated, existing=watch_targets[index])
         watch_targets = save_watch_targets(watch_targets)
         return True, get_watch_targets_state()
+
+
+def _generate_review_note_id():
+    return review_notes_core.generate_review_note_id()
+
+
+def _review_note_store(now_factory=None):
+    return review_notes_core.ReviewNoteStore(
+        REVIEW_NOTES_PATH,
+        now_factory=now_factory or datetime.now,
+        id_factory=_generate_review_note_id,
+    )
+
+
+def load_review_notes():
+    return _review_note_store().load()
+
+
+def save_review_notes(items=None):
+    items = review_notes if items is None else items
+    return _review_note_store().save(items)
+
+
+def get_review_notes_state():
+    with review_notes_lock:
+        return review_notes_core.review_notes_state(review_notes)
+
+
+def upsert_review_note(data):
+    global review_notes
+    with review_notes_lock:
+        next_notes, note = review_notes_core.upsert_review_note(
+            review_notes,
+            data,
+            now_factory=datetime.now,
+            id_factory=_generate_review_note_id,
+        )
+        review_notes = save_review_notes(next_notes)
+        return get_review_notes_state(), note
+
+
+def delete_review_note_by_id(note_id):
+    global review_notes
+    with review_notes_lock:
+        next_notes, deleted = review_notes_core.delete_review_note(review_notes, note_id)
+        if not deleted:
+            return False, get_review_notes_state()
+        review_notes = save_review_notes(next_notes)
+        return True, get_review_notes_state()
 
 
 def _watch_target_price_for_mode(mode):
@@ -1448,12 +1518,18 @@ def set_startup_enabled(enabled):
         return False, str(exc)
 
 
-def apply_settings(data):
-    saved = save_settings(data)
+def _apply_startup_setting(saved):
     ok, error = set_startup_enabled(saved["startup_enabled"])
     if not ok:
+        saved = dict(saved)
         saved["startup_enabled"] = False
         saved = save_settings(saved)
+    return saved, error
+
+
+def apply_settings(data):
+    saved = save_settings(data)
+    saved, error = _apply_startup_setting(saved)
     apply_floating_price_settings(saved)
     return saved, error
 
@@ -1675,9 +1751,15 @@ def _json_payload_metadata(path):
 
 
 def build_config_backup():
+    settings_snapshot = get_settings_snapshot()
+    restorable_settings = {
+        key: settings_snapshot.get(key, default_value)
+        for key, default_value in DEFAULT_SETTINGS.items()
+        if key not in SECRET_SETTING_KEYS
+    }
     return support_files_core.build_config_backup(
         APP_VERSION,
-        public_settings_snapshot(),
+        restorable_settings,
         {
             **{key: thresholds.get(key) for key in thresholds},
             "volatility_config": dict(volatility_config),
@@ -2037,17 +2119,33 @@ def _restore_config_import_state(
 
 def restore_config_backup(payload):
     global alert_profiles
-    if not isinstance(payload, dict):
-        raise ValueError("备份文件格式无效")
-    settings_payload = payload.get("settings")
-    thresholds_payload = payload.get("thresholds")
-    alert_profiles_payload = payload.get("alert_profiles")
-    if (
-        not isinstance(settings_payload, dict)
-        and not isinstance(thresholds_payload, dict)
-        and not isinstance(alert_profiles_payload, list)
-    ):
-        raise ValueError("备份中没有可导入的配置")
+    normalized_payload, backup_metadata = support_files_core.normalize_config_backup(payload)
+    preview = preview_config_backup(payload)
+    if not preview.get("importable"):
+        raise ValueError(preview.get("message") or "备份中没有可导入的配置")
+
+    importable_sections = set(preview.get("sections") or [])
+    raw_settings_payload = normalized_payload.get("settings")
+    accepted_setting_keys = set(DEFAULT_SETTINGS)
+    if backup_metadata.get("schema_version") != 0:
+        accepted_setting_keys -= set(SECRET_SETTING_KEYS)
+    settings_payload = None
+    if "settings" in importable_sections and isinstance(raw_settings_payload, dict):
+        filtered_settings = {
+            key: value
+            for key, value in raw_settings_payload.items()
+            if key in accepted_setting_keys
+        }
+        if filtered_settings:
+            settings_payload = filtered_settings
+    thresholds_payload = (
+        normalized_payload.get("thresholds") if "thresholds" in importable_sections else None
+    )
+    alert_profiles_payload = (
+        normalized_payload.get("alert_profiles")
+        if "alert_profiles" in importable_sections
+        else None
+    )
 
     normalized_alert_profiles = _normalize_alert_profiles_for_import(alert_profiles_payload)
     has_importable_alert_profiles = bool(normalized_alert_profiles)
@@ -2072,17 +2170,15 @@ def restore_config_backup(payload):
     )
 
     imported = []
+    updated_settings = None
     settings_event = None
     thresholds_event = None
     volatility_event = None
     alert_profiles_event = None
     try:
         if isinstance(settings_payload, dict):
-            updated, startup_error = apply_settings(settings_payload_for_import(settings_payload))
-            if startup_error:
-                logging.warning("导入配置时自启动设置失败: %s", startup_error)
+            updated_settings = save_settings(settings_payload_for_import(settings_payload))
             imported.append("settings")
-            settings_event = public_settings_snapshot(updated)
         if isinstance(thresholds_payload, dict):
             normalized = save_thresholds(thresholds_payload)
             apply_persisted_threshold_state(normalized)
@@ -2093,6 +2189,11 @@ def restore_config_backup(payload):
             alert_profiles = save_alert_profiles(_alert_profiles_payload_for_import(alert_profiles_payload))
             imported.append("alert_profiles")
             alert_profiles_event = get_alert_profiles_state()
+        if updated_settings is not None:
+            updated_settings, startup_error = _apply_startup_setting(updated_settings)
+            if startup_error:
+                logging.warning("导入配置时自启动设置失败: %s", startup_error)
+            settings_event = public_settings_snapshot(updated_settings)
     except OSError:
         rollback_ok = _restore_config_import_state(
             previous_settings,
@@ -2108,6 +2209,8 @@ def restore_config_backup(payload):
             logging.warning("配置导入失败后回滚未完全成功，请检查配置目录权限。")
         raise
 
+    if updated_settings is not None:
+        apply_floating_price_settings(updated_settings)
     if settings_event is not None:
         socketio.emit("settings_updated", settings_event)
     if thresholds_event is not None:
@@ -2146,7 +2249,9 @@ def build_diagnostics_report():
         "exports": resolve_export_dir(),
         "news": NEWS_CACHE_PATH,
         "risk_analysis_history": RISK_ANALYSIS_HISTORY_PATH,
+        "review_notes": REVIEW_NOTES_PATH,
         "price_history": PRICE_HISTORY_PATH,
+        "daily_digest_state": DAILY_DIGEST_STATE_PATH,
         "price_history_db": _price_history_db_path(),
         "alert_log_db": _alert_log_db_path(),
         "log": APP_LOG_PATH,
@@ -2161,7 +2266,7 @@ def build_diagnostics_report():
     data_schemas = {
         key: dict(item)
         for key, item in sorted(storage_manifest.items())
-        if item.get("schema") == "item_payload"
+        if item.get("schema") in {"item_payload", "versioned_object"}
     }
     report = {
         "app": APP_NAME,
@@ -2489,6 +2594,40 @@ class WebhookNotifier:
         )
 
 
+class DailyDigestEmailNotifier:
+    @staticmethod
+    def send(digest, timeout=10, blocking=False):
+        settings = get_settings_snapshot()
+        return notifications_core.send_email_message(
+            settings,
+            digest.get("subject", "GoldMonitor 每日摘要"),
+            digest.get("message", ""),
+            smtp_module=smtplib,
+            timeout=timeout,
+            blocking=blocking,
+            thread_factory=threading.Thread,
+            logger=logging,
+        )
+
+
+class DailyDigestWebhookNotifier:
+    @staticmethod
+    def send(digest, timeout=8, blocking=False):
+        settings = get_settings_snapshot()
+        return notifications_core.send_webhook_payload(
+            settings,
+            digest.get("payload") if isinstance(digest.get("payload"), dict) else {},
+            post=requests.post,
+            require_https_url=_require_https_url,
+            user_agent=HTTP_USER_AGENT,
+            proxies=REQ_PROXY,
+            timeout=timeout,
+            blocking=blocking,
+            thread_factory=threading.Thread,
+            logger=logging,
+        )
+
+
 def _notification_status(channel, label, status, message):
     return notifications_core.notification_status(channel, label, status, message)
 
@@ -2508,6 +2647,151 @@ def dispatch_alert(entry, title):
         webhook_sender=WebhookNotifier.send,
         logger=logging,
     )
+
+
+def _daily_digest_state_store(now_factory=None):
+    return daily_digest_core.DailyDigestStateStore(
+        DAILY_DIGEST_STATE_PATH,
+        now_factory=now_factory or datetime.now,
+    )
+
+
+def get_daily_digest_state():
+    return _daily_digest_state_store().load()
+
+
+def selected_daily_digest_channels(settings=None):
+    settings = settings or get_settings_snapshot()
+    channels = []
+    if settings.get("daily_digest_email_enabled", True):
+        channels.append("email")
+    if settings.get("daily_digest_webhook_enabled", False):
+        channels.append("webhook")
+    return channels
+
+
+def build_daily_digest_snapshot(now=None):
+    now = now or datetime.now()
+    timeline_state = build_event_timeline_state(
+        minutes=1440,
+        limit=EVENT_TIMELINE_MAX_LIMIT,
+        types=EVENT_TIMELINE_TYPES,
+    )
+    portfolio_state = build_portfolio_state()
+    source_health_state = get_source_health_state()
+    market_quality = (
+        source_health_state.get("quality")
+        if isinstance(source_health_state.get("quality"), dict)
+        else {}
+    )
+    return daily_digest_core.build_daily_digest(
+        timeline_state,
+        portfolio_state=portfolio_state,
+        market_quality=market_quality,
+        now=now,
+    )
+
+
+def daily_digest_status_payload(now=None):
+    now = now or datetime.now()
+    settings = get_settings_snapshot()
+    state = get_daily_digest_state()
+    decision = scheduler_core.daily_task_due(
+        settings.get("daily_digest_time", "20:00"),
+        state.get("last_completed_at", ""),
+        now=now,
+    )
+    return {
+        "enabled": bool(settings.get("daily_digest_enabled")),
+        "time": settings.get("daily_digest_time", "20:00"),
+        "channels": selected_daily_digest_channels(settings),
+        "state": state,
+        "schedule": decision,
+    }
+
+
+def _dispatch_daily_digest(digest, settings, blocking=False):
+    notifications = []
+    channels = selected_daily_digest_channels(settings)
+    if "email" in channels:
+        error = DailyDigestEmailNotifier.send(digest, blocking=blocking)
+        notifications.append(_notification_status(
+            "email",
+            "邮件",
+            "skipped" if error else "queued",
+            error or "已提交发送",
+        ))
+    if "webhook" in channels:
+        error = DailyDigestWebhookNotifier.send(digest, blocking=blocking)
+        notifications.append(_notification_status(
+            "webhook",
+            "Webhook",
+            "skipped" if error else "queued",
+            error or "已提交发送",
+        ))
+    return notifications
+
+
+def run_daily_digest_once(now=None, force=False, manual=False, blocking=False):
+    now = now or datetime.now()
+    settings = get_settings_snapshot()
+    with daily_digest_lock:
+        store = _daily_digest_state_store(now_factory=lambda: now)
+        state = store.load()
+        if not force:
+            if not settings.get("daily_digest_enabled", False):
+                return {
+                    "ok": False,
+                    "status": "disabled",
+                    "reason": "disabled",
+                    "message": "每日摘要未启用",
+                    "state": state,
+                }
+            decision = scheduler_core.daily_task_due(
+                settings.get("daily_digest_time", "20:00"),
+                state.get("last_completed_at", ""),
+                now=now,
+            )
+            if not decision.get("due"):
+                return {
+                    "ok": False,
+                    "status": "not_due",
+                    "reason": decision.get("reason", "not_due"),
+                    "message": "当前无需发送每日摘要",
+                    "schedule": decision,
+                    "state": state,
+                }
+
+        digest = build_daily_digest_snapshot(now=now)
+        channels = selected_daily_digest_channels(settings)
+        notifications = _dispatch_daily_digest(digest, settings, blocking=blocking) if channels else []
+        summary = _notification_summary(notifications)
+        sent = summary.get("queued", 0) > 0
+        if not channels:
+            summary = {
+                **summary,
+                "status": "skipped",
+                "label": "未选择渠道",
+                "message": "请至少选择一个每日摘要通知渠道",
+            }
+        state = store.record_result(
+            status=summary.get("status", "none"),
+            message=summary.get("message", ""),
+            channels=channels,
+            sent=sent,
+            manual=manual,
+        )
+        result = {
+            "ok": sent,
+            "status": summary.get("status", "none"),
+            "message": summary.get("message", ""),
+            "notifications": notifications,
+            "state": state,
+            "digest": digest,
+        }
+    if not manual:
+        socketio.emit("daily_digest_status", daily_digest_status_payload(now=now))
+    return result
 
 
 def emit_alert(entry, title):
@@ -2562,6 +2846,7 @@ app_settings = load_settings()
 apply_persisted_threshold_state(load_thresholds())
 alert_profiles = load_alert_profiles()
 watch_targets = load_watch_targets()
+review_notes = load_review_notes()
 portfolio_positions = load_portfolio_positions()
 portfolio_transactions = load_portfolio_transactions()
 portfolio_import_backup = load_portfolio_import_backup()
@@ -2803,6 +3088,7 @@ def get_source_health_state():
         source_health=state,
         comparison=comparison,
     )
+    state["adapters"] = get_market_adapter_catalog()
     return state
 
 
@@ -2846,6 +3132,84 @@ def get_source_comparison_state():
     return build_source_comparison_state()
 
 
+def build_market_adapter_registry():
+    """构建行情源注册表；抓取函数在调用时解析，以保留可替换的兼容入口。"""
+    adapter = market_adapters_core.MarketSourceAdapter
+    return market_adapters_core.MarketAdapterRegistry([
+        adapter(
+            key="sina_gold",
+            name="新浪贵金属",
+            category="gold",
+            priority=10,
+            cache_source="新浪贵金属",
+            provides_forex_rate=False,
+            fetcher=lambda: fetch_sina_gold_result(),
+        ),
+        adapter(
+            key="eastmoney_gold",
+            name="东方财富",
+            category="gold",
+            priority=20,
+            cache_source="东方财富",
+            provides_forex_rate=False,
+            fetcher=lambda: fetch_eastmoney_gold_result(),
+        ),
+        adapter(
+            key="goldprice",
+            name="GoldPrice",
+            category="gold",
+            priority=30,
+            cache_source="GoldPrice",
+            provides_forex_rate=True,
+            fetcher=lambda: fetch_goldprice_data_result(),
+        ),
+        adapter(
+            key="stooq_gold",
+            name="Stooq",
+            category="gold",
+            priority=40,
+            cache_source="Stooq",
+            provides_forex_rate=False,
+            fetcher=lambda: fetch_gold_data_result(GOLD_URL, "Stooq 金价源"),
+        ),
+        adapter(
+            key="sina_forex",
+            name="新浪",
+            category="forex",
+            priority=10,
+            cache_source="新浪",
+            provides_forex_rate=False,
+            fetcher=lambda: fetch_sina_forex_result(),
+        ),
+        adapter(
+            key="frankfurter_forex",
+            name="Frankfurter",
+            category="forex",
+            priority=20,
+            cache_source="Frankfurter",
+            provides_forex_rate=False,
+            fetcher=lambda: fetch_frankfurter_forex_result(),
+        ),
+        adapter(
+            key="stooq_forex",
+            name="Stooq",
+            category="forex",
+            priority=30,
+            cache_source="Stooq",
+            provides_forex_rate=False,
+            fetcher=lambda: fetch_csv_price_result(FOREX_URL, "Stooq 汇率源"),
+        ),
+    ])
+
+
+def get_market_adapter_catalog():
+    registry = build_market_adapter_registry()
+    return {
+        "gold": registry.catalog("gold"),
+        "forex": registry.catalog("forex"),
+    }
+
+
 def refresh_source_comparison(primary_data=None, primary_source="", primary_cached=False):
     global source_comparison_state, last_source_comparison_probe_at
     if primary_data is not None and primary_source:
@@ -2855,19 +3219,11 @@ def refresh_source_comparison(primary_data=None, primary_source="", primary_cach
     should_probe = now_monotonic - last_source_comparison_probe_at >= SOURCE_COMPARISON_REFRESH_SECONDS
     if should_probe:
         last_source_comparison_probe_at = now_monotonic
-        probes = [
-            ("新浪贵金属", lambda: fetch_sina_gold_result()[0]),
-            ("东方财富", lambda: fetch_eastmoney_gold_result()[0]),
-            ("GoldPrice", lambda: fetch_goldprice_data_result()[0]),
-            ("Stooq", lambda: fetch_gold_data_result(GOLD_URL, "Stooq 金价源")[0]),
-        ]
-        for name, getter in probes:
+        for adapter in build_market_adapter_registry().category_adapters("gold"):
+            name = adapter.cache_source
             if name == primary_source:
                 continue
-            try:
-                data = getter()
-            except Exception:
-                data = None
+            data = adapter.fetch().value
             if data is not None:
                 record_source_price_sample(name, data)
 
@@ -2885,29 +3241,23 @@ def fetch_gold_data(url):
 
 def fetch_gold_data_result(url, source_label="数据源"):
     """从 Stooq CSV 解析完整 OHLC 数据，并返回用户可读的失败原因。"""
-    started_at = time.monotonic()
-    try:
-        resp = requests.get(url, timeout=REQUEST_TIMEOUT, proxies=REQ_PROXY)
-        resp.raise_for_status()
-        data, error = market_data_core.parse_stooq_ohlc_csv(resp.text, source_label)
-        if error:
-            record_source_health(source_label, "gold" if "金价" in source_label else "forex", False, error, started_at)
-            return None, error
-        record_source_health(source_label, "gold" if "金价" in source_label else "forex", True, "", started_at)
-        return data, ""
-    except requests.Timeout:
-        error = f"{source_label}请求超时"
-    except requests.ConnectionError:
-        error = f"{source_label}网络连接失败"
-    except requests.HTTPError as exc:
-        code = exc.response.status_code if exc.response is not None else "未知"
-        error = f"{source_label}HTTP错误 {code}"
-    except requests.RequestException as exc:
-        error = f"{source_label}请求失败: {exc}"
-    except (ValueError, IndexError):
-        error = f"{source_label}返回格式异常"
-    record_source_health(source_label, "gold" if "金价" in source_label else "forex", False, error, started_at)
-    return None, error
+    result = market_adapters_core.fetch_http_source(
+        url,
+        source_label,
+        lambda payload: market_data_core.parse_stooq_ohlc_csv(payload, source_label),
+        timeout=REQUEST_TIMEOUT,
+        proxies=REQ_PROXY,
+        requests_module=requests,
+    )
+    category = "gold" if "金价" in source_label else "forex"
+    record_source_health(
+        source_label,
+        category,
+        result.value is not None,
+        result.error,
+        result.started_at,
+    )
+    return result.value, result.error
 
 
 def fetch_csv_price(url):
@@ -2982,32 +3332,26 @@ def parse_sina_forex(text):
 
 
 def fetch_sina_forex_result():
-    started_at = time.monotonic()
-    try:
-        resp = requests.get(
-            SINA_FOREX_URL,
-            timeout=REQUEST_TIMEOUT,
-            proxies=REQ_PROXY,
-            headers={
-                "User-Agent": BROWSER_USER_AGENT,
-                "Referer": "https://finance.sina.com.cn/",
-            },
-        )
-        resp.raise_for_status()
-        rate, error = parse_sina_forex(resp.text)
-        record_source_health("新浪汇率", "forex", rate is not None, error, started_at)
-        return rate, error
-    except requests.Timeout:
-        error = "新浪汇率请求超时"
-    except requests.ConnectionError:
-        error = "新浪汇率网络连接失败"
-    except requests.HTTPError as exc:
-        code = exc.response.status_code if exc.response is not None else "未知"
-        error = f"新浪汇率HTTP错误 {code}"
-    except requests.RequestException as exc:
-        error = f"新浪汇率请求失败: {exc}"
-    record_source_health("新浪汇率", "forex", False, error, started_at)
-    return None, error
+    result = market_adapters_core.fetch_http_source(
+        SINA_FOREX_URL,
+        "新浪汇率",
+        parse_sina_forex,
+        headers={
+            "User-Agent": BROWSER_USER_AGENT,
+            "Referer": "https://finance.sina.com.cn/",
+        },
+        timeout=REQUEST_TIMEOUT,
+        proxies=REQ_PROXY,
+        requests_module=requests,
+    )
+    record_source_health(
+        "新浪汇率",
+        "forex",
+        result.value is not None,
+        result.error,
+        result.started_at,
+    )
+    return result.value, result.error
 
 
 def parse_frankfurter_forex(payload):
@@ -3015,68 +3359,45 @@ def parse_frankfurter_forex(payload):
 
 
 def fetch_frankfurter_forex_result():
-    started_at = time.monotonic()
-    try:
-        resp = requests.get(
-            FRANKFURTER_FOREX_URL,
-            timeout=REQUEST_TIMEOUT,
-            proxies=REQ_PROXY,
-            headers={"User-Agent": HTTP_USER_AGENT},
-        )
-        resp.raise_for_status()
-        rate, error = parse_frankfurter_forex(resp.json())
-        record_source_health("Frankfurter", "forex", rate is not None, error, started_at)
-        return rate, error
-    except requests.Timeout:
-        error = "Frankfurter 请求超时"
-    except requests.ConnectionError:
-        error = "Frankfurter 网络连接失败"
-    except requests.HTTPError as exc:
-        code = exc.response.status_code if exc.response is not None else "未知"
-        error = f"Frankfurter HTTP错误 {code}"
-    except requests.RequestException as exc:
-        error = f"Frankfurter 请求失败: {exc}"
-    except (ValueError, json.JSONDecodeError):
-        error = "Frankfurter 返回格式异常"
-    record_source_health("Frankfurter", "forex", False, error, started_at)
-    return None, error
+    result = market_adapters_core.fetch_http_source(
+        FRANKFURTER_FOREX_URL,
+        "Frankfurter",
+        parse_frankfurter_forex,
+        "json",
+        headers={"User-Agent": HTTP_USER_AGENT},
+        timeout=REQUEST_TIMEOUT,
+        proxies=REQ_PROXY,
+        requests_module=requests,
+    )
+    record_source_health(
+        "Frankfurter",
+        "forex",
+        result.value is not None,
+        result.error,
+        result.started_at,
+    )
+    return result.value, result.error
 
 
 def fetch_usdcny_rate_result():
     errors = []
-    for source, fetcher in (
-        ("新浪", fetch_sina_forex_result),
-        ("Frankfurter", fetch_frankfurter_forex_result),
-    ):
-        rate, error = fetcher()
+    for adapter in build_market_adapter_registry().category_adapters("forex"):
+        result = adapter.fetch()
+        rate = result.value
+        error = result.error
         if rate is not None:
             now_iso = datetime.now().isoformat()
             try:
-                return save_usdcny_cache(rate, source, now_iso), ""
+                return save_usdcny_cache(rate, adapter.cache_source, now_iso), ""
             except (OSError, ValueError) as exc:
                 return {
                     "value": rate,
-                    "source": source,
+                    "source": adapter.cache_source,
                     "timestamp": now_iso,
                     "cached": False,
                 }, f"汇率缓存保存失败: {exc}"
         if error:
             errors.append(error)
-
-    stooq_rate, stooq_error = fetch_csv_price_result(FOREX_URL, "Stooq 汇率源")
-    if stooq_rate is not None:
-        now_iso = datetime.now().isoformat()
-        try:
-            return save_usdcny_cache(stooq_rate, "Stooq", now_iso), ""
-        except (OSError, ValueError) as exc:
-            return {
-                "value": stooq_rate,
-                "source": "Stooq",
-                "timestamp": now_iso,
-                "cached": False,
-            }, f"汇率缓存保存失败: {exc}"
-    if stooq_error:
-        errors.append(stooq_error)
 
     cached = load_valid_usdcny_cache()
     if cached:
@@ -3090,32 +3411,26 @@ def parse_sina_gold(text):
 
 
 def fetch_sina_gold_result():
-    started_at = time.monotonic()
-    try:
-        resp = requests.get(
-            SINA_GOLD_URL,
-            timeout=REQUEST_TIMEOUT,
-            proxies=REQ_PROXY,
-            headers={
-                "User-Agent": BROWSER_USER_AGENT,
-                "Referer": "https://finance.sina.com.cn/futures/quotes/XAU.shtml",
-            },
-        )
-        resp.raise_for_status()
-        data, error = parse_sina_gold(resp.text)
-        record_source_health("新浪贵金属", "gold", data is not None, error, started_at)
-        return data, error
-    except requests.Timeout:
-        error = "新浪贵金属请求超时"
-    except requests.ConnectionError:
-        error = "新浪贵金属网络连接失败"
-    except requests.HTTPError as exc:
-        code = exc.response.status_code if exc.response is not None else "未知"
-        error = f"新浪贵金属HTTP错误 {code}"
-    except requests.RequestException as exc:
-        error = f"新浪贵金属请求失败: {exc}"
-    record_source_health("新浪贵金属", "gold", False, error, started_at)
-    return None, error
+    result = market_adapters_core.fetch_http_source(
+        SINA_GOLD_URL,
+        "新浪贵金属",
+        parse_sina_gold,
+        headers={
+            "User-Agent": BROWSER_USER_AGENT,
+            "Referer": "https://finance.sina.com.cn/futures/quotes/XAU.shtml",
+        },
+        timeout=REQUEST_TIMEOUT,
+        proxies=REQ_PROXY,
+        requests_module=requests,
+    )
+    record_source_health(
+        "新浪贵金属",
+        "gold",
+        result.value is not None,
+        result.error,
+        result.started_at,
+    )
+    return result.value, result.error
 
 
 def parse_eastmoney_gold(payload):
@@ -3125,34 +3440,27 @@ def parse_eastmoney_gold(payload):
 
 def fetch_eastmoney_gold_result():
     """从东方财富公开行情接口获取 XAU/USD，并返回用户可读的失败原因。"""
-    started_at = time.monotonic()
-    try:
-        resp = requests.get(
-            EASTMONEY_GOLD_URL,
-            timeout=REQUEST_TIMEOUT,
-            proxies=REQ_PROXY,
-            headers={
-                "User-Agent": HTTP_USER_AGENT,
-                "Referer": "https://hf-wap.eastmoney.com/quote/stock/122.xau.html",
-            },
-        )
-        resp.raise_for_status()
-        data, error = parse_eastmoney_gold(resp.json())
-        record_source_health("东方财富", "gold", data is not None, error, started_at)
-        return data, error
-    except requests.Timeout:
-        error = "东方财富请求超时"
-    except requests.ConnectionError:
-        error = "东方财富网络连接失败"
-    except requests.HTTPError as exc:
-        code = exc.response.status_code if exc.response is not None else "未知"
-        error = f"东方财富HTTP错误 {code}"
-    except requests.RequestException as exc:
-        error = f"东方财富请求失败: {exc}"
-    except (ValueError, json.JSONDecodeError):
-        error = "东方财富返回格式异常"
-    record_source_health("东方财富", "gold", False, error, started_at)
-    return None, error
+    result = market_adapters_core.fetch_http_source(
+        EASTMONEY_GOLD_URL,
+        "东方财富",
+        parse_eastmoney_gold,
+        "json",
+        headers={
+            "User-Agent": HTTP_USER_AGENT,
+            "Referer": "https://hf-wap.eastmoney.com/quote/stock/122.xau.html",
+        },
+        timeout=REQUEST_TIMEOUT,
+        proxies=REQ_PROXY,
+        requests_module=requests,
+    )
+    record_source_health(
+        "东方财富",
+        "gold",
+        result.value is not None,
+        result.error,
+        result.started_at,
+    )
+    return result.value, result.error
 
 
 def parse_goldprice_rates(payload):
@@ -3162,84 +3470,55 @@ def parse_goldprice_rates(payload):
 
 def fetch_goldprice_data_result():
     """从 GoldPrice.org 公开接口获取实时金价，并返回用户可读的失败原因。"""
-    started_at = time.monotonic()
-    try:
-        resp = requests.get(
-            GOLDPRICE_URL,
-            timeout=REQUEST_TIMEOUT,
-            proxies=REQ_PROXY,
-            headers={"User-Agent": HTTP_USER_AGENT},
-        )
-        resp.raise_for_status()
-        data, rate, error = parse_goldprice_rates(resp.json())
-        record_source_health("GoldPrice", "gold", data is not None, error, started_at)
-        return data, rate, error
-    except requests.Timeout:
-        error = "GoldPrice 请求超时"
-    except requests.ConnectionError:
-        error = "GoldPrice 网络连接失败"
-    except requests.HTTPError as exc:
-        code = exc.response.status_code if exc.response is not None else "未知"
-        error = f"GoldPrice HTTP错误 {code}"
-    except requests.RequestException as exc:
-        error = f"GoldPrice 请求失败: {exc}"
-    except (ValueError, json.JSONDecodeError):
-        error = "GoldPrice 返回格式异常"
-    record_source_health("GoldPrice", "gold", False, error, started_at)
-    return None, None, error
+    result = market_adapters_core.fetch_http_source(
+        GOLDPRICE_URL,
+        "GoldPrice",
+        parse_goldprice_rates,
+        "json",
+        headers={"User-Agent": HTTP_USER_AGENT},
+        timeout=REQUEST_TIMEOUT,
+        proxies=REQ_PROXY,
+        requests_module=requests,
+    )
+    record_source_health(
+        "GoldPrice",
+        "gold",
+        result.value is not None,
+        result.error,
+        result.started_at,
+    )
+    return result.value, result.auxiliary_rate, result.error
 
 
 def fetch_market_data_result():
     """按优先级获取行情数据，避免单一接口失败导致应用一直无数据。"""
-    sina_data, sina_error = fetch_sina_gold_result()
-    if sina_data is not None:
+    errors = []
+    for adapter in build_market_adapter_registry().category_adapters("gold"):
+        result = adapter.fetch()
+        data = result.value
+        if data is None:
+            if result.error:
+                errors.append(result.error)
+            continue
         try:
-            save_xauusd_cache(sina_data, "新浪贵金属")
+            save_xauusd_cache(data, adapter.cache_source)
         except (OSError, ValueError):
             pass
-        rate_info, forex_error = fetch_usdcny_rate_result()
-        return sina_data, rate_info, "新浪贵金属", "", forex_error
-
-    eastmoney_data, eastmoney_error = fetch_eastmoney_gold_result()
-    if eastmoney_data is not None:
-        try:
-            save_xauusd_cache(eastmoney_data, "东方财富")
-        except (OSError, ValueError):
-            pass
-        rate_info, forex_error = fetch_usdcny_rate_result()
-        return eastmoney_data, rate_info, "东方财富", "", forex_error
-
-    goldprice_data, goldprice_rate, goldprice_error = fetch_goldprice_data_result()
-    if goldprice_data is not None:
-        try:
-            save_xauusd_cache(goldprice_data, "GoldPrice")
-        except (OSError, ValueError):
-            pass
-        if goldprice_rate is not None:
+        if result.auxiliary_rate is not None:
             now_iso = datetime.now().isoformat()
             try:
-                rate_info = save_usdcny_cache(goldprice_rate, "GoldPrice", now_iso)
-                return goldprice_data, rate_info, "GoldPrice", "", ""
+                rate_info = save_usdcny_cache(result.auxiliary_rate, adapter.cache_source, now_iso)
+                return data, rate_info, adapter.cache_source, "", ""
             except (OSError, ValueError) as exc:
-                return goldprice_data, {
-                    "value": goldprice_rate,
-                    "source": "GoldPrice",
+                return data, {
+                    "value": result.auxiliary_rate,
+                    "source": adapter.cache_source,
                     "timestamp": now_iso,
                     "cached": False,
-                }, "GoldPrice", "", f"汇率缓存保存失败: {exc}"
+                }, adapter.cache_source, "", f"汇率缓存保存失败: {exc}"
         rate_info, forex_error = fetch_usdcny_rate_result()
-        return goldprice_data, rate_info, "GoldPrice", "", forex_error
+        return data, rate_info, adapter.cache_source, "", forex_error
 
-    stooq_data, stooq_gold_error = fetch_gold_data_result(GOLD_URL, "Stooq 金价源")
-    if stooq_data is not None:
-        try:
-            save_xauusd_cache(stooq_data, "Stooq")
-        except (OSError, ValueError):
-            pass
-        rate_info, forex_error = fetch_usdcny_rate_result()
-        return stooq_data, rate_info, "Stooq", "", forex_error
-
-    errors = [error for error in (sina_error, eastmoney_error, goldprice_error, stooq_gold_error) if error]
     rate_info, forex_error = fetch_usdcny_rate_result()
     cached_gold = load_valid_xauusd_cache()
     gold_error = "；".join(errors) or "所有金价接口均不可用"
@@ -3514,10 +3793,13 @@ def _event_timeline_sources():
         risk_items = list(risk_analysis_history[:RISK_ANALYSIS_HISTORY_LIMIT])
     with lock:
         current_news_items = list(news_items[:NEWS_LIMIT])
+    with review_notes_lock:
+        current_review_notes = list(review_notes)
     return {
         "alert_entries": alert_log_export_entries(limit=ALERT_LOG_EXPORT_LIMIT),
         "risk_items": risk_items,
         "news_items": current_news_items,
+        "review_notes": current_review_notes,
         "fetch_status": get_fetch_status(),
         "source_health_state": get_source_health_state(),
         "source_comparison_state": get_source_comparison_state(),
@@ -4579,6 +4861,7 @@ def on_connect(auth=None):
             },
         )
         state["alert_profiles"] = get_alert_profiles_state()
+        state["daily_digest_status"] = daily_digest_status_payload()
     state["news"] = get_news_state()
     state["risk_analysis_history"] = get_risk_analysis_history_state()
     emit("init_state", state)
@@ -5321,6 +5604,48 @@ def on_test_webhook():
     threading.Thread(target=_test, daemon=True).start()
 
 
+@socketio.on("preview_daily_digest")
+def on_preview_daily_digest():
+    try:
+        digest = build_daily_digest_snapshot()
+        emit("daily_digest_previewed", {"ok": True, **digest})
+    except Exception as exc:
+        logging.exception("生成每日摘要预览失败")
+        emit("daily_digest_previewed", {
+            "ok": False,
+            "message": f"生成摘要预览失败: {exc}",
+        })
+
+
+@socketio.on("get_daily_digest_status")
+def on_get_daily_digest_status():
+    emit("daily_digest_status", daily_digest_status_payload())
+
+
+@socketio.on("test_daily_digest")
+def on_test_daily_digest():
+    sid = request.sid
+
+    def _test():
+        try:
+            result = run_daily_digest_once(
+                force=True,
+                manual=True,
+                blocking=True,
+            )
+        except Exception as exc:
+            logging.exception("发送每日摘要测试失败")
+            result = {
+                "ok": False,
+                "status": "error",
+                "message": f"发送摘要测试失败: {exc}",
+            }
+        socketio.emit("daily_digest_test_result", result, room=sid)
+        socketio.emit("daily_digest_status", daily_digest_status_payload(), room=sid)
+
+    threading.Thread(target=_test, daemon=True).start()
+
+
 @socketio.on("close_choice")
 def on_close_choice(data):
     if not isinstance(data, dict):
@@ -5404,6 +5729,38 @@ def on_get_event_timeline(data=None):
     except Exception as exc:
         logging.warning("事件时间轴生成失败: %s", exc)
         emit("event_timeline_error", {"message": "事件时间轴加载失败，请稍后重试。"})
+
+
+@socketio.on("save_review_note")
+def on_save_review_note(data=None):
+    try:
+        state, note = upsert_review_note(data)
+    except ValueError as exc:
+        emit("review_note_error", {"message": str(exc)})
+        return
+    except OSError:
+        emit("review_note_error", {"message": "复盘笔记保存失败，请检查配置目录权限。"})
+        return
+    emit("review_note_saved", {"ok": True, "note": note, "state": state})
+    socketio.emit("review_notes_updated", state)
+
+
+@socketio.on("delete_review_note")
+def on_delete_review_note(data=None):
+    note_id = data.get("id") if isinstance(data, dict) else ""
+    try:
+        deleted, state = delete_review_note_by_id(note_id)
+    except ValueError as exc:
+        emit("review_note_error", {"message": str(exc)})
+        return
+    except OSError:
+        emit("review_note_error", {"message": "复盘笔记删除失败，请检查配置目录权限。"})
+        return
+    if not deleted:
+        emit("review_note_error", {"message": "未找到复盘笔记。"})
+        return
+    emit("review_note_deleted", {"ok": True, "id": str(note_id), "state": state})
+    socketio.emit("review_notes_updated", state)
 
 
 @socketio.on("export_review_report")
@@ -6752,6 +7109,23 @@ def start_news_fetching():
     threading.Thread(target=news_loop, daemon=True).start()
 
 
+def daily_digest_loop():
+    while True:
+        try:
+            run_daily_digest_once()
+        except Exception:
+            logging.exception("执行每日摘要任务失败")
+        time.sleep(30)
+
+
+def start_daily_digest_scheduler():
+    global _daily_digest_scheduler_started
+    if _daily_digest_scheduler_started:
+        return
+    _daily_digest_scheduler_started = True
+    threading.Thread(target=daily_digest_loop, daemon=True).start()
+
+
 def wait_for_server_ready(timeout=3.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -7052,12 +7426,14 @@ if __name__ == "__main__":
         update_floating_price()
         start_background_fetching()
         start_news_fetching()
+        start_daily_digest_scheduler()
         start_hidden = (os.name == "nt" or sys.platform == "darwin") and startup_mode and get_settings_snapshot().get("startup_to_tray", True)
         start_desktop_window(start_hidden=start_hidden)
     else:
         # Web 模式 (--web): Flask 主线程 + 浏览器
         start_background_fetching()
         start_news_fetching()
+        start_daily_digest_scheduler()
         web_url = f"http://{DEFAULT_HOST}:{server_port}"
         print(f"金价监控服务已启动 -> {web_url}")
         try:

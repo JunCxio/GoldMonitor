@@ -97,6 +97,12 @@ def normalize_settings(raw, defaults, options=None):
     data["email_body_template"] = str(
         data.get("email_body_template") or options.get("default_email_body_template") or defaults.get("email_body_template", "")
     )
+    data["daily_digest_enabled"] = bool(data.get("daily_digest_enabled", False))
+    data["daily_digest_time"] = normalize_hhmm(data.get("daily_digest_time")) or str(
+        defaults.get("daily_digest_time") or "20:00"
+    )
+    data["daily_digest_email_enabled"] = bool(data.get("daily_digest_email_enabled", True))
+    data["daily_digest_webhook_enabled"] = bool(data.get("daily_digest_webhook_enabled", False))
 
     data["risk_assistant_enabled"] = bool(data.get("risk_assistant_enabled", True))
     if data.get("risk_assistant_provider") not in options.get("valid_risk_assistant_providers", set()):

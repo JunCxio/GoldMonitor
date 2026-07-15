@@ -33,11 +33,13 @@ with tempfile.TemporaryDirectory() as tmp_dir:
     original_appdata_dir = app.APPDATA_DIR
     original_export_dir = app.EXPORT_DIR
     original_price_history_path = app.PRICE_HISTORY_PATH
+    original_review_notes_path = app.REVIEW_NOTES_PATH
     original_price_archive = list(app.price_archive)
     original_price_history = list(app.price_history)
     original_alert_log = list(app.alert_log)
     original_risk_history = list(app.risk_analysis_history)
     original_news_items = list(app.news_items)
+    original_review_notes = list(app.review_notes)
     original_source_health = dict(app.source_health)
     original_source_comparison_state = dict(app.source_comparison_state)
     original_last_fetch_ok = app.last_fetch_ok
@@ -51,6 +53,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         app.APPDATA_DIR = str(Path(tmp_dir) / "appdata")
         app.EXPORT_DIR = str(Path(tmp_dir) / "exports")
         app.PRICE_HISTORY_PATH = str(Path(tmp_dir) / "price_history.json")
+        app.REVIEW_NOTES_PATH = str(Path(tmp_dir) / "review_notes.json")
         now = datetime.now()
         base_time = now - timedelta(minutes=30)
 
@@ -127,6 +130,20 @@ with tempfile.TemporaryDirectory() as tmp_dir:
                 "summary": "",
             },
         ]
+        app.review_notes = [
+            {
+                "id": "note-review-1",
+                "timestamp": (base_time + timedelta(minutes=25)).isoformat(timespec="seconds"),
+                "title": "复盘上涨预警",
+                "content": "记录预警触发后的价格变化和数据质量。",
+                "related_event_id": "alert-test-1",
+                "related_event_type": "alert",
+                "related_event_title": "国内金价上涨关注",
+                "created_at": (base_time + timedelta(minutes=25)).isoformat(timespec="seconds"),
+                "updated_at": (base_time + timedelta(minutes=25)).isoformat(timespec="seconds"),
+            },
+            {"id": "note-bad-time", "timestamp": "not-a-time", "content": "无效时间笔记"},
+        ]
         app.source_health = {
             "缓存金价": {
                 "name": "缓存金价",
@@ -201,7 +218,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             assert_timeline_event_shape(event)
 
         by_type = state["summary"]["by_type"]
-        for event_type in ("price_summary", "alert", "risk_analysis", "news", "data_status"):
+        for event_type in ("price_summary", "alert", "risk_analysis", "news", "data_status", "review_note"):
             if by_type.get(event_type, 0) < 1:
                 raise SystemExit(f"timeline must include {event_type} events, got {by_type}")
 
@@ -226,6 +243,10 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             raise SystemExit(f"data status events must include cached source health: {data_events}")
         if not any(event["source"] == "source_comparison" for event in data_events):
             raise SystemExit(f"data status events must include source comparison anomalies: {data_events}")
+
+        note_event = next(event for event in events if event["type"] == "review_note")
+        if note_event["payload"].get("related_event_id") != "alert-test-1":
+            raise SystemExit(f"review note event must preserve related event: {note_event}")
 
         alert_only = app.build_event_timeline_state(minutes=60, limit=300, types=["alert"])
         if {event["type"] for event in alert_only["events"]} != {"alert"}:
@@ -259,7 +280,11 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             if not updated or updated["summary"]["by_type"].get("alert") != 1:
                 raise SystemExit(f"get_event_timeline must emit event_timeline_updated: {received}")
 
-            client.emit("export_review_report", {"minutes": 60, "limit": 300, "types": ["alert", "price_summary"]})
+            client.emit("export_review_report", {
+                "minutes": 60,
+                "limit": 300,
+                "types": ["alert", "price_summary", "review_note"],
+            })
             received = client.get_received()
             exported = find_event(received, "review_report_exported")
             if not exported or not exported.get("saved_path"):
@@ -270,7 +295,15 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             if "GoldMonitor-review-report" not in saved_path.name:
                 raise SystemExit(f"review report filename must include prefix: {saved_path.name}")
             content = saved_path.read_text(encoding="utf-8")
-            for required in ("# GoldMonitor 复盘报告", "## 时间范围", "## 价格摘要", "## 事件概览", "## 预警回顾"):
+            for required in (
+                "# GoldMonitor 复盘报告",
+                "## 时间范围",
+                "## 价格摘要",
+                "## 事件概览",
+                "## 预警回顾",
+                "## 复盘笔记",
+                "记录预警触发后的价格变化和数据质量。",
+            ):
                 if required not in content:
                     raise SystemExit(f"review report missing section {required}: {content}")
         finally:
@@ -284,11 +317,13 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         app.APPDATA_DIR = original_appdata_dir
         app.EXPORT_DIR = original_export_dir
         app.PRICE_HISTORY_PATH = original_price_history_path
+        app.REVIEW_NOTES_PATH = original_review_notes_path
         app.price_archive = original_price_archive
         app.price_history = original_price_history
         app.alert_log = original_alert_log
         app.risk_analysis_history = original_risk_history
         app.news_items = original_news_items
+        app.review_notes = original_review_notes
         app.source_health = original_source_health
         app.source_comparison_state = original_source_comparison_state
         app.last_fetch_ok = original_last_fetch_ok

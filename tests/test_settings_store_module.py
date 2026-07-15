@@ -41,6 +41,10 @@ DEFAULTS = {
     "alert_quiet_end": "",
     "email_subject_template": "subject",
     "email_body_template": "body",
+    "daily_digest_enabled": False,
+    "daily_digest_time": "20:00",
+    "daily_digest_email_enabled": True,
+    "daily_digest_webhook_enabled": False,
     "risk_assistant_enabled": True,
     "risk_assistant_provider": "deepseek",
     "risk_assistant_depth": "standard",
@@ -89,6 +93,10 @@ def test_normalize_settings_clamps_invalid_values_and_removes_legacy_update_keys
         "alert_cooldown_minutes": 999,
         "alert_quiet_start": "8:5",
         "alert_quiet_end": "25:00",
+        "daily_digest_enabled": 1,
+        "daily_digest_time": "29:15",
+        "daily_digest_email_enabled": 0,
+        "daily_digest_webhook_enabled": 1,
         "risk_assistant_provider": "unknown",
         "risk_assistant_depth": "slow",
         "deepseek_base_url": " https://api.deepseek.com/ ",
@@ -115,6 +123,10 @@ def test_normalize_settings_clamps_invalid_values_and_removes_legacy_update_keys
     assert normalized["alert_cooldown_minutes"] == 240
     assert normalized["alert_quiet_start"] == "08:05"
     assert normalized["alert_quiet_end"] == ""
+    assert normalized["daily_digest_enabled"] is True
+    assert normalized["daily_digest_time"] == "20:00"
+    assert normalized["daily_digest_email_enabled"] is False
+    assert normalized["daily_digest_webhook_enabled"] is True
     assert normalized["risk_assistant_provider"] == "deepseek"
     assert normalized["risk_assistant_depth"] == "standard"
     assert normalized["deepseek_base_url"] == "https://api.deepseek.com"
