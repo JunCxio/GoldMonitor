@@ -1,0 +1,109 @@
+name: 数据源异常
+description: 报告金价、汇率或行情源状态异常
+title: "[数据源] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请提交可公开分享的最小信息，帮助定位行情获取、缓存或数据差异问题。不要粘贴 API Key、SMTP 授权码、Webhook URL、用户数据、完整诊断报告或可识别个人身份的本地路径。安全漏洞请使用私密报告入口，不要提交公开 Issue。
+  - type: input
+    id: version
+    attributes:
+      label: GoldMonitor 版本
+      placeholder: 例如 1.0.6
+    validations:
+      required: true
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: 操作系统
+      options:
+        - Windows 10
+        - Windows 11
+        - macOS
+    validations:
+      required: true
+  - type: dropdown
+    id: market-data-type
+    attributes:
+      label: 异常的行情类型
+      options:
+        - XAU/USD 金价
+        - 人民币克价
+        - USD/CNY 汇率
+        - 多项行情
+    validations:
+      required: true
+  - type: dropdown
+    id: issue-type
+    attributes:
+      label: 异常类型
+      options:
+        - 无法获取或请求失败
+        - 回退到缓存
+        - 数据长时间未更新
+        - 数据与可核验来源明显不一致
+        - 显示的数据源或状态不正确
+        - 其他
+    validations:
+      required: true
+  - type: input
+    id: displayed-source
+    attributes:
+      label: 应用显示的数据源和更新时间
+      description: 请按界面显示填写，例如“新浪贵金属，2026-07-15 10:30”；未显示时填写“未显示”。
+      placeholder: 例如 新浪贵金属，2026-07-15 10:30
+    validations:
+      required: true
+  - type: textarea
+    id: observed-result
+    attributes:
+      label: 实际表现
+      description: 说明界面提示、数据值、是否使用缓存，以及持续了多久。错误信息请删除敏感内容后粘贴。
+    validations:
+      required: true
+  - type: textarea
+    id: comparison
+    attributes:
+      label: 对比信息
+      description: 若认为数值异常，请提供可公开访问的对比来源、查询时间和对应数值；无法对比时填写“无”。
+      placeholder: |
+        对比来源：
+        查询时间：
+        对比数值：
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      description: 提供可稳定复现的最小步骤；如果为偶发问题，请说明发生频率和最近发生时间。
+      placeholder: |
+        1. 打开……
+        2. 点击……
+        3. 出现……
+    validations:
+      required: true
+  - type: dropdown
+    id: network-environment
+    attributes:
+      label: 网络环境
+      description: 不要填写 IP 地址、代理地址或其他敏感网络信息。
+      options:
+        - 家庭或移动网络
+        - 公司、校园或受限网络
+        - 使用代理或 VPN
+        - 不确定
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 隐私确认
+      options:
+        - label: 我已删除 API Key、SMTP 授权码、Webhook URL、用户数据、可识别个人身份的本地路径信息和完整诊断数据。
+          required: true
+        - label: 这不是需要私密处理的安全漏洞。
+          required: true
