@@ -9,6 +9,7 @@
 <p align="center">
   <a href="https://github.com/JunCxio/GoldMonitor/releases/latest">下载最新版本</a> ·
   <a href="#快速开始">快速开始</a> ·
+  <a href="docs/quick-start.md">首次使用指南</a> ·
   <a href="CONTRIBUTING.md">参与贡献</a> ·
   <a href="https://github.com/JunCxio/GoldMonitor/issues/new/choose">提交反馈</a>
 </p>
@@ -71,6 +72,8 @@ https://github.com/JunCxio/GoldMonitor/releases/latest
 Windows 用户通常只需要下载 `GoldMonitorSetup.exe` 并运行安装。安装包是按用户目录安装，不需要管理员权限。
 
 macOS 用户可下载 `GoldMonitor-macOS.dmg`，打开后把 `GoldMonitor.app` 拖入“应用程序”目录即可安装。macOS 版会在菜单栏显示状态项，关闭主窗口后仍可从菜单栏恢复。
+
+首次使用、预警设置、通知测试和隐私注意事项参见 [首次使用指南](docs/quick-start.md)。
 
 ## 更新源
 
