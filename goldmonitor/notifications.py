@@ -64,7 +64,8 @@ def is_alert_quiet_time(settings, now=None):
 def alert_cooldown_key(entry):
     source = str(entry.get("source") or "alert")
     identifier = (
-        entry.get("threshold_key")
+        entry.get("rule_id")
+        or entry.get("threshold_key")
         or entry.get("watch_target_id")
         or entry.get("portfolio_alert_id")
         or entry.get("portfolio_position_id")
@@ -86,10 +87,16 @@ def evaluate_alert_delivery(entry, settings, cooldown_state, now=None):
     settings = settings or {}
     cooldown_state = cooldown_state if isinstance(cooldown_state, dict) else {}
     now = now or datetime.now()
+    delivery_channels = entry.get("delivery_channels")
+    if isinstance(delivery_channels, list) and not delivery_channels:
+        return {"deliver": False, "reason": "no_channels"}
     if is_alert_quiet_time(settings, now):
         return {"deliver": False, "reason": "quiet_time"}
     try:
-        cooldown_minutes = int(settings.get("alert_cooldown_minutes", 0) or 0)
+        cooldown_value = entry.get("cooldown_minutes")
+        if cooldown_value in (None, "", "inherit"):
+            cooldown_value = settings.get("alert_cooldown_minutes", 0)
+        cooldown_minutes = int(cooldown_value or 0)
     except (TypeError, ValueError):
         cooldown_minutes = 0
     if cooldown_minutes <= 0:
@@ -475,9 +482,13 @@ def plan_alert_notifications(entry, settings):
     settings = settings or {}
     alert_type = entry.get("type", "warning")
     notifications = []
+    delivery_channels = entry.get("delivery_channels")
+    explicit_channels = set(delivery_channels) if isinstance(delivery_channels, list) else None
 
     email_key = ALERT_CHANNEL_KEYS["email"].get(alert_type, "email_warning_enabled")
-    if settings.get(email_key, True):
+    if explicit_channels is not None and "email" not in explicit_channels:
+        notifications.append(notification_status("email", "邮件", "disabled", "规则未选择"))
+    elif settings.get(email_key, True):
         notifications.append(notification_status(
             "email",
             "邮件",
@@ -491,7 +502,9 @@ def plan_alert_notifications(entry, settings):
         notifications.append(notification_status("email", "邮件", "disabled", "未启用"))
 
     webhook_key = ALERT_CHANNEL_KEYS["webhook"].get(alert_type, "webhook_warning_enabled")
-    if settings.get("webhook_enabled", False) and settings.get(webhook_key, True):
+    if explicit_channels is not None and "webhook" not in explicit_channels:
+        notifications.append(notification_status("webhook", "Webhook", "disabled", "规则未选择"))
+    elif settings.get("webhook_enabled", False) and settings.get(webhook_key, True):
         notifications.append(notification_status(
             "webhook",
             "Webhook",
@@ -504,6 +517,11 @@ def plan_alert_notifications(entry, settings):
     else:
         notifications.append(notification_status("webhook", "Webhook", "disabled", "未启用"))
     return notifications
+
+
+def alert_local_delivery_enabled(entry):
+    delivery_channels = entry.get("delivery_channels") if isinstance(entry, dict) else None
+    return not isinstance(delivery_channels, list) or "local" in delivery_channels
 
 
 def deliver_alert_notifications(

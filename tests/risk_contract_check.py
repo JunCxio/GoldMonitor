@@ -55,14 +55,16 @@ def collect_events(client, duration=0.3):
 
 with tempfile.TemporaryDirectory() as tmp_dir:
     original_thresholds_path = app.THRESHOLDS_PATH
+    original_alert_rules_path = app.ALERT_RULES_PATH
     original_source_metrics_path = app.SOURCE_METRICS_PATH
     original_thresholds = dict(app.thresholds)
     original_volatility_config = dict(app.volatility_config)
+    original_alert_rules = [dict(rule) for rule in app.alert_rules]
     app.THRESHOLDS_PATH = str(Path(tmp_dir) / "thresholds.json")
+    app.ALERT_RULES_PATH = str(Path(tmp_dir) / "alert_rules.json")
     app.SOURCE_METRICS_PATH = str(Path(tmp_dir) / "source_metrics.json")
-    app.thresholds.clear()
-    app.thresholds.update({key: None for key in original_thresholds if "_" in key})
-    app.volatility_config = {"percent": None, "minutes": 10, "enabled": False}
+    app.alert_rules = []
+    app._sync_legacy_alert_rule_views()
 
     client = authorized_client()
     try:
@@ -70,9 +72,9 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         assert_event(client.get_received(), "threshold_error")
         if "unexpected_badmode" in app.thresholds:
             raise SystemExit("invalid threshold keys must not enter runtime state")
-        if Path(app.THRESHOLDS_PATH).exists():
-            persisted = json.loads(Path(app.THRESHOLDS_PATH).read_text(encoding="utf-8"))
-            if "unexpected_badmode" in persisted:
+        if Path(app.ALERT_RULES_PATH).exists():
+            persisted = json.loads(Path(app.ALERT_RULES_PATH).read_text(encoding="utf-8"))
+            if "unexpected_badmode" in json.dumps(persisted, ensure_ascii=False):
                 raise SystemExit("invalid threshold keys must not be persisted")
 
         client.emit("set_volatility", {"percent": "0", "minutes": "0", "enabled": True})
@@ -82,15 +84,25 @@ with tempfile.TemporaryDirectory() as tmp_dir:
 
         client.emit("set_volatility", {"percent": "1.5", "minutes": "15", "enabled": True})
         assert_event(client.get_received(), "volatility_updated")
-        persisted = json.loads(Path(app.THRESHOLDS_PATH).read_text(encoding="utf-8"))
+        persisted = json.loads(Path(app.ALERT_RULES_PATH).read_text(encoding="utf-8"))
+        persisted_volatility_rule = next(
+            item for item in persisted.get("items", []) if item.get("kind") == "volatility"
+        )
         expected_volatility = {"percent": 1.5, "minutes": 15, "enabled": True}
         if app.volatility_config != expected_volatility:
             raise SystemExit("runtime volatility config must use normalized values")
-        if persisted["volatility_config"] != expected_volatility:
+        if persisted_volatility_rule.get("condition") != {
+            "operator": "abs_change_gte",
+            "value": 1.5,
+            "window_minutes": 15,
+            "condition_key": None,
+        }:
             raise SystemExit("persisted volatility config must match runtime values")
     finally:
         client.disconnect()
         app.THRESHOLDS_PATH = original_thresholds_path
+        app.ALERT_RULES_PATH = original_alert_rules_path
+        app.alert_rules = original_alert_rules
         app.thresholds.clear()
         app.thresholds.update(original_thresholds)
         app.volatility_config = original_volatility_config
@@ -265,6 +277,7 @@ original_settings = dict(app.app_settings)
 original_appdata_dir = app.APPDATA_DIR
 original_settings_path = app.SETTINGS_PATH
 original_thresholds_path = app.THRESHOLDS_PATH
+original_alert_rules_path = app.ALERT_RULES_PATH
 original_set_startup_enabled = app.set_startup_enabled
 original_post = app.requests.post
 original_get = app.requests.get
@@ -340,6 +353,7 @@ try:
         app.APPDATA_DIR = tmp_dir
         app.SETTINGS_PATH = str(Path(tmp_dir) / "settings.json")
         app.THRESHOLDS_PATH = str(Path(tmp_dir) / "thresholds.json")
+        app.ALERT_RULES_PATH = str(Path(tmp_dir) / "alert_rules.json")
         app._credential_test_store = {}
         app.set_startup_enabled = lambda enabled: (True, None)
         secret = "sk-test-secret-123456"
@@ -686,6 +700,7 @@ finally:
     app.APPDATA_DIR = original_appdata_dir
     app.SETTINGS_PATH = original_settings_path
     app.THRESHOLDS_PATH = original_thresholds_path
+    app.ALERT_RULES_PATH = original_alert_rules_path
     app.SOURCE_METRICS_PATH = original_source_metrics_path
     app._credential_test_store = original_credential_test_store
     app.RISK_ANALYSIS_HISTORY_PATH = original_risk_history_path
@@ -708,6 +723,7 @@ original_settings = dict(app.app_settings)
 original_appdata_dir = app.APPDATA_DIR
 original_settings_path = app.SETTINGS_PATH
 original_thresholds_path = app.THRESHOLDS_PATH
+original_alert_rules_path = app.ALERT_RULES_PATH
 original_source_metrics_path = app.SOURCE_METRICS_PATH
 original_price_history_path = app.PRICE_HISTORY_PATH
 original_export_dir = app.EXPORT_DIR
@@ -726,6 +742,7 @@ try:
         app.APPDATA_DIR = tmp_dir
         app.SETTINGS_PATH = str(Path(tmp_dir) / "settings.json")
         app.THRESHOLDS_PATH = str(Path(tmp_dir) / "thresholds.json")
+        app.ALERT_RULES_PATH = str(Path(tmp_dir) / "alert_rules.json")
         app.SOURCE_METRICS_PATH = str(Path(tmp_dir) / "source_metrics.json")
         app.PRICE_HISTORY_PATH = str(Path(tmp_dir) / "price_history.json")
         app.EXPORT_DIR = str(Path(tmp_dir) / "exports")
@@ -944,6 +961,7 @@ finally:
     app.APPDATA_DIR = original_appdata_dir
     app.SETTINGS_PATH = original_settings_path
     app.THRESHOLDS_PATH = original_thresholds_path
+    app.ALERT_RULES_PATH = original_alert_rules_path
     app.SOURCE_METRICS_PATH = original_source_metrics_path
     app.PRICE_HISTORY_PATH = original_price_history_path
     app.EXPORT_DIR = original_export_dir

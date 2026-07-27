@@ -6,6 +6,7 @@ from goldmonitor.data_contracts import item_payload_metadata
 
 
 ALERT_PROFILE_IMPORT_LIMIT = 20
+ALERT_RULE_IMPORT_LIMIT = 500
 CONFIG_BACKUP_SCHEMA_VERSION = 1
 
 
@@ -50,7 +51,7 @@ def json_payload_metadata(path):
         }
 
 
-def build_config_backup(app_version, settings, thresholds, alert_profiles=None, now_factory=None):
+def build_config_backup(app_version, settings, thresholds, alert_profiles=None, now_factory=None, alert_rules=None):
     if callable(alert_profiles) and now_factory is None:
         now_factory = alert_profiles
         alert_profiles = None
@@ -63,6 +64,7 @@ def build_config_backup(app_version, settings, thresholds, alert_profiles=None, 
         "settings": settings,
         "thresholds": thresholds,
         "alert_profiles": list(alert_profiles or []),
+        "alert_rules": list(alert_rules or []),
     }
 
 
@@ -169,6 +171,26 @@ def _alert_profiles_preview(payload):
     return valid_count, sorted(set(ignored), key=int)
 
 
+def _alert_rules_preview(payload):
+    if not isinstance(payload, list):
+        return 0, []
+    valid_count = 0
+    seen = set()
+    ignored = []
+    for index, item in enumerate(payload):
+        rule_id = str(item.get("id") or "").strip() if isinstance(item, dict) else ""
+        kind = str(item.get("kind") or "").strip() if isinstance(item, dict) else ""
+        if not rule_id.startswith("rule-") or not kind:
+            ignored.append(str(index))
+            continue
+        if rule_id in seen or valid_count >= ALERT_RULE_IMPORT_LIMIT:
+            ignored.append(str(index))
+            continue
+        seen.add(rule_id)
+        valid_count += 1
+    return valid_count, ignored
+
+
 def build_config_import_preview(payload, settings_defaults, threshold_keys, secret_keys):
     try:
         normalized_payload, metadata = normalize_config_backup(payload)
@@ -178,16 +200,17 @@ def build_config_import_preview(payload, settings_defaults, threshold_keys, secr
             "ok": False,
             "importable": False,
             "sections": [],
-            "missing_sections": ["settings", "thresholds", "alert_profiles"],
-            "ignored": {"settings": [], "thresholds": [], "alert_profiles": []},
+            "missing_sections": ["settings", "thresholds", "alert_profiles", "alert_rules"],
+            "ignored": {"settings": [], "thresholds": [], "alert_profiles": [], "alert_rules": []},
             "secret_actions": {},
-            "counts": {"settings": 0, "thresholds": 0, "alert_profiles": 0},
+            "counts": {"settings": 0, "thresholds": 0, "alert_profiles": 0, "alert_rules": 0},
             "message": str(exc),
         }
 
     settings_payload = normalized_payload.get("settings")
     thresholds_payload = normalized_payload.get("thresholds")
     alert_profiles_payload = normalized_payload.get("alert_profiles")
+    alert_rules_payload = normalized_payload.get("alert_rules")
     secret_key_set = set(secret_keys or ())
     accepted_setting_keys = set(settings_defaults or ())
     if metadata["schema_version"] > 0:
@@ -195,6 +218,7 @@ def build_config_import_preview(payload, settings_defaults, threshold_keys, secr
     settings_keys, ignored_settings = _section_preview(settings_payload, accepted_setting_keys)
     threshold_keys_found, ignored_thresholds = _section_preview(thresholds_payload, threshold_keys)
     alert_profiles_count, ignored_alert_profiles = _alert_profiles_preview(alert_profiles_payload)
+    alert_rules_count, ignored_alert_rules = _alert_rules_preview(alert_rules_payload)
 
     sections = []
     missing_sections = []
@@ -213,6 +237,11 @@ def build_config_import_preview(payload, settings_defaults, threshold_keys, secr
             sections.append("alert_profiles")
     else:
         missing_sections.append("alert_profiles")
+    if isinstance(alert_rules_payload, list):
+        if alert_rules_count:
+            sections.append("alert_rules")
+    else:
+        missing_sections.append("alert_rules")
 
     importable = bool(sections)
     message = "配置导入预检通过" if importable else "备份中没有可导入的配置"
@@ -226,6 +255,7 @@ def build_config_import_preview(payload, settings_defaults, threshold_keys, secr
             "settings": ignored_settings,
             "thresholds": ignored_thresholds,
             "alert_profiles": ignored_alert_profiles,
+            "alert_rules": ignored_alert_rules,
         },
         "secret_actions": {
             key: (
@@ -239,6 +269,7 @@ def build_config_import_preview(payload, settings_defaults, threshold_keys, secr
             "settings": len(settings_keys),
             "thresholds": len(threshold_keys_found),
             "alert_profiles": alert_profiles_count,
+            "alert_rules": alert_rules_count,
         },
         "message": message,
     }

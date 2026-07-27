@@ -5,6 +5,7 @@ from types import SimpleNamespace
 EXPECTED_COMPILE_TARGETS = (
     "app.py",
     "setup_gui.py",
+    "goldmonitor/alert_rules.py",
     "goldmonitor/daily_digest.py",
     "goldmonitor/market_adapters.py",
     "goldmonitor/market_data.py",
@@ -17,6 +18,8 @@ EXPECTED_COMPILE_TARGETS = (
     "tests/startup_contract_check.py",
     "tests/frontend_asset_check.py",
     "tests/alert_log_ui_contract_check.py",
+    "tests/test_alert_rules_module.py",
+    "tests/test_alert_rules_app.py",
     "tests/test_single_instance_app.py",
     "tests/test_update_app.py",
     "tests/test_portfolio_module.py",

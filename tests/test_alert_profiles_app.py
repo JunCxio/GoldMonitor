@@ -23,11 +23,15 @@ def _prepare_state(monkeypatch, tmp_path):
     import app
 
     monkeypatch.setattr(app, "ALERT_PROFILES_PATH", str(tmp_path / "alert_profiles.json"), raising=False)
-    monkeypatch.setattr(app, "THRESHOLDS_PATH", str(tmp_path / "thresholds.json"))
+    monkeypatch.setattr(app, "ALERT_RULES_PATH", str(tmp_path / "alert_rules.json"))
     monkeypatch.setattr(app, "SETTINGS_PATH", str(tmp_path / "settings.json"))
     monkeypatch.setattr(app, "set_startup_enabled", lambda enabled: (True, ""))
     monkeypatch.setattr(app, "alert_profiles", [], raising=False)
     monkeypatch.setattr(app, "alert_cooldown_state", {})
+    monkeypatch.setattr(app, "alert_rules", [])
+    monkeypatch.setattr(app, "alert_rule_migration_status", {"completed": True, "source_version": "1.0.7"})
+    monkeypatch.setattr(app, "alert_rules_load_error", "")
+    monkeypatch.setattr(app, "alert_rules_invalid_count", 0)
 
     thresholds = _threshold_defaults(app)
     thresholds.update({
@@ -37,6 +41,12 @@ def _prepare_state(monkeypatch, tmp_path):
     })
     monkeypatch.setattr(app, "thresholds", thresholds)
     monkeypatch.setattr(app, "volatility_config", {"enabled": True, "percent": 1.5, "minutes": 15})
+    monkeypatch.setattr(
+        app,
+        "alert_rules",
+        app._rules_for_legacy_threshold_snapshot(thresholds, app.volatility_config),
+    )
+    app._sync_legacy_alert_rule_views()
 
     settings = dict(app.DEFAULT_SETTINGS)
     settings.update({
@@ -58,10 +68,14 @@ def _prepare_state(monkeypatch, tmp_path):
 
 
 def _set_non_profile_runtime_state(app):
-    app.thresholds["upper_warning_rmb"] = 610.0
-    app.thresholds["upper_critical_rmb"] = None
-    app.thresholds["lower_warning_usd"] = None
-    app.volatility_config = {"enabled": False, "percent": None, "minutes": 10}
+    next_thresholds = dict(app.thresholds)
+    next_thresholds["upper_warning_rmb"] = 610.0
+    next_thresholds["upper_critical_rmb"] = None
+    next_thresholds["lower_warning_usd"] = None
+    next_volatility_config = {"enabled": False, "percent": None, "minutes": 10}
+    app.alert_rules = app.save_alert_rules(
+        app._rules_for_legacy_threshold_snapshot(next_thresholds, next_volatility_config)
+    )
     app.app_settings["alert_sound_enabled"] = False
     app.app_settings["alert_cooldown_minutes"] = 5
     app.app_settings["smtp_server"] = "smtp.latest.example.com"
@@ -120,7 +134,7 @@ def test_alert_profile_socket_save_apply_rename_delete_flow(monkeypatch, tmp_pat
     assert app.get_settings_snapshot()["startup_enabled"] is True
     assert app.get_settings_snapshot()["floating_price_enabled"] is True
     assert app.alert_cooldown_state == {}
-    assert Path(app.THRESHOLDS_PATH).exists()
+    assert Path(app.ALERT_RULES_PATH).exists()
     assert Path(app.SETTINGS_PATH).exists()
     assert applied_profiles["current_profile_id"] == profile_id
     assert applied_profiles["items"][0]["last_applied_at"]
@@ -167,16 +181,16 @@ def test_apply_alert_profile_preserves_latest_unrelated_settings(monkeypatch, tm
     client.get_received()
     profile = _saved_profile(app, client, name="保留设置")
 
-    original_save_thresholds = app.save_thresholds
+    original_save_alert_rules = app.save_alert_rules
 
-    def save_thresholds_with_concurrent_settings_change(data=None):
+    def save_alert_rules_with_concurrent_settings_change(items=None):
         app.app_settings["smtp_server"] = "changed.example.com"
         app.app_settings["export_dir"] = "/tmp/changed"
-        return original_save_thresholds(data)
+        return original_save_alert_rules(items)
 
     app.app_settings["smtp_server"] = "before-apply.example.com"
     app.app_settings["export_dir"] = "/tmp/before-apply"
-    monkeypatch.setattr(app, "save_thresholds", save_thresholds_with_concurrent_settings_change)
+    monkeypatch.setattr(app, "save_alert_rules", save_alert_rules_with_concurrent_settings_change)
 
     client.emit("apply_alert_profile", {"id": profile["id"]})
     client.get_received()
@@ -234,14 +248,14 @@ def test_apply_alert_profile_rollback_failure_emits_partial_write_warning(monkey
     def fail_save_alert_profile_settings(applied_settings):
         raise OSError("settings unavailable")
 
-    original_save_thresholds = app.save_thresholds
-    save_threshold_calls = {"count": 0}
+    original_save_alert_rules = app.save_alert_rules
+    save_alert_rule_calls = {"count": 0}
 
-    def save_thresholds_with_failed_rollback(data=None):
-        save_threshold_calls["count"] += 1
-        if save_threshold_calls["count"] == 2:
-            raise OSError("threshold rollback unavailable")
-        return original_save_thresholds(data)
+    def save_alert_rules_with_failed_rollback(items=None):
+        save_alert_rule_calls["count"] += 1
+        if save_alert_rule_calls["count"] == 2:
+            raise app.alert_rules_core.AlertRuleStoreError("alert rule rollback unavailable")
+        return original_save_alert_rules(items)
 
     monkeypatch.setattr(
         app,
@@ -249,7 +263,7 @@ def test_apply_alert_profile_rollback_failure_emits_partial_write_warning(monkey
         fail_save_alert_profile_settings,
         raising=False,
     )
-    monkeypatch.setattr(app, "save_thresholds", save_thresholds_with_failed_rollback)
+    monkeypatch.setattr(app, "save_alert_rules", save_alert_rules_with_failed_rollback)
 
     client.emit("apply_alert_profile", {"id": profile["id"]})
     events = client.get_received()

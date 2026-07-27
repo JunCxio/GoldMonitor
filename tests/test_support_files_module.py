@@ -63,6 +63,7 @@ def test_config_backup_and_export_file_sanitize_outputs():
             "settings": {"smtp_password": ""},
             "thresholds": {"upper_warning_rmb": 888.88, "volatility_config": {"enabled": True}},
             "alert_profiles": [{"id": "profile-a", "name": "回调关注"}],
+            "alert_rules": [],
         }
 
         saved = save_export_file(tmp_dir, "../report.md", "hello")
@@ -82,6 +83,7 @@ def test_config_backup_keeps_positional_now_factory_compatibility():
 
     assert backup["exported_at"] == "2026-06-12T10:00:00"
     assert backup["alert_profiles"] == []
+    assert backup["alert_rules"] == []
 
 
 def test_config_backup_normalization_migrates_legacy_payload_without_mutating_input():
@@ -185,16 +187,22 @@ def test_config_import_preview_reports_sections_ignored_keys_and_secret_actions(
     assert preview["ok"] is True
     assert preview["importable"] is True
     assert preview["sections"] == ["settings", "thresholds", "alert_profiles"]
-    assert preview["missing_sections"] == []
+    assert preview["missing_sections"] == ["alert_rules"]
     assert preview["ignored"]["settings"] == ["smtp_password_configured", "unknown_setting"]
     assert preview["ignored"]["thresholds"] == ["unknown_threshold"]
     assert preview["ignored"]["alert_profiles"] == []
+    assert preview["ignored"]["alert_rules"] == []
     assert preview["secret_actions"] == {
         "deepseek_api_key": "import",
         "openai_compatible_api_key": "preserve_existing",
         "smtp_password": "clear",
     }
-    assert preview["counts"] == {"settings": 3, "thresholds": 2, "alert_profiles": 1}
+    assert preview["counts"] == {
+        "settings": 3,
+        "thresholds": 2,
+        "alert_profiles": 1,
+        "alert_rules": 0,
+    }
     assert preview["schema_version"] == 0
     assert preview["expected_schema_version"] == 1
     assert preview["format"] == "legacy_dict"
@@ -215,8 +223,9 @@ def test_config_import_preview_rejects_payload_without_importable_sections():
     assert preview["ok"] is False
     assert preview["importable"] is False
     assert preview["sections"] == []
-    assert preview["missing_sections"] == ["settings", "thresholds", "alert_profiles"]
+    assert preview["missing_sections"] == ["settings", "thresholds", "alert_profiles", "alert_rules"]
     assert preview["counts"]["alert_profiles"] == 0
+    assert preview["counts"]["alert_rules"] == 0
     assert preview["message"] == "备份中没有可导入的配置"
 
 
@@ -239,9 +248,14 @@ def test_config_import_preview_rejects_empty_or_unknown_only_sections():
     assert preview["ok"] is False
     assert preview["importable"] is False
     assert preview["sections"] == []
-    assert preview["missing_sections"] == []
+    assert preview["missing_sections"] == ["alert_rules"]
     assert preview["ignored"]["settings"] == ["unknown_setting"]
-    assert preview["counts"] == {"settings": 0, "thresholds": 0, "alert_profiles": 0}
+    assert preview["counts"] == {
+        "settings": 0,
+        "thresholds": 0,
+        "alert_profiles": 0,
+        "alert_rules": 0,
+    }
     assert preview["schema_version"] == 1
     assert preview["expected_schema_version"] == 1
     assert preview["format"] == "versioned_dict"
@@ -318,7 +332,7 @@ def test_config_import_preview_accepts_alert_profiles_only_backup():
     assert preview["ok"] is True
     assert preview["importable"] is True
     assert preview["sections"] == ["alert_profiles"]
-    assert preview["missing_sections"] == ["settings", "thresholds"]
+    assert preview["missing_sections"] == ["settings", "thresholds", "alert_rules"]
     assert preview["counts"]["alert_profiles"] == 1
 
 
@@ -341,7 +355,7 @@ def test_config_import_preview_rejects_invalid_alert_profiles_only_backup():
     assert preview["ok"] is False
     assert preview["importable"] is False
     assert preview["sections"] == []
-    assert preview["missing_sections"] == ["settings", "thresholds"]
+    assert preview["missing_sections"] == ["settings", "thresholds", "alert_rules"]
     assert preview["ignored"]["alert_profiles"] == ["0", "1", "2"]
     assert preview["counts"]["alert_profiles"] == 0
     assert preview["message"] == "备份中没有可导入的配置"
@@ -371,6 +385,29 @@ def test_config_import_preview_counts_importable_alert_profiles_after_dedup_and_
     assert "0" in preview["ignored"]["alert_profiles"]
     assert "1" not in preview["ignored"]["alert_profiles"]
     assert "21" in preview["ignored"]["alert_profiles"]
+
+
+def test_config_import_preview_accepts_alert_rules_and_reports_invalid_items():
+    from goldmonitor.support_files import build_config_import_preview
+
+    preview = build_config_import_preview(
+        {
+            "alert_rules": [
+                {"id": "rule-valid", "kind": "price_threshold"},
+                {"id": "invalid-id", "kind": "watch_target"},
+                {"id": "rule-missing-kind"},
+                {"id": "rule-valid", "kind": "volatility"},
+            ],
+        },
+        settings_defaults={"smtp_server": ""},
+        threshold_keys={"upper_warning_rmb"},
+        secret_keys={"smtp_password"},
+    )
+
+    assert preview["ok"] is True
+    assert preview["sections"] == ["alert_rules"]
+    assert preview["counts"]["alert_rules"] == 1
+    assert preview["ignored"]["alert_rules"] == ["1", "2", "3"]
 
 
 def test_open_exports_folder_plan_matches_platforms():

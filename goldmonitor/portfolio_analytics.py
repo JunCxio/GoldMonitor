@@ -238,6 +238,18 @@ def _notification_outcome(entry):
     return status or "unknown"
 
 
+def _alert_rule_kind(entry):
+    explicit = str(entry.get("rule_kind") or "").strip()
+    if explicit:
+        return explicit
+    return {
+        "threshold": "price_threshold",
+        "volatility": "volatility",
+        "watch_target": "watch_target",
+        "portfolio_alert": "portfolio",
+    }.get(str(entry.get("source") or "").strip(), "legacy")
+
+
 def _nearest_trigger_price(points, timestamp, explicit_price):
     explicit = _number(explicit_price)
     if explicit is not None and explicit > 0:
@@ -299,6 +311,8 @@ def build_alert_effectiveness(
         follow_through = final_change >= float(follow_through_threshold_pct or 0)
         evaluated_items.append({
             "id": str(entry.get("id") or ""),
+            "rule_id": str(entry.get("rule_id") or ""),
+            "rule_kind": _alert_rule_kind(entry),
             "timestamp": timestamp.isoformat(timespec="seconds"),
             "title": str(entry.get("title") or entry.get("message") or "预警"),
             "source": str(entry.get("source") or "alert"),
@@ -319,6 +333,22 @@ def build_alert_effectiveness(
     evaluated_items.sort(key=lambda item: item["timestamp"], reverse=True)
     follow_through_count = sum(1 for item in evaluated_items if item["follow_through"])
     total = len(alerts)
+    by_rule_kind = {}
+    for entry in alerts:
+        kind = _alert_rule_kind(entry)
+        group = by_rule_kind.setdefault(kind, {"total": 0, "evaluated": 0, "follow_through": 0})
+        group["total"] += 1
+    for item in evaluated_items:
+        group = by_rule_kind.setdefault(item["rule_kind"], {"total": 0, "evaluated": 0, "follow_through": 0})
+        group["evaluated"] += 1
+        if item["follow_through"]:
+            group["follow_through"] += 1
+    for group in by_rule_kind.values():
+        group["rate"] = (
+            round((group["follow_through"] / group["evaluated"]) * 100, 2)
+            if group["evaluated"]
+            else None
+        )
     return {
         "period_alerts": total,
         "delivery": {
@@ -340,5 +370,6 @@ def build_alert_effectiveness(
             "horizon_hours": int(horizon_hours or 24),
             "threshold_pct": float(follow_through_threshold_pct or 0),
         },
+        "by_rule_kind": by_rule_kind,
         "items": evaluated_items[:50],
     }

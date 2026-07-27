@@ -8,6 +8,13 @@ STORAGE_DEFINITIONS = (
     {"key": "appdata", "label": "应用数据目录", "kind": "directory", "schema": "directory"},
     {"key": "settings", "label": "通用设置", "kind": "json", "schema": "plain_json"},
     {"key": "thresholds", "label": "预警阈值", "kind": "json", "schema": "plain_json"},
+    {
+        "key": "alert_rules",
+        "label": "统一预警规则",
+        "kind": "json",
+        "schema": "versioned_object",
+        "expected_schema_version": 1,
+    },
     {"key": "alert_profiles", "label": "预警策略模板", "kind": "json", "schema": "item_payload"},
     {"key": "watch_targets", "label": "目标价观察清单", "kind": "json", "schema": "item_payload"},
     {"key": "portfolio_positions", "label": "持仓记录", "kind": "json", "schema": "item_payload"},
