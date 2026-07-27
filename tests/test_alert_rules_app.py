@@ -121,3 +121,81 @@ def test_alert_rule_socket_crud_contract(monkeypatch, tmp_path):
     state = next(event["args"][0] for event in client.get_received() if event["name"] == "alert_rules_updated")
     assert state["total"] == 1
     client.disconnect()
+
+
+def test_alert_rule_socket_batch_operations_are_transactional(monkeypatch, tmp_path):
+    app = _prepare_rules_state(monkeypatch, tmp_path)
+    for value in (688, 680):
+        app.upsert_alert_rule_entry({
+            "kind": "watch_target",
+            "scope": {"mode": "rmb"},
+            "condition": {"operator": "lte", "value": value},
+        })
+    rule_ids = [item["id"] for item in app.alert_rules]
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+
+    client.emit("batch_update_alert_rules", {"ids": rule_ids, "action": "disable"})
+    events = client.get_received()
+    result = next(event["args"][0] for event in events if event["name"] == "alert_rules_batch_updated")
+    state = next(event["args"][0] for event in events if event["name"] == "alert_rules_updated")
+    assert result["count"] == 2
+    assert all(item["enabled"] is False for item in state["items"])
+
+    snapshot = json.loads(Path(app.ALERT_RULES_PATH).read_text(encoding="utf-8"))
+    client.emit("batch_update_alert_rules", {"ids": [rule_ids[0], "rule-missing"], "action": "delete"})
+    error = next(event["args"][0] for event in client.get_received() if event["name"] == "alert_rule_error")
+    assert "已不存在" in error["message"]
+    assert json.loads(Path(app.ALERT_RULES_PATH).read_text(encoding="utf-8")) == snapshot
+    client.disconnect()
+
+
+def test_alert_rule_insight_reports_delivery_and_effectiveness(monkeypatch, tmp_path):
+    app = _prepare_rules_state(monkeypatch, tmp_path)
+    _, rule = app.upsert_alert_rule_entry({
+        "kind": "price_threshold",
+        "scope": {"mode": "rmb"},
+        "condition": {"operator": "gte", "value": 720},
+        "delivery": {"channels": ["local", "email"], "cooldown_minutes": 15},
+    })
+    monkeypatch.setattr(app, "get_settings_snapshot", lambda: {
+        "email_warning_enabled": True,
+        "smtp_server": "smtp.example.com",
+        "smtp_sender": "sender@example.com",
+        "smtp_recipient": "receiver@example.com",
+        "smtp_password": "secret",
+        "webhook_enabled": False,
+        "alert_quiet_start": "",
+        "alert_quiet_end": "",
+        "alert_cooldown_minutes": 30,
+    })
+    monkeypatch.setattr(app, "alert_log_export_entries", lambda limit=None: [{
+        "id": "alert-one",
+        "rule_id": rule["id"],
+        "rule_kind": "price_threshold",
+        "timestamp": "2026-07-27T13:00:00",
+        "mode": "rmb",
+        "trigger_price": 721,
+        "alert_direction": "up",
+        "notification_summary": {"status": "sent"},
+        "handled": True,
+    }])
+    monkeypatch.setattr(app, "_analytics_price_history", lambda days, limit=1000: [
+        {"timestamp": "2026-07-27T13:00:00", "rmb": 721},
+        {"timestamp": "2026-07-27T14:30:00", "rmb": 723},
+    ])
+
+    insight = app.build_alert_rule_insight(rule["id"], now=datetime(2026, 7, 27, 15, 0, 0))
+    assert insight["effectiveness"]["period_alerts"] == 1
+    assert insight["effectiveness"]["delivery"]["sent"] == 1
+    assert insight["effectiveness"]["response"]["handled"] == 1
+    assert insight["delivery"]["cooldown_minutes"] == 15
+    assert insight["delivery"]["channels"][1]["ready"] is True
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+    client.emit("get_alert_rule_insight", {"id": rule["id"], "days": 30})
+    payload = next(event["args"][0] for event in client.get_received() if event["name"] == "alert_rule_insight")
+    assert payload["rule_id"] == rule["id"]
+    assert payload["effectiveness"]["period_alerts"] == 1
+    client.disconnect()
