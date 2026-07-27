@@ -104,7 +104,23 @@
 
         <div class="card-outer threshold-card">
           <div class="card-inner">
-            <h3>预警阈值 <span class="threshold-unit" id="thresholdUnit">(RMB/克)</span></h3>
+            <div class="alert-center-head">
+              <div>
+                <h3>预警中心</h3>
+                <div class="alert-center-subtitle">统一管理价格、波动、目标价和持仓规则</div>
+              </div>
+              <button class="btn-clear-sm alert-center-add" type="button" onclick="openNewAlertRule()">新增规则</button>
+            </div>
+            <div class="alert-center-summary" id="alertRuleSummary" aria-label="预警规则状态汇总"></div>
+            <div class="alert-center-filters" id="alertRuleFilters" role="tablist" aria-label="预警规则类型筛选">
+              <button class="alert-center-filter active" type="button" data-filter="all" onclick="setAlertRuleFilter('all')">全部</button>
+              <button class="alert-center-filter" type="button" data-filter="price_threshold" onclick="setAlertRuleFilter('price_threshold')">价格</button>
+              <button class="alert-center-filter" type="button" data-filter="volatility" onclick="setAlertRuleFilter('volatility')">波动</button>
+              <button class="alert-center-filter" type="button" data-filter="watch_target" onclick="setAlertRuleFilter('watch_target')">目标价</button>
+              <button class="alert-center-filter" type="button" data-filter="portfolio" onclick="setAlertRuleFilter('portfolio')">持仓</button>
+            </div>
+            <div class="alert-center-status" id="alertRuleCenterStatus"></div>
+            <div class="alert-center-list" id="alertRuleCenterList"></div>
             <div class="alert-profiles" id="alertProfilesPanel">
               <div class="alert-profiles-head">
                 <div>
@@ -115,15 +131,6 @@
               </div>
               <div class="alert-profiles-list" id="alertProfilesList"></div>
               <div class="alert-profiles-status" id="alertProfilesStatus"></div>
-            </div>
-            <div class="alert-rules-list" id="alertRulesList"></div>
-            <div class="watch-targets">
-              <div class="watch-target-head">
-                <div class="watch-target-title">目标价观察</div>
-                <button class="btn-clear-sm" type="button" onclick="setActiveWatchTarget('new')">新增观察</button>
-              </div>
-              <div class="watch-target-status" id="watchTargetStatus"></div>
-              <div class="watch-target-list" id="watchTargetList"></div>
             </div>
           </div>
         </div>

@@ -83,6 +83,49 @@ def test_alert_cooldown_is_scoped_to_the_specific_alert_rule():
     assert same_watch_target["reason"] == "cooldown"
 
 
+def test_rule_delivery_overrides_channels_and_cooldown():
+    from goldmonitor.notifications import (
+        alert_local_delivery_enabled,
+        evaluate_alert_delivery,
+        plan_alert_notifications,
+    )
+
+    settings = {
+        "alert_cooldown_minutes": 30,
+        "email_warning_enabled": True,
+        "webhook_enabled": True,
+        "webhook_warning_enabled": True,
+    }
+    cooldown_state = {}
+    entry = {
+        "rule_id": "rule-budget",
+        "type": "warning",
+        "mode": "rmb",
+        "source": "watch_target",
+        "delivery_channels": ["email"],
+        "cooldown_minutes": 5,
+    }
+
+    first = evaluate_alert_delivery(entry, settings, cooldown_state, now=datetime(2026, 6, 8, 12, 0))
+    repeated = evaluate_alert_delivery(entry, settings, cooldown_state, now=datetime(2026, 6, 8, 12, 3))
+    notifications = plan_alert_notifications(entry, settings)
+
+    assert first == {"deliver": True, "reason": ""}
+    assert repeated["reason"] == "cooldown"
+    assert repeated["remaining_seconds"] == 120
+    assert notifications[0]["channel"] == "email" and notifications[0]["status"] == "pending"
+    assert notifications[1]["channel"] == "webhook" and notifications[1]["status"] == "disabled"
+    assert alert_local_delivery_enabled(entry) is False
+
+    record_only = evaluate_alert_delivery(
+        {**entry, "rule_id": "rule-record", "delivery_channels": []},
+        settings,
+        cooldown_state,
+        now=datetime(2026, 6, 8, 12, 0),
+    )
+    assert record_only == {"deliver": False, "reason": "no_channels"}
+
+
 def test_templates_and_webhook_payload_use_market_context_without_leaking_format_errors():
     from goldmonitor.notifications import build_alert_template_values, build_webhook_payload, format_template
 

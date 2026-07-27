@@ -19,6 +19,7 @@ import secrets
 import requests
 from flask import Flask, jsonify, render_template, request, send_from_directory
 from flask_socketio import SocketIO, emit
+from goldmonitor import alert_rules as alert_rules_core
 from goldmonitor import alert_profiles as alert_profiles_core
 from goldmonitor import app_state as app_state_core
 from goldmonitor import desktop_ui as desktop_ui_core
@@ -59,7 +60,7 @@ app.config["MAX_CONTENT_LENGTH"] = 256 * 1024 * 1024
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 OFFICIAL_UPDATE_HOST = "github.com"
@@ -134,6 +135,7 @@ def _run_macos_osascript(script, wait=False, timeout=4):
 APPDATA_DIR = os.path.join(_default_appdata_root(), "GoldMonitor")
 SETTINGS_PATH = os.path.join(APPDATA_DIR, "settings.json")
 THRESHOLDS_PATH = os.path.join(APPDATA_DIR, "thresholds.json")
+ALERT_RULES_PATH = os.path.join(APPDATA_DIR, "alert_rules.json")
 ALERT_PROFILES_PATH = os.path.join(APPDATA_DIR, "alert_profiles.json")
 WATCH_TARGETS_PATH = os.path.join(APPDATA_DIR, "watch_targets.json")
 PORTFOLIO_POSITIONS_PATH = os.path.join(APPDATA_DIR, "portfolio_positions.json")
@@ -397,6 +399,10 @@ for m in THRESHOLD_MODES:
 # 波动率预警
 volatility_config = {"percent": None, "minutes": 10, "enabled": False}
 alert_profiles = []
+alert_rules = []
+alert_rule_migration_status = {}
+alert_rules_load_error = ""
+alert_rules_invalid_count = 0
 last_volatility_check = None
 watch_targets = []
 review_notes = []
@@ -762,6 +768,286 @@ def save_thresholds(data=None):
     ).save(data)
 
 
+def _alert_rule_store(now_factory=None):
+    return alert_rules_core.AlertRuleStore(
+        ALERT_RULES_PATH,
+        now_factory=now_factory or datetime.now,
+        id_factory=alert_rules_core.generate_alert_rule_id,
+    )
+
+
+def _sync_legacy_alert_rule_views():
+    global volatility_config, watch_targets, portfolio_alerts
+    legacy_thresholds = alert_rules_core.legacy_threshold_state(alert_rules)
+    thresholds.clear()
+    for mode in THRESHOLD_MODES:
+        for threshold_type in THRESHOLD_TYPES:
+            key = f"{threshold_type}_{mode}"
+            thresholds[key] = legacy_thresholds.get(key)
+    volatility_config = dict(legacy_thresholds.get("volatility_config") or {
+        "percent": None,
+        "minutes": 10,
+        "enabled": False,
+    })
+    watch_targets = alert_rules_core.legacy_watch_targets(alert_rules)
+    portfolio_alerts = alert_rules_core.legacy_portfolio_alerts(alert_rules)
+
+
+def load_alert_rules():
+    global alert_rule_migration_status, alert_rules_load_error, alert_rules_invalid_count
+    store = _alert_rule_store()
+    try:
+        if store.exists():
+            payload = store.load()
+        else:
+            payload = store.migrate(
+                thresholds=load_thresholds(),
+                watch_targets=load_watch_targets(),
+                portfolio_alerts=load_portfolio_alerts(),
+            )
+    except alert_rules_core.AlertRuleStoreError as exc:
+        alert_rules_load_error = str(exc)
+        alert_rule_migration_status = {"completed": False, "error": str(exc)}
+        alert_rules_invalid_count = 0
+        return []
+    alert_rules_load_error = ""
+    alert_rule_migration_status = dict(payload.get("migration") or {})
+    alert_rules_invalid_count = int(payload.get("invalid_count") or 0)
+    return list(payload.get("items") or [])
+
+
+def save_alert_rules(items=None):
+    global alert_rules, alert_rule_migration_status, alert_rules_load_error, alert_rules_invalid_count
+    items = alert_rules if items is None else items
+    payload = _alert_rule_store().save(items, migration=alert_rule_migration_status)
+    alert_rules = list(payload.get("items") or [])
+    alert_rules_invalid_count = int(payload.get("invalid_count") or 0)
+    alert_rules_load_error = ""
+    _sync_legacy_alert_rule_views()
+    return alert_rules
+
+
+def get_alert_rules_state():
+    positions = []
+    try:
+        positions = build_portfolio_state().get("items", [])
+    except Exception:
+        positions = list(portfolio_positions or [])
+    return alert_rules_core.alert_rules_state(
+        alert_rules,
+        positions=positions,
+        prices={"usd": price_usd, "rmb": price_rmb},
+        migration=alert_rule_migration_status,
+        invalid_count=alert_rules_invalid_count,
+        load_error=alert_rules_load_error,
+    )
+
+
+def _find_alert_rule(rule_id):
+    index = alert_rules_core.find_rule_index(alert_rules, rule_id)
+    return alert_rules[index] if index >= 0 else None
+
+
+def _find_legacy_alert_rule(source, identifier=None, condition=None):
+    source = str(source or "").strip()
+    identifier = str(identifier or "").strip()
+    condition = str(condition or "").strip()
+    for rule in alert_rules:
+        if not isinstance(rule, dict):
+            continue
+        legacy = rule.get("legacy") if isinstance(rule.get("legacy"), dict) else {}
+        if legacy.get("source") != source:
+            continue
+        legacy_identifier = str(legacy.get("key") or legacy.get("id") or "").strip()
+        if identifier and legacy_identifier != identifier:
+            continue
+        if condition and str(legacy.get("condition") or "").strip() != condition:
+            continue
+        return rule
+    return None
+
+
+def _persist_alert_rule_items(items):
+    global alert_rules
+    alert_rules = save_alert_rules(items)
+    return get_alert_rules_state()
+
+
+def upsert_alert_rule_entry(data):
+    with lock:
+        next_rules, rule = alert_rules_core.upsert_alert_rule(
+            alert_rules,
+            data,
+            now_factory=datetime.now,
+            id_factory=alert_rules_core.generate_alert_rule_id,
+        )
+        state = _persist_alert_rule_items(next_rules)
+        saved_rule = _find_alert_rule(rule.get("id")) or rule
+    return state, dict(saved_rule)
+
+
+def delete_alert_rule_entry(rule_id):
+    with lock:
+        next_rules, deleted = alert_rules_core.delete_alert_rule(alert_rules, rule_id)
+        state = _persist_alert_rule_items(next_rules) if deleted else get_alert_rules_state()
+    return deleted, state
+
+
+def toggle_alert_rule_entry(rule_id, enabled):
+    with lock:
+        next_rules, updated = alert_rules_core.toggle_alert_rule(
+            alert_rules,
+            rule_id,
+            enabled,
+            now_factory=datetime.now,
+        )
+        state = _persist_alert_rule_items(next_rules) if updated else get_alert_rules_state()
+    return updated is not None, state
+
+
+def reset_alert_rule_entry(rule_id):
+    with lock:
+        next_rules, updated = alert_rules_core.reset_alert_rule(
+            alert_rules,
+            rule_id,
+            now_factory=datetime.now,
+        )
+        state = _persist_alert_rule_items(next_rules) if updated else get_alert_rules_state()
+    return updated is not None, state
+
+
+def duplicate_alert_rule_entry(rule_id):
+    with lock:
+        next_rules, duplicated = alert_rules_core.duplicate_alert_rule(
+            alert_rules,
+            rule_id,
+            now_factory=datetime.now,
+            id_factory=alert_rules_core.generate_alert_rule_id,
+        )
+        state = _persist_alert_rule_items(next_rules) if duplicated else get_alert_rules_state()
+    return duplicated is not None, state, duplicated
+
+
+def _replace_legacy_threshold_rule(mode, threshold_type, value):
+    key = f"{threshold_type}_{mode}"
+    existing = _find_legacy_alert_rule("threshold", key)
+    if value in (None, ""):
+        if not existing:
+            return get_alert_rules_state()
+        next_rules, _ = alert_rules_core.delete_alert_rule(alert_rules, existing.get("id"))
+        return _persist_alert_rule_items(next_rules)
+
+    definition = alert_rules_core.THRESHOLD_DEFINITIONS[threshold_type]
+    payload = {
+        "kind": "price_threshold",
+        "name": ("国际金价" if mode == "usd" else "国内金价") + definition["label"],
+        "enabled": True,
+        "scope": {"mode": mode},
+        "condition": {"operator": definition["operator"], "value": value},
+        "alert_level": definition["level"],
+        "legacy": {"source": "threshold", "key": key},
+    }
+    if existing:
+        payload["id"] = existing.get("id")
+    next_rules, _ = alert_rules_core.upsert_alert_rule(
+        alert_rules,
+        payload,
+        now_factory=datetime.now,
+        id_factory=alert_rules_core.generate_alert_rule_id,
+    )
+    return _persist_alert_rule_items(next_rules)
+
+
+def _replace_legacy_volatility_rule(data):
+    existing = _find_legacy_alert_rule("volatility", "volatility_config")
+    normalized = _normalize_volatility_config(data)
+    if not normalized.get("enabled") or normalized.get("percent") is None:
+        if not existing:
+            return get_alert_rules_state()
+        next_rules, _ = alert_rules_core.delete_alert_rule(alert_rules, existing.get("id"))
+        return _persist_alert_rule_items(next_rules)
+
+    payload = {
+        "kind": "volatility",
+        "name": "国际金价波动提醒",
+        "enabled": True,
+        "scope": {"mode": "usd"},
+        "condition": {
+            "value": normalized["percent"],
+            "window_minutes": normalized["minutes"],
+        },
+        "alert_level": "volatility",
+        "legacy": {"source": "volatility", "key": "volatility_config"},
+    }
+    if existing:
+        payload["id"] = existing.get("id")
+    next_rules, _ = alert_rules_core.upsert_alert_rule(
+        alert_rules,
+        payload,
+        now_factory=datetime.now,
+        id_factory=alert_rules_core.generate_alert_rule_id,
+    )
+    return _persist_alert_rule_items(next_rules)
+
+
+def _rules_for_legacy_threshold_snapshot(threshold_values, volatility):
+    threshold_values = threshold_values if isinstance(threshold_values, dict) else {}
+    volatility = _normalize_volatility_config(volatility)
+    next_rules = [
+        dict(rule)
+        for rule in alert_rules
+        if (rule.get("legacy") or {}).get("source") not in {"threshold", "volatility"}
+    ]
+    for mode in THRESHOLD_MODES:
+        for threshold_type in THRESHOLD_TYPES:
+            key = f"{threshold_type}_{mode}"
+            value = threshold_values.get(key)
+            if value in (None, ""):
+                continue
+            definition = alert_rules_core.THRESHOLD_DEFINITIONS[threshold_type]
+            existing = _find_legacy_alert_rule("threshold", key)
+            payload = {
+                "kind": "price_threshold",
+                "name": ("国际金价" if mode == "usd" else "国内金价") + definition["label"],
+                "enabled": True,
+                "scope": {"mode": mode},
+                "condition": {"operator": definition["operator"], "value": value},
+                "alert_level": definition["level"],
+                "legacy": {"source": "threshold", "key": key},
+            }
+            if existing:
+                payload["id"] = existing.get("id")
+            next_rules, _ = alert_rules_core.upsert_alert_rule(
+                next_rules,
+                payload,
+                now_factory=datetime.now,
+                id_factory=alert_rules_core.generate_alert_rule_id,
+            )
+    if volatility.get("enabled") and volatility.get("percent") is not None:
+        existing = _find_legacy_alert_rule("volatility", "volatility_config")
+        payload = {
+            "kind": "volatility",
+            "name": "国际金价波动提醒",
+            "enabled": True,
+            "scope": {"mode": "usd"},
+            "condition": {
+                "value": volatility["percent"],
+                "window_minutes": volatility["minutes"],
+            },
+            "alert_level": "volatility",
+            "legacy": {"source": "volatility", "key": "volatility_config"},
+        }
+        if existing:
+            payload["id"] = existing.get("id")
+        next_rules, _ = alert_rules_core.upsert_alert_rule(
+            next_rules,
+            payload,
+            now_factory=datetime.now,
+            id_factory=alert_rules_core.generate_alert_rule_id,
+        )
+    return next_rules
+
+
 def _alert_profile_store():
     return alert_profiles_core.AlertProfileStore(
         ALERT_PROFILES_PATH,
@@ -867,58 +1153,87 @@ def _find_watch_target_index(target_id):
 
 
 def upsert_watch_target(data):
-    global watch_targets
     target_id = str((data or {}).get("id") or "").strip() if isinstance(data, dict) else ""
     with lock:
         index = _find_watch_target_index(target_id)
         existing = watch_targets[index] if index >= 0 else None
         target = normalize_watch_target(data, existing=existing)
-        if index >= 0:
-            watch_targets[index] = target
-        else:
-            watch_targets.append(target)
-        watch_targets = save_watch_targets(watch_targets)
+        existing_rule = None
+        if existing and existing.get("rule_id"):
+            existing_rule = _find_alert_rule(existing.get("rule_id"))
+        if existing_rule is None:
+            existing_rule = _find_legacy_alert_rule("watch_target", target.get("id"))
+        payload = {
+            "kind": "watch_target",
+            "name": target.get("note") or "目标价观察",
+            "enabled": target.get("enabled", True),
+            "scope": {"mode": target.get("mode")},
+            "condition": {
+                "operator": "gte" if target.get("direction") == "rise_to" else "lte",
+                "value": target.get("price"),
+            },
+            "validity": {"expires_at": target.get("expires_at", "")},
+            "note": target.get("note", ""),
+            "created_at": target.get("created_at", ""),
+            "legacy": {"source": "watch_target", "id": target.get("id")},
+        }
+        if existing_rule:
+            payload["id"] = existing_rule.get("id")
+        next_rules, _ = alert_rules_core.upsert_alert_rule(
+            alert_rules,
+            payload,
+            now_factory=datetime.now,
+            id_factory=alert_rules_core.generate_alert_rule_id,
+        )
+        _persist_alert_rule_items(next_rules)
         return get_watch_targets_state()
 
 
 def delete_watch_target(target_id):
-    global watch_targets
     with lock:
         index = _find_watch_target_index(target_id)
         if index < 0:
             return False, get_watch_targets_state()
-        watch_targets.pop(index)
-        watch_targets = save_watch_targets(watch_targets)
+        rule_id = watch_targets[index].get("rule_id")
+        next_rules, deleted = alert_rules_core.delete_alert_rule(alert_rules, rule_id)
+        if not deleted:
+            return False, get_watch_targets_state()
+        _persist_alert_rule_items(next_rules)
         return True, get_watch_targets_state()
 
 
 def toggle_watch_target(target_id, enabled):
-    global watch_targets
     with lock:
         index = _find_watch_target_index(target_id)
         if index < 0:
             return False, get_watch_targets_state()
-        updated = dict(watch_targets[index])
-        updated["enabled"] = _coerce_watch_target_bool(enabled, updated.get("enabled", True))
-        updated["updated_at"] = datetime.now().isoformat(timespec="seconds")
-        watch_targets[index] = normalize_watch_target(updated, existing=watch_targets[index])
-        watch_targets = save_watch_targets(watch_targets)
+        rule_id = watch_targets[index].get("rule_id")
+        next_rules, updated = alert_rules_core.toggle_alert_rule(
+            alert_rules,
+            rule_id,
+            _coerce_watch_target_bool(enabled, watch_targets[index].get("enabled", True)),
+            now_factory=datetime.now,
+        )
+        if updated is None:
+            return False, get_watch_targets_state()
+        _persist_alert_rule_items(next_rules)
         return True, get_watch_targets_state()
 
 
 def reset_watch_target(target_id):
-    global watch_targets
     with lock:
         index = _find_watch_target_index(target_id)
         if index < 0:
             return False, get_watch_targets_state()
-        updated = dict(watch_targets[index])
-        updated["triggered"] = False
-        updated["triggered_at"] = ""
-        updated["last_trigger_price"] = None
-        updated["updated_at"] = datetime.now().isoformat(timespec="seconds")
-        watch_targets[index] = normalize_watch_target(updated, existing=watch_targets[index])
-        watch_targets = save_watch_targets(watch_targets)
+        rule_id = watch_targets[index].get("rule_id")
+        next_rules, updated = alert_rules_core.reset_alert_rule(
+            alert_rules,
+            rule_id,
+            now_factory=datetime.now,
+        )
+        if updated is None:
+            return False, get_watch_targets_state()
+        _persist_alert_rule_items(next_rules)
         return True, get_watch_targets_state()
 
 
@@ -1302,7 +1617,6 @@ def _find_portfolio_alert_index_by_position(position_id):
 
 
 def upsert_portfolio_alert(data):
-    global portfolio_alerts
     alert_id = str((data or {}).get("id") or "").strip() if isinstance(data, dict) else ""
     position_id = str((data or {}).get("position_id") or "").strip() if isinstance(data, dict) else ""
     with lock:
@@ -1311,46 +1625,93 @@ def upsert_portfolio_alert(data):
             index = _find_portfolio_alert_index_by_position(position_id)
         existing = portfolio_alerts[index] if index >= 0 else None
         alert = portfolio_alerts_core.normalize_portfolio_alert(data, existing=existing, now_factory=datetime.now)
-        next_alerts = list(portfolio_alerts)
-        if index >= 0:
-            next_alerts[index] = alert
-        else:
-            next_alerts.append(alert)
-        portfolio_alerts = save_portfolio_alerts(next_alerts)
+        group_id = alert.get("id")
+        next_rules = [dict(rule) for rule in alert_rules]
+        existing_by_condition = {}
+        for rule in alert_rules:
+            legacy = rule.get("legacy") if isinstance(rule.get("legacy"), dict) else {}
+            if legacy.get("source") == "portfolio_alert" and legacy.get("id") == group_id:
+                existing_by_condition[legacy.get("condition")] = rule
+
+        mode = "rmb"
+        for position in build_portfolio_state().get("items", []):
+            if position.get("id") == alert.get("position_id"):
+                mode = position.get("mode") or "rmb"
+                break
+
+        for condition_key, field_name in alert_rules_core.PORTFOLIO_FIELD_BY_CONDITION.items():
+            value = alert.get(field_name)
+            existing_rule = existing_by_condition.get(condition_key)
+            if value is None:
+                if existing_rule:
+                    next_rules, _ = alert_rules_core.delete_alert_rule(next_rules, existing_rule.get("id"))
+                continue
+            payload = {
+                "kind": "portfolio",
+                "name": "持仓" + alert_rules_core.PORTFOLIO_LABELS[condition_key],
+                "enabled": alert.get("enabled", True),
+                "scope": {"mode": mode, "position_id": alert.get("position_id")},
+                "condition": {"condition_key": condition_key, "value": value},
+                "note": alert.get("note", ""),
+                "created_at": alert.get("created_at", ""),
+                "legacy": {
+                    "source": "portfolio_alert",
+                    "id": group_id,
+                    "condition": condition_key,
+                },
+            }
+            if existing_rule:
+                payload["id"] = existing_rule.get("id")
+            next_rules, _ = alert_rules_core.upsert_alert_rule(
+                next_rules,
+                payload,
+                now_factory=datetime.now,
+                id_factory=alert_rules_core.generate_alert_rule_id,
+            )
+        _persist_alert_rule_items(next_rules)
     return build_portfolio_state()
 
 
 def reset_portfolio_alert(alert_id):
-    global portfolio_alerts
     with lock:
         index = _find_portfolio_alert_index(alert_id)
         if index < 0:
             return False, build_portfolio_state()
-        updated = dict(portfolio_alerts[index])
-        updated["triggered"] = portfolio_alerts_core.empty_portfolio_alert_triggered()
-        updated["last_triggered_at"] = ""
-        updated["last_trigger_price"] = None
-        updated["last_trigger_condition"] = ""
-        updated["updated_at"] = datetime.now().isoformat(timespec="seconds")
-        next_alerts = list(portfolio_alerts)
-        next_alerts[index] = portfolio_alerts_core.normalize_portfolio_alert(
-            updated,
-            existing=portfolio_alerts[index],
-            now_factory=datetime.now,
-        )
-        portfolio_alerts = save_portfolio_alerts(next_alerts)
+        group_id = portfolio_alerts[index].get("id")
+        next_rules = [dict(rule) for rule in alert_rules]
+        found = False
+        for rule in list(next_rules):
+            legacy = rule.get("legacy") if isinstance(rule.get("legacy"), dict) else {}
+            if legacy.get("source") != "portfolio_alert" or legacy.get("id") != group_id:
+                continue
+            next_rules, updated = alert_rules_core.reset_alert_rule(
+                next_rules,
+                rule.get("id"),
+                now_factory=datetime.now,
+            )
+            found = found or updated is not None
+        if not found:
+            return False, build_portfolio_state()
+        _persist_alert_rule_items(next_rules)
     return True, build_portfolio_state()
 
 
 def delete_portfolio_alert(alert_id):
-    global portfolio_alerts
     with lock:
         index = _find_portfolio_alert_index(alert_id)
         if index < 0:
             return False, build_portfolio_state()
-        next_alerts = list(portfolio_alerts)
-        next_alerts.pop(index)
-        portfolio_alerts = save_portfolio_alerts(next_alerts)
+        group_id = portfolio_alerts[index].get("id")
+        next_rules = [
+            dict(rule)
+            for rule in alert_rules
+            if not (
+                isinstance(rule.get("legacy"), dict)
+                and rule["legacy"].get("source") == "portfolio_alert"
+                and rule["legacy"].get("id") == group_id
+            )
+        ]
+        _persist_alert_rule_items(next_rules)
     return True, build_portfolio_state()
 
 
@@ -1396,6 +1757,43 @@ def check_portfolio_alerts(now_str):
     return triggered_entries
 
 
+def check_alert_rules(now_str=None, now=None):
+    global alert_rules, alert_rules_load_error
+    now = now or datetime.now()
+    with lock:
+        portfolio_state = build_portfolio_state()
+        next_rules, triggers = alert_rules_core.evaluate_alert_rules(
+            alert_rules,
+            prices={"usd": price_usd, "rmb": price_rmb},
+            price_history=list(price_history),
+            positions=portfolio_state.get("items", []),
+            now=now,
+        )
+        changed = next_rules != alert_rules
+        if changed:
+            try:
+                alert_rules = save_alert_rules(next_rules)
+            except alert_rules_core.AlertRuleStoreError as exc:
+                alert_rules_load_error = str(exc)
+                logging.warning("统一预警规则状态保存失败: %s", exc)
+                socketio.emit("alert_rule_error", {"message": "预警规则状态保存失败，请检查配置目录权限。"})
+                return []
+        rules_state = get_alert_rules_state()
+        watch_state = get_watch_targets_state()
+        portfolio_state = build_portfolio_state()
+
+    if changed:
+        socketio.emit("alert_rules_updated", rules_state)
+        socketio.emit("watch_targets_updated", watch_state)
+        socketio.emit("portfolio_updated", portfolio_state)
+    for trigger in triggers:
+        alert_entry = dict(trigger.get("alert") or {})
+        if now_str:
+            alert_entry["time"] = str(now_str)
+        emit_alert(alert_entry, trigger.get("title") or "金价预警")
+    return triggers
+
+
 def upsert_portfolio_position(data):
     global portfolio_positions, portfolio_transactions
     position_id = str((data or {}).get("id") or "").strip() if isinstance(data, dict) else ""
@@ -1438,7 +1836,7 @@ def upsert_portfolio_position(data):
 
 
 def delete_portfolio_position(position_id):
-    global portfolio_positions, portfolio_transactions, portfolio_alerts
+    global portfolio_positions, portfolio_transactions
     with lock:
         if portfolio_transactions:
             position_id = str(position_id or "").strip()
@@ -1448,9 +1846,16 @@ def delete_portfolio_position(position_id):
             portfolio_core.validate_portfolio_transactions(next_transactions)
             saved_transactions = save_portfolio_transactions(next_transactions)
             portfolio_transactions = saved_transactions
-            next_alerts = [item for item in portfolio_alerts if item.get("position_id") != position_id]
-            if len(next_alerts) != len(portfolio_alerts):
-                portfolio_alerts = save_portfolio_alerts(next_alerts)
+            next_rules = [
+                dict(rule)
+                for rule in alert_rules
+                if not (
+                    rule.get("kind") == "portfolio"
+                    and (rule.get("scope") or {}).get("position_id") == position_id
+                )
+            ]
+            if len(next_rules) != len(alert_rules):
+                _persist_alert_rule_items(next_rules)
             prices = _current_portfolio_prices()
             return True, _build_portfolio_state_from_snapshots([dict(item) for item in saved_transactions], [], prices)
 
@@ -1460,9 +1865,16 @@ def delete_portfolio_position(position_id):
         next_positions = list(portfolio_positions)
         next_positions.pop(index)
         portfolio_positions = save_portfolio_positions(next_positions)
-        next_alerts = [item for item in portfolio_alerts if item.get("position_id") != position_id]
-        if len(next_alerts) != len(portfolio_alerts):
-            portfolio_alerts = save_portfolio_alerts(next_alerts)
+        next_rules = [
+            dict(rule)
+            for rule in alert_rules
+            if not (
+                rule.get("kind") == "portfolio"
+                and (rule.get("scope") or {}).get("position_id") == position_id
+            )
+        ]
+        if len(next_rules) != len(alert_rules):
+            _persist_alert_rule_items(next_rules)
         return True, build_portfolio_state()
 
 
@@ -1890,6 +2302,14 @@ def build_config_backup():
         },
         alert_profiles=get_alert_profiles_state().get("items", []),
         now_factory=datetime.now,
+        alert_rules=[
+            {
+                key: value
+                for key, value in rule.items()
+                if key != "state"
+            }
+            for rule in alert_rules
+        ],
     )
 
 
@@ -2121,6 +2541,7 @@ def _data_archive_paths():
     return {
         "settings": {"path": SETTINGS_PATH, "kind": "json", "label": "通用设置", "sensitive": True},
         "thresholds": {"path": THRESHOLDS_PATH, "kind": "json", "label": "预警阈值"},
+        "alert_rules": {"path": ALERT_RULES_PATH, "kind": "json", "label": "统一预警规则"},
         "alert_profiles": {"path": ALERT_PROFILES_PATH, "kind": "json", "label": "预警策略模板"},
         "watch_targets": {"path": WATCH_TARGETS_PATH, "kind": "json", "label": "目标价观察清单"},
         "portfolio_positions": {"path": PORTFOLIO_POSITIONS_PATH, "kind": "json", "label": "持仓记录"},
@@ -2193,7 +2614,7 @@ def create_data_archive(now=None):
 
 
 def _reload_application_data_from_disk():
-    global app_settings, alert_profiles, watch_targets, review_notes
+    global app_settings, alert_profiles, alert_rules, review_notes
     global portfolio_positions, portfolio_transactions, portfolio_import_backup, portfolio_alerts
     global news_items, news_last_updated, news_last_error, risk_analysis_history
     global alert_log, price_archive, alert_cooldown_state, alerted_flags, source_health
@@ -2204,14 +2625,13 @@ def _reload_application_data_from_disk():
     global today_open_rmb, today_high_rmb, today_low_rmb
 
     app_settings = load_settings()
-    apply_persisted_threshold_state(load_thresholds())
-    alert_profiles = load_alert_profiles()
-    watch_targets = load_watch_targets()
-    review_notes = load_review_notes()
     portfolio_positions = load_portfolio_positions()
     portfolio_transactions = load_portfolio_transactions()
     portfolio_import_backup = load_portfolio_import_backup()
-    portfolio_alerts = load_portfolio_alerts()
+    alert_rules = load_alert_rules()
+    _sync_legacy_alert_rule_views()
+    alert_profiles = load_alert_profiles()
+    review_notes = load_review_notes()
     news_items = load_news_cache()
     news_last_updated = None
     news_last_error = ""
@@ -2338,6 +2758,19 @@ def _normalize_alert_profiles_for_import(alert_profiles_payload):
     return _alert_profile_store().normalize(alert_profiles_payload, existing_items=alert_profiles)
 
 
+def _normalize_alert_rules_for_import(alert_rules_payload):
+    if not isinstance(alert_rules_payload, list):
+        return None
+    normalized, invalid_count = alert_rules_core.normalize_alert_rules(
+        alert_rules_payload,
+        now_factory=datetime.now,
+        id_factory=alert_rules_core.generate_alert_rule_id,
+    )
+    if invalid_count:
+        raise ValueError("备份中的预警规则包含无效或重复数据")
+    return normalized
+
+
 def _alert_profiles_payload_for_import(alert_profiles_payload):
     if not isinstance(alert_profiles_payload, list):
         return []
@@ -2369,12 +2802,12 @@ def _alert_profiles_payload_for_import(alert_profiles_payload):
     return prepared
 
 
-def _snapshot_config_import_files(restore_settings, restore_thresholds, restore_alert_profiles):
+def _snapshot_config_import_files(restore_settings, restore_alert_rules, restore_alert_profiles):
     paths = []
     if restore_settings:
         paths.append(SETTINGS_PATH)
-    if restore_thresholds:
-        paths.append(THRESHOLDS_PATH)
+    if restore_alert_rules:
+        paths.append(ALERT_RULES_PATH)
     if restore_alert_profiles:
         paths.append(ALERT_PROFILES_PATH)
 
@@ -2405,14 +2838,13 @@ def _restore_config_import_files(snapshots):
 
 def _restore_config_import_state(
     previous_settings,
-    previous_thresholds,
-    previous_volatility_config,
+    previous_alert_rules,
     previous_alert_profiles,
     restore_settings,
-    restore_thresholds,
+    restore_alert_rules,
     restore_alert_profiles,
 ):
-    global volatility_config, alert_profiles
+    global alert_rules, alert_profiles
     rollback_ok = True
     if restore_settings:
         try:
@@ -2423,18 +2855,13 @@ def _restore_config_import_state(
                 app_settings.clear()
                 app_settings.update(previous_settings)
 
-    if restore_thresholds:
+    if restore_alert_rules:
         try:
-            restored_thresholds = save_thresholds({
-                **previous_thresholds,
-                "volatility_config": previous_volatility_config,
-            })
-            apply_persisted_threshold_state(restored_thresholds)
-        except OSError:
+            alert_rules = save_alert_rules(previous_alert_rules)
+        except alert_rules_core.AlertRuleStoreError:
             rollback_ok = False
-            thresholds.clear()
-            thresholds.update(previous_thresholds)
-            volatility_config = dict(previous_volatility_config)
+            alert_rules = [dict(rule) for rule in previous_alert_rules]
+            _sync_legacy_alert_rule_views()
 
     if restore_alert_profiles:
         try:
@@ -2447,7 +2874,7 @@ def _restore_config_import_state(
 
 
 def restore_config_backup(payload):
-    global alert_profiles
+    global alert_profiles, alert_rules
     normalized_payload, backup_metadata = support_files_core.normalize_config_backup(payload)
     preview = preview_config_backup(payload)
     if not preview.get("importable"):
@@ -2475,26 +2902,33 @@ def restore_config_backup(payload):
         if "alert_profiles" in importable_sections
         else None
     )
+    alert_rules_payload = (
+        normalized_payload.get("alert_rules")
+        if "alert_rules" in importable_sections
+        else None
+    )
 
     normalized_alert_profiles = _normalize_alert_profiles_for_import(alert_profiles_payload)
+    normalized_alert_rules = _normalize_alert_rules_for_import(alert_rules_payload)
     has_importable_alert_profiles = bool(normalized_alert_profiles)
+    has_importable_alert_rules = bool(normalized_alert_rules)
     if (
         not isinstance(settings_payload, dict)
         and not isinstance(thresholds_payload, dict)
         and not has_importable_alert_profiles
+        and not has_importable_alert_rules
     ):
         raise ValueError("备份中没有可导入的配置")
 
     previous_settings = get_settings_snapshot()
-    previous_thresholds = dict(thresholds)
-    previous_volatility_config = dict(volatility_config)
+    previous_alert_rules = [dict(rule) for rule in alert_rules]
     previous_alert_profiles = list(alert_profiles)
     restore_settings = isinstance(settings_payload, dict)
-    restore_thresholds = isinstance(thresholds_payload, dict)
+    restore_alert_rules = has_importable_alert_rules or isinstance(thresholds_payload, dict)
     restore_alert_profiles = bool(normalized_alert_profiles)
     file_snapshots = _snapshot_config_import_files(
         restore_settings,
-        restore_thresholds,
+        restore_alert_rules,
         restore_alert_profiles,
     )
 
@@ -2504,14 +2938,30 @@ def restore_config_backup(payload):
     thresholds_event = None
     volatility_event = None
     alert_profiles_event = None
+    alert_rules_event = None
     try:
         if isinstance(settings_payload, dict):
             updated_settings = save_settings(settings_payload_for_import(settings_payload))
             imported.append("settings")
-        if isinstance(thresholds_payload, dict):
-            normalized = save_thresholds(thresholds_payload)
-            apply_persisted_threshold_state(normalized)
+        if has_importable_alert_rules:
+            alert_rules = save_alert_rules(normalized_alert_rules)
+            imported.append("alert_rules")
+            alert_rules_event = get_alert_rules_state()
+            thresholds_event = dict(thresholds)
+            volatility_event = dict(volatility_config)
+        elif isinstance(thresholds_payload, dict):
+            normalized_thresholds = targets_core.normalize_thresholds(
+                thresholds_payload,
+                thresholds,
+                volatility_config,
+            )
+            next_rules = _rules_for_legacy_threshold_snapshot(
+                normalized_thresholds,
+                normalized_thresholds.get("volatility_config"),
+            )
+            alert_rules = save_alert_rules(next_rules)
             imported.append("thresholds")
+            alert_rules_event = get_alert_rules_state()
             thresholds_event = dict(thresholds)
             volatility_event = dict(volatility_config)
         if normalized_alert_profiles:
@@ -2526,11 +2976,10 @@ def restore_config_backup(payload):
     except OSError:
         rollback_ok = _restore_config_import_state(
             previous_settings,
-            previous_thresholds,
-            previous_volatility_config,
+            previous_alert_rules,
             previous_alert_profiles,
             restore_settings,
-            restore_thresholds,
+            restore_alert_rules,
             restore_alert_profiles,
         )
         files_rollback_ok = _restore_config_import_files(file_snapshots)
@@ -2545,20 +2994,27 @@ def restore_config_backup(payload):
     if thresholds_event is not None:
         socketio.emit("thresholds_updated", thresholds_event)
         socketio.emit("volatility_updated", volatility_event)
+    if alert_rules_event is not None:
+        socketio.emit("alert_rules_updated", alert_rules_event)
     if alert_profiles_event is not None:
         socketio.emit("alert_profiles_updated", alert_profiles_event)
     return {"ok": True, "imported": imported}
 
 
 def reset_to_default_settings():
-    global alert_cooldown_state
+    global alert_cooldown_state, alert_rules
     saved_settings, startup_error = apply_settings(dict(DEFAULT_SETTINGS))
-    normalized_thresholds = save_thresholds({})
-    apply_persisted_threshold_state(normalized_thresholds)
+    next_rules = [
+        dict(rule)
+        for rule in alert_rules
+        if (rule.get("legacy") or {}).get("source") not in {"threshold", "volatility"}
+    ]
+    alert_rules = save_alert_rules(next_rules)
     alert_cooldown_state = {}
     socketio.emit("settings_updated", public_settings_snapshot(saved_settings))
     socketio.emit("thresholds_updated", thresholds)
     socketio.emit("volatility_updated", volatility_config)
+    socketio.emit("alert_rules_updated", get_alert_rules_state())
     return {"ok": True, "startup_error": startup_error or ""}
 
 
@@ -2610,6 +3066,7 @@ def build_diagnostics_report():
         "appdata": APPDATA_DIR,
         "settings": SETTINGS_PATH,
         "thresholds": THRESHOLDS_PATH,
+        "alert_rules": ALERT_RULES_PATH,
         "alert_profiles": ALERT_PROFILES_PATH,
         "watch_targets": WATCH_TARGETS_PATH,
         "portfolio_positions": PORTFOLIO_POSITIONS_PATH,
@@ -2636,6 +3093,16 @@ def build_diagnostics_report():
     watch_targets_state = get_watch_targets_state()
     risk_history_count = len(get_risk_analysis_history_state().get("items", []))
     recent_alerts = list(alert_log[-20:])
+    rules_state = get_alert_rules_state()
+    alert_rules_diagnostics = {
+        "schema_version": rules_state.get("schema_version", 0),
+        "total": rules_state.get("total", 0),
+        "summary": dict(rules_state.get("summary") or {}),
+        "by_kind": dict(rules_state.get("by_kind") or {}),
+        "migration": dict(rules_state.get("migration") or {}),
+        "invalid_count": rules_state.get("invalid_count", 0),
+        "load_error": rules_state.get("load_error", ""),
+    }
     data_schemas = {
         key: dict(item)
         for key, item in sorted(storage_manifest.items())
@@ -2664,6 +3131,7 @@ def build_diagnostics_report():
         "source_health": source_health_state,
         "price_history": price_history_state,
         "watch_targets": watch_targets_state,
+        "alert_rules": alert_rules_diagnostics,
         "risk_history_count": risk_history_count,
         "last_update_status": get_last_update_status(),
         "recent_alerts": recent_alerts,
@@ -2729,6 +3197,7 @@ def build_diagnostics_clipboard_text(report=None):
     export_dir_status = export_status.get("directory") if isinstance(export_status.get("directory"), dict) else {}
     last_export = export_status.get("last_export") if isinstance(export_status.get("last_export"), dict) else {}
     update_status = payload.get("last_update_status") if isinstance(payload.get("last_update_status"), dict) else get_last_update_status()
+    rules_state = payload.get("alert_rules") if isinstance(payload.get("alert_rules"), dict) else {}
     update_message = update_status.get("message") or ("尚未检查更新" if not update_status else "更新状态未知")
     logs = payload.get("logs")
     log_count = len(logs) if isinstance(logs, list) else len(str(logs or "").splitlines()) if logs else 0
@@ -2769,6 +3238,13 @@ def build_diagnostics_clipboard_text(report=None):
         f"- 状态: {risk_enabled}",
         f"- 模型: {provider} / {model}",
         f"- 历史记录数: {payload.get('risk_history_count', 0)}",
+        "",
+        "预警规则",
+        f"- 文件版本: {_diagnostics_value(rules_state.get('schema_version'))}",
+        f"- 规则数量: {rules_state.get('total', 0)}",
+        f"- 无效规则: {rules_state.get('invalid_count', 0)}",
+        f"- 迁移状态: {'已完成' if (rules_state.get('migration') or {}).get('completed') else '未完成'}",
+        f"- 加载错误: {_diagnostics_value(rules_state.get('load_error'), '无')}",
         "",
         "更新状态",
         f"- 当前版本: {_diagnostics_value(update_status.get('current_version') or payload.get('version'))}",
@@ -3257,6 +3733,8 @@ def emit_alert(entry, title):
             entry["notification_message"] = "当前处于静默时段，仅记录提醒。"
         elif reason == "cooldown":
             entry["notification_message"] = "提醒冷却中，仅记录本次触发。"
+        elif reason == "no_channels":
+            entry["notification_message"] = "该规则未选择通知渠道，仅记录本次触发。"
         entry["notifications"] = [
             _notification_status("all", "通知", "muted", entry.get("notification_message", "仅记录提醒")),
         ]
@@ -3277,7 +3755,7 @@ def emit_alert(entry, title):
     history_state = build_price_history_state(limit=240)
     history_state["scope"] = "live"
     socketio.emit("price_history_updated", history_state)
-    if delivery.get("deliver"):
+    if delivery.get("deliver") and notifications_core.alert_local_delivery_enabled(entry):
         send_desktop_notification(title, entry["message"])
         play_system_alert_sound(entry.get("type", "warning"))
         show_alert_dialog(title, f"{entry['message']}\n\n时间: {entry['time']}")
@@ -3304,14 +3782,14 @@ if SETTINGS_FILE_EXISTED_AT_STARTUP and not SETTINGS_ONBOARDING_MARKER_PRESENT_A
         app_settings = save_settings(app_settings)
     except OSError as exc:
         logging.warning("首次使用状态迁移保存失败: %s", exc)
-apply_persisted_threshold_state(load_thresholds())
+alert_rules = load_alert_rules()
+_sync_legacy_alert_rule_views()
 alert_profiles = load_alert_profiles()
-watch_targets = load_watch_targets()
 review_notes = load_review_notes()
 portfolio_positions = load_portfolio_positions()
 portfolio_transactions = load_portfolio_transactions()
 portfolio_import_backup = load_portfolio_import_backup()
-portfolio_alerts = load_portfolio_alerts()
+_sync_legacy_alert_rule_views()
 
 
 def find_available_port(preferred=DEFAULT_PORT):
@@ -5335,15 +5813,8 @@ def fetch_price_once():
                 update_desktop_price_title(desktop_title)
                 update_floating_price(price_rmb, price_usd, pct_rmb)
 
-                # --- 检查阈值 ---
-                _check_thresholds("usd", price_usd, now_str)
-                if price_rmb is not None:
-                    _check_thresholds("rmb", price_rmb, now_str)
-                check_watch_targets(now_str)
-                check_portfolio_alerts(now_str)
-
-                # --- 检查波动率 ---
-                _check_volatility(now_str)
+                # --- 统一预警规则评估 ---
+                check_alert_rules(now_str, now=now)
                 if cny_rate:
                     rate_message = (
                         f"使用缓存汇率 {cny_rate:.4f}（{rate_source}）"
@@ -5582,11 +6053,112 @@ def on_connect(auth=None):
                 "open_rmb": today_open_rmb, "high_rmb": today_high_rmb, "low_rmb": today_low_rmb,
             },
         )
+        state["alert_rules"] = get_alert_rules_state()
         state["alert_profiles"] = get_alert_profiles_state()
         state["daily_digest_status"] = daily_digest_status_payload()
     state["news"] = get_news_state()
     state["risk_analysis_history"] = get_risk_analysis_history_state()
     emit("init_state", state)
+
+
+def _broadcast_alert_rule_views(state=None):
+    state = state or get_alert_rules_state()
+    socketio.emit("alert_rules_updated", state)
+    socketio.emit("thresholds_updated", dict(thresholds))
+    socketio.emit("volatility_updated", dict(volatility_config))
+    socketio.emit("watch_targets_updated", get_watch_targets_state())
+    socketio.emit("portfolio_updated", build_portfolio_state())
+    return state
+
+
+@socketio.on("get_alert_rules")
+def on_get_alert_rules():
+    state = get_alert_rules_state()
+    emit("alert_rules_updated", state)
+    emit("alert_rule_migration_status", {
+        "migration": state.get("migration", {}),
+        "invalid_count": state.get("invalid_count", 0),
+        "load_error": state.get("load_error", ""),
+    })
+
+
+@socketio.on("save_alert_rule")
+def on_save_alert_rule(data=None):
+    try:
+        state, rule = upsert_alert_rule_entry(data)
+    except (ValueError, alert_rules_core.AlertRuleError) as exc:
+        emit("alert_rule_error", {"message": str(exc)})
+        return
+    except alert_rules_core.AlertRuleStoreError:
+        emit("alert_rule_error", {"message": "预警规则保存失败，请检查配置目录权限。"})
+        return
+    emit("alert_rule_saved", {"ok": True, "rule": rule})
+    _broadcast_alert_rule_views(state)
+
+
+@socketio.on("delete_alert_rule")
+def on_delete_alert_rule(data=None):
+    rule_id = data.get("id") if isinstance(data, dict) else ""
+    try:
+        deleted, state = delete_alert_rule_entry(rule_id)
+    except alert_rules_core.AlertRuleStoreError:
+        emit("alert_rule_error", {"message": "预警规则删除失败，请检查配置目录权限。"})
+        return
+    if not deleted:
+        emit("alert_rule_error", {"message": "未找到预警规则。"})
+        return
+    emit("alert_rule_deleted", {"ok": True, "id": str(rule_id or "")})
+    _broadcast_alert_rule_views(state)
+
+
+@socketio.on("toggle_alert_rule")
+def on_toggle_alert_rule(data=None):
+    rule_id = data.get("id") if isinstance(data, dict) else ""
+    enabled = data.get("enabled") if isinstance(data, dict) else None
+    try:
+        updated, state = toggle_alert_rule_entry(rule_id, enabled)
+    except alert_rules_core.AlertRuleStoreError:
+        emit("alert_rule_error", {"message": "预警规则状态保存失败，请检查配置目录权限。"})
+        return
+    if not updated:
+        emit("alert_rule_error", {"message": "未找到预警规则。"})
+        return
+    emit("alert_rule_toggled", {
+        "ok": True,
+        "id": str(rule_id or ""),
+        "enabled": bool((_find_alert_rule(rule_id) or {}).get("enabled")),
+    })
+    _broadcast_alert_rule_views(state)
+
+
+@socketio.on("duplicate_alert_rule")
+def on_duplicate_alert_rule(data=None):
+    rule_id = data.get("id") if isinstance(data, dict) else ""
+    try:
+        duplicated, state, rule = duplicate_alert_rule_entry(rule_id)
+    except alert_rules_core.AlertRuleStoreError:
+        emit("alert_rule_error", {"message": "预警规则复制失败，请检查配置目录权限。"})
+        return
+    if not duplicated:
+        emit("alert_rule_error", {"message": "未找到预警规则。"})
+        return
+    emit("alert_rule_duplicated", {"ok": True, "rule": rule})
+    _broadcast_alert_rule_views(state)
+
+
+@socketio.on("reset_alert_rule_state")
+def on_reset_alert_rule_state(data=None):
+    rule_id = data.get("id") if isinstance(data, dict) else ""
+    try:
+        reset, state = reset_alert_rule_entry(rule_id)
+    except alert_rules_core.AlertRuleStoreError:
+        emit("alert_rule_error", {"message": "预警规则重置失败，请检查配置目录权限。"})
+        return
+    if not reset:
+        emit("alert_rule_error", {"message": "未找到预警规则。"})
+        return
+    emit("alert_rule_reset", {"ok": True, "id": str(rule_id or "")})
+    _broadcast_alert_rule_views(state)
 
 
 @socketio.on("set_threshold")
@@ -5602,29 +6174,22 @@ def on_set_threshold(data):
         if mode not in THRESHOLD_MODES or ttype not in THRESHOLD_TYPES:
             emit("threshold_error", {"message": "阈值类型无效"})
             return
-        key = f"{ttype}_{mode}"
-
         try:
-            if value in (None, ""):
-                thresholds[key] = None
-            else:
-                thresholds[key] = float(value)
-        except (ValueError, TypeError):
+            normalized_value = None if value in (None, "") else float(value)
+            state = _replace_legacy_threshold_rule(mode, ttype, normalized_value)
+        except (ValueError, TypeError, alert_rules_core.AlertRuleError):
             emit("threshold_error", {"message": "请输入有效的数字"})
             return
-
-        alerted_flags.pop(key, None)  # 重置去重标记
-        try:
-            save_thresholds(thresholds)
-        except OSError:
+        except alert_rules_core.AlertRuleStoreError:
             emit("threshold_error", {"message": "阈值保存失败，请检查配置目录权限。"})
             return
 
-        socketio.emit("thresholds_updated", thresholds)
+        socketio.emit("alert_rules_updated", state)
+        socketio.emit("thresholds_updated", dict(thresholds))
 
         cur = price_usd if mode == "usd" else price_rmb
         if cur is not None:
-            _check_thresholds(mode, cur, datetime.now().strftime("%H:%M:%S"))
+            check_alert_rules(datetime.now().strftime("%H:%M:%S"))
 
 
 @socketio.on("clear_threshold")
@@ -5640,22 +6205,23 @@ def on_clear_threshold(data):
         return
 
     with lock:
-        if ttype == "all":
-            for prefix in THRESHOLD_TYPES:
-                thresholds[f"{prefix}_{mode}"] = None
-        else:
-            thresholds[f"{ttype}_{mode}"] = None
         try:
-            save_thresholds(thresholds)
-        except OSError:
+            next_rules = [dict(rule) for rule in alert_rules]
+            target_types = THRESHOLD_TYPES if ttype == "all" else (ttype,)
+            for threshold_type in target_types:
+                existing = _find_legacy_alert_rule("threshold", f"{threshold_type}_{mode}")
+                if existing:
+                    next_rules, _ = alert_rules_core.delete_alert_rule(next_rules, existing.get("id"))
+            state = _persist_alert_rule_items(next_rules)
+        except alert_rules_core.AlertRuleStoreError:
             emit("threshold_error", {"message": "阈值保存失败，请检查配置目录权限。"})
             return
-        socketio.emit("thresholds_updated", thresholds)
+        socketio.emit("alert_rules_updated", state)
+        socketio.emit("thresholds_updated", dict(thresholds))
 
 
 @socketio.on("set_volatility")
 def on_set_volatility(data):
-    global volatility_config
     if not isinstance(data, dict):
         emit("threshold_error", {"message": "波动率预警格式无效"})
         return
@@ -5677,41 +6243,31 @@ def on_set_volatility(data):
             if normalized["percent"] is None or raw_minutes < 1:
                 emit("threshold_error", {"message": "请输入有效的波动率预警数字"})
                 return
-        volatility_config = normalized
         try:
-            saved_thresholds = save_thresholds({
-                **thresholds,
-                "volatility_config": volatility_config,
-            })
+            state = _replace_legacy_volatility_rule(normalized)
         except ValueError:
             emit("threshold_error", {"message": "请输入有效的数字"})
             return
-        except OSError:
+        except alert_rules_core.AlertRuleStoreError:
             emit("threshold_error", {"message": "波动率预警保存失败，请检查配置目录权限。"})
             return
-        volatility_config = saved_thresholds["volatility_config"]
-        socketio.emit("volatility_updated", volatility_config)
+        socketio.emit("alert_rules_updated", state)
+        socketio.emit("volatility_updated", dict(volatility_config))
 
 
 def _restore_alert_profile_apply_state(
-    previous_thresholds,
-    previous_volatility_config,
+    previous_alert_rules,
     previous_settings,
     previous_alert_cooldown_state,
 ):
-    global volatility_config, alert_cooldown_state
+    global alert_rules, alert_cooldown_state
     rollback_ok = True
     try:
-        restored_thresholds = save_thresholds({
-            **previous_thresholds,
-            "volatility_config": previous_volatility_config,
-        })
-        apply_persisted_threshold_state(restored_thresholds)
-    except OSError:
+        alert_rules = save_alert_rules(previous_alert_rules)
+    except alert_rules_core.AlertRuleStoreError:
         rollback_ok = False
-        thresholds.clear()
-        thresholds.update(previous_thresholds)
-        volatility_config = dict(previous_volatility_config)
+        alert_rules = [dict(rule) for rule in previous_alert_rules]
+        _sync_legacy_alert_rule_views()
 
     try:
         save_settings(previous_settings)
@@ -5822,6 +6378,7 @@ def on_apply_alert_profile(data=None):
 
         previous_thresholds = dict(thresholds)
         previous_volatility_config = dict(volatility_config)
+        previous_alert_rules = [dict(rule) for rule in alert_rules]
         previous_settings = get_settings_snapshot()
         previous_alert_cooldown_state = dict(alert_cooldown_state)
         previous_profiles = list(alert_profiles)
@@ -5838,12 +6395,12 @@ def on_apply_alert_profile(data=None):
             return
 
         try:
-            saved_thresholds = save_thresholds({
-                **applied["thresholds"],
-                "volatility_config": applied["volatility_config"],
-            })
+            next_rules = _rules_for_legacy_threshold_snapshot(
+                applied["thresholds"],
+                applied["volatility_config"],
+            )
+            rules_state = _persist_alert_rule_items(next_rules)
             saved_settings = save_alert_profile_settings(applied["settings"])
-            apply_persisted_threshold_state(saved_thresholds)
 
             applied_at = datetime.now().isoformat(timespec="seconds")
             next_profiles = []
@@ -5864,8 +6421,7 @@ def on_apply_alert_profile(data=None):
         except OSError:
             alert_profiles = previous_profiles
             rollback_ok = _restore_alert_profile_apply_state(
-                previous_thresholds,
-                previous_volatility_config,
+                previous_alert_rules,
                 previous_settings,
                 previous_alert_cooldown_state,
             )
@@ -5876,6 +6432,7 @@ def on_apply_alert_profile(data=None):
             emit("alert_profile_error", {"message": message})
             return
 
+    socketio.emit("alert_rules_updated", rules_state)
     socketio.emit("thresholds_updated", thresholds_state)
     socketio.emit("volatility_updated", volatility_state)
     socketio.emit("settings_updated", settings_state)
@@ -5892,7 +6449,7 @@ def on_set_watch_target(data):
     except OSError:
         emit("watch_target_error", {"message": "观察清单保存失败，请检查配置目录权限。"})
         return
-    socketio.emit("watch_targets_updated", state)
+    _broadcast_alert_rule_views()
 
 
 @socketio.on("delete_watch_target")
@@ -5906,7 +6463,7 @@ def on_delete_watch_target(data=None):
     if not ok:
         emit("watch_target_error", {"message": "未找到观察项"})
         return
-    socketio.emit("watch_targets_updated", state)
+    _broadcast_alert_rule_views()
 
 
 @socketio.on("get_portfolio")
@@ -5939,7 +6496,7 @@ def on_delete_portfolio_position(data=None):
         emit("portfolio_error", {"message": "未找到持仓记录"})
         emit("portfolio_updated", state)
         return
-    socketio.emit("portfolio_updated", state)
+    _broadcast_alert_rule_views()
 
 
 @socketio.on("save_portfolio_transaction")
@@ -6039,7 +6596,7 @@ def on_save_portfolio_alert(data):
     except OSError:
         emit("portfolio_error", {"message": "持仓提醒保存失败，请检查配置目录权限。"})
         return
-    socketio.emit("portfolio_updated", state)
+    _broadcast_alert_rule_views()
 
 
 @socketio.on("reset_portfolio_alert")
@@ -6054,7 +6611,7 @@ def on_reset_portfolio_alert(data=None):
         emit("portfolio_error", {"message": "未找到持仓提醒"})
         emit("portfolio_updated", state)
         return
-    socketio.emit("portfolio_updated", state)
+    _broadcast_alert_rule_views()
 
 
 @socketio.on("delete_portfolio_alert")
@@ -6069,7 +6626,7 @@ def on_delete_portfolio_alert(data=None):
         emit("portfolio_error", {"message": "未找到持仓提醒"})
         emit("portfolio_updated", state)
         return
-    socketio.emit("portfolio_updated", state)
+    _broadcast_alert_rule_views()
 
 
 @socketio.on("export_portfolio")
@@ -6117,7 +6674,7 @@ def on_toggle_watch_target(data=None):
     if not ok:
         emit("watch_target_error", {"message": "未找到观察项"})
         return
-    socketio.emit("watch_targets_updated", state)
+    _broadcast_alert_rule_views()
 
 
 @socketio.on("reset_watch_target")
@@ -6131,7 +6688,7 @@ def on_reset_watch_target(data=None):
     if not ok:
         emit("watch_target_error", {"message": "未找到观察项"})
         return
-    socketio.emit("watch_targets_updated", state)
+    _broadcast_alert_rule_views()
 
 
 @socketio.on("get_settings")

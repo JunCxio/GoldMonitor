@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -8,8 +9,12 @@ def test_app_portfolio_alerts_attach_to_state_and_trigger_once(monkeypatch, tmp_
     import app
 
     emitted_alerts = []
-    monkeypatch.setattr(app, "PORTFOLIO_ALERTS_PATH", str(tmp_path / "portfolio_alerts.json"))
-    monkeypatch.setattr(app, "portfolio_alerts", [])
+    monkeypatch.setattr(app, "ALERT_RULES_PATH", str(tmp_path / "alert_rules.json"))
+    monkeypatch.setattr(app, "alert_rules", [])
+    monkeypatch.setattr(app, "alert_rule_migration_status", {"completed": True, "source_version": "1.0.7"})
+    monkeypatch.setattr(app, "alert_rules_load_error", "")
+    monkeypatch.setattr(app, "alert_rules_invalid_count", 0)
+    app._sync_legacy_alert_rule_views()
     monkeypatch.setattr(app, "portfolio_positions", [])
     monkeypatch.setattr(app, "portfolio_transactions", [{
         "id": "transaction-rmb",
@@ -39,11 +44,14 @@ def test_app_portfolio_alerts_attach_to_state_and_trigger_once(monkeypatch, tmp_
 
     assert state["alerts"]["total"] == 1
     assert state["items"][0]["alert"]["status"] == "watching"
-    assert Path(app.PORTFOLIO_ALERTS_PATH).exists()
+    assert Path(app.ALERT_RULES_PATH).exists()
 
-    triggered = app.check_portfolio_alerts("12:00:00")
+    triggered = app.check_alert_rules("12:00:00", now=datetime(2026, 7, 27, 12, 0, 0))
 
-    assert [item["condition"] for item in triggered] == ["take_profit", "profit_percent"]
+    assert [item["alert"]["portfolio_alert_condition"] for item in triggered] == [
+        "take_profit",
+        "profit_percent",
+    ]
     assert len(emitted_alerts) == 2
     first_entry, first_title = emitted_alerts[0]
     assert first_title == "持仓提醒"
@@ -53,7 +61,7 @@ def test_app_portfolio_alerts_attach_to_state_and_trigger_once(monkeypatch, tmp_
     assert "金条" in first_entry["message"]
     assert app.portfolio_alerts[0]["triggered"]["take_profit"] is True
 
-    triggered_again = app.check_portfolio_alerts("12:00:10")
+    triggered_again = app.check_alert_rules("12:00:10", now=datetime(2026, 7, 27, 12, 0, 10))
 
     assert triggered_again == []
     assert len(emitted_alerts) == 2
@@ -66,8 +74,12 @@ def test_app_portfolio_alerts_attach_to_state_and_trigger_once(monkeypatch, tmp_
 def test_portfolio_alert_socket_events_save_reset_and_delete(monkeypatch, tmp_path):
     import app
 
-    monkeypatch.setattr(app, "PORTFOLIO_ALERTS_PATH", str(tmp_path / "portfolio_alerts.json"))
-    monkeypatch.setattr(app, "portfolio_alerts", [])
+    monkeypatch.setattr(app, "ALERT_RULES_PATH", str(tmp_path / "alert_rules.json"))
+    monkeypatch.setattr(app, "alert_rules", [])
+    monkeypatch.setattr(app, "alert_rule_migration_status", {"completed": True, "source_version": "1.0.7"})
+    monkeypatch.setattr(app, "alert_rules_load_error", "")
+    monkeypatch.setattr(app, "alert_rules_invalid_count", 0)
+    app._sync_legacy_alert_rule_views()
     monkeypatch.setattr(app, "portfolio_positions", [])
     monkeypatch.setattr(app, "portfolio_transactions", [])
     monkeypatch.setattr(app, "price_rmb", 742.0)

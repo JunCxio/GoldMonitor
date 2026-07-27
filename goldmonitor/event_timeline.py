@@ -213,10 +213,14 @@ def build_alert_timeline_events(start_time, end_time, alert_entries=None, today_
             continue
         if event_time < start_time or event_time > end_time:
             continue
+        rule_name = str(entry.get("rule_name") or "").strip()
+        event_title = alert_level_label(entry.get("type"))
+        if rule_name:
+            event_title += "：" + rule_name
         event = make_timeline_event(
             "alert",
             event_time.isoformat(timespec="seconds"),
-            alert_level_label(entry.get("type")),
+            event_title,
             str(entry.get("message") or "达到预警条件")[:180],
             "alert_log",
             {
@@ -234,6 +238,11 @@ def build_alert_timeline_events(start_time, end_time, alert_entries=None, today_
                 "notifications": entry.get("notifications") if isinstance(entry.get("notifications"), list) else [],
                 "related_news": entry.get("related_news") if isinstance(entry.get("related_news"), list) else [],
                 "source": entry.get("source", ""),
+                "rule_id": entry.get("rule_id", ""),
+                "rule_kind": entry.get("rule_kind", ""),
+                "rule_name": entry.get("rule_name", ""),
+                "rule_scope": entry.get("rule_scope") if isinstance(entry.get("rule_scope"), dict) else {},
+                "rule_condition": entry.get("rule_condition") if isinstance(entry.get("rule_condition"), dict) else {},
                 "watch_target_id": entry.get("watch_target_id", ""),
             },
             event_id=f"alert-{entry.get('id') or event_time.isoformat(timespec='seconds')}",

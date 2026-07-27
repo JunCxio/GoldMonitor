@@ -7,6 +7,17 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_alert_rule_store(monkeypatch, tmp_path):
+    import app
+
+    monkeypatch.setattr(app, "ALERT_RULES_PATH", str(tmp_path / "alert_rules.json"))
+    monkeypatch.setattr(app, "alert_rules", [])
+    monkeypatch.setattr(app, "alert_rule_migration_status", {"completed": True, "source_version": "1.0.7"})
+    monkeypatch.setattr(app, "alert_rules_load_error", "")
+    monkeypatch.setattr(app, "alert_rules_invalid_count", 0)
+
+
 def test_build_config_backup_exports_only_restorable_non_secret_settings(monkeypatch):
     import app
 
@@ -104,7 +115,8 @@ def test_import_config_socket_event_still_imports_directly(monkeypatch, tmp_path
     assert result["ok"] is True
     assert result["imported"] == ["settings", "thresholds", "alert_profiles"]
     assert Path(app.SETTINGS_PATH).exists()
-    assert Path(app.THRESHOLDS_PATH).exists()
+    assert Path(app.ALERT_RULES_PATH).exists()
+    assert not Path(app.THRESHOLDS_PATH).exists()
     assert Path(app.ALERT_PROFILES_PATH).exists()
     client.disconnect()
 
@@ -295,12 +307,12 @@ def test_import_config_rolls_back_settings_when_threshold_save_fails(monkeypatch
 
     original_smtp_server = "smtp.old.example.com"
     app.app_settings["smtp_server"] = original_smtp_server
-    real_save_thresholds = app.save_thresholds
+    real_save_alert_rules = app.save_alert_rules
 
-    def fail_save_thresholds(data=None):
-        raise OSError("threshold write failed")
+    def fail_save_alert_rules(items=None):
+        raise OSError("alert rule write failed")
 
-    monkeypatch.setattr(app, "save_thresholds", fail_save_thresholds)
+    monkeypatch.setattr(app, "save_alert_rules", fail_save_alert_rules)
     client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
     client.get_received()
 
@@ -321,7 +333,7 @@ def test_import_config_rolls_back_settings_when_threshold_save_fails(monkeypatch
     assert app.thresholds["upper_warning_rmb"] is None
     assert startup_calls == []
     assert floating_calls == []
-    monkeypatch.setattr(app, "save_thresholds", real_save_thresholds)
+    monkeypatch.setattr(app, "save_alert_rules", real_save_alert_rules)
     client.disconnect()
 
 
@@ -356,6 +368,7 @@ def test_import_config_rejects_empty_or_unknown_only_sections(monkeypatch, tmp_p
         app.restore_config_backup(payload)
     assert not Path(app.SETTINGS_PATH).exists()
     assert not Path(app.THRESHOLDS_PATH).exists()
+    assert not Path(app.ALERT_RULES_PATH).exists()
     assert not Path(app.ALERT_PROFILES_PATH).exists()
 
 
@@ -493,8 +506,9 @@ def test_import_config_rolls_back_files_when_alert_profiles_save_fails(monkeypat
     app.thresholds["upper_warning_rmb"] = 650.0
     old_profile = {"id": "profile-old", "name": "旧模板", "thresholds": {"upper_warning_rmb": 650}}
     app.save_settings(dict(app.app_settings))
-    saved_thresholds = app.save_thresholds({**app.thresholds, "volatility_config": app.volatility_config})
-    app.apply_persisted_threshold_state(saved_thresholds)
+    app.alert_rules = app.save_alert_rules(
+        app._rules_for_legacy_threshold_snapshot(app.thresholds, app.volatility_config)
+    )
     app.alert_profiles = app.save_alert_profiles([old_profile])
 
     real_save_alert_profiles = app.save_alert_profiles
@@ -522,7 +536,7 @@ def test_import_config_rolls_back_files_when_alert_profiles_save_fails(monkeypat
 
     emitted_names = [event["name"] for event in events]
     settings_payload = json.loads(Path(app.SETTINGS_PATH).read_text(encoding="utf-8"))
-    thresholds_payload = json.loads(Path(app.THRESHOLDS_PATH).read_text(encoding="utf-8"))
+    alert_rules_payload = json.loads(Path(app.ALERT_RULES_PATH).read_text(encoding="utf-8"))
     profiles_payload = json.loads(Path(app.ALERT_PROFILES_PATH).read_text(encoding="utf-8"))
     assert result["ok"] is False
     assert "settings_updated" not in emitted_names
@@ -532,7 +546,7 @@ def test_import_config_rolls_back_files_when_alert_profiles_save_fails(monkeypat
     assert app.thresholds["upper_warning_rmb"] == 650.0
     assert app.alert_profiles[0]["id"] == "profile-old"
     assert settings_payload["smtp_server"] == "smtp.old.example.com"
-    assert thresholds_payload["upper_warning_rmb"] == 650.0
+    assert alert_rules_payload["items"][0]["condition"]["value"] == 650.0
     assert profiles_payload["items"][0]["id"] == "profile-old"
     assert startup_calls == []
     assert floating_calls == []
@@ -577,6 +591,7 @@ def test_import_config_rolls_back_created_files_when_no_previous_files(monkeypat
     assert result["ok"] is False
     assert not Path(app.SETTINGS_PATH).exists()
     assert not Path(app.THRESHOLDS_PATH).exists()
+    assert not Path(app.ALERT_RULES_PATH).exists()
     assert not Path(app.ALERT_PROFILES_PATH).exists()
     assert app.app_settings["smtp_server"] == app.DEFAULT_SETTINGS["smtp_server"]
     assert app.thresholds["upper_warning_rmb"] is None

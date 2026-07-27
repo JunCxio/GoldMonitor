@@ -9,6 +9,7 @@ def test_data_archive_paths_cover_all_restorable_state():
     assert set(paths) == {
         "settings",
         "thresholds",
+        "alert_rules",
         "alert_profiles",
         "watch_targets",
         "portfolio_positions",
@@ -26,6 +27,7 @@ def test_data_archive_paths_cover_all_restorable_state():
         "alert_log_db",
     }
     assert paths["settings"]["sensitive"] is True
+    assert paths["alert_rules"]["kind"] == "json"
     assert paths["price_history_db"]["kind"] == "sqlite"
     assert paths["alert_log_db"]["kind"] == "sqlite"
 
