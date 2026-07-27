@@ -9,8 +9,10 @@ import smtplib
 import subprocess
 import socket
 import sys
+import tempfile
 import threading
 import time
+from contextlib import ExitStack
 from datetime import datetime, timedelta
 import secrets
 
@@ -21,6 +23,7 @@ from goldmonitor import alert_profiles as alert_profiles_core
 from goldmonitor import app_state as app_state_core
 from goldmonitor import desktop_ui as desktop_ui_core
 from goldmonitor import daily_digest as daily_digest_core
+from goldmonitor import data_archive as data_archive_core
 from goldmonitor import event_timeline as event_timeline_core
 from goldmonitor import market_adapters as market_adapters_core
 from goldmonitor import market_data as market_data_core
@@ -28,6 +31,7 @@ from goldmonitor import news as news_core
 from goldmonitor import notifications as notifications_core
 from goldmonitor import platform as platform_core
 from goldmonitor import portfolio as portfolio_core
+from goldmonitor import portfolio_analytics as portfolio_analytics_core
 from goldmonitor import portfolio_alerts as portfolio_alerts_core
 from goldmonitor import review_notes as review_notes_core
 from goldmonitor import risk_analysis as risk_analysis_core
@@ -51,10 +55,11 @@ else:
     _basedir = os.path.dirname(os.path.abspath(__file__))
 
 app = Flask(__name__, template_folder=os.path.join(_basedir, "templates"))
+app.config["MAX_CONTENT_LENGTH"] = 256 * 1024 * 1024
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 OFFICIAL_UPDATE_HOST = "github.com"
@@ -136,6 +141,7 @@ PORTFOLIO_TRANSACTIONS_PATH = os.path.join(APPDATA_DIR, "portfolio_transactions.
 PORTFOLIO_IMPORT_BACKUP_PATH = os.path.join(APPDATA_DIR, "portfolio_import_backup.json")
 PORTFOLIO_ALERTS_PATH = os.path.join(APPDATA_DIR, "portfolio_alerts.json")
 MARKET_CACHE_PATH = os.path.join(APPDATA_DIR, "market_cache.json")
+SOURCE_METRICS_PATH = os.path.join(APPDATA_DIR, "source_metrics.json")
 UPDATE_DIR = os.path.join(APPDATA_DIR, "updates")
 EXPORT_DIR = os.path.join(APPDATA_DIR, "exports")
 UPDATE_INSTALLER_NAME = "GoldMonitor-macOS.dmg" if sys.platform == "darwin" else "GoldMonitorSetup.exe"
@@ -145,6 +151,19 @@ REVIEW_NOTES_PATH = os.path.join(APPDATA_DIR, "review_notes.json")
 PRICE_HISTORY_PATH = os.path.join(APPDATA_DIR, "price_history.json")
 APP_LOG_PATH = os.path.join(APPDATA_DIR, "GoldMonitor.log")
 DAILY_DIGEST_STATE_PATH = os.path.join(APPDATA_DIR, "daily_digest_state.json")
+SETTINGS_FILE_EXISTED_AT_STARTUP = os.path.isfile(SETTINGS_PATH)
+try:
+    with open(SETTINGS_PATH, "r", encoding="utf-8") as _settings_marker_file:
+        _settings_marker_payload = json.load(_settings_marker_file)
+except (OSError, json.JSONDecodeError):
+    _settings_marker_payload = {}
+SETTINGS_ONBOARDING_MARKER_PRESENT_AT_STARTUP = bool(
+    isinstance(_settings_marker_payload, dict)
+    and (
+        "onboarding_started" in _settings_marker_payload
+        or "onboarding_completed" in _settings_marker_payload
+    )
+)
 NEWS_REFRESH_INTERVAL = 15 * 60
 NEWS_LIMIT = 20
 RISK_ANALYSIS_HISTORY_LIMIT = 20
@@ -163,11 +182,12 @@ EVENT_TIMELINE_TYPES = (
     "review_note",
 )
 EVENT_TIMELINE_DEFAULT_MINUTES = 60
-EVENT_TIMELINE_ALLOWED_MINUTES = (60, 240, 1440, 10080)
+EVENT_TIMELINE_ALLOWED_MINUTES = (60, 240, 1440, 10080, 43200, 129600)
 EVENT_TIMELINE_MAX_LIMIT = 500
 EVENT_TIMELINE_DEFAULT_LIMIT = 300
 REVIEW_REPORT_EXPORT_PREFIX = "GoldMonitor-review-report"
 SOURCE_HEALTH_LIMIT = 20
+SOURCE_METRICS_WINDOW = 50
 SOURCE_COMPARISON_REFRESH_SECONDS = 60
 SOURCE_COMPARISON_STALE_SECONDS = 5 * 60
 SOURCE_COMPARISON_ANOMALY_PCT = 0.5
@@ -221,7 +241,24 @@ def _configure_logging():
 
 _configure_logging()
 NEWS_KEYWORDS = news_core.NEWS_KEYWORDS
+MARKET_SOURCE_DEFAULT_ORDER = {
+    "gold": ["sina_gold", "eastmoney_gold", "goldprice", "stooq_gold"],
+    "forex": ["sina_forex", "frankfurter_forex", "stooq_forex"],
+}
+MARKET_SOURCE_HEALTH_KEYS = {
+    ("gold", "新浪贵金属"): "sina_gold",
+    ("gold", "东方财富"): "eastmoney_gold",
+    ("gold", "GoldPrice"): "goldprice",
+    ("gold", "Stooq 金价源"): "stooq_gold",
+    ("forex", "新浪汇率"): "sina_forex",
+    ("forex", "Frankfurter"): "frankfurter_forex",
+    ("forex", "Stooq 汇率源"): "stooq_forex",
+}
 DEFAULT_SETTINGS = {
+    "onboarding_started": False,
+    "onboarding_completed": False,
+    "onboarding_version": 1,
+    "onboarding_completed_at": "",
     "startup_enabled": False,
     "startup_to_tray": True,
     "floating_price_enabled": True,
@@ -274,6 +311,14 @@ DEFAULT_SETTINGS = {
     "risk_assistant_max_tokens": RISK_ASSISTANT_MAX_TOKENS,
     "risk_assistant_cooldown_seconds": 15,
     "risk_assistant_cache_minutes": 10,
+    "market_source_enabled": {
+        category: list(keys)
+        for category, keys in MARKET_SOURCE_DEFAULT_ORDER.items()
+    },
+    "market_source_order": {
+        category: list(keys)
+        for category, keys in MARKET_SOURCE_DEFAULT_ORDER.items()
+    },
     "export_dir": "",
 }
 SECRET_SETTING_KEYS = ("smtp_password", "deepseek_api_key", "openai_compatible_api_key")
@@ -300,6 +345,7 @@ THRESHOLD_MODES = ("usd", "rmb")
 THRESHOLD_TYPES = ("upper_warning", "upper_critical", "lower_warning", "lower_critical")
 WATCH_TARGET_DIRECTIONS = ("rise_to", "fall_to")
 WATCH_TARGET_NOTE_LIMIT = 200
+DATA_ARCHIVE_UPLOAD_TTL_SECONDS = 15 * 60
 
 # ---------- 全局状态 ----------
 lock = threading.RLock()
@@ -309,6 +355,8 @@ last_update_status_lock = threading.RLock()
 last_export_status_lock = threading.RLock()
 daily_digest_lock = threading.Lock()
 review_notes_lock = threading.RLock()
+data_archive_lock = threading.Lock()
+data_archive_upload_lock = threading.Lock()
 price_usd = None
 price_rmb = None
 previous_usd = None
@@ -370,7 +418,10 @@ last_settings_error = None
 server_port = DEFAULT_PORT
 risk_analysis_lock = threading.Lock()
 risk_analysis_last_started = 0.0
-source_health = {}
+source_health = market_data_core.SourceMetricsStore(
+    SOURCE_METRICS_PATH,
+    window_size=SOURCE_METRICS_WINDOW,
+).load()
 source_price_samples = {}
 source_comparison_state = {}
 last_source_comparison_probe_at = 0.0
@@ -380,6 +431,7 @@ _credential_test_store = None
 _alert_dialog_lock = threading.Lock()
 _alert_dialog_active = False
 _daily_digest_scheduler_started = False
+data_archive_uploads = {}
 
 
 # ---------- 设置与系统集成 ----------
@@ -603,6 +655,7 @@ def _settings_options():
         "default_email_subject_template": DEFAULT_EMAIL_SUBJECT_TEMPLATE,
         "default_email_body_template": DEFAULT_EMAIL_BODY_TEMPLATE,
         "risk_assistant_max_tokens": RISK_ASSISTANT_MAX_TOKENS,
+        "market_source_defaults": MARKET_SOURCE_DEFAULT_ORDER,
     }
 
 
@@ -955,6 +1008,8 @@ def check_watch_targets(now_str):
             "time": now_str,
             "type": "warning",
             "mode": target.get("mode"),
+            "trigger_price": current_price,
+            "alert_direction": "up" if target.get("direction") == "rise_to" else "down",
             "message": _watch_target_alert_message(target, current_price),
             "source": "watch_target",
             "watch_target_id": target.get("id"),
@@ -1155,6 +1210,69 @@ def build_portfolio_state():
     return state
 
 
+def _portfolio_analytics_days(value):
+    try:
+        days = int(value)
+    except (TypeError, ValueError):
+        days = 90
+    return days if days in {30, 90, 365} else 90
+
+
+def _analytics_price_history(days, limit=1000):
+    try:
+        points = _price_history_store().filter_from_db(minutes=int(days) * 1440, limit=limit)
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        logging.warning("读取持仓分析价格历史失败: %s", exc)
+        points = []
+    if points:
+        return points
+    cutoff = datetime.now() - timedelta(days=int(days))
+    return [
+        dict(item) for item in price_archive
+        if _history_timestamp(item.get("timestamp"))
+        and _history_timestamp(item.get("timestamp")) >= cutoff
+    ][-limit:]
+
+
+def build_portfolio_analytics_state(days=90, now=None):
+    now = now or datetime.now()
+    days = _portfolio_analytics_days(days)
+    with lock:
+        transactions = [dict(item) for item in portfolio_transactions]
+        positions = [dict(item) for item in portfolio_positions]
+        current_prices = _current_portfolio_prices()
+    if not transactions:
+        transactions = portfolio_core.transactions_from_positions(positions, now_factory=lambda: now)
+
+    performance_history = _analytics_price_history(days, limit=1000)
+    effectiveness_days = min(days, 30)
+    effectiveness_history = _analytics_price_history(effectiveness_days, limit=1000)
+    cutoff = now - timedelta(days=effectiveness_days)
+    recent_alerts = [
+        dict(item) for item in alert_log_export_entries(limit=ALERT_LOG_EXPORT_LIMIT)
+        if _history_timestamp(item.get("timestamp"))
+        and _history_timestamp(item.get("timestamp")) >= cutoff
+    ]
+    return {
+        "range_days": days,
+        "generated_at": now.isoformat(timespec="seconds"),
+        "performance": portfolio_analytics_core.build_portfolio_performance(
+            transactions,
+            performance_history,
+            current_prices=current_prices,
+            now=now,
+        ),
+        "alert_effectiveness": {
+            "period_days": effectiveness_days,
+            **portfolio_analytics_core.build_alert_effectiveness(
+                recent_alerts,
+                effectiveness_history,
+                horizon_hours=24,
+            ),
+        },
+    }
+
+
 def _find_portfolio_position_index(position_id):
     return portfolio_core.find_portfolio_position_index(portfolio_positions, position_id)
 
@@ -1262,6 +1380,12 @@ def check_portfolio_alerts(now_str):
             "time": now_str,
             "type": "warning",
             "mode": trigger.get("mode"),
+            "trigger_price": trigger.get("current_price"),
+            "alert_direction": (
+                "up" if trigger.get("condition") in {"take_profit", "profit_percent"}
+                else "down" if trigger.get("condition") in {"stop_loss", "loss_percent"}
+                else ""
+            ),
             "message": portfolio_alerts_core.build_portfolio_alert_message(trigger),
             "source": "portfolio_alert",
             "portfolio_alert_id": alert.get("id"),
@@ -1993,6 +2117,211 @@ def save_export_file(filename, content):
     return saved_path
 
 
+def _data_archive_paths():
+    return {
+        "settings": {"path": SETTINGS_PATH, "kind": "json", "label": "通用设置", "sensitive": True},
+        "thresholds": {"path": THRESHOLDS_PATH, "kind": "json", "label": "预警阈值"},
+        "alert_profiles": {"path": ALERT_PROFILES_PATH, "kind": "json", "label": "预警策略模板"},
+        "watch_targets": {"path": WATCH_TARGETS_PATH, "kind": "json", "label": "目标价观察清单"},
+        "portfolio_positions": {"path": PORTFOLIO_POSITIONS_PATH, "kind": "json", "label": "持仓记录"},
+        "portfolio_transactions": {"path": PORTFOLIO_TRANSACTIONS_PATH, "kind": "json", "label": "持仓流水"},
+        "portfolio_import_backup": {"path": PORTFOLIO_IMPORT_BACKUP_PATH, "kind": "json", "label": "持仓导入备份"},
+        "portfolio_alerts": {"path": PORTFOLIO_ALERTS_PATH, "kind": "json", "label": "持仓提醒"},
+        "market_cache": {"path": MARKET_CACHE_PATH, "kind": "json", "label": "行情缓存"},
+        "source_metrics": {"path": SOURCE_METRICS_PATH, "kind": "json", "label": "数据源滚动指标"},
+        "news": {"path": NEWS_CACHE_PATH, "kind": "json", "label": "新闻缓存"},
+        "risk_analysis_history": {"path": RISK_ANALYSIS_HISTORY_PATH, "kind": "json", "label": "风险分析历史"},
+        "review_notes": {"path": REVIEW_NOTES_PATH, "kind": "json", "label": "复盘笔记"},
+        "price_history": {"path": PRICE_HISTORY_PATH, "kind": "json", "label": "价格历史 JSON"},
+        "daily_digest_state": {"path": DAILY_DIGEST_STATE_PATH, "kind": "json", "label": "每日摘要状态"},
+        "price_history_db": {"path": _price_history_db_path(), "kind": "sqlite", "label": "价格历史数据库"},
+        "alert_log_db": {"path": _alert_log_db_path(), "kind": "sqlite", "label": "告警记录数据库"},
+    }
+
+
+def _data_archive_manager(now_factory=None):
+    return data_archive_core.DataArchiveManager(
+        _data_archive_paths(),
+        app_version=APP_VERSION,
+        now_factory=now_factory or datetime.now,
+    )
+
+
+def _data_archive_filename(now=None):
+    now = now or datetime.now()
+    return f"GoldMonitor-full-backup-{now.strftime('%Y%m%d-%H%M%S')}.zip"
+
+
+def create_data_archive(now=None):
+    now = now or datetime.now()
+    export_dir = resolve_export_dir()
+    filename = _data_archive_filename(now)
+    destination_path = os.path.join(export_dir, filename)
+    settings_content = json.dumps(
+        get_settings_snapshot(),
+        ensure_ascii=False,
+        indent=2,
+    ).encode("utf-8")
+    try:
+        with data_archive_lock:
+            result = _data_archive_manager(now_factory=lambda: now).create(
+                destination_path,
+                content_overrides={"settings": settings_content},
+            )
+    except (OSError, sqlite3.Error, data_archive_core.DataArchiveError) as exc:
+        _set_last_export_status(_build_export_failure_status(filename, export_dir, exc))
+        raise
+    _set_last_export_status({
+        "ok": True,
+        "status": "success",
+        "filename": filename,
+        "saved_path": result["path"],
+        "export_dir": export_dir,
+        "message": f"完整数据归档已保存：{result['path']}",
+        "timestamp": now.isoformat(timespec="seconds"),
+    })
+    return {
+        "ok": True,
+        "saved_path": result["path"],
+        "filename": result["filename"],
+        "files": result["files"],
+        "bytes": result["bytes"],
+        "contains_sensitive_data": result["contains_sensitive_data"],
+        "message": f"已归档 {result['files']} 项本地数据",
+        "export_dir_check": build_export_dir_check(),
+    }
+
+
+def _reload_application_data_from_disk():
+    global app_settings, alert_profiles, watch_targets, review_notes
+    global portfolio_positions, portfolio_transactions, portfolio_import_backup, portfolio_alerts
+    global news_items, news_last_updated, news_last_error, risk_analysis_history
+    global alert_log, price_archive, alert_cooldown_state, alerted_flags, source_health
+    global price_usd, price_rmb, previous_usd, previous_rmb
+    global usdcny_rate, usdcny_rate_source, usdcny_rate_time, usdcny_rate_cached, usdcny_rate_error
+    global gold_price_source, gold_price_time, gold_price_cached, gold_price_error
+    global today_date, today_open_usd, today_high_usd, today_low_usd
+    global today_open_rmb, today_high_rmb, today_low_rmb
+
+    app_settings = load_settings()
+    apply_persisted_threshold_state(load_thresholds())
+    alert_profiles = load_alert_profiles()
+    watch_targets = load_watch_targets()
+    review_notes = load_review_notes()
+    portfolio_positions = load_portfolio_positions()
+    portfolio_transactions = load_portfolio_transactions()
+    portfolio_import_backup = load_portfolio_import_backup()
+    portfolio_alerts = load_portfolio_alerts()
+    news_items = load_news_cache()
+    news_last_updated = None
+    news_last_error = ""
+    risk_analysis_history = load_risk_analysis_history()
+    source_health = market_data_core.SourceMetricsStore(
+        SOURCE_METRICS_PATH,
+        window_size=SOURCE_METRICS_WINDOW,
+    ).load()
+    alert_log = load_alert_log_archive(limit=ALERT_LOG_MEMORY_LIMIT)
+    price_archive = load_price_history_archive()
+    restore_price_history_state(price_archive)
+
+    latest_price = price_archive[-1] if price_archive else {}
+    price_usd = latest_price.get("usd")
+    price_rmb = latest_price.get("rmb")
+    previous_usd = price_usd
+    previous_rmb = price_rmb
+    usdcny_rate = latest_price.get("rate")
+    usdcny_rate_source = ""
+    usdcny_rate_time = None
+    usdcny_rate_cached = False
+    usdcny_rate_error = ""
+    gold_price_source = ""
+    gold_price_time = None
+    gold_price_cached = False
+    gold_price_error = ""
+    initialize_market_cache()
+
+    today_date = None
+    today_open_usd = None
+    today_high_usd = None
+    today_low_usd = None
+    today_open_rmb = None
+    today_high_rmb = None
+    today_low_rmb = None
+    alert_cooldown_state = {}
+    alerted_flags = {}
+
+
+def restore_data_archive(archive_path):
+    previous_settings = get_settings_snapshot()
+
+    def apply_restored_state(manifest, preview):
+        _reload_application_data_from_disk()
+
+    def rollback_restored_state():
+        try:
+            save_settings(previous_settings)
+        finally:
+            _reload_application_data_from_disk()
+
+    with data_archive_lock, ExitStack() as stack:
+        for state_lock in (
+            price_refresh_lock,
+            risk_analysis_lock,
+            daily_digest_lock,
+            lock,
+            settings_lock,
+            risk_history_lock,
+            review_notes_lock,
+        ):
+            stack.enter_context(state_lock)
+        result = _data_archive_manager().restore(
+            archive_path,
+            apply_callback=apply_restored_state,
+            rollback_callback=rollback_restored_state,
+        )
+    apply_floating_price_settings(get_settings_snapshot())
+    return result
+
+
+def _authorized_http_request():
+    token = str(request.headers.get("X-GoldMonitor-Token") or "")
+    return bool(token) and secrets.compare_digest(token, SOCKET_ACCESS_TOKEN)
+
+
+def _cleanup_data_archive_uploads(now_monotonic=None):
+    now_monotonic = time.monotonic() if now_monotonic is None else float(now_monotonic)
+    expired_paths = []
+    with data_archive_upload_lock:
+        for token, item in list(data_archive_uploads.items()):
+            if now_monotonic - float(item.get("created_at") or 0) <= DATA_ARCHIVE_UPLOAD_TTL_SECONDS:
+                continue
+            expired_paths.append(str(item.get("path") or ""))
+            data_archive_uploads.pop(token, None)
+    for path in expired_paths:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+
+
+def _store_data_archive_upload(path, preview):
+    _cleanup_data_archive_uploads()
+    token = secrets.token_urlsafe(24)
+    with data_archive_upload_lock:
+        data_archive_uploads[token] = {
+            "path": path,
+            "preview": dict(preview),
+            "created_at": time.monotonic(),
+        }
+    return token
+
+
+def _consume_data_archive_upload(token):
+    _cleanup_data_archive_uploads()
+    with data_archive_upload_lock:
+        return data_archive_uploads.pop(str(token or ""), None)
+
+
 def open_exports_folder():
     export_dir = resolve_export_dir()
     os.makedirs(export_dir, exist_ok=True)
@@ -2233,6 +2562,49 @@ def reset_to_default_settings():
     return {"ok": True, "startup_error": startup_error or ""}
 
 
+ONBOARDING_PREFERENCE_KEYS = {
+    "startup_enabled",
+    "startup_to_tray",
+    "floating_price_enabled",
+    "floating_price_display_mode",
+    "close_behavior",
+    "alert_sound_enabled",
+    "alert_dialog_enabled",
+    "alert_cooldown_minutes",
+}
+
+
+def start_onboarding():
+    current = get_settings_snapshot()
+    if current.get("onboarding_started"):
+        return public_settings_snapshot(current)
+    current["onboarding_started"] = True
+    current["onboarding_version"] = 1
+    return public_settings_snapshot(save_settings(current))
+
+
+def complete_onboarding(preferences=None):
+    current = get_settings_snapshot()
+    if isinstance(preferences, dict):
+        current.update({
+            key: preferences[key]
+            for key in ONBOARDING_PREFERENCE_KEYS
+            if key in preferences
+        })
+    current["close_remembered"] = current.get("close_behavior") != "ask"
+    current["onboarding_started"] = True
+    current["onboarding_completed"] = True
+    current["onboarding_version"] = 1
+    current["onboarding_completed_at"] = datetime.now().isoformat(timespec="seconds")
+    saved, startup_error = apply_settings(current)
+    return {
+        "ok": True,
+        "settings": public_settings_snapshot(saved),
+        "startup_error": startup_error or "",
+        "message": "首次使用设置已保存。",
+    }
+
+
 def build_diagnostics_report():
     paths = {
         "appdata": APPDATA_DIR,
@@ -2245,6 +2617,7 @@ def build_diagnostics_report():
         "portfolio_import_backup": PORTFOLIO_IMPORT_BACKUP_PATH,
         "portfolio_alerts": PORTFOLIO_ALERTS_PATH,
         "market_cache": MARKET_CACHE_PATH,
+        "source_metrics": SOURCE_METRICS_PATH,
         "update_dir": UPDATE_DIR,
         "exports": resolve_export_dir(),
         "news": NEWS_CACHE_PATH,
@@ -2628,15 +3001,15 @@ class DailyDigestWebhookNotifier:
         )
 
 
-def _notification_status(channel, label, status, message):
-    return notifications_core.notification_status(channel, label, status, message)
+def _notification_status(channel, label, status, message, **details):
+    return notifications_core.notification_status(channel, label, status, message, **details)
 
 
 def _notification_summary(notifications):
     return notifications_core.summarize_notifications(notifications)
 
 
-def dispatch_alert(entry, title):
+def dispatch_alert(entry, title, blocking=True, on_update=None):
     """通知渠道分发: 根据设置决定哪些渠道发送"""
     settings = get_settings_snapshot()
     return notifications_core.dispatch_alert(
@@ -2646,7 +3019,63 @@ def dispatch_alert(entry, title):
         email_sender=EmailNotifier.send,
         webhook_sender=WebhookNotifier.send,
         logger=logging,
+        blocking=blocking,
+        thread_factory=threading.Thread if not blocking else None,
+        on_update=on_update,
     )
+
+
+def _plan_alert_notifications(entry, settings=None):
+    return notifications_core.plan_alert_notifications(entry, settings or get_settings_snapshot())
+
+
+def _persist_alert_notification_update(alert_id, notifications):
+    def updater(entry):
+        updated = dict(entry)
+        updated["notifications"] = [dict(item) for item in notifications]
+        updated["notification_summary"] = _notification_summary(updated["notifications"])
+        return updated
+
+    ok, updated = _update_alert_log_entry_payload(alert_id, updater)
+    if ok and updated:
+        socketio.emit("alert_log_status_updated", {"ok": True, "entry": updated})
+    return ok, updated
+
+
+def _deliver_alert_notifications(alert_id, entry, title, settings, notifications):
+    return notifications_core.deliver_alert_notifications(
+        entry,
+        title,
+        settings,
+        email_sender=EmailNotifier.send,
+        webhook_sender=WebhookNotifier.send,
+        notifications=notifications,
+        on_update=lambda items, item: _persist_alert_notification_update(alert_id, items),
+        logger=logging,
+    )
+
+
+def _start_alert_notification_delivery(entry, title, settings=None):
+    notifications = entry.get("notifications") if isinstance(entry.get("notifications"), list) else []
+    if not any(item.get("status") == "pending" for item in notifications if isinstance(item, dict)):
+        return False
+    alert_id = str(entry.get("id") or "").strip()
+    if not alert_id:
+        return False
+    settings_snapshot = dict(settings or get_settings_snapshot())
+    entry_snapshot = dict(entry)
+    notification_snapshot = [dict(item) for item in notifications if isinstance(item, dict)]
+    threading.Thread(
+        target=lambda: _deliver_alert_notifications(
+            alert_id,
+            entry_snapshot,
+            title,
+            settings_snapshot,
+            notification_snapshot,
+        ),
+        daemon=True,
+    ).start()
+    return True
 
 
 def _daily_digest_state_store(now_factory=None):
@@ -2714,20 +3143,34 @@ def _dispatch_daily_digest(digest, settings, blocking=False):
     notifications = []
     channels = selected_daily_digest_channels(settings)
     if "email" in channels:
-        error = DailyDigestEmailNotifier.send(digest, blocking=blocking)
-        notifications.append(_notification_status(
-            "email",
-            "邮件",
-            "skipped" if error else "queued",
-            error or "已提交发送",
+        notifications.append(notifications_core.deliver_notification(
+            _notification_status(
+                "email",
+                "邮件",
+                "pending",
+                "等待发送",
+                attempts=0,
+                started_at="",
+                completed_at="",
+            ),
+            DailyDigestEmailNotifier.send,
+            (digest,),
+            logger=logging,
         ))
     if "webhook" in channels:
-        error = DailyDigestWebhookNotifier.send(digest, blocking=blocking)
-        notifications.append(_notification_status(
-            "webhook",
-            "Webhook",
-            "skipped" if error else "queued",
-            error or "已提交发送",
+        notifications.append(notifications_core.deliver_notification(
+            _notification_status(
+                "webhook",
+                "Webhook",
+                "pending",
+                "等待发送",
+                attempts=0,
+                started_at="",
+                completed_at="",
+            ),
+            DailyDigestWebhookNotifier.send,
+            (digest,),
+            logger=logging,
         ))
     return notifications
 
@@ -2766,7 +3209,7 @@ def run_daily_digest_once(now=None, force=False, manual=False, blocking=False):
         channels = selected_daily_digest_channels(settings)
         notifications = _dispatch_daily_digest(digest, settings, blocking=blocking) if channels else []
         summary = _notification_summary(notifications)
-        sent = summary.get("queued", 0) > 0
+        sent = summary.get("sent", 0) > 0
         if not channels:
             summary = {
                 **summary,
@@ -2797,6 +3240,14 @@ def run_daily_digest_once(now=None, force=False, manual=False, blocking=False):
 def emit_alert(entry, title):
     settings = get_settings_snapshot()
     entry["title"] = str(title or "")
+    if entry.get("trigger_price") in (None, ""):
+        with lock:
+            if entry.get("mode") == "usd":
+                entry["trigger_price"] = price_usd
+            elif entry.get("mode") == "rmb":
+                entry["trigger_price"] = price_rmb
+    entry["id"] = str(entry.get("id") or _generate_alert_log_id())
+    entry["timestamp"] = str(entry.get("timestamp") or datetime.now().isoformat(timespec="seconds"))
     delivery = evaluate_alert_delivery(entry, settings)
     if not delivery.get("deliver"):
         reason = delivery.get("reason", "")
@@ -2810,10 +3261,9 @@ def emit_alert(entry, title):
             _notification_status("all", "通知", "muted", entry.get("notification_message", "仅记录提醒")),
         ]
     else:
-        entry["notifications"] = dispatch_alert(entry, title)
+        entry["notifications"] = _plan_alert_notifications(entry, settings)
     entry["notification_summary"] = _notification_summary(entry.get("notifications"))
     entry["related_news"] = select_related_news(title)
-    entry["timestamp"] = datetime.now().isoformat(timespec="seconds")
     alert_log.append(entry)
     while len(alert_log) > ALERT_LOG_MEMORY_LIMIT:
         alert_log.pop(0)
@@ -2822,6 +3272,8 @@ def emit_alert(entry, title):
     except (OSError, sqlite3.Error) as exc:
         logging.warning("告警记录保存失败: %s", exc)
     socketio.emit("alert", entry)
+    if delivery.get("deliver"):
+        _start_alert_notification_delivery(entry, title, settings=settings)
     history_state = build_price_history_state(limit=240)
     history_state["scope"] = "live"
     socketio.emit("price_history_updated", history_state)
@@ -2843,6 +3295,15 @@ def initialize_market_cache():
 
 
 app_settings = load_settings()
+if SETTINGS_FILE_EXISTED_AT_STARTUP and not SETTINGS_ONBOARDING_MARKER_PRESENT_AT_STARTUP:
+    app_settings["onboarding_started"] = True
+    app_settings["onboarding_completed"] = True
+    app_settings["onboarding_version"] = 1
+    app_settings["onboarding_completed_at"] = datetime.now().isoformat(timespec="seconds")
+    try:
+        app_settings = save_settings(app_settings)
+    except OSError as exc:
+        logging.warning("首次使用状态迁移保存失败: %s", exc)
 apply_persisted_threshold_state(load_thresholds())
 alert_profiles = load_alert_profiles()
 watch_targets = load_watch_targets()
@@ -3061,6 +3522,7 @@ def _market_state_locked():
 def record_source_health(name, category, ok, error="", started_at=None, cached=False):
     if not name:
         return
+    source_key = MARKET_SOURCE_HEALTH_KEYS.get((str(category or ""), str(name or "")), "")
     with lock:
         market_data_core.record_source_health(
             source_health,
@@ -3071,7 +3533,17 @@ def record_source_health(name, category, ok, error="", started_at=None, cached=F
             started_at=started_at,
             cached=cached,
             limit=SOURCE_HEALTH_LIMIT,
+            window_size=SOURCE_METRICS_WINDOW,
+            source_key=source_key,
         )
+        health_snapshot = {item_name: dict(item) for item_name, item in source_health.items()}
+    try:
+        market_data_core.SourceMetricsStore(
+            SOURCE_METRICS_PATH,
+            window_size=SOURCE_METRICS_WINDOW,
+        ).save(health_snapshot)
+    except OSError as exc:
+        logging.warning("数据源滚动指标保存失败: %s", exc)
     socketio.emit("source_health_updated", get_source_health_state())
 
 
@@ -3082,13 +3554,49 @@ def get_source_health_state():
     state = market_data_core.build_source_health_state(
         health_snapshot,
         comparison=comparison,
+        window_size=SOURCE_METRICS_WINDOW,
     )
+    adapters = get_market_adapter_catalog(health_snapshot=health_snapshot)
+    adapter_by_key = {
+        item.get("key"): item
+        for category_items in adapters.values()
+        for item in category_items
+        if isinstance(item, dict) and item.get("key")
+    }
+    for item in state["items"]:
+        adapter = adapter_by_key.get(item.get("key"))
+        if not adapter:
+            continue
+        item.update({
+            "enabled": adapter.get("enabled"),
+            "active": adapter.get("active"),
+            "current": adapter.get("current"),
+            "order": adapter.get("order"),
+        })
+    operational_items = [
+        item for item in state["items"]
+        if not item.get("key") or item.get("enabled") is not False
+    ]
+    rolling_samples = sum(int(item.get("sample_count") or 0) for item in operational_items)
+    rolling_successes = sum(int(item.get("success_count") or 0) for item in operational_items)
+    state["summary"].update({
+        "total": len(operational_items),
+        "ok": sum(1 for item in operational_items if item.get("ok")),
+        "failed": sum(1 for item in operational_items if item.get("ok") is False),
+        "cached": sum(1 for item in operational_items if item.get("cached")),
+        "rolling_samples": rolling_samples,
+        "rolling_success_rate_pct": (
+            round(rolling_successes / rolling_samples * 100, 1)
+            if rolling_samples else None
+        ),
+    })
+    state["adapters"] = adapters
+    state["preferences"] = get_market_source_preferences()
     state["quality"] = market_data_core.build_market_quality(
         fetch_status=get_fetch_status(),
         source_health=state,
         comparison=comparison,
     )
-    state["adapters"] = get_market_adapter_catalog()
     return state
 
 
@@ -3132,8 +3640,8 @@ def get_source_comparison_state():
     return build_source_comparison_state()
 
 
-def build_market_adapter_registry():
-    """构建行情源注册表；抓取函数在调用时解析，以保留可替换的兼容入口。"""
+def _build_market_adapter_registry():
+    """构建完整的内置行情源注册表。"""
     adapter = market_adapters_core.MarketSourceAdapter
     return market_adapters_core.MarketAdapterRegistry([
         adapter(
@@ -3202,11 +3710,143 @@ def build_market_adapter_registry():
     ])
 
 
-def get_market_adapter_catalog():
-    registry = build_market_adapter_registry()
+def get_market_source_preferences(settings=None, strict=False, defaults=None):
+    settings = settings if isinstance(settings, dict) else get_settings_snapshot()
+    return market_adapters_core.normalize_source_preferences(
+        settings.get("market_source_enabled"),
+        settings.get("market_source_order"),
+        defaults or MARKET_SOURCE_DEFAULT_ORDER,
+        strict=strict,
+    )
+
+
+def build_market_adapter_registry():
+    """按用户启停和排序配置构建运行时行情源注册表。"""
+    registry = _build_market_adapter_registry()
+    preferences = get_market_source_preferences(
+        defaults=market_adapters_core.source_preference_defaults(registry),
+    )
+    configured, _normalized = market_adapters_core.configure_registry(
+        registry,
+        preferences["enabled"],
+        preferences["order"],
+        strict=True,
+    )
+    return configured
+
+
+def _market_source_matches(descriptor, source_name):
+    source_name = str(source_name or "").strip()
+    if not source_name:
+        return False
+    candidates = {
+        str(descriptor.get("name") or "").strip(),
+        str(descriptor.get("cache_source") or "").strip(),
+    }
+    return any(candidate and (candidate == source_name or candidate in source_name) for candidate in candidates)
+
+
+def get_market_adapter_catalog(health_snapshot=None):
+    registry = _build_market_adapter_registry()
+    preferences = get_market_source_preferences(
+        defaults=market_adapters_core.source_preference_defaults(registry),
+    )
+    health_snapshot = health_snapshot if isinstance(health_snapshot, dict) else source_health
+    health_by_key = {
+        str(item.get("key") or ""): item
+        for item in health_snapshot.values()
+        if isinstance(item, dict) and item.get("key")
+    }
+    fetch_sources = get_fetch_status().get("sources", {})
+    result = {}
+    metric_keys = (
+        "sample_count",
+        "success_count",
+        "failure_count",
+        "success_rate_pct",
+        "cache_rate_pct",
+        "average_latency_ms",
+        "median_latency_ms",
+        "consecutive_failures",
+        "last_checked",
+        "last_recovered_at",
+        "error",
+        "ok",
+        "cached",
+    )
+    for category, ordered_keys in preferences["order"].items():
+        enabled_keys = set(preferences["enabled"].get(category) or [])
+        current_source = fetch_sources.get(category) if isinstance(fetch_sources.get(category), dict) else {}
+        category_items = []
+        for index, key in enumerate(ordered_keys):
+            adapter = registry.get(key)
+            if adapter is None:
+                continue
+            descriptor = adapter.descriptor()
+            descriptor.update({
+                "priority": (index + 1) * 10,
+                "order": index,
+                "enabled": key in enabled_keys,
+                "current": _market_source_matches(descriptor, current_source.get("source")),
+                "current_cached": False,
+                "active": False,
+            })
+            descriptor["current_cached"] = bool(descriptor["current"] and current_source.get("cached"))
+            descriptor["active"] = bool(
+                descriptor["current"]
+                and descriptor["enabled"]
+                and not current_source.get("cached")
+            )
+            metrics = health_by_key.get(key) or {}
+            descriptor.update({metric_key: metrics.get(metric_key) for metric_key in metric_keys})
+            category_items.append(descriptor)
+        result[category] = category_items
+    return result
+
+
+def update_market_source_preferences(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("数据源配置格式无效")
+    preferences = market_adapters_core.normalize_source_preferences(
+        payload.get("enabled"),
+        payload.get("order"),
+        MARKET_SOURCE_DEFAULT_ORDER,
+        strict=True,
+    )
+    current = get_settings_snapshot()
+    current["market_source_enabled"] = preferences["enabled"]
+    current["market_source_order"] = preferences["order"]
+    saved = save_settings(current)
+    return get_market_source_preferences(saved, strict=True)
+
+
+def reset_market_source_preferences():
+    return update_market_source_preferences({
+        "enabled": {
+            category: list(keys)
+            for category, keys in MARKET_SOURCE_DEFAULT_ORDER.items()
+        },
+        "order": {
+            category: list(keys)
+            for category, keys in MARKET_SOURCE_DEFAULT_ORDER.items()
+        },
+    })
+
+
+def retry_market_source(source_key):
+    adapter = _build_market_adapter_registry().get(source_key)
+    if adapter is None:
+        raise ValueError("未找到数据源")
+    result = adapter.fetch()
+    if result.value is not None and adapter.category == "gold":
+        record_source_price_sample(adapter.cache_source, result.value)
     return {
-        "gold": registry.catalog("gold"),
-        "forex": registry.catalog("forex"),
+        "ok": bool(result.ok),
+        "key": adapter.key,
+        "name": adapter.name,
+        "category": adapter.category,
+        "message": "数据源探测成功" if result.ok else (result.error or "数据源探测失败"),
+        "source_health": get_source_health_state(),
     }
 
 
@@ -3968,10 +4608,12 @@ def _alert_resend_title(entry):
     return str(entry.get("title") or f"金价预警 - {alert_level_label(entry.get('type'))}")
 
 
-def resend_alert_notification(alert_id):
+def resend_alert_notification(alert_id, blocking=False, start_delivery=True):
+    settings = get_settings_snapshot()
+
     def updater(entry):
         updated = dict(entry)
-        updated["notifications"] = dispatch_alert(updated, _alert_resend_title(updated))
+        updated["notifications"] = _plan_alert_notifications(updated, settings)
         updated["notification_summary"] = _notification_summary(updated.get("notifications"))
         updated["notification_muted"] = False
         updated["notification_reason"] = ""
@@ -3979,7 +4621,19 @@ def resend_alert_notification(alert_id):
         updated["last_notification_resend_at"] = datetime.now().isoformat(timespec="seconds")
         return updated
 
-    return _update_alert_log_entry_payload(alert_id, updater)
+    ok, updated = _update_alert_log_entry_payload(alert_id, updater)
+    if ok and updated and start_delivery:
+        if blocking:
+            notifications = _deliver_alert_notifications(
+                updated["id"],
+                updated,
+                _alert_resend_title(updated),
+                settings,
+                updated.get("notifications", []),
+            )
+            return _persist_alert_notification_update(updated["id"], notifications)
+        _start_alert_notification_delivery(updated, _alert_resend_title(updated), settings=settings)
+    return ok, updated
 
 
 def alert_log_export_entries(limit=ALERT_LOG_EXPORT_LIMIT):
@@ -4816,6 +5470,74 @@ def api_activate():
     })
 
 
+@app.route("/api/data-archive/preview", methods=["POST"])
+def api_preview_data_archive():
+    if not _authorized_http_request():
+        return jsonify({"ok": False, "message": "未授权的数据归档请求"}), 403
+    uploaded = request.files.get("archive")
+    if uploaded is None or not str(uploaded.filename or "").strip():
+        return jsonify({"ok": False, "message": "请选择数据归档文件"}), 400
+    file_descriptor, upload_path = tempfile.mkstemp(prefix="goldmonitor-restore-", suffix=".zip")
+    os.close(file_descriptor)
+    try:
+        uploaded.save(upload_path)
+        preview = _data_archive_manager().preview(upload_path)
+        restore_token = _store_data_archive_upload(upload_path, preview)
+        return jsonify({**preview, "restore_token": restore_token})
+    except data_archive_core.DataArchiveError as exc:
+        try:
+            os.remove(upload_path)
+        except FileNotFoundError:
+            pass
+        logging.warning("数据归档预检失败: %s", exc)
+        return jsonify({
+            "ok": False,
+            "restorable": False,
+            "message": "数据归档校验失败，请确认文件来自 GoldMonitor 且未损坏",
+        }), 400
+    except OSError as exc:
+        try:
+            os.remove(upload_path)
+        except FileNotFoundError:
+            pass
+        logging.warning("读取数据归档失败: %s", exc)
+        return jsonify({
+            "ok": False,
+            "restorable": False,
+            "message": "读取数据归档失败，请检查文件后重试",
+        }), 400
+
+
+@app.route("/api/data-archive/restore", methods=["POST"])
+def api_restore_data_archive():
+    if not _authorized_http_request():
+        return jsonify({"ok": False, "message": "未授权的数据归档请求"}), 403
+    payload = request.get_json(silent=True)
+    token = str(payload.get("restore_token") or "") if isinstance(payload, dict) else ""
+    upload = _consume_data_archive_upload(token)
+    if not upload:
+        return jsonify({"ok": False, "message": "归档预检已失效，请重新选择文件"}), 400
+    archive_path = str(upload.get("path") or "")
+    try:
+        result = restore_data_archive(archive_path)
+        socketio.emit("data_archive_restored", result)
+        return jsonify(result)
+    except (data_archive_core.DataArchiveError, OSError, sqlite3.Error) as exc:
+        logging.warning("完整数据恢复失败: %s", exc)
+        return jsonify({
+            "ok": False,
+            "message": "数据恢复失败，原数据已回滚。请检查归档文件后重试。",
+        }), 400
+    except Exception:
+        logging.exception("完整数据恢复失败")
+        return jsonify({"ok": False, "message": "数据恢复失败，原数据已回滚。请检查运行日志。"}), 500
+    finally:
+        try:
+            os.remove(archive_path)
+        except FileNotFoundError:
+            pass
+
+
 @app.route("/favicon.ico")
 def favicon():
     return send_from_directory(os.path.join(_basedir, "static"), "icon-64.png", mimetype="image/png")
@@ -5372,6 +6094,16 @@ def on_export_portfolio(data=None):
         emit("portfolio_export_error", build_export_error_payload(f"持仓导出失败: {exc}"))
 
 
+@socketio.on("get_portfolio_analytics")
+def on_get_portfolio_analytics(data=None):
+    days = data.get("days") if isinstance(data, dict) else 90
+    try:
+        emit("portfolio_analytics_updated", build_portfolio_analytics_state(days=days))
+    except (ValueError, OSError, sqlite3.Error) as exc:
+        logging.warning("生成持仓分析失败: %s", exc)
+        emit("portfolio_analytics_error", {"message": "持仓收益与预警分析生成失败，请稍后重试。"})
+
+
 @socketio.on("toggle_watch_target")
 def on_toggle_watch_target(data=None):
     if not isinstance(data, dict):
@@ -5405,6 +6137,26 @@ def on_reset_watch_target(data=None):
 @socketio.on("get_settings")
 def on_get_settings():
     emit("settings_updated", public_settings_snapshot())
+
+
+@socketio.on("start_onboarding")
+def on_start_onboarding():
+    try:
+        settings_state = start_onboarding()
+        emit("onboarding_started", {"ok": True, "settings": settings_state})
+    except OSError:
+        emit("onboarding_error", {"message": "首次使用状态保存失败，请检查配置目录权限。"})
+
+
+@socketio.on("complete_onboarding")
+def on_complete_onboarding(data=None):
+    try:
+        result = complete_onboarding(data if isinstance(data, dict) else {})
+    except OSError:
+        emit("onboarding_error", {"message": "首次使用设置保存失败，请检查配置目录权限。"})
+        return
+    socketio.emit("settings_updated", result["settings"])
+    emit("onboarding_completed", result)
 
 
 @socketio.on("update_settings")
@@ -5697,6 +6449,72 @@ def on_get_source_health():
     emit("source_health_updated", get_source_health_state())
 
 
+@socketio.on("update_market_sources")
+def on_update_market_sources(data=None):
+    try:
+        preferences = update_market_source_preferences(data)
+    except ValueError as exc:
+        emit("market_sources_error", {"message": str(exc)})
+        emit("source_health_updated", get_source_health_state())
+        return
+    except OSError:
+        emit("market_sources_error", {"message": "数据源配置保存失败，请检查配置目录权限。"})
+        emit("source_health_updated", get_source_health_state())
+        return
+    state = get_source_health_state()
+    socketio.emit("settings_updated", public_settings_snapshot())
+    socketio.emit("source_health_updated", state)
+    emit("market_sources_updated", {
+        "ok": True,
+        "preferences": preferences,
+        "message": "数据源配置已保存，将按新顺序刷新行情。",
+    })
+    threading.Thread(target=fetch_price_once, daemon=True).start()
+
+
+@socketio.on("reset_market_sources")
+def on_reset_market_sources():
+    try:
+        preferences = reset_market_source_preferences()
+    except OSError:
+        emit("market_sources_error", {"message": "默认数据源配置恢复失败，请检查配置目录权限。"})
+        return
+    socketio.emit("settings_updated", public_settings_snapshot())
+    socketio.emit("source_health_updated", get_source_health_state())
+    emit("market_sources_updated", {
+        "ok": True,
+        "preferences": preferences,
+        "message": "已恢复默认数据源顺序。",
+    })
+    threading.Thread(target=fetch_price_once, daemon=True).start()
+
+
+@socketio.on("retry_market_source")
+def on_retry_market_source(data=None):
+    source_key = str(data.get("key") or "").strip() if isinstance(data, dict) else ""
+    if not source_key:
+        emit("market_sources_error", {"message": "请选择需要探测的数据源。"})
+        return
+
+    emit("market_source_retry_result", {
+        "ok": None,
+        "pending": True,
+        "key": source_key,
+        "message": "正在探测数据源...",
+    })
+
+    def run_retry():
+        try:
+            result = retry_market_source(source_key)
+        except ValueError as exc:
+            result = {"ok": False, "key": source_key, "message": str(exc)}
+        socketio.emit("market_source_retry_result", result)
+        if isinstance(result.get("source_health"), dict):
+            socketio.emit("source_health_updated", result["source_health"])
+
+    threading.Thread(target=run_retry, daemon=True).start()
+
+
 @socketio.on("get_price_history")
 def on_get_price_history(data=None):
     minutes = None
@@ -5861,11 +6679,12 @@ def on_resend_alert_notification(data=None):
     if not isinstance(data, dict):
         emit("alert_notification_resend_error", {"message": "告警通知重发参数无效"})
         return
-    ok, entry = resend_alert_notification(data.get("id"))
+    ok, entry = resend_alert_notification(data.get("id"), start_delivery=False)
     if not ok:
         emit("alert_notification_resend_error", {"message": "未找到对应告警记录"})
         return
     socketio.emit("alert_notification_resent", {"ok": True, "entry": entry})
+    _start_alert_notification_delivery(entry, _alert_resend_title(entry))
 
 
 @socketio.on("export_config")
@@ -5882,6 +6701,15 @@ def on_export_config():
         })
     except OSError:
         emit("config_backup_ready", build_export_error_payload("配置导出失败，请检查导出目录权限。"))
+
+
+@socketio.on("export_data_archive")
+def on_export_data_archive():
+    try:
+        emit("data_archive_exported", create_data_archive())
+    except (OSError, sqlite3.Error, data_archive_core.DataArchiveError) as exc:
+        logging.warning("完整数据归档失败: %s", exc)
+        emit("data_archive_export_error", build_export_error_payload("完整数据归档失败，请检查导出目录和本地数据文件。"))
 
 
 @socketio.on("preview_import_config")
@@ -5907,6 +6735,9 @@ def on_import_config(data=None):
             payload = json.loads(payload)
         result = restore_config_backup(payload)
         emit("config_import_result", {**result, "message": "配置导入完成。"})
+        if "settings" in result.get("imported", []):
+            socketio.emit("source_health_updated", get_source_health_state())
+            threading.Thread(target=fetch_price_once, daemon=True).start()
     except (ValueError, json.JSONDecodeError) as exc:
         emit("config_import_result", {"ok": False, "message": str(exc)})
     except OSError:
@@ -5918,6 +6749,8 @@ def on_reset_settings():
     try:
         result = reset_to_default_settings()
         emit("settings_reset_result", {**result, "message": "已恢复默认设置。"})
+        socketio.emit("source_health_updated", get_source_health_state())
+        threading.Thread(target=fetch_price_once, daemon=True).start()
     except OSError:
         emit("settings_reset_result", {"ok": False, "message": "恢复默认设置失败，请检查配置目录权限。"})
 

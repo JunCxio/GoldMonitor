@@ -101,6 +101,9 @@ def build_threshold_alert(
                     "mode": mode,
                     "source": "threshold",
                     "threshold_key": key,
+                    "threshold_value": value,
+                    "trigger_price": price,
+                    "alert_direction": "up" if is_upper else "down",
                     "message": message,
                 },
             }
@@ -387,6 +390,14 @@ def build_volatility_alert(history, config, now_str, last_checked_at=None, now_f
         message = f"[波动预警] {minutes}分钟内{direction} {change_pct:.2f}% (${start_price:,.2f} → ${end_price:,.2f})"
         return {
             "title": "金价波动预警",
-            "alert": {"time": now_str, "type": "volatility", "mode": "usd", "source": "volatility", "message": message},
+            "alert": {
+                "time": now_str,
+                "type": "volatility",
+                "mode": "usd",
+                "source": "volatility",
+                "trigger_price": end_price,
+                "alert_direction": "up" if end_price > start_price else "down",
+                "message": message,
+            },
         }, now
     return None, now

@@ -3,8 +3,13 @@ import io
 import json
 import math
 import os
+import statistics
 import time
 from datetime import datetime
+
+
+SOURCE_METRICS_SCHEMA_VERSION = 1
+DEFAULT_SOURCE_METRICS_WINDOW = 50
 
 
 def parse_iso_datetime(value):
@@ -337,6 +342,133 @@ class MarketCacheStore:
         }
 
 
+def _normalize_health_samples(samples, window_size=DEFAULT_SOURCE_METRICS_WINDOW):
+    normalized = []
+    for raw in samples if isinstance(samples, list) else []:
+        if not isinstance(raw, dict):
+            continue
+        elapsed_ms = raw.get("elapsed_ms")
+        try:
+            elapsed_ms = int(elapsed_ms) if elapsed_ms is not None else None
+        except (TypeError, ValueError):
+            elapsed_ms = None
+        normalized.append({
+            "checked_at": str(raw.get("checked_at") or ""),
+            "ok": bool(raw.get("ok")),
+            "cached": bool(raw.get("cached")),
+            "elapsed_ms": max(0, elapsed_ms) if elapsed_ms is not None else None,
+        })
+    return normalized[-max(1, int(window_size or DEFAULT_SOURCE_METRICS_WINDOW)):]
+
+
+def _rolling_health_metrics(samples):
+    samples = samples if isinstance(samples, list) else []
+    sample_count = len(samples)
+    success_count = sum(1 for item in samples if item.get("ok"))
+    failure_count = sample_count - success_count
+    cache_count = sum(1 for item in samples if item.get("cached"))
+    latencies = [
+        int(item["elapsed_ms"])
+        for item in samples
+        if item.get("elapsed_ms") is not None
+    ]
+    consecutive_failures = 0
+    for item in reversed(samples):
+        if item.get("ok"):
+            break
+        consecutive_failures += 1
+    return {
+        "sample_count": sample_count,
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "cache_count": cache_count,
+        "success_rate_pct": round(success_count / sample_count * 100, 1) if sample_count else None,
+        "cache_rate_pct": round(cache_count / sample_count * 100, 1) if sample_count else None,
+        "average_latency_ms": round(sum(latencies) / len(latencies), 1) if latencies else None,
+        "median_latency_ms": round(float(statistics.median(latencies)), 1) if latencies else None,
+        "consecutive_failures": consecutive_failures,
+    }
+
+
+def normalize_source_health_item(raw, window_size=DEFAULT_SOURCE_METRICS_WINDOW):
+    def nonnegative_int(value):
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    item = dict(raw) if isinstance(raw, dict) else {}
+    samples = _normalize_health_samples(item.get("samples"), window_size=window_size)
+    item["samples"] = samples
+    item.update(_rolling_health_metrics(samples))
+    item["name"] = str(item.get("name") or "").strip()
+    item["key"] = str(item.get("key") or "").strip()
+    item["category"] = str(item.get("category") or "").strip()
+    item["ok_count"] = nonnegative_int(item.get("ok_count"))
+    item["fail_count"] = nonnegative_int(item.get("fail_count"))
+    item["ok"] = bool(item.get("ok"))
+    item["cached"] = bool(item.get("cached"))
+    return item
+
+
+class SourceMetricsStore:
+    def __init__(self, path, window_size=DEFAULT_SOURCE_METRICS_WINDOW):
+        self.path = str(path or "")
+        self.window_size = max(1, int(window_size or DEFAULT_SOURCE_METRICS_WINDOW))
+
+    def load(self):
+        if not self.path or not os.path.exists(self.path):
+            return {}
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        try:
+            schema_version = int(payload.get("schema_version") or 0)
+        except (TypeError, ValueError):
+            return {}
+        if schema_version != SOURCE_METRICS_SCHEMA_VERSION:
+            return {}
+        sources = payload.get("sources")
+        if not isinstance(sources, dict):
+            return {}
+        result = {}
+        for raw_name, raw_item in sources.items():
+            item = normalize_source_health_item(raw_item, window_size=self.window_size)
+            name = item.get("name") or str(raw_name or "").strip()
+            if not name:
+                continue
+            item["name"] = name
+            result[name] = item
+        return result
+
+    def save(self, health_state):
+        if not self.path:
+            raise OSError("source metrics path is empty")
+        sources = {}
+        for raw_name, raw_item in (health_state or {}).items():
+            item = normalize_source_health_item(raw_item, window_size=self.window_size)
+            name = item.get("name") or str(raw_name or "").strip()
+            if not name:
+                continue
+            item["name"] = name
+            sources[name] = item
+        payload = {
+            "schema_version": SOURCE_METRICS_SCHEMA_VERSION,
+            "window_size": self.window_size,
+            "sources": sources,
+        }
+        os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+        tmp_path = self.path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, self.path)
+        return payload
+
+
 def record_source_health(
     health_state,
     name,
@@ -348,6 +480,8 @@ def record_source_health(
     now=None,
     now_monotonic=None,
     limit=None,
+    window_size=DEFAULT_SOURCE_METRICS_WINDOW,
+    source_key="",
 ):
     if not name:
         return None
@@ -356,25 +490,42 @@ def record_source_health(
         current_monotonic = time.monotonic() if now_monotonic is None else now_monotonic
         elapsed_ms = int(max(0, (current_monotonic - started_at) * 1000))
     now = now or datetime.now()
-    current = health_state.get(name, {
+    current = normalize_source_health_item(health_state.get(name, {
         "name": name,
         "category": category,
         "ok_count": 0,
         "fail_count": 0,
+    }), window_size=window_size)
+    previous_ok = current.get("ok") if current.get("last_checked") else None
+    checked_at = now.isoformat(timespec="seconds")
+    samples = list(current.get("samples") or [])
+    samples.append({
+        "checked_at": checked_at,
+        "ok": bool(ok),
+        "cached": bool(cached),
+        "elapsed_ms": elapsed_ms,
     })
+    samples = _normalize_health_samples(samples, window_size=window_size)
     current.update({
         "name": name,
+        "key": str(source_key or current.get("key") or "").strip(),
         "category": category,
         "ok": bool(ok),
         "cached": bool(cached),
         "error": str(error or ""),
-        "last_checked": now.isoformat(timespec="seconds"),
+        "last_checked": checked_at,
         "elapsed_ms": elapsed_ms,
+        "samples": samples,
     })
     if ok:
         current["ok_count"] = int(current.get("ok_count", 0)) + 1
+        current["last_success_at"] = checked_at
+        if previous_ok is False:
+            current["last_recovered_at"] = checked_at
     else:
         current["fail_count"] = int(current.get("fail_count", 0)) + 1
+        current["last_failure_at"] = checked_at
+    current.update(_rolling_health_metrics(samples))
     health_state[name] = current
     if limit and len(health_state) > int(limit):
         oldest = sorted(health_state.values(), key=lambda item: item.get("last_checked", ""))[0]
@@ -382,17 +533,21 @@ def record_source_health(
     return dict(current)
 
 
-def build_source_health_state(health_state, comparison=None, now=None):
+def build_source_health_state(health_state, comparison=None, now=None, window_size=DEFAULT_SOURCE_METRICS_WINDOW):
     now = now or datetime.now()
     items = sorted(
-        [dict(item) for item in health_state.values()],
+        [normalize_source_health_item(item, window_size=window_size) for item in health_state.values()],
         key=lambda item: (item.get("category", ""), item.get("name", "")),
     )
+    rolling_samples = sum(int(item.get("sample_count") or 0) for item in items)
+    rolling_successes = sum(int(item.get("success_count") or 0) for item in items)
     summary = {
         "total": len(items),
         "ok": sum(1 for item in items if item.get("ok")),
         "failed": sum(1 for item in items if item.get("ok") is False),
         "cached": sum(1 for item in items if item.get("cached")),
+        "rolling_samples": rolling_samples,
+        "rolling_success_rate_pct": round(rolling_successes / rolling_samples * 100, 1) if rolling_samples else None,
     }
     return {
         "items": items,
@@ -453,10 +608,11 @@ def build_source_comparison_state(samples=None, stale_seconds=300, anomaly_pct=0
     return state
 
 
-def build_market_quality(fetch_status=None, source_health=None, comparison=None):
+def build_market_quality(fetch_status=None, source_health=None, comparison=None, now=None):
     fetch_status = fetch_status if isinstance(fetch_status, dict) else {}
     source_health = source_health if isinstance(source_health, dict) else {}
     comparison = comparison if isinstance(comparison, dict) else {}
+    now = now or datetime.now()
     source_summary = source_health.get("summary") if isinstance(source_health.get("summary"), dict) else {}
 
     failed_sources = int(source_summary.get("failed") or 0)
@@ -465,28 +621,129 @@ def build_market_quality(fetch_status=None, source_health=None, comparison=None)
     has_anomaly = comparison.get("status") == "anomaly"
     degraded = bool(fetch_status.get("degraded") or fetch_status.get("ok") is False or failed_sources)
 
-    reasons = []
-    if has_anomaly:
-        reasons.append("数据源价差异常")
+    deductions = []
+
+    def deduct(code, label, points, detail=""):
+        points = max(0, min(100, int(round(points))))
+        if not points:
+            return
+        deductions.append({
+            "code": code,
+            "label": label,
+            "points": points,
+            "detail": str(detail or label),
+        })
+
     if uses_cache:
-        reasons.append("正在使用缓存行情")
-    if failed_sources:
-        reasons.append(f"{failed_sources} 个数据源异常")
-    if fetch_status.get("error"):
-        reasons.append(str(fetch_status.get("error")))
+        deduct("cache", "正在使用缓存行情", 40)
+    elif fetch_status.get("ok") is False:
+        deduct(
+            "fetch_failed",
+            "实时行情获取未完全成功",
+            20 + min(10, failed_sources * 5),
+        )
+    elif degraded:
+        deduct("fetch_degraded", "部分数据源当前异常", min(12, max(4, failed_sources * 4)))
+
+    adapters = source_health.get("adapters") if isinstance(source_health.get("adapters"), dict) else {}
+    active_sources = []
+    for category_items in adapters.values():
+        if not isinstance(category_items, list):
+            continue
+        active_sources.extend(
+            item for item in category_items
+            if isinstance(item, dict) and item.get("active") and int(item.get("sample_count") or 0) > 0
+        )
+    if not active_sources:
+        active_sources = [
+            item for item in source_health.get("items", [])
+            if isinstance(item, dict) and item.get("active") and int(item.get("sample_count") or 0) > 0
+        ]
+
+    active_sample_count = sum(int(item.get("sample_count") or 0) for item in active_sources)
+    active_success_count = sum(int(item.get("success_count") or 0) for item in active_sources)
+    active_success_rate = (
+        round(active_success_count / active_sample_count * 100, 1)
+        if active_sample_count else None
+    )
+    if active_sample_count >= 3 and active_success_rate is not None and active_success_rate < 95:
+        reliability_penalty = min(20, max(1, round((95 - active_success_rate) * 0.4)))
+        deduct(
+            "rolling_reliability",
+            f"当前数据源最近 {active_sample_count} 次成功率为 {active_success_rate:.1f}%",
+            reliability_penalty,
+        )
+
+    consecutive_failures = max(
+        [int(item.get("consecutive_failures") or 0) for item in active_sources] or [0]
+    )
+    if consecutive_failures:
+        deduct(
+            "consecutive_failures",
+            f"当前数据源连续失败 {consecutive_failures} 次",
+            min(12, consecutive_failures * 4),
+        )
+
+    active_ages = []
+    for item in active_sources:
+        checked_at = parse_iso_datetime(item.get("last_checked"))
+        if checked_at:
+            active_ages.append(max(0, int((now - checked_at).total_seconds())))
+    oldest_active_age_seconds = max(active_ages) if active_ages else None
+    if oldest_active_age_seconds is not None and oldest_active_age_seconds > 90:
+        freshness_penalty = min(15, max(1, math.ceil((oldest_active_age_seconds - 90) / 60) * 3))
+        deduct(
+            "freshness",
+            f"当前数据源最近探测距今 {oldest_active_age_seconds} 秒",
+            freshness_penalty,
+        )
 
     if has_anomaly:
-        level, score, label = "anomaly", 50, "价差异常"
+        comparison_summary = comparison.get("summary") if isinstance(comparison.get("summary"), dict) else {}
+        spread_pct = _format_number(comparison_summary.get("spread_pct"))
+        threshold_pct = _format_number(comparison_summary.get("threshold_pct"))
+        if spread_pct is not None and threshold_pct is not None and threshold_pct > 0:
+            anomaly_penalty = min(50, 40 + round(max(0, spread_pct - threshold_pct) / threshold_pct * 10))
+            detail = f"跨源价差 {spread_pct:.2f}% 超过阈值 {threshold_pct:.2f}%"
+        else:
+            anomaly_penalty = 50
+            detail = "数据源价差异常"
+        deduct("source_spread", "数据源价差异常", anomaly_penalty, detail)
+
+    reasons = [item["detail"] for item in deductions]
+    if failed_sources:
+        reasons.append(f"{failed_sources} 个数据源异常")
+    fetch_error = str(fetch_status.get("error") or "").strip()
+    if fetch_error and fetch_error not in reasons:
+        reasons.append(fetch_error)
+
+    score = max(0, 100 - sum(item["points"] for item in deductions))
+    if has_anomaly:
+        level, label = "anomaly", "价差异常"
     elif uses_cache:
-        level, score, label = "stale", 60, "使用缓存"
-    elif degraded:
-        level, score, label = "degraded", 70, "部分降级"
+        level, label = "stale", "使用缓存"
+    elif score < 90 or degraded:
+        level, label = "degraded", "部分降级"
     else:
-        level, score, label = "normal", 100, "数据可信"
+        level, label = "normal", "数据可信"
 
     return {
         "level": level,
         "score": score,
         "label": label,
         "reasons": reasons,
+        "deductions": deductions,
+        "components": {
+            "uses_cache": uses_cache,
+            "failed_sources": failed_sources,
+            "active_sample_count": active_sample_count,
+            "active_success_rate_pct": active_success_rate,
+            "consecutive_failures": consecutive_failures,
+            "oldest_active_probe_age_seconds": oldest_active_age_seconds,
+            "spread_pct": (
+                comparison.get("summary", {}).get("spread_pct")
+                if isinstance(comparison.get("summary"), dict)
+                else None
+            ),
+        },
     }

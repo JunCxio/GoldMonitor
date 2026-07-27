@@ -1,7 +1,9 @@
 import json
+import sqlite3
 import sys
 import tempfile
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -194,6 +196,82 @@ def test_price_history_store_closes_database_connections():
 
             assert len(connections) == 3
             assert all(connection.closed for connection in connections)
+
+
+def test_price_history_store_keeps_long_windows_in_rollups_after_raw_cleanup():
+    from goldmonitor.price_history import PriceHistoryStore
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        store = PriceHistoryStore(
+            str(Path(tmp_dir) / "price_history.json"),
+            archive_limit=20000,
+            raw_retention_minutes=60,
+        )
+        start = datetime(2026, 7, 1, 12, 0, 0)
+        points = []
+        for index in range(8 * 24 * 12 + 1):
+            timestamp = start + timedelta(minutes=index * 5)
+            points.append({
+                "usd": 2300 + index / 10,
+                "rmb": 540 + index / 100,
+                "rate": 7.2,
+                "timestamp": timestamp.isoformat(timespec="seconds"),
+            })
+
+        store.upsert_points(points)
+
+        raw_items = store.load_from_db()
+        assert len(raw_items) == 13
+        assert raw_items[0]["timestamp"] == (start + timedelta(days=8) - timedelta(minutes=60)).isoformat(timespec="seconds")
+
+        state = store.build_state([], minutes=7 * 24 * 60, limit=2100)
+        assert state["resolution"] == "5m"
+        assert state["resolution_seconds"] == 300
+        assert state["total"] == 7 * 24 * 12 + 1
+        assert state["items"][0]["timestamp"] == (start + timedelta(days=1)).isoformat(timespec="seconds")
+        assert state["items"][-1]["timestamp"] == (start + timedelta(days=8)).isoformat(timespec="seconds")
+
+
+def test_price_history_store_backfills_rollups_from_legacy_sqlite():
+    from goldmonitor.price_history import PRICE_HISTORY_DB_SCHEMA_VERSION, PriceHistoryStore
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = str(Path(tmp_dir) / "price_history.json")
+        store = PriceHistoryStore(path)
+        with closing(sqlite3.connect(store.db_path())) as conn:
+            conn.execute("""
+                CREATE TABLE price_history (
+                    timestamp TEXT PRIMARY KEY,
+                    time TEXT NOT NULL,
+                    usd REAL,
+                    rmb REAL,
+                    rate REAL
+                )
+            """)
+            conn.executemany(
+                """
+                INSERT INTO price_history(timestamp, time, usd, rmb, rate)
+                VALUES(?, ?, ?, ?, ?)
+                """,
+                [
+                    ("2026-07-01T12:00:00", "12:00:00", 2300, 540, 7.2),
+                    ("2026-07-03T12:00:00", "12:00:00", 2320, 545, 7.2),
+                ],
+            )
+            conn.commit()
+
+        items = store.filter_from_db(minutes=7 * 24 * 60, limit=2100)
+
+        assert [item["usd"] for item in items] == [2300.0, 2320.0]
+        with closing(sqlite3.connect(store.db_path())) as conn:
+            version = conn.execute(
+                "SELECT value FROM price_history_metadata WHERE key = 'schema_version'"
+            ).fetchone()
+            rollup_count = conn.execute(
+                "SELECT COUNT(*) FROM price_history_rollups"
+            ).fetchone()[0]
+        assert version == (str(PRICE_HISTORY_DB_SCHEMA_VERSION),)
+        assert rollup_count == 8
 
 
 if __name__ == "__main__":

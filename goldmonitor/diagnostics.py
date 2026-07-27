@@ -17,10 +17,16 @@ def _notification_summary_status(entry):
     statuses = {str(item.get("status") or "") for item in notifications if isinstance(item, dict)}
     if "muted" in statuses:
         return "muted"
-    if "skipped" in statuses and "queued" in statuses:
+    if ("failed" in statuses or "skipped" in statuses) and ("sent" in statuses or "queued" in statuses):
         return "partial"
+    if "failed" in statuses:
+        return "failed"
     if "skipped" in statuses:
         return "skipped"
+    if "pending" in statuses:
+        return "pending"
+    if "sent" in statuses:
+        return "sent"
     if "queued" in statuses:
         return "queued"
     if statuses == {"disabled"}:
@@ -59,7 +65,7 @@ def build_health_summary(
     cached_sources = int(source_summary.get("cached") or 0)
     notification_statuses = [_notification_summary_status(item) for item in recent_alerts]
     notification_muted_alerts = sum(1 for status in notification_statuses if status == "muted")
-    notification_problem_alerts = sum(1 for status in notification_statuses if status in {"partial", "skipped"})
+    notification_problem_alerts = sum(1 for status in notification_statuses if status in {"failed", "partial", "skipped"})
 
     if fetch_status.get("ok") is False:
         messages.append(str(fetch_status.get("message") or "行情数据异常"))
@@ -68,7 +74,7 @@ def build_health_summary(
     if cached_sources:
         messages.append(f"{cached_sources} 个数据源使用缓存")
     if notification_problem_alerts:
-        messages.append(f"{notification_problem_alerts} 条警报通知未完全提交")
+        messages.append(f"{notification_problem_alerts} 条警报通知未完全送达")
     if notification_muted_alerts:
         messages.append(f"{notification_muted_alerts} 条警报处于静默或冷却记录")
     if not int(price_history.get("total") or 0):

@@ -84,6 +84,8 @@
               <button class="chart-tg" data-period="4h" onclick="switchChartPeriod('4h')">4小时</button>
               <button class="chart-tg" data-period="day" onclick="switchChartPeriod('day')">日内</button>
               <button class="chart-tg" data-period="7d" onclick="switchChartPeriod('7d')">7日</button>
+              <button class="chart-tg" data-period="30d" onclick="switchChartPeriod('30d')">30日</button>
+              <button class="chart-tg" data-period="90d" onclick="switchChartPeriod('90d')">90日</button>
               <button class="chart-tg" data-period="5min" onclick="switchChartPeriod('5min')">5分钟波动</button>
             </div>
           </div>
@@ -177,12 +179,24 @@
                 </div>
               </div>
               <div class="source-health-details" id="sourceHealthDetails" hidden>
+                <div class="market-quality-details" id="marketQualityDetails">
+                  <div class="market-quality-title">质量评分依据</div>
+                  <div class="market-quality-reasons">等待评分</div>
+                </div>
                 <div class="source-comparison" id="sourceComparison">
                   <div class="source-comparison-head">
                     <span>行情源价差</span>
                     <span class="source-comparison-badge insufficient">等待</span>
                   </div>
                   <div class="source-comparison-list"></div>
+                </div>
+                <div class="source-manager" id="sourceManager">
+                  <div class="source-manager-head">
+                    <span>数据源管理</span>
+                    <button class="btn-clear-sm btn-muted-sm" type="button" onclick="resetMarketSources()">恢复默认</button>
+                  </div>
+                  <div class="source-manager-status" id="sourceManagerStatus"></div>
+                  <div class="source-manager-list"></div>
                 </div>
                 <div class="source-health-list"></div>
               </div>
@@ -645,6 +659,32 @@
         </div>
         <div class="setting-row">
           <div>
+            <div class="setting-label">完整数据归档</div>
+            <div class="setting-desc">归档设置、密钥、持仓、预警、复盘和历史数据库。归档含敏感信息，请妥善保管。</div>
+          </div>
+          <button class="btn-set btn-form" type="button" onclick="exportDataArchive()">创建归档</button>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">恢复完整数据</div>
+            <div class="setting-desc">先校验归档版本、哈希和数据库完整性，确认后原子恢复；失败时自动回滚。</div>
+          </div>
+          <div class="settings-stack">
+            <input id="dataArchiveFile" class="portfolio-import-file" type="file" accept=".zip,application/zip" onchange="previewDataArchive(this)">
+            <button class="settings-cancel btn-form" type="button" onclick="chooseDataArchive()">选择归档</button>
+            <button class="dialog-danger btn-form" id="restoreDataArchiveButton" type="button" onclick="confirmDataArchiveRestore()" hidden>确认恢复</button>
+            <div class="data-archive-preview" id="dataArchivePreview"></div>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">首次使用向导</div>
+            <div class="setting-desc">重新检查桌面显示、启动行为和本机预警偏好，不修改持仓或预警规则。</div>
+          </div>
+          <button class="settings-cancel btn-form" type="button" onclick="reopenOnboarding()">重新打开</button>
+        </div>
+        <div class="setting-row">
+          <div>
             <div class="setting-label">更新状态</div>
             <div class="setting-desc">查看当前版本、最近检查结果和失败原因，必要时复制诊断摘要。</div>
           </div>
@@ -706,6 +746,86 @@
     <div class="settings-foot">
       <button class="settings-cancel" onclick="closeSettings()">取消</button>
       <button class="settings-save" onclick="saveSettings()">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="settings-backdrop onboarding-backdrop" id="onboardingBackdrop">
+  <div class="settings-modal onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboardingTitle">
+    <div class="settings-head">
+      <div>
+        <div class="onboarding-kicker">首次使用设置</div>
+        <h2 id="onboardingTitle">开始使用金价监控</h2>
+      </div>
+    </div>
+    <div class="onboarding-progress" aria-label="向导进度">
+      <span class="active" data-onboarding-progress="1">1</span>
+      <span data-onboarding-progress="2">2</span>
+      <span data-onboarding-progress="3">3</span>
+      <span data-onboarding-progress="4">4</span>
+    </div>
+    <div class="settings-body onboarding-body">
+      <section class="onboarding-step active" data-onboarding-step="1">
+        <h3>确认运行方式</h3>
+        <p>行情、持仓、预警和复盘数据默认保存在本机。应用会从多个公开数据源获取金价与汇率。</p>
+        <div class="onboarding-status-grid">
+          <div><span>行情状态</span><strong id="onboardingMarketStatus">等待连接</strong></div>
+          <div><span>当前价格</span><strong id="onboardingPriceStatus">等待行情</strong></div>
+          <div><span>数据来源</span><strong id="onboardingSourceStatus">等待行情</strong></div>
+        </div>
+      </section>
+      <section class="onboarding-step" data-onboarding-step="2">
+        <h3>桌面显示与启动</h3>
+        <div class="onboarding-field">
+          <label for="onboardingDisplayMode">悬浮窗显示</label>
+          <select class="settings-select" id="onboardingDisplayMode">
+            <option value="rmb_usd">人民币与美元</option>
+            <option value="rmb_only">仅人民币</option>
+            <option value="usd_only">仅美元</option>
+          </select>
+        </div>
+        <label class="onboarding-check"><input type="checkbox" id="onboardingFloatingEnabled">启用桌面悬浮价格</label>
+        <label class="onboarding-check"><input type="checkbox" id="onboardingStartupEnabled">开机后自动启动</label>
+        <label class="onboarding-check"><input type="checkbox" id="onboardingStartupTray">自启动时不弹出主窗口</label>
+        <div class="onboarding-field">
+          <label for="onboardingCloseBehavior">关闭主窗口时</label>
+          <select class="settings-select" id="onboardingCloseBehavior">
+            <option value="ask">每次询问</option>
+            <option value="minimize_to_tray">继续在后台运行</option>
+            <option value="exit">退出程序</option>
+          </select>
+        </div>
+      </section>
+      <section class="onboarding-step" data-onboarding-step="3">
+        <h3>本机预警方式</h3>
+        <p>这里仅设置触发后的提醒方式。价格阈值和持仓提醒可在主界面按实际需求配置。</p>
+        <label class="onboarding-check"><input type="checkbox" id="onboardingAlertSound">播放系统提示音</label>
+        <label class="onboarding-check"><input type="checkbox" id="onboardingAlertDialog">显示桌面警报窗口</label>
+        <div class="onboarding-field">
+          <label for="onboardingCooldown">相同规则冷却时间</label>
+          <select class="settings-select" id="onboardingCooldown">
+            <option value="0">不限制</option>
+            <option value="15">15 分钟</option>
+            <option value="30">30 分钟</option>
+            <option value="60">60 分钟</option>
+          </select>
+        </div>
+        <div class="onboarding-note">邮件、Webhook、每日摘要和风险分析密钥可在设置中继续配置。</div>
+      </section>
+      <section class="onboarding-step" data-onboarding-step="4">
+        <h3>设置完成后</h3>
+        <p>建议先观察当前行情状态，再按需要建立价格阈值、目标价观察项或持仓提醒。所有设置之后都可以修改。</p>
+        <div class="onboarding-summary" id="onboardingSummary"></div>
+      </section>
+      <div class="settings-message" id="onboardingMessage"></div>
+    </div>
+    <div class="settings-foot onboarding-foot">
+      <button class="settings-cancel" id="onboardingSkipButton" type="button" onclick="skipOnboarding()">暂不设置</button>
+      <div class="onboarding-foot-actions">
+        <button class="settings-cancel" id="onboardingBackButton" type="button" onclick="changeOnboardingStep(-1)" hidden>上一步</button>
+        <button class="settings-save" id="onboardingNextButton" type="button" onclick="changeOnboardingStep(1)">下一步</button>
+        <button class="settings-save" id="onboardingFinishButton" type="button" onclick="finishOnboarding()" hidden>保存并开始</button>
+      </div>
     </div>
   </div>
 </div>
@@ -797,6 +917,8 @@
               <option value="240">最近 4 小时</option>
               <option value="1440">最近 24 小时</option>
               <option value="10080">最近 7 天</option>
+              <option value="43200">最近 30 天</option>
+              <option value="129600">最近 90 天</option>
             </select>
             <button class="settings-cancel timeline-note-create" id="createReviewNoteButton" type="button" onclick="openReviewNoteEditor()">新增笔记</button>
           </div>

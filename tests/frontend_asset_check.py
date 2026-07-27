@@ -33,6 +33,14 @@ if "render_template(\"index.html\", socket_access_token=SOCKET_ACCESS_TOKEN, app
 if 'id="chartEmptyState"' not in template:
     raise SystemExit("template must expose chart empty state overlay")
 
+for required in ('data-period="30d"', 'data-period="90d"', 'value="43200"', 'value="129600"'):
+    if required not in template:
+        raise SystemExit(f"frontend missing long history range: {required}")
+
+for required in ("resolution_seconds", "chartResolutionDate", "43200", "129600"):
+    if required not in js_path.read_text(encoding="utf-8"):
+        raise SystemExit(f"frontend missing multi-resolution history contract: {required}")
+
 for required in ('id="riskEvidence"', 'id="riskDiagnostic"'):
     if required not in template:
         raise SystemExit(f"template must expose risk diagnostic/evidence element: {required}")
@@ -275,6 +283,38 @@ for required in (
 for required in ("market_quality", "function renderRiskQuality", "function sourceQualityText", "data.quality", "行情质量"):
     if required not in js:
         raise SystemExit(f"static/app.js missing risk quality frontend contract: {required}")
+
+for required in (
+    "function renderMarketQualityDetails",
+    "quality.deductions",
+    "function renderSourceManager",
+    "function updateMarketSourceEnabled",
+    "function moveMarketSource",
+    "function retryMarketSource",
+    "function resetMarketSources",
+    "update_market_sources",
+    "retry_market_source",
+    "当前主源",
+):
+    if required not in js:
+        raise SystemExit(f"static/app.js missing market source management contract: {required}")
+
+for required in (
+    'id="marketQualityDetails"',
+    'id="sourceManager"',
+    'id="sourceManagerStatus"',
+):
+    if required not in template:
+        raise SystemExit(f"template missing market source management anchor: {required}")
+
+for required in (
+    ".market-quality-details",
+    ".source-manager",
+    ".source-manager-row",
+    ".source-manager-current",
+):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing market source management selector: {required}")
 
 for required in (
     "function renderRiskDiagnostic",

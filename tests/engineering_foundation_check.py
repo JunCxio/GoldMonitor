@@ -90,7 +90,7 @@ def test_diagnostics_summary_counts_alert_notification_states():
     assert summary["status"] == "degraded"
     assert summary["counts"]["notification_muted_alerts"] == 1
     assert summary["counts"]["notification_problem_alerts"] == 2
-    assert "2 条警报通知未完全提交" in summary["messages"]
+    assert "2 条警报通知未完全送达" in summary["messages"]
 
 
 def test_frontend_shell_static_resource_is_referenced():

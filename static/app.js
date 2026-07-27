@@ -45,7 +45,9 @@ const CHART_PERIODS = {
   '1h': { label: '1小时走势', minutes: 60, limit: 360 },
   '4h': { label: '4小时走势', minutes: 240, limit: 720 },
   day: { label: '日内走势', minutes: 1440, limit: 1440 },
-  '7d': { label: '7日走势', minutes: 10080, limit: 2000 },
+  '7d': { label: '7日走势', minutes: 10080, limit: 2100 },
+  '30d': { label: '30日走势', minutes: 43200, limit: 1500 },
+  '90d': { label: '90日走势', minutes: 129600, limit: 2160 },
   '5min': { label: '5分钟波动', minutes: null, limit: 96, kline: true },
 };
 const PORTFOLIO_TRANSACTION_IMPORT_FIELDS = ['id', 'position_id', 'type', 'name', 'mode', 'price', 'quantity', 'fee', 'trade_date', 'note'];
@@ -83,6 +85,9 @@ let alertProfiles = { items: [], total: 0, current_profile_id: '' };
 let pendingAlertProfileApply = false;
 let watchTargets = [];
 let portfolioState = { items: [], transactions: [], total: 0, rmb_summary: {}, usd_summary: {}, prices: {}, review: { rmb: {}, usd: {} }, alerts: { items: [], total: 0, enabled: 0, triggered: 0 }, import_backup: { available: false } };
+let portfolioAnalyticsState = null;
+let portfolioAnalyticsRange = 90;
+let portfolioAnalyticsLoading = false;
 let portfolioView = 'positions';
 let portfolioDetailView = 'review';
 let portfolioSearch = '';
@@ -121,6 +126,10 @@ const EVENT_TIMELINE_TYPE_DEFS = [
   { type: 'review_note', label: '复盘笔记' },
 ];
 let appSettings = {
+  onboarding_started: false,
+  onboarding_completed: false,
+  onboarding_version: 1,
+  onboarding_completed_at: '',
   platform: 'windows',
   platform_capabilities: {},
   startup_enabled: false,
@@ -177,10 +186,14 @@ let pendingUpdateInfo = null;
 let pendingConfigImportPayload = null;
 let pendingConfigImportPreview = null;
 let configImportPreviewRequestPayload = null;
+let pendingDataArchiveRestore = null;
 let recentOpsRecords = [];
 let autoUpdateTimer = null;
 let lastAutoUpdateCheckAt = 0;
 let opsUpdateStatus = null;
+let onboardingStep = 1;
+let onboardingManual = false;
+let onboardingAutoChecked = false;
 const AUTO_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 function autoUpdateIntervalMs() {
   return AUTO_UPDATE_CHECK_INTERVAL_MS;
@@ -219,18 +232,37 @@ function requestChartHistory(period) {
   });
 }
 
+function longChartPeriod() {
+  return ['7d', '30d', '90d'].includes(chartPeriod);
+}
+
+function chartResolutionDate(date) {
+  if (chartPeriod === 'realtime' || Number.isNaN(date.getTime())) return date;
+  const seconds = chartHistoryState.period === chartPeriod
+    ? Number(chartHistoryState.resolution_seconds || 0)
+    : 0;
+  if (!seconds) return date;
+  const bucket = new Date(date.getTime());
+  if (seconds >= 86400) {
+    bucket.setHours(0, 0, 0, 0);
+    return bucket;
+  }
+  const milliseconds = seconds * 1000;
+  return new Date(Math.floor(bucket.getTime() / milliseconds) * milliseconds);
+}
+
 function chartHistoryLabel(item) {
   const raw = item.timestamp || item.time || '';
   if (!raw) return '--';
-  const date = new Date(raw);
+  const date = chartResolutionDate(new Date(raw));
   if (!Number.isNaN(date.getTime())) {
     const hhmm = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
-    if (chartPeriod === '7d') {
+    if (longChartPeriod()) {
       return (date.getMonth() + 1) + '/' + date.getDate() + ' ' + hhmm;
     }
     return hhmm;
   }
-  return String(raw).replace('T', ' ').slice(0, chartPeriod === '7d' ? 16 : 8);
+  return String(raw).replace('T', ' ').slice(0, longChartPeriod() ? 16 : 8);
 }
 
 function klineNumber(kline, key) {
@@ -298,9 +330,9 @@ function addChartEvent(event) {
 
 function chartEventLabel(event) {
   const raw = event.timestamp || event.time || '';
-  const date = new Date(raw);
+  const date = chartResolutionDate(new Date(raw));
   if (!Number.isNaN(date.getTime())) {
-    if (chartPeriod === '7d') {
+    if (longChartPeriod()) {
       const hhmm = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
       return (date.getMonth() + 1) + '/' + date.getDate() + ' ' + hhmm;
     }
@@ -312,7 +344,7 @@ function chartEventLabel(event) {
   const text = String(raw).replace('T', ' ');
   if (chartPeriod === 'realtime' && /^\d{2}:\d{2}:\d{2}$/.test(text)) return text;
   if (/^\d{2}:\d{2}/.test(text)) return chartPeriod === 'realtime' ? text.slice(0, 8) : text.slice(0, 5);
-  return text.slice(0, chartPeriod === '7d' ? 16 : 5);
+  return text.slice(0, longChartPeriod() ? 16 : 5);
 }
 
 function activeChartEvents(labels) {
@@ -497,6 +529,7 @@ socket.on('init_state', data => {
   if (data.fetch_status) applyFetchStatus(data.fetch_status);
   else if (!data.ok) applyFetchStatus({ ok:false, message:'行情数据获取失败', retryable:true });
   setAlertEntries(data.alert_log || []);
+  maybeOpenOnboarding();
   socket.emit('get_settings');
 });
 
@@ -600,8 +633,8 @@ socket.on('alert_log_handling_error', data => {
 socket.on('alert_notification_resent', data => {
   const status = document.getElementById('alertLogStatus');
   if (data && data.entry) mergeAlertLogEntry(data.entry);
-  status.textContent = '通知已重新提交。';
-  status.className = 'log-status ok';
+  status.textContent = '通知正在重新发送。';
+  status.className = 'log-status';
 });
 
 socket.on('alert_notification_resend_error', data => {
@@ -678,6 +711,18 @@ socket.on('portfolio_export_error', data => {
   setPortfolioStatus((data && data.message) || '持仓导出失败。', 'fail');
 });
 
+socket.on('portfolio_analytics_updated', data => {
+  portfolioAnalyticsState = data && typeof data === 'object' ? data : null;
+  portfolioAnalyticsLoading = false;
+  if (portfolioView === 'review') renderPortfolio();
+});
+
+socket.on('portfolio_analytics_error', data => {
+  portfolioAnalyticsLoading = false;
+  setPortfolioStatus((data && data.message) || '持仓收益与预警分析生成失败。', 'fail');
+  if (portfolioView === 'review') renderPortfolio();
+});
+
 socket.on('portfolio_imported', data => {
   const count = data && Number.isFinite(Number(data.count)) ? Number(data.count) : 0;
   const summary = data && data.summary ? data.summary : {};
@@ -734,6 +779,30 @@ socket.on('settings_error', data => {
   settingsSaveFailed = true;
   document.getElementById('settingsMessage').textContent = data.message || '设置保存失败';
   if (data && data.export_dir_check) renderExportDirStatus(data.export_dir_check);
+});
+
+socket.on('onboarding_started', data => {
+  if (data && data.settings) appSettings = Object.assign({}, appSettings, data.settings);
+});
+
+socket.on('onboarding_completed', data => {
+  const finishButton = document.getElementById('onboardingFinishButton');
+  const skipButton = document.getElementById('onboardingSkipButton');
+  if (finishButton) finishButton.disabled = false;
+  if (skipButton) skipButton.disabled = false;
+  if (!data || data.ok === false) return;
+  if (data.settings) applySettings(data.settings);
+  document.getElementById('onboardingBackdrop').classList.remove('show');
+  if (data.startup_error) setOpsStatus('首次使用设置已保存，但开机自启动设置失败，请检查系统权限。', false);
+});
+
+socket.on('onboarding_error', data => {
+  const message = document.getElementById('onboardingMessage');
+  const finishButton = document.getElementById('onboardingFinishButton');
+  const skipButton = document.getElementById('onboardingSkipButton');
+  if (message) message.textContent = (data && data.message) || '首次使用设置保存失败。';
+  if (finishButton) finishButton.disabled = false;
+  if (skipButton) skipButton.disabled = false;
 });
 
 socket.on('daily_digest_status', data => {
@@ -860,6 +929,21 @@ socket.on('source_health_updated', data => {
   renderSourceHealth(data || {});
 });
 
+socket.on('market_sources_updated', data => {
+  setSourceManagerStatus(data && data.message ? data.message : '数据源配置已更新。', true);
+});
+
+socket.on('market_sources_error', data => {
+  setSourceManagerStatus(data && data.message ? data.message : '数据源配置更新失败。', false);
+});
+
+socket.on('market_source_retry_result', data => {
+  const pending = data && data.pending;
+  const message = data && data.message ? data.message : (pending ? '正在探测数据源...' : '数据源探测完成。');
+  setSourceManagerStatus(message, pending ? null : !!(data && data.ok));
+  if (data && data.source_health) renderSourceHealth(data.source_health);
+});
+
 socket.on('price_history_updated', data => {
   applyPriceHistory(data || {});
 });
@@ -945,6 +1029,21 @@ socket.on('config_backup_ready', data => {
   downloadText(fallbackData.filename, data.content, 'application/json;charset=utf-8');
   addRecentOpsRecord('config_export', fallbackData);
   setOpsExportStatus(fallbackData, '配置已导出', '配置导出失败。');
+});
+
+socket.on('data_archive_exported', data => {
+  addRecentOpsRecord('data_archive_export', data || {});
+  setOpsExportStatus(data || {}, '完整数据归档已创建', '完整数据归档失败。');
+});
+
+socket.on('data_archive_export_error', data => {
+  addRecentOpsRecord('data_archive_export', data || {});
+  setOpsExportStatus(data || {}, '完整数据归档已创建', '完整数据归档失败。');
+});
+
+socket.on('data_archive_restored', data => {
+  if (!data || data.ok === false) return;
+  setOpsStatus(data.message || '完整数据已恢复，正在重新载入界面。', true);
 });
 
 socket.on('diagnostics_ready', data => {
@@ -1111,9 +1210,137 @@ function sourceQualityText(quality) {
   return '行情质量 ' + score + '分/' + label;
 }
 
+function setSourceManagerStatus(message, ok) {
+  const status = document.getElementById('sourceManagerStatus');
+  if (!status) return;
+  status.textContent = message || '';
+  status.className = 'source-manager-status' + (ok === true ? ' ok' : ok === false ? ' fail' : '');
+}
+
+function renderMarketQualityDetails(quality) {
+  const box = document.getElementById('marketQualityDetails');
+  if (!box) return;
+  const reasons = box.querySelector('.market-quality-reasons');
+  const deductions = quality && Array.isArray(quality.deductions) ? quality.deductions : [];
+  if (!deductions.length) {
+    reasons.innerHTML = '<div class="market-quality-reason none"><span class="market-quality-points">0分</span><span>当前没有质量扣分项</span></div>';
+    return;
+  }
+  reasons.innerHTML = deductions.map(item => [
+    '<div class="market-quality-reason" title="' + escapeHtml(item.detail || item.label || '') + '">',
+    '<span class="market-quality-points">-' + escapeHtml(item.points == null ? '--' : item.points) + '分</span>',
+    '<span>' + escapeHtml(item.detail || item.label || '质量异常') + '</span>',
+    '</div>',
+  ].join('')).join('');
+}
+
+function sourceCategoryLabel(category) {
+  if (category === 'gold') return '金价源';
+  if (category === 'forex') return '汇率源';
+  return category || '数据源';
+}
+
+function marketSourcePreferences() {
+  const adapters = latestSourceHealthState && latestSourceHealthState.adapters || {};
+  const enabled = {};
+  const order = {};
+  Object.keys(adapters).forEach(category => {
+    const items = Array.isArray(adapters[category]) ? adapters[category].slice() : [];
+    items.sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
+    order[category] = items.map(item => item.key).filter(Boolean);
+    enabled[category] = items.filter(item => item.enabled).map(item => item.key).filter(Boolean);
+  });
+  return { enabled, order };
+}
+
+function updateMarketSourceEnabled(category, key, checked) {
+  const preferences = marketSourcePreferences();
+  const categoryEnabled = Array.isArray(preferences.enabled[category]) ? preferences.enabled[category].slice() : [];
+  if (checked && !categoryEnabled.includes(key)) categoryEnabled.push(key);
+  if (!checked) preferences.enabled[category] = categoryEnabled.filter(item => item !== key);
+  else preferences.enabled[category] = preferences.order[category].filter(item => categoryEnabled.includes(item));
+  if (!preferences.enabled[category].length) {
+    setSourceManagerStatus(sourceCategoryLabel(category) + '至少启用一个。', false);
+    renderSourceManager(latestSourceHealthState);
+    return;
+  }
+  setSourceManagerStatus('正在保存数据源配置...', null);
+  socket.emit('update_market_sources', preferences);
+}
+
+function moveMarketSource(category, key, direction) {
+  const preferences = marketSourcePreferences();
+  const order = Array.isArray(preferences.order[category]) ? preferences.order[category].slice() : [];
+  const currentIndex = order.indexOf(key);
+  const nextIndex = currentIndex + Number(direction || 0);
+  if (currentIndex < 0 || nextIndex < 0 || nextIndex >= order.length) return;
+  const displaced = order[nextIndex];
+  order[nextIndex] = key;
+  order[currentIndex] = displaced;
+  preferences.order[category] = order;
+  preferences.enabled[category] = order.filter(item => preferences.enabled[category].includes(item));
+  setSourceManagerStatus('正在保存数据源顺序...', null);
+  socket.emit('update_market_sources', preferences);
+}
+
+function retryMarketSource(key) {
+  setSourceManagerStatus('正在探测数据源...', null);
+  socket.emit('retry_market_source', { key });
+}
+
+function resetMarketSources() {
+  setSourceManagerStatus('正在恢复默认数据源顺序...', null);
+  socket.emit('reset_market_sources');
+}
+
+function renderSourceManager(data) {
+  const box = document.getElementById('sourceManager');
+  if (!box) return;
+  const list = box.querySelector('.source-manager-list');
+  const adapters = data && data.adapters && typeof data.adapters === 'object' ? data.adapters : {};
+  const categories = ['gold', 'forex'].filter(category => Array.isArray(adapters[category]));
+  if (!categories.length) {
+    list.innerHTML = '<div class="source-manager-meta">等待数据源目录</div>';
+    return;
+  }
+  list.innerHTML = categories.map(category => {
+    const items = adapters[category].slice().sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
+    const enabledCount = items.filter(item => item.enabled).length;
+    const rows = items.map((item, index) => {
+      const successRate = item.success_rate_pct == null ? '--' : Number(item.success_rate_pct).toFixed(1) + '%';
+      const latency = item.median_latency_ms == null ? '--' : Number(item.median_latency_ms).toFixed(0) + 'ms';
+      const failures = Number(item.consecutive_failures || 0);
+      const currentLabel = item.active ? '当前主源' : item.current_cached ? '当前缓存来源' : item.current ? '正在切换' : '';
+      const disableToggle = !!item.enabled && enabledCount <= 1;
+      const safeKey = escapeHtml(item.key || '');
+      const safeCategory = escapeHtml(category);
+      return [
+        '<div class="source-manager-row' + (item.enabled ? '' : ' disabled') + '">',
+        '<input class="source-manager-toggle" type="checkbox" aria-label="启用' + escapeHtml(item.name || '') + '" ',
+        item.enabled ? 'checked ' : '',
+        disableToggle ? 'disabled ' : '',
+        'onchange="updateMarketSourceEnabled(\'' + safeCategory + '\',\'' + safeKey + '\',this.checked)">',
+        '<div class="source-manager-copy">',
+        '<div class="source-manager-name">' + escapeHtml(item.name || '--') + (currentLabel ? '<span class="source-manager-current">' + currentLabel + '</span>' : '') + '</div>',
+        '<div class="source-manager-meta">近 ' + escapeHtml(item.sample_count || 0) + ' 次 · 成功率 ' + escapeHtml(successRate) + ' · 中位延迟 ' + escapeHtml(latency) + (failures ? ' · 连续失败 ' + failures + ' 次' : '') + '</div>',
+        '</div>',
+        '<div class="source-manager-actions">',
+        '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="moveMarketSource(\'' + safeCategory + '\',\'' + safeKey + '\',-1)" ' + (index === 0 ? 'disabled' : '') + '>上移</button>',
+        '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="moveMarketSource(\'' + safeCategory + '\',\'' + safeKey + '\',1)" ' + (index === items.length - 1 ? 'disabled' : '') + '>下移</button>',
+        '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="retryMarketSource(\'' + safeKey + '\')">探测</button>',
+        '</div>',
+        '</div>',
+      ].join('');
+    }).join('');
+    return '<div class="source-manager-category"><div class="source-manager-category-title">' + sourceCategoryLabel(category) + '</div>' + rows + '</div>';
+  }).join('');
+}
+
 function renderSourceHealth(data) {
   latestSourceHealthState = data || { items: [], summary: {} };
   if (data && data.comparison) renderSourceComparison(data.comparison);
+  renderMarketQualityDetails(data && data.quality ? data.quality : {});
+  renderSourceManager(latestSourceHealthState);
   const box = document.getElementById('sourceHealth');
   if (!box) return;
   const items = Array.isArray(data.items) ? data.items : [];
@@ -1137,11 +1364,14 @@ function renderSourceHealth(data) {
     const elapsed = item.elapsed_ms == null ? '--' : item.elapsed_ms + 'ms';
     const status = item.cached ? '缓存' : item.ok ? '正常' : '异常';
     const title = item.error ? item.error : status;
+    const successRate = item.success_rate_pct == null ? '--' : Number(item.success_rate_pct).toFixed(1) + '%';
+    const failures = Number(item.consecutive_failures || 0);
+    const rolling = '成功率 ' + successRate + ' · ' + elapsed + (failures ? ' · 连续失败 ' + failures + ' 次' : '');
     return [
       '<div class="source-health-item" title="' + escapeHtml(title) + '">',
       '<span class="source-health-dot ' + cls + '"></span>',
-      '<span class="source-health-name">' + escapeHtml(item.name || '--') + '</span>',
-      '<span class="source-health-meta">' + escapeHtml(status + ' · ' + elapsed) + '</span>',
+      '<span class="source-health-name">' + escapeHtml(item.name || '--') + (item.active ? ' · 当前主源' : '') + '</span>',
+      '<span class="source-health-meta">' + escapeHtml(status + ' · ' + rolling) + '</span>',
       '</div>',
     ].join('');
   }).join('');
@@ -1481,7 +1711,7 @@ function renderTimelineTypeFilters() {
 
 function setTimelineRange(value) {
   const minutes = parseInt(value, 10);
-  eventTimelineRange = [60, 240, 1440, 10080].includes(minutes) ? minutes : 60;
+  eventTimelineRange = [60, 240, 1440, 10080, 43200, 129600].includes(minutes) ? minutes : 60;
   refreshEventTimeline();
 }
 
@@ -1526,7 +1756,9 @@ function timelineRangeForTimestamp(timestamp) {
   if (diffMinutes <= 60) return 60;
   if (diffMinutes <= 240) return 240;
   if (diffMinutes <= 1440) return 1440;
-  return 10080;
+  if (diffMinutes <= 10080) return 10080;
+  if (diffMinutes <= 43200) return 43200;
+  return 129600;
 }
 
 function timelineFocusTimeKey(value) {
@@ -1758,6 +1990,7 @@ function setOpsStatus(message, ok) {
 
 function recentOpsTypeLabel(type) {
   if (type === 'config_export') return '导出配置';
+  if (type === 'data_archive_export') return '完整数据归档';
   if (type === 'diagnostics_export') return '生成诊断';
   if (type === 'open_exports_folder') return '打开目录';
   return '运维操作';
@@ -1860,6 +2093,129 @@ function setOpsExportStatus(data, successLabel, fallbackMessage) {
 function exportConfig() {
   setOpsStatus('正在导出配置...', true);
   socket.emit('export_config');
+}
+
+function exportDataArchive() {
+  setOpsStatus('正在创建完整数据归档...', true);
+  socket.emit('export_data_archive');
+}
+
+function formatDataArchiveBytes(value) {
+  const bytes = Math.max(0, Number(value) || 0);
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function resetDataArchivePreview() {
+  pendingDataArchiveRestore = null;
+  const preview = document.getElementById('dataArchivePreview');
+  const restoreButton = document.getElementById('restoreDataArchiveButton');
+  if (preview) preview.innerHTML = '';
+  if (restoreButton) {
+    restoreButton.hidden = true;
+    restoreButton.disabled = false;
+  }
+}
+
+function renderDataArchivePreview(data, fileName) {
+  const preview = document.getElementById('dataArchivePreview');
+  const restoreButton = document.getElementById('restoreDataArchiveButton');
+  if (!preview || !restoreButton) return;
+  if (!data || data.ok === false || data.restorable === false) {
+    preview.innerHTML = '<div class="data-archive-preview-error">' + escapeHtml((data && data.message) || '归档预检失败。') + '</div>';
+    restoreButton.hidden = true;
+    return;
+  }
+  const items = Array.isArray(data.items) ? data.items.filter(item => item && item.present) : [];
+  const labels = items.slice(0, 8).map(item => item.label || item.key).filter(Boolean);
+  const remaining = Math.max(0, items.length - labels.length);
+  const detail = labels.join('、') + (remaining ? '等 ' + items.length + ' 项' : '');
+  preview.innerHTML = [
+    '<div class="data-archive-preview-ok"><strong>归档校验通过</strong></div>',
+    '<div>文件：' + escapeHtml(fileName || '') + '</div>',
+    '<div>来源版本：' + escapeHtml(data.source_app_version || '未知') + '；导出时间：' + escapeHtml((data.exported_at || '').replace('T', ' ')) + '</div>',
+    '<div>数据量：' + escapeHtml(String(data.files || 0)) + ' 项，' + escapeHtml(formatDataArchiveBytes(data.bytes)) + '</div>',
+    detail ? '<div>包含：' + escapeHtml(detail) + '</div>' : '',
+    data.contains_sensitive_data ? '<div class="data-archive-preview-warning">归档包含通知密钥等敏感配置。</div>' : '',
+  ].join('');
+  restoreButton.hidden = false;
+}
+
+function chooseDataArchive() {
+  const input = document.getElementById('dataArchiveFile');
+  if (!input) {
+    setOpsStatus('未找到归档文件选择入口。', false);
+    return;
+  }
+  input.value = '';
+  resetDataArchivePreview();
+  input.click();
+}
+
+async function previewDataArchive(input) {
+  const file = input && input.files ? input.files[0] : null;
+  resetDataArchivePreview();
+  if (!file) return;
+  setOpsStatus('正在校验完整数据归档...', true);
+  const formData = new FormData();
+  formData.append('archive', file, file.name);
+  try {
+    const response = await fetch('/api/data-archive/preview', {
+      method: 'POST',
+      headers: { 'X-GoldMonitor-Token': SOCKET_ACCESS_TOKEN },
+      body: formData,
+    });
+    const data = await response.json();
+    renderDataArchivePreview(data, file.name);
+    if (!response.ok || !data.restore_token) {
+      setOpsStatus(data.message || '归档预检失败。', false);
+      return;
+    }
+    pendingDataArchiveRestore = {
+      token: data.restore_token,
+      fileName: file.name,
+      preview: data,
+    };
+    setOpsStatus(data.message || '归档预检通过，请确认恢复。', true);
+  } catch (error) {
+    renderDataArchivePreview({ ok: false, message: '无法上传或校验归档文件。' }, file.name);
+    setOpsStatus('无法上传或校验归档文件。', false);
+  }
+}
+
+async function confirmDataArchiveRestore() {
+  if (!pendingDataArchiveRestore || !pendingDataArchiveRestore.token) {
+    setOpsStatus('请先选择并校验归档文件。', false);
+    return;
+  }
+  const confirmed = confirm('恢复完整数据会覆盖当前设置、持仓、预警、复盘和历史记录。是否继续？');
+  if (!confirmed) return;
+  const restoreButton = document.getElementById('restoreDataArchiveButton');
+  if (restoreButton) restoreButton.disabled = true;
+  setOpsStatus('正在恢复完整数据，请勿关闭应用...', true);
+  try {
+    const response = await fetch('/api/data-archive/restore', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-GoldMonitor-Token': SOCKET_ACCESS_TOKEN,
+      },
+      body: JSON.stringify({ restore_token: pendingDataArchiveRestore.token }),
+    });
+    const data = await response.json();
+    pendingDataArchiveRestore = null;
+    if (!response.ok || data.ok === false) {
+      setOpsStatus(data.message || '完整数据恢复失败，原数据已回滚。', false);
+      if (restoreButton) restoreButton.disabled = false;
+      return;
+    }
+    setOpsStatus(data.message || '完整数据已恢复，正在重新载入界面。', true);
+    setTimeout(() => window.location.reload(), 800);
+  } catch (error) {
+    setOpsStatus('完整数据恢复请求失败，请重新选择归档并确认当前数据状态。', false);
+    if (restoreButton) restoreButton.disabled = false;
+  }
 }
 
 function configImportSectionLabel(section) {
@@ -2099,8 +2455,8 @@ function applyDailyDigestStatus(data) {
   else if (enabled && schedule.reason === 'invalid_schedule') parts.push('发送时间无效');
   if (testedAt) parts.push('最近测试：' + testedAt);
   if (state.last_message) parts.push(state.last_message);
-  const okStatuses = ['queued'];
-  const failStatuses = ['partial', 'skipped'];
+  const okStatuses = ['sent', 'queued'];
+  const failStatuses = ['failed', 'partial', 'skipped'];
   const statusFlag = okStatuses.includes(state.last_status)
     ? true
     : failStatuses.includes(state.last_status) || schedule.reason === 'invalid_schedule'
@@ -2380,6 +2736,129 @@ function openSettings() {
   switchSettingsTab('general');
   document.getElementById('settingsMessage').textContent = '';
   document.getElementById('settingsBackdrop').classList.add('show');
+}
+
+function onboardingPriceText() {
+  if (Number.isFinite(Number(latestData.rmb))) return '¥' + Number(latestData.rmb).toFixed(2) + '/克';
+  if (Number.isFinite(Number(latestData.usd))) return '$' + Number(latestData.usd).toFixed(2) + '/盎司';
+  return '等待行情';
+}
+
+function updateOnboardingStatus() {
+  const market = document.getElementById('onboardingMarketStatus');
+  const price = document.getElementById('onboardingPriceStatus');
+  const source = document.getElementById('onboardingSourceStatus');
+  const statusText = document.getElementById('statusText');
+  if (market) market.textContent = statusText && statusText.textContent ? statusText.textContent : '本地服务已连接';
+  if (price) price.textContent = onboardingPriceText();
+  if (source) source.textContent = latestData.gold_source || '等待行情';
+}
+
+function populateOnboardingFields() {
+  document.getElementById('onboardingDisplayMode').value = appSettings.floating_price_display_mode || 'rmb_usd';
+  document.getElementById('onboardingFloatingEnabled').checked = appSettings.floating_price_enabled !== false;
+  document.getElementById('onboardingStartupEnabled').checked = !!appSettings.startup_enabled;
+  document.getElementById('onboardingStartupTray').checked = appSettings.startup_to_tray !== false;
+  document.getElementById('onboardingCloseBehavior').value = appSettings.close_behavior || 'ask';
+  document.getElementById('onboardingAlertSound').checked = appSettings.alert_sound_enabled !== false;
+  document.getElementById('onboardingAlertDialog').checked = appSettings.alert_dialog_enabled !== false;
+  const cooldown = document.getElementById('onboardingCooldown');
+  const cooldownValue = String(appSettings.alert_cooldown_minutes ?? 30);
+  if (![...cooldown.options].some(option => option.value === cooldownValue)) {
+    const option = document.createElement('option');
+    option.value = cooldownValue;
+    option.textContent = cooldownValue + ' 分钟';
+    cooldown.appendChild(option);
+  }
+  cooldown.value = cooldownValue;
+}
+
+function onboardingPreferences() {
+  return {
+    floating_price_display_mode: document.getElementById('onboardingDisplayMode').value,
+    floating_price_enabled: document.getElementById('onboardingFloatingEnabled').checked,
+    startup_enabled: document.getElementById('onboardingStartupEnabled').checked,
+    startup_to_tray: document.getElementById('onboardingStartupTray').checked,
+    close_behavior: document.getElementById('onboardingCloseBehavior').value,
+    alert_sound_enabled: document.getElementById('onboardingAlertSound').checked,
+    alert_dialog_enabled: document.getElementById('onboardingAlertDialog').checked,
+    alert_cooldown_minutes: document.getElementById('onboardingCooldown').value,
+  };
+}
+
+function renderOnboardingSummary() {
+  const summary = document.getElementById('onboardingSummary');
+  if (!summary) return;
+  const preferences = onboardingPreferences();
+  const displayLabels = { rmb_usd: '人民币与美元', rmb_only: '仅人民币', usd_only: '仅美元' };
+  const closeLabels = { ask: '关闭时询问', minimize_to_tray: '继续在后台运行', exit: '退出程序' };
+  const parts = [
+    '悬浮窗：' + (preferences.floating_price_enabled ? displayLabels[preferences.floating_price_display_mode] : '不启用'),
+    '开机自启动：' + (preferences.startup_enabled ? '启用' : '不启用'),
+    '关闭行为：' + (closeLabels[preferences.close_behavior] || '关闭时询问'),
+    '提示音：' + (preferences.alert_sound_enabled ? '启用' : '关闭'),
+    '警报窗口：' + (preferences.alert_dialog_enabled ? '启用' : '关闭'),
+    '相同规则冷却：' + preferences.alert_cooldown_minutes + ' 分钟',
+  ];
+  summary.innerHTML = parts.map(part => '<div>' + escapeHtml(part) + '</div>').join('');
+}
+
+function showOnboardingStep(step) {
+  onboardingStep = Math.max(1, Math.min(4, Number(step) || 1));
+  document.querySelectorAll('[data-onboarding-step]').forEach(section => {
+    section.classList.toggle('active', Number(section.dataset.onboardingStep) === onboardingStep);
+  });
+  document.querySelectorAll('[data-onboarding-progress]').forEach(item => {
+    item.classList.toggle('active', Number(item.dataset.onboardingProgress) <= onboardingStep);
+  });
+  document.getElementById('onboardingBackButton').hidden = onboardingStep === 1;
+  document.getElementById('onboardingNextButton').hidden = onboardingStep === 4;
+  document.getElementById('onboardingFinishButton').hidden = onboardingStep !== 4;
+  if (onboardingStep === 1) updateOnboardingStatus();
+  if (onboardingStep === 4) renderOnboardingSummary();
+}
+
+function openOnboarding(manual) {
+  onboardingManual = !!manual;
+  populateOnboardingFields();
+  const message = document.getElementById('onboardingMessage');
+  if (message) message.textContent = '';
+  document.getElementById('onboardingSkipButton').textContent = onboardingManual ? '关闭向导' : '暂不设置';
+  document.getElementById('onboardingBackdrop').classList.add('show');
+  showOnboardingStep(1);
+  if (!onboardingManual && !appSettings.onboarding_started) socket.emit('start_onboarding');
+}
+
+function maybeOpenOnboarding() {
+  if (onboardingAutoChecked) return;
+  onboardingAutoChecked = true;
+  if (appSettings.onboarding_completed) return;
+  setTimeout(() => openOnboarding(false), 120);
+}
+
+function reopenOnboarding() {
+  closeSettings();
+  openOnboarding(true);
+}
+
+function changeOnboardingStep(delta) {
+  showOnboardingStep(onboardingStep + Number(delta || 0));
+}
+
+function finishOnboarding() {
+  const finishButton = document.getElementById('onboardingFinishButton');
+  if (finishButton) finishButton.disabled = true;
+  socket.emit('complete_onboarding', onboardingPreferences());
+}
+
+function skipOnboarding() {
+  if (onboardingManual) {
+    document.getElementById('onboardingBackdrop').classList.remove('show');
+    return;
+  }
+  const skipButton = document.getElementById('onboardingSkipButton');
+  if (skipButton) skipButton.disabled = true;
+  socket.emit('complete_onboarding', {});
 }
 
 function closeSettings() {
@@ -4806,7 +5285,13 @@ function renderPortfolioControls() {
   const box = document.getElementById('portfolioControls');
   if (!box) return;
   if (portfolioView === 'review') {
-    box.innerHTML = '<div class="portfolio-controls-note">复盘和收益曲线基于全部流水生成</div>';
+    box.innerHTML = [
+      '<div class="portfolio-controls-note">交易复盘基于全部流水；持仓总收益按所选历史行情重估</div>',
+      '<div class="portfolio-analytics-ranges">',
+      [30, 90, 365].map(days => '<button class="btn-clear-sm' + (portfolioAnalyticsRange === days ? ' active' : '') + '" type="button" onclick="setPortfolioAnalyticsRange(' + days + ')">' + days + ' 日</button>').join(''),
+      '<button class="btn-clear-sm" type="button" onclick="requestPortfolioAnalytics(true)">刷新</button>',
+      '</div>',
+    ].join('');
     return;
   }
   const search = [
@@ -4829,6 +5314,23 @@ function renderPortfolioControls() {
     renderPortfolioDropdownControl('portfolio-filter', '筛选', portfolioPositionFilter, PORTFOLIO_POSITION_FILTER_OPTIONS, 'positionFilter'),
     renderPortfolioDropdownControl('portfolio-sort', '排序', portfolioPositionSort, PORTFOLIO_POSITION_SORT_OPTIONS, 'positionSort'),
   ].join('');
+}
+
+function requestPortfolioAnalytics(force) {
+  if (portfolioAnalyticsLoading) return;
+  if (!force && portfolioAnalyticsState && Number(portfolioAnalyticsState.range_days) === portfolioAnalyticsRange) return;
+  portfolioAnalyticsLoading = true;
+  socket.emit('get_portfolio_analytics', { days: portfolioAnalyticsRange });
+  if (portfolioView === 'review') renderPortfolio();
+}
+
+function setPortfolioAnalyticsRange(days) {
+  const next = [30, 90, 365].includes(Number(days)) ? Number(days) : 90;
+  if (portfolioAnalyticsRange === next && portfolioAnalyticsState) return;
+  portfolioAnalyticsRange = next;
+  portfolioAnalyticsState = null;
+  renderPortfolio();
+  requestPortfolioAnalytics(true);
 }
 
 function portfolioSearchMatches(textParts) {
@@ -5113,7 +5615,7 @@ function renderPortfolioReviewCurve(mode, summary) {
   return [
     '<div class="portfolio-review-curve">',
     '<div class="portfolio-review-curve-head">',
-    '<div class="portfolio-review-section-title">' + escapeHtml((mode === 'usd' ? '美元' : '人民币') + '收益曲线') + '</div>',
+    '<div class="portfolio-review-section-title">' + escapeHtml((mode === 'usd' ? '美元' : '人民币') + '已实现收益曲线') + '</div>',
     '<div class="portfolio-review-curve-value ' + pnlClass + '">' + escapeHtml(formatPortfolioSignedMoney(last.value, mode)) + '</div>',
     '</div>',
     '<svg class="portfolio-curve-svg" viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="none" aria-hidden="true">',
@@ -5140,11 +5642,119 @@ function renderPortfolioReviewSection(mode, summary, maxNetInvested) {
   ].join('');
 }
 
+function renderPortfolioPerformanceCurve(mode, performance) {
+  const state = performance && typeof performance === 'object' ? performance : {};
+  const points = Array.isArray(state.points) ? state.points.filter(point => point && Number.isFinite(Number(point.total_pnl))) : [];
+  if (!points.length) {
+    return '<div class="portfolio-review-section"><div class="portfolio-review-section-title">' + escapeHtml((mode === 'usd' ? '美元' : '人民币') + '持仓总收益曲线') + '</div><div class="portfolio-review-analytics-empty">当前区间没有可用于历史重估的行情与流水交集。</div></div>';
+  }
+  const values = points.map(point => Number(point.total_pnl) || 0);
+  const minValue = Math.min(0, ...values);
+  const maxValue = Math.max(0, ...values);
+  const range = maxValue - minValue || 1;
+  const width = 360;
+  const height = 118;
+  const padding = 14;
+  const innerWidth = width - padding * 2;
+  const innerHeight = height - padding * 2;
+  const xy = values.map((value, index) => {
+    const x = points.length === 1 ? width / 2 : padding + innerWidth * (index / (points.length - 1));
+    const y = padding + innerHeight * (1 - ((value - minValue) / range));
+    return { x: Number(x.toFixed(2)), y: Number(y.toFixed(2)), value, point: points[index] };
+  });
+  const zeroY = padding + innerHeight * (1 - ((0 - minValue) / range));
+  const last = points[points.length - 1];
+  const summary = state.summary && typeof state.summary === 'object' ? state.summary : {};
+  const pnlClass = portfolioPnlClass(last.total_pnl);
+  const meta = [
+    points[0].date + ' 至 ' + last.date,
+    points.length + ' 个估值点',
+    '最大回撤 ' + formatPortfolioSignedMoney(summary.max_drawdown, mode),
+  ].join(' · ');
+  return [
+    '<div class="portfolio-review-section portfolio-performance-section">',
+    '<div class="portfolio-review-curve-head">',
+    '<div><div class="portfolio-review-section-title">' + escapeHtml((mode === 'usd' ? '美元' : '人民币') + '持仓总收益曲线') + '</div><div class="portfolio-review-curve-meta">总收益 = 已实现收益 + 按历史市价计算的未实现收益</div></div>',
+    '<div class="portfolio-review-curve-value ' + pnlClass + '">' + escapeHtml(formatPortfolioSignedMoney(last.total_pnl, mode)) + '</div>',
+    '</div>',
+    '<svg class="portfolio-curve-svg portfolio-performance-svg" viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="none" aria-label="持仓总收益曲线">',
+    '<line class="portfolio-curve-axis" x1="' + padding + '" y1="' + zeroY.toFixed(2) + '" x2="' + (width - padding) + '" y2="' + zeroY.toFixed(2) + '"></line>',
+    '<polyline class="portfolio-curve-line" points="' + xy.map(item => item.x + ',' + item.y).join(' ') + '"></polyline>',
+    '</svg>',
+    '<div class="portfolio-performance-metrics">',
+    renderPortfolioReviewMetric('未实现', formatPortfolioSignedMoney(last.unrealized_pnl, mode), portfolioPnlClass(last.unrealized_pnl)),
+    renderPortfolioReviewMetric('已实现', formatPortfolioSignedMoney(last.realized_pnl, mode), portfolioPnlClass(last.realized_pnl)),
+    renderPortfolioReviewMetric('市值', formatPortfolioMoney(last.market_value, mode), ''),
+    renderPortfolioReviewMetric('收益率', formatPortfolioPercent(last.total_pnl_percent), pnlClass),
+    '</div>',
+    '<div class="portfolio-review-curve-meta">' + escapeHtml(meta) + '</div>',
+    state.unknown_date_count ? '<div class="portfolio-review-analytics-note">有 ' + escapeHtml(String(state.unknown_date_count)) + ' 笔流水缺少可识别日期，未计入历史曲线。</div>' : '',
+    '</div>',
+  ].join('');
+}
+
+function portfolioAnalyticsRate(value) {
+  return value == null || !Number.isFinite(Number(value)) ? '--' : Number(value).toFixed(1) + '%';
+}
+
+function renderAlertEffectiveness(effectiveness) {
+  const state = effectiveness && typeof effectiveness === 'object' ? effectiveness : {};
+  const total = Number(state.period_alerts || 0);
+  const delivery = state.delivery && typeof state.delivery === 'object' ? state.delivery : {};
+  const response = state.response && typeof state.response === 'object' ? state.response : {};
+  const market = state.market_follow_through && typeof state.market_follow_through === 'object' ? state.market_follow_through : {};
+  const items = Array.isArray(state.items) ? state.items.slice(0, 6) : [];
+  if (!total) {
+    return '<div class="portfolio-alert-effectiveness"><div class="portfolio-review-section-title">预警有效性</div><div class="portfolio-review-analytics-empty">最近 ' + escapeHtml(String(state.period_days || 30)) + ' 日没有可分析的预警记录。</div></div>';
+  }
+  const rows = items.map(item => {
+    const direction = item.direction === 'down' ? '下行' : '上行';
+    const outcome = item.follow_through ? '延续' : '未延续';
+    const className = portfolioPnlClass(item.follow_through ? 1 : -1);
+    return [
+      '<div class="portfolio-effectiveness-row">',
+      '<div><strong>' + escapeHtml(item.title || '预警') + '</strong><span>' + escapeHtml(String(item.timestamp || '').replace('T', ' ').slice(0, 16)) + ' · ' + direction + '</span></div>',
+      '<div class="' + className + '">' + escapeHtml(outcome + ' ' + portfolioAnalyticsRate(item.final_signed_change_pct)) + '</div>',
+      '</div>',
+    ].join('');
+  }).join('');
+  return [
+    '<div class="portfolio-alert-effectiveness">',
+    '<div class="portfolio-review-curve-head"><div><div class="portfolio-review-section-title">预警有效性</div><div class="portfolio-review-curve-meta">最近 ' + escapeHtml(String(state.period_days || 30)) + ' 日；行情延续按触发方向的 24 小时后变化统计</div></div></div>',
+    '<div class="portfolio-effectiveness-grid">',
+    renderPortfolioReviewMetric('预警数量', String(total), ''),
+    renderPortfolioReviewMetric('通知送达率', portfolioAnalyticsRate(delivery.sent_rate), ''),
+    renderPortfolioReviewMetric('已处理率', portfolioAnalyticsRate(response.handled_rate), ''),
+    renderPortfolioReviewMetric('行情延续率', portfolioAnalyticsRate(market.rate), ''),
+    '</div>',
+    '<div class="portfolio-review-analytics-note">行情延续率仅描述预警触发后的价格路径，不代表预测准确率或投资建议。已评估 ' + escapeHtml(String(market.evaluated || 0)) + ' 条方向性预警。</div>',
+    rows ? '<div class="portfolio-effectiveness-list">' + rows + '</div>' : '',
+    '</div>',
+  ].join('');
+}
+
+function renderPortfolioAnalytics() {
+  if (portfolioAnalyticsLoading && !portfolioAnalyticsState) {
+    return '<div class="portfolio-review-analytics-loading">正在计算历史持仓收益与预警效果...</div>';
+  }
+  if (!portfolioAnalyticsState || Number(portfolioAnalyticsState.range_days) !== portfolioAnalyticsRange) {
+    return '<div class="portfolio-review-analytics-empty">选择区间后可查看按历史市价重估的持仓总收益与预警效果。</div>';
+  }
+  const performance = portfolioAnalyticsState.performance && typeof portfolioAnalyticsState.performance === 'object' ? portfolioAnalyticsState.performance : {};
+  return [
+    '<div class="portfolio-performance-grid">',
+    renderPortfolioPerformanceCurve('rmb', performance.rmb),
+    renderPortfolioPerformanceCurve('usd', performance.usd),
+    '</div>',
+    renderAlertEffectiveness(portfolioAnalyticsState.alert_effectiveness),
+  ].join('');
+}
+
 function renderPortfolioReview(box) {
   const review = normalizePortfolioReview(portfolioState.review);
   const totalTrades = review.rmb.trade_count + review.usd.trade_count;
   if (!totalTrades) {
-    box.innerHTML = '<div class="portfolio-empty">暂无复盘数据</div>';
+    box.innerHTML = '<div class="portfolio-review">' + renderPortfolioAnalytics() + '<div class="portfolio-empty">暂无流水复盘数据</div></div>';
     return;
   }
   const maxNetInvested = Math.max(
@@ -5157,6 +5767,7 @@ function renderPortfolioReview(box) {
     renderPortfolioReviewCard('rmb', review.rmb),
     renderPortfolioReviewCard('usd', review.usd),
     '</div>',
+    renderPortfolioAnalytics(),
     renderPortfolioReviewSection('rmb', review.rmb, maxNetInvested),
     renderPortfolioReviewSection('usd', review.usd, maxNetInvested),
     '</div>',
@@ -5956,6 +6567,7 @@ function setPortfolioView(view) {
     portfolioDetailView = 'review';
   }
   renderPortfolio();
+  if (portfolioView === 'review') requestPortfolioAnalytics(false);
 }
 
 function setActivePortfolioDetail(id) {
@@ -6594,7 +7206,7 @@ function alertNotificationIssues(entry) {
   const summary = entry && entry.notification_summary;
   if (summary && typeof summary === 'object') {
     const status = summary.status || '';
-    if (!status || status === 'queued') return [];
+    if (!['failed', 'partial', 'skipped'].includes(status)) return [];
     return [{
       status,
       label: summary.label || '通知',
@@ -6602,15 +7214,32 @@ function alertNotificationIssues(entry) {
     }];
   }
   const items = Array.isArray(entry.notifications) ? entry.notifications : [];
-  return items.filter(item => item && item.status && item.status !== 'queued');
+  return items.filter(item => item && ['failed', 'skipped'].includes(item.status));
+}
+
+function alertNotificationDisplay(entry) {
+  const summary = entry && entry.notification_summary;
+  if (summary && typeof summary === 'object') {
+    const status = summary.status || '';
+    if (!status || ['none', 'disabled'].includes(status)) return [];
+    return [{
+      status,
+      label: summary.label || '通知',
+      message: summary.message || '',
+    }];
+  }
+  const items = Array.isArray(entry && entry.notifications) ? entry.notifications : [];
+  return items.filter(item => item && item.status && item.status !== 'disabled');
 }
 
 function renderNotificationBadges(entry) {
-  const items = alertNotificationIssues(entry);
+  const items = alertNotificationDisplay(entry);
   if (!items.length) return '';
   return '<span class="log-notify">' + items.map(item => {
     const status = item.status || '';
-    const cls = status === 'queued' ? 'ok' : (status === 'skipped' || status === 'partial' ? 'fail' : (status === 'muted' ? 'muted' : ''));
+    const cls = ['sent', 'queued'].includes(status)
+      ? 'ok'
+      : (['failed', 'skipped', 'partial'].includes(status) ? 'fail' : (status === 'muted' ? 'muted' : (status === 'pending' ? 'pending' : '')));
     const label = item.label || item.channel || '通知';
     const message = item.message ? '：' + item.message : '';
     return '<span class="log-notify-badge ' + cls + '">' + escapeHtml(label + message) + '</span>';

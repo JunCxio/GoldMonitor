@@ -161,6 +161,7 @@ def test_source_comparison_and_health_expose_registry_catalog(monkeypatch):
         )
     ])
     monkeypatch.setattr(app, "build_market_adapter_registry", lambda: registry)
+    monkeypatch.setattr(app, "_build_market_adapter_registry", lambda: registry)
     monkeypatch.setattr(app, "last_source_comparison_probe_at", 0.0)
     monkeypatch.setattr(app, "source_price_samples", {})
     monkeypatch.setattr(app, "source_comparison_state", {})

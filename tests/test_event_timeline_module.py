@@ -36,6 +36,9 @@ def test_request_normalization_clamps_known_options_and_preserves_type_order():
         "review_note",
     ]
 
+    long_range = normalize_event_timeline_request({"minutes": "129600"})
+    assert long_range["minutes"] == 129600
+
 
 def test_timeline_state_aggregates_injected_sources_without_side_effects():
     from goldmonitor.event_timeline import build_event_timeline_state
