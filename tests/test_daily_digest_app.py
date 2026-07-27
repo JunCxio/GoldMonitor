@@ -58,7 +58,9 @@ def test_scheduled_digest_sends_selected_channels_once_per_local_day(monkeypatch
     second = app.run_daily_digest_once(now=datetime(2026, 7, 13, 21, 0), blocking=True)
 
     assert first["ok"] is True
-    assert first["status"] == "queued"
+    assert first["status"] == "sent"
+    assert first["notifications"][0]["status"] == "sent"
+    assert first["notifications"][0]["attempts"] == 1
     assert first["state"]["last_completed_at"] == "2026-07-13T20:05:00"
     assert sent == ["email"]
     assert second["ok"] is False

@@ -136,6 +136,90 @@ def test_source_health_and_comparison_are_pure_state_helpers():
     assert comparison["summary"]["high_source"] == "B"
 
 
+def test_source_health_uses_bounded_rolling_window_and_persists_metrics():
+    from goldmonitor.market_data import SourceMetricsStore, record_source_health
+
+    health = {}
+    record_source_health(
+        health,
+        "测试源",
+        "gold",
+        True,
+        started_at=10.0,
+        now_monotonic=10.1,
+        now=fixed_now(),
+        window_size=3,
+        source_key="test_gold",
+    )
+    record_source_health(
+        health,
+        "测试源",
+        "gold",
+        False,
+        "第一次失败",
+        started_at=20.0,
+        now_monotonic=20.3,
+        now=fixed_now() + timedelta(seconds=1),
+        window_size=3,
+        source_key="test_gold",
+    )
+    failed = record_source_health(
+        health,
+        "测试源",
+        "gold",
+        False,
+        "第二次失败",
+        started_at=30.0,
+        now_monotonic=30.5,
+        now=fixed_now() + timedelta(seconds=2),
+        window_size=3,
+        source_key="test_gold",
+    )
+    assert failed["sample_count"] == 3
+    assert failed["success_rate_pct"] == 33.3
+    assert failed["consecutive_failures"] == 2
+    assert failed["median_latency_ms"] == 300.0
+
+    recovered = record_source_health(
+        health,
+        "测试源",
+        "gold",
+        True,
+        started_at=40.0,
+        now_monotonic=40.1,
+        now=fixed_now() + timedelta(seconds=3),
+        window_size=3,
+        source_key="test_gold",
+    )
+    assert len(recovered["samples"]) == 3
+    assert recovered["consecutive_failures"] == 0
+    assert recovered["last_recovered_at"] == "2026-06-08T12:00:03"
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "source_metrics.json"
+        store = SourceMetricsStore(path, window_size=3)
+        payload = store.save(health)
+        loaded = store.load()
+
+    assert payload["schema_version"] == 1
+    assert loaded["测试源"]["key"] == "test_gold"
+    assert loaded["测试源"]["sample_count"] == 3
+    assert loaded["测试源"]["success_rate_pct"] == 33.3
+
+
+def test_source_metrics_store_ignores_invalid_or_future_schema():
+    from goldmonitor.market_data import SourceMetricsStore
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "source_metrics.json"
+        store = SourceMetricsStore(path)
+        path.write_text('{"schema_version":"invalid","sources":{}}', encoding="utf-8")
+        assert store.load() == {}
+
+        path.write_text('{"schema_version":2,"sources":{"测试源":{"name":"测试源"}}}', encoding="utf-8")
+        assert store.load() == {}
+
+
 def test_market_quality_summarizes_fetch_health_cache_and_source_anomaly():
     from goldmonitor.market_data import build_market_quality
 
@@ -144,12 +228,11 @@ def test_market_quality_summarizes_fetch_health_cache_and_source_anomaly():
         source_health={"summary": {"failed": 0, "cached": 0}},
         comparison={"status": "normal", "message": "数据源价差 0.10% ，处于正常范围"},
     )
-    assert normal == {
-        "level": "normal",
-        "score": 100,
-        "label": "数据可信",
-        "reasons": [],
-    }
+    assert normal["level"] == "normal"
+    assert normal["score"] == 100
+    assert normal["label"] == "数据可信"
+    assert normal["reasons"] == []
+    assert normal["deductions"] == []
 
     stale = build_market_quality(
         fetch_status={"ok": False, "degraded": True, "gold_cached": True, "forex_cached": False},
@@ -177,6 +260,37 @@ def test_market_quality_summarizes_fetch_health_cache_and_source_anomaly():
     assert anomaly["level"] == "anomaly"
     assert anomaly["score"] == 50
     assert "数据源价差异常" in anomaly["reasons"]
+
+
+def test_market_quality_applies_rolling_reliability_and_failure_deductions():
+    from goldmonitor.market_data import build_market_quality
+
+    quality = build_market_quality(
+        fetch_status={"ok": True, "degraded": False, "gold_cached": False, "forex_cached": False},
+        source_health={
+            "summary": {"failed": 0, "cached": 0},
+            "adapters": {
+                "gold": [{
+                    "active": True,
+                    "sample_count": 10,
+                    "success_count": 7,
+                    "consecutive_failures": 2,
+                    "last_checked": fixed_now().isoformat(),
+                }],
+                "forex": [],
+            },
+        },
+        comparison={"status": "normal", "summary": {"spread_pct": 0.1, "threshold_pct": 0.5}},
+        now=fixed_now(),
+    )
+
+    assert quality["level"] == "degraded"
+    assert quality["score"] == 82
+    assert quality["components"]["active_success_rate_pct"] == 70.0
+    assert {item["code"] for item in quality["deductions"]} == {
+        "rolling_reliability",
+        "consecutive_failures",
+    }
 
 
 if __name__ == "__main__":

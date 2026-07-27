@@ -12,6 +12,15 @@ from datetime import datetime, timedelta
 from goldmonitor.data_contracts import unwrap_item_payload, wrap_item_payload
 
 
+PRICE_HISTORY_DB_SCHEMA_VERSION = 2
+ROLLUP_RESOLUTIONS = (
+    ("1m", 60, 30 * 24 * 60),
+    ("5m", 5 * 60, 90 * 24 * 60),
+    ("1h", 60 * 60, 2 * 365 * 24 * 60),
+    ("1d", 24 * 60 * 60, None),
+)
+
+
 def parse_iso_datetime(value):
     try:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
@@ -23,18 +32,29 @@ def parse_iso_datetime(value):
 
 
 class PriceHistoryStore:
-    def __init__(self, json_path, archive_limit=20000, export_limit=5000, save_interval_seconds=60, logger=None):
+    def __init__(
+        self,
+        json_path,
+        archive_limit=20000,
+        export_limit=5000,
+        save_interval_seconds=60,
+        raw_retention_minutes=24 * 60,
+        raw_interval_seconds=10,
+        logger=None,
+    ):
         self.json_path = json_path
         self.archive_limit = int(archive_limit)
         self.export_limit = int(export_limit)
         self.save_interval_seconds = int(save_interval_seconds)
+        self.raw_retention_minutes = int(raw_retention_minutes)
+        self.raw_interval_seconds = max(1, int(raw_interval_seconds))
         self.logger = logger or logging.getLogger(__name__)
 
     def db_path(self):
         base, _ext = os.path.splitext(self.json_path)
         return base + ".sqlite3"
 
-    def normalize(self, items):
+    def _normalize_items(self, items, max_items=None):
         if not isinstance(items, list):
             return []
         normalized = []
@@ -66,7 +86,138 @@ class PriceHistoryStore:
                 "timestamp": parsed.isoformat(timespec="seconds"),
             })
         normalized.sort(key=lambda item: item.get("timestamp", ""))
-        return normalized[-self.archive_limit:]
+        if max_items:
+            normalized = normalized[-int(max_items):]
+        return normalized
+
+    def normalize(self, items):
+        return self._normalize_items(items, max_items=self.archive_limit)
+
+    @staticmethod
+    def _bucket_timestamp(timestamp, interval_seconds):
+        parsed = parse_iso_datetime(timestamp)
+        if not parsed:
+            return ""
+        seconds_from_day_start = parsed.hour * 3600 + parsed.minute * 60 + parsed.second
+        bucket_seconds = seconds_from_day_start - (seconds_from_day_start % int(interval_seconds))
+        bucket = parsed.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(seconds=bucket_seconds)
+        return bucket.isoformat(timespec="seconds")
+
+    def _rollup_rows(self, items):
+        rows = []
+        for item in items:
+            for resolution, interval_seconds, _retention_minutes in ROLLUP_RESOLUTIONS:
+                bucket_timestamp = self._bucket_timestamp(item.get("timestamp"), interval_seconds)
+                if not bucket_timestamp:
+                    continue
+                rows.append({
+                    "resolution": resolution,
+                    "bucket_timestamp": bucket_timestamp,
+                    "time": bucket_timestamp[11:19],
+                    "usd": item.get("usd"),
+                    "rmb": item.get("rmb"),
+                    "rate": item.get("rate"),
+                    "last_timestamp": item.get("timestamp"),
+                })
+        return rows
+
+    @staticmethod
+    def _upsert_rollups(conn, rows):
+        if not rows:
+            return
+        conn.executemany(
+            """
+            INSERT INTO price_history_rollups(
+                resolution, bucket_timestamp, time, usd, rmb, rate, last_timestamp
+            ) VALUES(
+                :resolution, :bucket_timestamp, :time, :usd, :rmb, :rate, :last_timestamp
+            )
+            ON CONFLICT(resolution, bucket_timestamp) DO UPDATE SET
+                time = CASE
+                    WHEN excluded.last_timestamp >= price_history_rollups.last_timestamp
+                    THEN excluded.time ELSE price_history_rollups.time END,
+                usd = CASE
+                    WHEN excluded.last_timestamp >= price_history_rollups.last_timestamp
+                    THEN COALESCE(excluded.usd, price_history_rollups.usd)
+                    ELSE price_history_rollups.usd END,
+                rmb = CASE
+                    WHEN excluded.last_timestamp >= price_history_rollups.last_timestamp
+                    THEN COALESCE(excluded.rmb, price_history_rollups.rmb)
+                    ELSE price_history_rollups.rmb END,
+                rate = CASE
+                    WHEN excluded.last_timestamp >= price_history_rollups.last_timestamp
+                    THEN COALESCE(excluded.rate, price_history_rollups.rate)
+                    ELSE price_history_rollups.rate END,
+                last_timestamp = MAX(price_history_rollups.last_timestamp, excluded.last_timestamp)
+            """,
+            rows,
+        )
+
+    def _backfill_rollups(self, conn):
+        rows = conn.execute(
+            """
+            SELECT usd, rmb, rate, time, timestamp
+            FROM price_history
+            ORDER BY timestamp ASC
+            """
+        ).fetchall()
+        items = [
+            {"usd": row[0], "rmb": row[1], "rate": row[2], "time": row[3], "timestamp": row[4]}
+            for row in rows
+        ]
+        self._upsert_rollups(conn, self._rollup_rows(items))
+
+    def _migrate_database(self, conn):
+        row = conn.execute(
+            "SELECT value FROM price_history_metadata WHERE key = 'schema_version'"
+        ).fetchone()
+        try:
+            schema_version = int(row[0]) if row else 1
+        except (TypeError, ValueError):
+            schema_version = 1
+        if schema_version < PRICE_HISTORY_DB_SCHEMA_VERSION:
+            self._backfill_rollups(conn)
+            conn.execute(
+                """
+                INSERT INTO price_history_metadata(key, value)
+                VALUES('schema_version', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (str(PRICE_HISTORY_DB_SCHEMA_VERSION),),
+            )
+
+    def _cleanup_retention(self, conn, latest_timestamp):
+        latest_time = parse_iso_datetime(latest_timestamp)
+        if not latest_time:
+            return
+        if self.raw_retention_minutes > 0:
+            raw_cutoff = latest_time - timedelta(minutes=self.raw_retention_minutes)
+            conn.execute(
+                "DELETE FROM price_history WHERE timestamp < ?",
+                (raw_cutoff.isoformat(timespec="seconds"),),
+            )
+        conn.execute(
+            """
+            DELETE FROM price_history
+            WHERE timestamp NOT IN (
+                SELECT timestamp FROM price_history
+                ORDER BY timestamp DESC
+                LIMIT ?
+            )
+            """,
+            (self.archive_limit,),
+        )
+        for resolution, _interval_seconds, retention_minutes in ROLLUP_RESOLUTIONS:
+            if retention_minutes is None:
+                continue
+            cutoff = latest_time - timedelta(minutes=retention_minutes)
+            conn.execute(
+                """
+                DELETE FROM price_history_rollups
+                WHERE resolution = ? AND bucket_timestamp < ?
+                """,
+                (resolution, cutoff.isoformat(timespec="seconds")),
+            )
 
     def connect_db(self):
         path = self.db_path()
@@ -82,6 +233,30 @@ class PriceHistoryStore:
                 rate REAL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS price_history_rollups (
+                resolution TEXT NOT NULL,
+                bucket_timestamp TEXT NOT NULL,
+                time TEXT NOT NULL,
+                usd REAL,
+                rmb REAL,
+                rate REAL,
+                last_timestamp TEXT NOT NULL,
+                PRIMARY KEY(resolution, bucket_timestamp)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_price_history_rollups_time
+            ON price_history_rollups(resolution, bucket_timestamp)
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS price_history_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
+        self._migrate_database(conn)
+        conn.commit()
         return conn
 
     def upsert_points(self, items):
@@ -96,17 +271,8 @@ class PriceHistoryStore:
                 """,
                 normalized,
             )
-            conn.execute(
-                """
-                DELETE FROM price_history
-                WHERE timestamp NOT IN (
-                    SELECT timestamp FROM price_history
-                    ORDER BY timestamp DESC
-                    LIMIT ?
-                )
-                """,
-                (self.archive_limit,),
-            )
+            self._upsert_rollups(conn, self._rollup_rows(normalized))
+            self._cleanup_retention(conn, normalized[-1]["timestamp"])
         return normalized
 
     def load_from_db(self):
@@ -122,36 +288,99 @@ class PriceHistoryStore:
                 """,
                 (self.archive_limit,),
             ).fetchall()
-        return self.normalize([
+        return self._normalize_items([
             {"usd": row[0], "rmb": row[1], "rate": row[2], "time": row[3], "timestamp": row[4]}
             for row in rows
-        ])
+        ], max_items=self.archive_limit)
+
+    def query_resolution(self, minutes=None, limit=600):
+        if not minutes:
+            return {
+                "resolution": "raw",
+                "interval_seconds": self.raw_interval_seconds,
+                "retention_minutes": self.raw_retention_minutes,
+            }
+        minutes = max(1, int(minutes))
+        limit = max(1, int(limit or self.export_limit))
+        candidates = [
+            ("raw", self.raw_interval_seconds, self.raw_retention_minutes),
+            *ROLLUP_RESOLUTIONS,
+        ]
+        eligible = []
+        for resolution, interval_seconds, retention_minutes in candidates:
+            if retention_minutes is not None and minutes > retention_minutes:
+                continue
+            eligible.append((resolution, interval_seconds, retention_minutes))
+            expected_points = math.ceil(minutes * 60 / interval_seconds)
+            if expected_points <= limit:
+                return {
+                    "resolution": resolution,
+                    "interval_seconds": interval_seconds,
+                    "retention_minutes": retention_minutes,
+                }
+        resolution, interval_seconds, retention_minutes = eligible[-1] if eligible else ROLLUP_RESOLUTIONS[-1]
+        return {
+            "resolution": resolution,
+            "interval_seconds": interval_seconds,
+            "retention_minutes": retention_minutes,
+        }
 
     def filter_from_db(self, minutes=None, limit=600):
         if not os.path.exists(self.db_path()):
             return []
-        params = []
-        where = ""
-        if minutes:
-            latest_items = self.load_from_db()
-            latest_time = parse_iso_datetime(latest_items[-1].get("timestamp")) if latest_items else datetime.now()
-            cutoff = (latest_time or datetime.now()) - timedelta(minutes=int(minutes))
-            where = "WHERE timestamp >= ?"
-            params.append(cutoff.isoformat(timespec="seconds"))
-        params.append(int(limit or self.export_limit))
+        limit = max(1, int(limit or self.export_limit))
+        plan = self.query_resolution(minutes=minutes, limit=limit)
         with closing(self.connect_db()) as conn:
-            rows = conn.execute(
-                f"""
-                SELECT usd, rmb, rate, time, timestamp
-                FROM price_history
-                {where}
-                ORDER BY timestamp DESC
-                LIMIT ?
-                """,
-                params,
-            ).fetchall()
+            if plan["resolution"] == "raw":
+                latest_row = conn.execute("SELECT MAX(timestamp) FROM price_history").fetchone()
+                params = []
+                where = ""
+                if minutes and latest_row and latest_row[0]:
+                    latest_time = parse_iso_datetime(latest_row[0]) or datetime.now()
+                    cutoff = latest_time - timedelta(minutes=int(minutes))
+                    where = "WHERE timestamp >= ?"
+                    params.append(cutoff.isoformat(timespec="seconds"))
+                params.append(limit)
+                rows = conn.execute(
+                    f"""
+                    SELECT usd, rmb, rate, time, timestamp
+                    FROM price_history
+                    {where}
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                    """,
+                    params,
+                ).fetchall()
+            else:
+                resolution = plan["resolution"]
+                latest_row = conn.execute(
+                    """
+                    SELECT MAX(bucket_timestamp)
+                    FROM price_history_rollups
+                    WHERE resolution = ?
+                    """,
+                    (resolution,),
+                ).fetchone()
+                params = [resolution]
+                where = "resolution = ?"
+                if minutes and latest_row and latest_row[0]:
+                    latest_time = parse_iso_datetime(latest_row[0]) or datetime.now()
+                    cutoff = latest_time - timedelta(minutes=int(minutes))
+                    where += " AND bucket_timestamp >= ?"
+                    params.append(cutoff.isoformat(timespec="seconds"))
+                params.append(limit)
+                rows = conn.execute(
+                    f"""
+                    SELECT usd, rmb, rate, time, bucket_timestamp
+                    FROM price_history_rollups
+                    WHERE {where}
+                    ORDER BY bucket_timestamp DESC
+                    LIMIT ?
+                    """,
+                    params,
+                ).fetchall()
         rows.reverse()
-        return self.normalize([
+        return self._normalize_items([
             {"usd": row[0], "rmb": row[1], "rate": row[2], "time": row[3], "timestamp": row[4]}
             for row in rows
         ])
@@ -225,7 +454,7 @@ class PriceHistoryStore:
 
     def filter_archive(self, archive, minutes=None, limit=600):
         items = list(archive or [])
-        if len(items) < int(limit or 0):
+        if minutes or len(items) < int(limit or 0):
             try:
                 db_items = self.filter_from_db(minutes=minutes, limit=limit)
                 if db_items:
@@ -256,6 +485,7 @@ class PriceHistoryStore:
     def build_state(self, archive, minutes=None, limit=600, build_events=None, format_number=None):
         items = self.filter_archive(archive, minutes, limit)
         format_number = format_number or self._format_number
+        resolution = self.query_resolution(minutes=minutes, limit=limit)
 
         def series_stats(field):
             values = [item.get(field) for item in items if item.get(field) is not None]
@@ -282,6 +512,8 @@ class PriceHistoryStore:
             },
             "total": len(items),
             "minutes": minutes,
+            "resolution": resolution["resolution"],
+            "resolution_seconds": resolution["interval_seconds"],
             "events": build_events(items) if callable(build_events) else [],
             "updated_at": datetime.now().isoformat(timespec="seconds"),
         }

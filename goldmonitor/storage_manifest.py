@@ -15,6 +15,13 @@ STORAGE_DEFINITIONS = (
     {"key": "portfolio_import_backup", "label": "持仓导入备份", "kind": "json", "schema": "plain_json"},
     {"key": "portfolio_alerts", "label": "持仓提醒", "kind": "json", "schema": "item_payload"},
     {"key": "market_cache", "label": "行情缓存", "kind": "json", "schema": "plain_json"},
+    {
+        "key": "source_metrics",
+        "label": "数据源滚动指标",
+        "kind": "json",
+        "schema": "versioned_object",
+        "expected_schema_version": 1,
+    },
     {"key": "update_dir", "label": "更新下载目录", "kind": "directory", "schema": "directory"},
     {"key": "exports", "label": "导出目录", "kind": "directory", "schema": "directory"},
     {"key": "news", "label": "新闻缓存", "kind": "json", "schema": "item_payload"},

@@ -2,6 +2,8 @@ import json
 import logging
 import os
 
+from goldmonitor.market_adapters import normalize_source_preferences
+
 
 def optional_int(value):
     if value in (None, ""):
@@ -44,6 +46,10 @@ def normalize_settings(raw, defaults, options=None):
     if isinstance(raw, dict):
         data.update(raw)
 
+    data["onboarding_started"] = bool(data.get("onboarding_started", False))
+    data["onboarding_completed"] = bool(data.get("onboarding_completed", False))
+    data["onboarding_version"] = bounded_int(data.get("onboarding_version", 1), 1, 1, 1000)
+    data["onboarding_completed_at"] = str(data.get("onboarding_completed_at") or "")
     data["startup_enabled"] = bool(data.get("startup_enabled"))
     data["startup_to_tray"] = bool(data.get("startup_to_tray"))
     data["floating_price_enabled"] = bool(data.get("floating_price_enabled", True))
@@ -137,6 +143,15 @@ def normalize_settings(raw, defaults, options=None):
         0,
         60,
     )
+    market_source_defaults = options.get("market_source_defaults", {})
+    if market_source_defaults or "market_source_enabled" in defaults or "market_source_order" in defaults:
+        source_preferences = normalize_source_preferences(
+            data.get("market_source_enabled"),
+            data.get("market_source_order"),
+            market_source_defaults,
+        )
+        data["market_source_enabled"] = source_preferences["enabled"]
+        data["market_source_order"] = source_preferences["order"]
     data["export_dir"] = str(data.get("export_dir") or "").strip()
     return data
 

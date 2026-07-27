@@ -55,9 +55,11 @@ def collect_events(client, duration=0.3):
 
 with tempfile.TemporaryDirectory() as tmp_dir:
     original_thresholds_path = app.THRESHOLDS_PATH
+    original_source_metrics_path = app.SOURCE_METRICS_PATH
     original_thresholds = dict(app.thresholds)
     original_volatility_config = dict(app.volatility_config)
     app.THRESHOLDS_PATH = str(Path(tmp_dir) / "thresholds.json")
+    app.SOURCE_METRICS_PATH = str(Path(tmp_dir) / "source_metrics.json")
     app.thresholds.clear()
     app.thresholds.update({key: None for key in original_thresholds if "_" in key})
     app.volatility_config = {"percent": None, "minutes": 10, "enabled": False}
@@ -247,8 +249,8 @@ try:
     notifications = app.dispatch_alert({"type": "warning", "message": "测试提醒"}, "通知测试")
     if [item.get("channel") for item in notifications] != ["email", "webhook"]:
         raise SystemExit(f"dispatch alert must report email and webhook notification status, got: {notifications}")
-    if any(item.get("status") != "queued" for item in notifications):
-        raise SystemExit(f"enabled notification channels must be marked queued, got: {notifications}")
+    if any(item.get("status") != "sent" for item in notifications):
+        raise SystemExit(f"enabled notification channels must expose final sent status, got: {notifications}")
     if len(sent_channels) != 2:
         raise SystemExit(f"dispatch alert must call enabled notification channels, got: {sent_channels}")
 finally:
@@ -682,6 +684,7 @@ finally:
     app.APPDATA_DIR = original_appdata_dir
     app.SETTINGS_PATH = original_settings_path
     app.THRESHOLDS_PATH = original_thresholds_path
+    app.SOURCE_METRICS_PATH = original_source_metrics_path
     app._credential_test_store = original_credential_test_store
     app.RISK_ANALYSIS_HISTORY_PATH = original_risk_history_path
     app.set_startup_enabled = original_set_startup_enabled
@@ -703,6 +706,7 @@ original_settings = dict(app.app_settings)
 original_appdata_dir = app.APPDATA_DIR
 original_settings_path = app.SETTINGS_PATH
 original_thresholds_path = app.THRESHOLDS_PATH
+original_source_metrics_path = app.SOURCE_METRICS_PATH
 original_price_history_path = app.PRICE_HISTORY_PATH
 original_export_dir = app.EXPORT_DIR
 original_price_archive = list(app.price_archive)
@@ -719,6 +723,7 @@ try:
         app.APPDATA_DIR = tmp_dir
         app.SETTINGS_PATH = str(Path(tmp_dir) / "settings.json")
         app.THRESHOLDS_PATH = str(Path(tmp_dir) / "thresholds.json")
+        app.SOURCE_METRICS_PATH = str(Path(tmp_dir) / "source_metrics.json")
         app.PRICE_HISTORY_PATH = str(Path(tmp_dir) / "price_history.json")
         app.EXPORT_DIR = str(Path(tmp_dir) / "exports")
         app.price_archive = []
@@ -821,7 +826,7 @@ try:
         reloaded_alert = app.load_alert_log_archive(limit=5)[-1]
         if not reloaded_alert.get("read") or not reloaded_alert.get("acknowledged"):
             raise SystemExit(f"alert log archive must keep read and acknowledged flags, got: {reloaded_alert}")
-        ok, resent_alert = app.resend_alert_notification(alert_id)
+        ok, resent_alert = app.resend_alert_notification(alert_id, blocking=True)
         if not ok or not resent_alert or not resent_alert.get("last_notification_resend_at"):
             raise SystemExit(f"alert notification resend must update alert record, got: {resent_alert}")
         if [item[0] for item in resend_channels] != ["email", "webhook"]:
@@ -919,6 +924,7 @@ finally:
     app.APPDATA_DIR = original_appdata_dir
     app.SETTINGS_PATH = original_settings_path
     app.THRESHOLDS_PATH = original_thresholds_path
+    app.SOURCE_METRICS_PATH = original_source_metrics_path
     app.PRICE_HISTORY_PATH = original_price_history_path
     app.EXPORT_DIR = original_export_dir
     app.price_archive = original_price_archive

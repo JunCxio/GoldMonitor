@@ -1,6 +1,6 @@
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable, Optional
 
 import requests
@@ -146,6 +146,107 @@ class MarketAdapterRegistry:
         else:
             adapters = self.category_adapters(category)
         return [adapter.descriptor() for adapter in adapters]
+
+
+def source_preference_defaults(registry):
+    if not isinstance(registry, MarketAdapterRegistry):
+        raise TypeError("registry must be a MarketAdapterRegistry")
+    categories = []
+    for descriptor in registry.catalog():
+        category = descriptor["category"]
+        if category not in categories:
+            categories.append(category)
+    return {
+        category: [item["key"] for item in registry.catalog(category)]
+        for category in categories
+    }
+
+
+def normalize_source_preferences(enabled, order, defaults, strict=False):
+    defaults = defaults if isinstance(defaults, dict) else {}
+    normalized_defaults = {
+        str(category): [str(key) for key in keys if str(key)]
+        for category, keys in defaults.items()
+        if isinstance(keys, (list, tuple))
+    }
+    if strict:
+        if enabled is not None and not isinstance(enabled, dict):
+            raise ValueError("数据源启用配置格式无效")
+        if order is not None and not isinstance(order, dict):
+            raise ValueError("数据源排序配置格式无效")
+        unknown_categories = (
+            set(enabled or {}) | set(order or {})
+        ) - set(normalized_defaults)
+        if unknown_categories:
+            raise ValueError("包含未知的数据源分类")
+
+    enabled = enabled if isinstance(enabled, dict) else {}
+    order = order if isinstance(order, dict) else {}
+    normalized_order = {}
+    normalized_enabled = {}
+    category_labels = {"gold": "金价", "forex": "汇率"}
+
+    for category, default_keys in normalized_defaults.items():
+        known = set(default_keys)
+        raw_order = order.get(category)
+        if raw_order is not None and not isinstance(raw_order, (list, tuple)):
+            if strict:
+                raise ValueError(f"{category_labels.get(category, category)}数据源排序格式无效")
+            raw_order = []
+        ordered = []
+        for raw_key in raw_order or []:
+            key = str(raw_key or "").strip()
+            if key not in known:
+                if strict:
+                    raise ValueError(f"包含未知的{category_labels.get(category, category)}数据源")
+                continue
+            if key not in ordered:
+                ordered.append(key)
+        ordered.extend(key for key in default_keys if key not in ordered)
+        normalized_order[category] = ordered
+
+        if category in enabled:
+            raw_enabled = enabled.get(category)
+            if not isinstance(raw_enabled, (list, tuple)):
+                if strict:
+                    raise ValueError(f"{category_labels.get(category, category)}数据源启用配置格式无效")
+                raw_enabled = []
+            enabled_keys = []
+            for raw_key in raw_enabled:
+                key = str(raw_key or "").strip()
+                if key not in known:
+                    if strict:
+                        raise ValueError(f"包含未知的{category_labels.get(category, category)}数据源")
+                    continue
+                if key not in enabled_keys:
+                    enabled_keys.append(key)
+        else:
+            enabled_keys = list(default_keys)
+
+        if not enabled_keys:
+            if strict:
+                raise ValueError(f"{category_labels.get(category, category)}数据源至少启用一个")
+            enabled_keys = list(default_keys)
+        normalized_enabled[category] = [key for key in ordered if key in enabled_keys]
+
+    return {
+        "enabled": normalized_enabled,
+        "order": normalized_order,
+    }
+
+
+def configure_registry(registry, enabled=None, order=None, strict=False):
+    defaults = source_preference_defaults(registry)
+    preferences = normalize_source_preferences(enabled, order, defaults, strict=strict)
+    configured = []
+    for category, ordered_keys in preferences["order"].items():
+        enabled_keys = set(preferences["enabled"].get(category) or [])
+        for index, key in enumerate(ordered_keys):
+            adapter = registry.get(key)
+            if adapter is None or key not in enabled_keys:
+                continue
+            configured.append(replace(adapter, priority=(index + 1) * 10))
+    return MarketAdapterRegistry(configured), preferences
 
 
 def fetch_http_source(

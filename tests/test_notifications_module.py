@@ -123,7 +123,7 @@ def test_templates_and_webhook_payload_use_market_context_without_leaking_format
     assert payload["price_rmb"] == "543.21"
 
 
-def test_dispatch_alert_reports_enabled_disabled_and_skipped_channels():
+def test_dispatch_alert_reports_final_delivery_statuses():
     from goldmonitor.notifications import dispatch_alert
 
     class QuietLogger:
@@ -154,8 +154,10 @@ def test_dispatch_alert_reports_enabled_disabled_and_skipped_channels():
         logger=QuietLogger(),
     )
     assert [item["channel"] for item in notifications] == ["email", "webhook"]
-    assert notifications[0]["status"] == "queued"
-    assert notifications[1]["status"] == "skipped"
+    assert notifications[0]["status"] == "sent"
+    assert notifications[0]["attempts"] == 1
+    assert notifications[1]["status"] == "failed"
+    assert notifications[1]["attempts"] == 1
     assert sent == [
         ("email", "warning", "通知测试", "测试提醒"),
         ("webhook", "warning", "通知测试", "测试提醒"),
@@ -172,6 +174,48 @@ def test_dispatch_alert_reports_enabled_disabled_and_skipped_channels():
     assert [item["status"] for item in disabled] == ["disabled", "disabled"]
 
 
+def test_dispatch_alert_async_returns_pending_then_reports_retried_result():
+    from goldmonitor.notifications import dispatch_alert
+
+    attempts = []
+    updates = []
+    threads = []
+
+    def email_send(alert_type, title, message, blocking=False):
+        attempts.append(blocking)
+        return "临时网络错误" if len(attempts) < 3 else None
+
+    class CapturedThread:
+        def __init__(self, target, daemon=False):
+            threads.append((target, daemon))
+
+        def start(self):
+            return None
+
+    notifications = dispatch_alert(
+        {"type": "warning", "message": "测试提醒"},
+        "通知测试",
+        {"email_warning_enabled": True, "webhook_enabled": False},
+        email_sender=email_send,
+        webhook_sender=lambda *args, **kwargs: None,
+        blocking=False,
+        thread_factory=CapturedThread,
+        retry_wait=lambda attempt: None,
+        on_update=lambda items, item: updates.append((items, item)),
+    )
+
+    assert notifications[0]["status"] == "pending"
+    assert notifications[0]["attempts"] == 0
+    assert len(threads) == 1
+    assert threads[0][1] is True
+
+    threads[0][0]()
+
+    assert attempts == [True, True, True]
+    assert updates[-1][1]["status"] == "sent"
+    assert updates[-1][1]["attempts"] == 3
+
+
 def test_summarize_notifications_prioritizes_muted_and_partial_failures():
     from goldmonitor.notifications import notification_status, summarize_notifications
 
@@ -182,6 +226,9 @@ def test_summarize_notifications_prioritizes_muted_and_partial_failures():
         "status": "muted",
         "label": "已静默",
         "message": "当前处于静默时段，仅记录提醒。",
+        "pending": 0,
+        "sent": 0,
+        "failed": 0,
         "queued": 0,
         "skipped": 0,
         "disabled": 0,
@@ -189,13 +236,13 @@ def test_summarize_notifications_prioritizes_muted_and_partial_failures():
     }
 
     partial = summarize_notifications([
-        notification_status("email", "邮件", "queued", "已提交发送"),
-        notification_status("webhook", "Webhook", "skipped", "Webhook 地址未配置"),
+        notification_status("email", "邮件", "sent", "发送成功"),
+        notification_status("webhook", "Webhook", "failed", "Webhook 地址未配置"),
     ])
     assert partial["status"] == "partial"
-    assert partial["label"] == "部分提交"
-    assert partial["queued"] == 1
-    assert partial["skipped"] == 1
+    assert partial["label"] == "部分送达"
+    assert partial["sent"] == 1
+    assert partial["failed"] == 1
     assert partial["message"] == "Webhook 地址未配置"
 
     disabled = summarize_notifications([

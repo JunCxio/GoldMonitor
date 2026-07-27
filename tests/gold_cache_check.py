@@ -20,6 +20,7 @@ def sample_gold(close=2300.0):
 
 with tempfile.TemporaryDirectory() as tmp_dir:
     original_cache_path = app.MARKET_CACHE_PATH
+    original_source_metrics_path = app.SOURCE_METRICS_PATH
     original_fetchers = {
         "fetch_sina_gold_result": app.fetch_sina_gold_result,
         "fetch_eastmoney_gold_result": app.fetch_eastmoney_gold_result,
@@ -48,6 +49,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
     }
     try:
         app.MARKET_CACHE_PATH = str(Path(tmp_dir) / "market_cache.json")
+        app.SOURCE_METRICS_PATH = str(Path(tmp_dir) / "source_metrics.json")
         now = datetime.now().isoformat()
         app.save_usdcny_cache(7.25, "测试汇率", now)
         app.save_xauusd_cache(sample_gold(), "测试金价源", now)
@@ -132,6 +134,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             raise SystemExit(f"fetch_status must tell the user cached gold is used, got: {statuses}")
     finally:
         app.MARKET_CACHE_PATH = original_cache_path
+        app.SOURCE_METRICS_PATH = original_source_metrics_path
         app.fetch_sina_gold_result = original_fetchers["fetch_sina_gold_result"]
         app.fetch_eastmoney_gold_result = original_fetchers["fetch_eastmoney_gold_result"]
         app.fetch_goldprice_data_result = original_fetchers["fetch_goldprice_data_result"]

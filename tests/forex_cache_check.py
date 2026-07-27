@@ -17,8 +17,10 @@ if frankfurter_error or frankfurter_rate != 7.2345:
 
 with tempfile.TemporaryDirectory() as tmp_dir:
     original_path = app.MARKET_CACHE_PATH
+    original_source_metrics_path = app.SOURCE_METRICS_PATH
     try:
         app.MARKET_CACHE_PATH = str(Path(tmp_dir) / "market_cache.json")
+        app.SOURCE_METRICS_PATH = str(Path(tmp_dir) / "source_metrics.json")
         cached = {
             "value": 7.1111,
             "source": "测试缓存",
@@ -117,5 +119,6 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             raise SystemExit(f"forex error should explain failed live sources, got: {forex_error}")
     finally:
         app.MARKET_CACHE_PATH = original_path
+        app.SOURCE_METRICS_PATH = original_source_metrics_path
 
 print("forex cache checks passed.")

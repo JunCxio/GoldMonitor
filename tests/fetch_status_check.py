@@ -9,7 +9,9 @@ import requests
 
 with tempfile.TemporaryDirectory() as tmp_dir:
     original_market_cache_path = app.MARKET_CACHE_PATH
+    original_source_metrics_path = app.SOURCE_METRICS_PATH
     app.MARKET_CACHE_PATH = str(Path(tmp_dir) / "market_cache.json")
+    app.SOURCE_METRICS_PATH = str(Path(tmp_dir) / "source_metrics.json")
     try:
         status = app.build_fetch_status(
             ok=False,
@@ -170,5 +172,6 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             raise SystemExit("GoldPrice User-Agent must be ASCII so requests can send it")
     finally:
         app.MARKET_CACHE_PATH = original_market_cache_path
+        app.SOURCE_METRICS_PATH = original_source_metrics_path
 
 print("fetch status checks passed.")
