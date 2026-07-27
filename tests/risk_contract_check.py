@@ -178,8 +178,10 @@ try:
         raise SystemExit(f"non-blocking email send should queue work, got: {error}")
     if not warning_event.wait(2):
         raise SystemExit("async email failure must be logged")
-    if not any("SMTP login failed" in item for item in warnings):
-        raise SystemExit(f"async email failure log must include the SMTP error, got: {warnings}")
+    if not any("邮件通知发送失败" in item for item in warnings):
+        raise SystemExit(f"async email failure log must include a stable failure message, got: {warnings}")
+    if any("SMTP login failed" in item for item in warnings):
+        raise SystemExit(f"async email failure log must not expose SMTP error details, got: {warnings}")
 finally:
     app.app_settings = original_settings
     app.smtplib.SMTP_SSL = original_smtp_ssl
@@ -717,6 +719,7 @@ original_alert_cooldown_state = dict(app.alert_cooldown_state)
 original_alert_log = list(app.alert_log)
 original_email_send = app.EmailNotifier.send
 original_webhook_send = app.WebhookNotifier.send
+original_start_alert_notification_delivery = app._start_alert_notification_delivery
 
 try:
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -734,6 +737,22 @@ try:
         app.alert_log = []
         resend_channels = []
 
+        def start_alert_notification_delivery_sync(entry, title, settings=None):
+            notifications = entry.get("notifications") if isinstance(entry.get("notifications"), list) else []
+            if not any(item.get("status") == "pending" for item in notifications if isinstance(item, dict)):
+                return False
+            alert_id = str(entry.get("id") or "").strip()
+            if not alert_id:
+                return False
+            app._deliver_alert_notifications(
+                alert_id,
+                dict(entry),
+                title,
+                dict(settings or app.get_settings_snapshot()),
+                [dict(item) for item in notifications if isinstance(item, dict)],
+            )
+            return True
+
         def capture_resend_email(alert_type, title, message, **kwargs):
             resend_channels.append(("email", alert_type, title, message))
             return None
@@ -744,6 +763,7 @@ try:
 
         app.EmailNotifier.send = capture_resend_email
         app.WebhookNotifier.send = capture_resend_webhook
+        app._start_alert_notification_delivery = start_alert_notification_delivery_sync
         app.app_settings = app._normalize_settings({
             "smtp_password": "smtp-secret",
             "smtp_server": "smtp.example.com",
@@ -935,6 +955,7 @@ finally:
     app.alert_log = original_alert_log
     app.EmailNotifier.send = original_email_send
     app.WebhookNotifier.send = original_webhook_send
+    app._start_alert_notification_delivery = original_start_alert_notification_delivery
 
 
 print("risk contract checks passed.")

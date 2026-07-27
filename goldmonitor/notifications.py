@@ -215,7 +215,7 @@ def _send_email_mime_message(
     def _send_async():
         send_error = _send()
         if send_error:
-            logger.warning("邮件通知发送失败: %s", send_error)
+            logger.warning("邮件通知发送失败")
 
     if thread_factory:
         thread_factory(target=_send_async, daemon=True).start()
@@ -371,7 +371,7 @@ def send_webhook_payload(
     def _send_async():
         error = _send()
         if error:
-            logger.warning("Webhook 通知发送失败: %s", error)
+            logger.warning("Webhook 通知发送失败")
 
     if thread_factory:
         thread_factory(target=_send_async, daemon=True).start()
@@ -459,7 +459,11 @@ def deliver_notification(
         if attempt >= attempts_limit or not _delivery_error_retryable(error):
             item["status"] = "failed"
             item["message"] = error
-            logger.warning("%s通知发送失败（尝试 %s 次）: %s", item.get("label") or item.get("channel") or "", attempt, error)
+            logger.warning(
+                "%s通知发送失败（尝试 %s 次）",
+                item.get("label") or item.get("channel") or "",
+                attempt,
+            )
             break
         wait(attempt)
 

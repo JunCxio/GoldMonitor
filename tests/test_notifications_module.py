@@ -174,6 +174,30 @@ def test_dispatch_alert_reports_final_delivery_statuses():
     assert [item["status"] for item in disabled] == ["disabled", "disabled"]
 
 
+def test_delivery_failure_log_does_not_include_raw_error_details():
+    from goldmonitor.notifications import deliver_notification, notification_status
+
+    warnings = []
+
+    class CapturedLogger:
+        def warning(self, *args, **kwargs):
+            warnings.append((args, kwargs))
+
+    secret_error = "Webhook 请求失败: https://example.com/hooks/private-token"
+    result = deliver_notification(
+        notification_status("webhook", "Webhook", "pending", "等待发送"),
+        lambda *args, **kwargs: secret_error,
+        (),
+        max_attempts=1,
+        logger=CapturedLogger(),
+    )
+
+    assert result["status"] == "failed"
+    assert result["message"] == secret_error
+    assert len(warnings) == 1
+    assert "private-token" not in repr(warnings)
+
+
 def test_dispatch_alert_async_returns_pending_then_reports_retried_result():
     from goldmonitor.notifications import dispatch_alert
 

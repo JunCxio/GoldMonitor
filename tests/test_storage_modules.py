@@ -2,7 +2,7 @@ import json
 import sqlite3
 import sys
 import tempfile
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -238,7 +238,7 @@ def test_price_history_store_backfills_rollups_from_legacy_sqlite():
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = str(Path(tmp_dir) / "price_history.json")
         store = PriceHistoryStore(path)
-        with sqlite3.connect(store.db_path()) as conn:
+        with closing(sqlite3.connect(store.db_path())) as conn:
             conn.execute("""
                 CREATE TABLE price_history (
                     timestamp TEXT PRIMARY KEY,
@@ -258,11 +258,12 @@ def test_price_history_store_backfills_rollups_from_legacy_sqlite():
                     ("2026-07-03T12:00:00", "12:00:00", 2320, 545, 7.2),
                 ],
             )
+            conn.commit()
 
         items = store.filter_from_db(minutes=7 * 24 * 60, limit=2100)
 
         assert [item["usd"] for item in items] == [2300.0, 2320.0]
-        with sqlite3.connect(store.db_path()) as conn:
+        with closing(sqlite3.connect(store.db_path())) as conn:
             version = conn.execute(
                 "SELECT value FROM price_history_metadata WHERE key = 'schema_version'"
             ).fetchone()

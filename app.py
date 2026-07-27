@@ -5489,13 +5489,23 @@ def api_preview_data_archive():
             os.remove(upload_path)
         except FileNotFoundError:
             pass
-        return jsonify({"ok": False, "restorable": False, "message": str(exc)}), 400
+        logging.warning("数据归档预检失败: %s", exc)
+        return jsonify({
+            "ok": False,
+            "restorable": False,
+            "message": "数据归档校验失败，请确认文件来自 GoldMonitor 且未损坏",
+        }), 400
     except OSError as exc:
         try:
             os.remove(upload_path)
         except FileNotFoundError:
             pass
-        return jsonify({"ok": False, "restorable": False, "message": f"读取归档失败: {exc}"}), 400
+        logging.warning("读取数据归档失败: %s", exc)
+        return jsonify({
+            "ok": False,
+            "restorable": False,
+            "message": "读取数据归档失败，请检查文件后重试",
+        }), 400
 
 
 @app.route("/api/data-archive/restore", methods=["POST"])
@@ -5514,7 +5524,10 @@ def api_restore_data_archive():
         return jsonify(result)
     except (data_archive_core.DataArchiveError, OSError, sqlite3.Error) as exc:
         logging.warning("完整数据恢复失败: %s", exc)
-        return jsonify({"ok": False, "message": f"数据恢复失败，原数据已回滚: {exc}"}), 400
+        return jsonify({
+            "ok": False,
+            "message": "数据恢复失败，原数据已回滚。请检查归档文件后重试。",
+        }), 400
     except Exception:
         logging.exception("完整数据恢复失败")
         return jsonify({"ok": False, "message": "数据恢复失败，原数据已回滚。请检查运行日志。"}), 500

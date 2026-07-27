@@ -20,6 +20,7 @@ class DataArchiveError(ValueError):
 
 
 def _sha256_bytes(content):
+    # SHA-256 仅用于归档清单的内容完整性校验，不用于密码派生或身份认证。
     return hashlib.sha256(content).hexdigest()
 
 
