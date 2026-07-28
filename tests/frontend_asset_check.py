@@ -7,6 +7,8 @@ template = (root / "templates" / "index.html").read_text(encoding="utf-8")
 app_py = (root / "app.py").read_text(encoding="utf-8")
 css_path = root / "static" / "app.css"
 js_path = root / "static" / "app.js"
+history_review_js_path = root / "static" / "history-review-center.js"
+risk_analysis_js_path = root / "static" / "risk-analysis-center.js"
 alert_rule_js_path = root / "static" / "alert-rule-center.js"
 portfolio_js_path = root / "static" / "portfolio-center.js"
 
@@ -17,6 +19,12 @@ if not css_path.exists():
 if not js_path.exists():
     raise SystemExit("frontend main script must live in static/app.js")
 
+if not history_review_js_path.exists():
+    raise SystemExit("history review center script must live in static/history-review-center.js")
+
+if not risk_analysis_js_path.exists():
+    raise SystemExit("risk analysis center script must live in static/risk-analysis-center.js")
+
 if not alert_rule_js_path.exists():
     raise SystemExit("alert rule center script must live in static/alert-rule-center.js")
 
@@ -24,6 +32,8 @@ if not portfolio_js_path.exists():
     raise SystemExit("portfolio center script must live in static/portfolio-center.js")
 
 js = "\n".join((
+    history_review_js_path.read_text(encoding="utf-8"),
+    risk_analysis_js_path.read_text(encoding="utf-8"),
     alert_rule_js_path.read_text(encoding="utf-8"),
     portfolio_js_path.read_text(encoding="utf-8"),
     js_path.read_text(encoding="utf-8"),
@@ -40,6 +50,20 @@ if '<script src="/static/app-shell.js?v={{ app_version }}"></script>' not in tem
 
 if '<script src="/static/app.js?v={{ app_version }}"></script>' not in template:
     raise SystemExit("template must reference versioned /static/app.js")
+
+history_review_script = '<script src="/static/history-review-center.js?v={{ app_version }}"></script>'
+if history_review_script not in template:
+    raise SystemExit("template must reference versioned /static/history-review-center.js")
+
+if template.find(history_review_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("history review center script must load before static/app.js")
+
+risk_analysis_script = '<script src="/static/risk-analysis-center.js?v={{ app_version }}"></script>'
+if risk_analysis_script not in template:
+    raise SystemExit("template must reference versioned /static/risk-analysis-center.js")
+
+if template.find(risk_analysis_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("risk analysis center script must load before static/app.js")
 
 alert_rule_script = '<script src="/static/alert-rule-center.js?v={{ app_version }}"></script>'
 if alert_rule_script not in template:
@@ -979,11 +1003,17 @@ for required in (
 
 for required in (
     'REVIEW_NOTES_PATH',
-    '@socketio.on("save_review_note")',
-    '@socketio.on("delete_review_note")',
 ):
     if required not in app_py:
         raise SystemExit(f"app.py missing review note contract: {required}")
+
+history_review_socket_py = (root / "goldmonitor" / "socket_history_review.py").read_text(encoding="utf-8")
+for required in (
+    '@socketio.on("save_review_note")',
+    '@socketio.on("delete_review_note")',
+):
+    if required not in history_review_socket_py:
+        raise SystemExit(f"history review socket module missing review note contract: {required}")
 
 for required in (
     'onclick="copyDiagnostics()"',

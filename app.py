@@ -39,7 +39,9 @@ from goldmonitor import risk_analysis as risk_analysis_core
 from goldmonitor import scheduler as scheduler_core
 from goldmonitor import settings_store as settings_store_core
 from goldmonitor import socket_alert_rules as socket_alert_rules_core
+from goldmonitor import socket_history_review as socket_history_review_core
 from goldmonitor import socket_portfolio as socket_portfolio_core
+from goldmonitor import socket_risk_analysis as socket_risk_analysis_core
 from goldmonitor import storage_manifest as storage_manifest_core
 from goldmonitor import support_files as support_files_core
 from goldmonitor import targets as targets_core
@@ -6704,108 +6706,51 @@ def on_update_settings(data):
     socketio.emit("settings_updated", public_settings_snapshot(updated))
 
 
-@socketio.on("request_risk_analysis")
-def on_request_risk_analysis(data=None):
+def _set_risk_analysis_last_started(value):
     global risk_analysis_last_started
-    settings = get_settings_snapshot()
-    if not settings.get("risk_assistant_enabled", True):
-        emit("risk_analysis_error", build_risk_analysis_error_payload("风险分析助手已关闭，请先在设置中启用。", settings))
-        return
-    provider = settings.get("risk_assistant_provider", "deepseek")
-    if provider not in VALID_RISK_ASSISTANT_PROVIDERS:
-        emit("risk_analysis_error", build_risk_analysis_error_payload("暂不支持当前模型提供商。", settings))
-        return
-    provider_key = settings.get("deepseek_api_key") if provider == "deepseek" else settings.get("openai_compatible_api_key")
-    if not provider_key:
-        emit("risk_analysis_error", build_risk_analysis_error_payload("请先在设置中配置当前模型提供商的 API Key。", settings))
-        return
-    market_data_error = risk_analysis_market_data_error()
-    if market_data_error:
-        emit("risk_analysis_error", build_risk_analysis_error_payload(market_data_error, settings))
-        return
-    trigger = data.get("trigger") if isinstance(data, dict) else None
-    force = bool(data.get("force")) if isinstance(data, dict) else False
-    context = build_risk_analysis_context(trigger=trigger, depth=settings.get("risk_assistant_depth", "standard"))
-    snapshot = build_risk_analysis_snapshot(context)
-    cache_minutes = settings.get("risk_assistant_cache_minutes", 0)
-    if not force:
-        cached = find_recent_risk_analysis_cache(snapshot, cache_minutes)
-        if cached:
-            emit("risk_analysis_cache_hit", {
-                "ok": True,
-                "provider": cached.get("provider"),
-                "model": cached.get("model"),
-                "content": cached.get("content"),
-                "structured": cached.get("structured", {}),
-                "usage": cached.get("usage"),
-                "snapshot": cached.get("snapshot", snapshot),
-                "history_entry": cached,
-                "cache_age_seconds": cached.get("cache_age_seconds", 0),
-                "trigger": trigger,
-                "message": "已找到最近同一行情分析，可直接查看，也可以选择重新分析。",
-            })
-            return
-    cooldown = settings.get("risk_assistant_cooldown_seconds", 0)
-    now_monotonic = time.monotonic()
-    if cooldown and risk_analysis_last_started and now_monotonic - risk_analysis_last_started < cooldown:
-        remaining = max(1, int(cooldown - (now_monotonic - risk_analysis_last_started)))
-        emit("risk_analysis_error", build_risk_analysis_error_payload(f"分析冷却中，请 {remaining} 秒后再试。", settings, snapshot))
-        return
-    if not risk_analysis_lock.acquire(blocking=False):
-        emit("risk_analysis_error", build_risk_analysis_error_payload("已有风险分析正在进行，请稍后再试。", settings, snapshot))
-        return
-
-    risk_analysis_last_started = now_monotonic
-    sid = request.sid
-    emit("risk_analysis_status", {"running": True, "message": "正在生成风险分析..."})
-
-    def _analyze():
-        try:
-            result, error = run_risk_analysis(settings, context)
-            if error:
-                socketio.emit("risk_analysis_error", build_risk_analysis_error_payload(error, settings, snapshot), room=sid)
-                return
-            history_entry = add_risk_analysis_history_entry(result, snapshot)
-            socketio.emit("risk_analysis_result", {
-                "ok": True,
-                "provider": result.get("provider"),
-                "model": result.get("model"),
-                "content": result.get("content"),
-                "structured": result.get("structured", {}),
-                "usage": result.get("usage"),
-                "snapshot": snapshot,
-                "history_entry": history_entry,
-            }, room=sid)
-            socketio.emit("risk_analysis_history_updated", get_risk_analysis_history_state(), room=sid)
-        finally:
-            socketio.emit("risk_analysis_status", {"running": False, "message": ""}, room=sid)
-            risk_analysis_lock.release()
-
-    threading.Thread(target=_analyze, daemon=True).start()
+    risk_analysis_last_started = value
 
 
-@socketio.on("get_risk_model_options")
-def on_get_risk_model_options(data=None):
-    settings = get_settings_snapshot()
-    provider = settings.get("risk_assistant_provider", "deepseek")
-    if isinstance(data, dict) and data.get("provider") in VALID_RISK_ASSISTANT_PROVIDERS:
-        provider = data.get("provider")
-    emit("risk_model_options_updated", fetch_risk_model_options(settings, provider))
-
-
-@socketio.on("test_risk_model")
-def on_test_risk_model():
-    emit("risk_model_test_result", test_risk_model_availability(get_settings_snapshot()))
-
-
-@socketio.on("get_risk_analysis_history")
-def on_get_risk_analysis_history():
-    emit("risk_analysis_history_updated", get_risk_analysis_history_state())
-
-
-@socketio.on("clear_risk_analysis_history")
-def on_clear_risk_analysis_history():
-    emit("risk_analysis_history_updated", clear_risk_analysis_history_state())
+socket_risk_analysis_core.register_risk_analysis_handlers(
+    socketio,
+    get_settings_snapshot=lambda: get_settings_snapshot(),
+    valid_providers=VALID_RISK_ASSISTANT_PROVIDERS,
+    build_error_payload=(
+        lambda message, settings=None, snapshot=None: build_risk_analysis_error_payload(
+            message,
+            settings,
+            snapshot,
+        )
+    ),
+    market_data_error=lambda: risk_analysis_market_data_error(),
+    build_context=(
+        lambda trigger=None, depth=None: build_risk_analysis_context(
+            trigger=trigger,
+            depth=depth,
+        )
+    ),
+    build_snapshot=lambda context: build_risk_analysis_snapshot(context),
+    find_recent_cache=(
+        lambda snapshot, cache_minutes: find_recent_risk_analysis_cache(
+            snapshot,
+            cache_minutes,
+        )
+    ),
+    get_last_started=lambda: risk_analysis_last_started,
+    set_last_started=_set_risk_analysis_last_started,
+    analysis_lock=risk_analysis_lock,
+    run_analysis=lambda settings, context: run_risk_analysis(settings, context),
+    add_history_entry=(
+        lambda result, snapshot: add_risk_analysis_history_entry(result, snapshot)
+    ),
+    get_history_state=lambda: get_risk_analysis_history_state(),
+    clear_history_state=lambda: clear_risk_analysis_history_state(),
+    fetch_model_options=(
+        lambda settings, provider: fetch_risk_model_options(settings, provider)
+    ),
+    test_model_availability=lambda settings: test_risk_model_availability(settings),
+    monotonic_factory=lambda: time.monotonic(),
+)
 
 
 @socketio.on("test_email")
@@ -7022,107 +6967,32 @@ def on_retry_market_source(data=None):
     threading.Thread(target=run_retry, daemon=True).start()
 
 
-@socketio.on("get_price_history")
-def on_get_price_history(data=None):
-    minutes = None
-    limit = 600
-    period = None
-    scope = "history"
-    if isinstance(data, dict):
-        period = str(data.get("period") or "").strip() or None
-        scope = str(data.get("scope") or "history").strip() or "history"
-        try:
-            minutes = int(data.get("minutes")) if data.get("minutes") else None
-        except (TypeError, ValueError):
-            minutes = None
-        try:
-            limit = max(1, min(PRICE_HISTORY_EXPORT_LIMIT, int(data.get("limit", limit))))
-        except (TypeError, ValueError):
-            limit = 600
-    state = build_price_history_state(minutes=minutes, limit=limit)
-    state["period"] = period
-    state["scope"] = scope
-    emit("price_history_updated", state)
-
-
-@socketio.on("get_event_timeline")
-def on_get_event_timeline(data=None):
-    try:
-        request_args = normalize_event_timeline_request(data)
-        state = build_event_timeline_state(**request_args)
-        emit("event_timeline_updated", state)
-    except Exception as exc:
-        logging.warning("事件时间轴生成失败: %s", exc)
-        emit("event_timeline_error", {"message": "事件时间轴加载失败，请稍后重试。"})
-
-
-@socketio.on("save_review_note")
-def on_save_review_note(data=None):
-    try:
-        state, note = upsert_review_note(data)
-    except ValueError as exc:
-        emit("review_note_error", {"message": str(exc)})
-        return
-    except OSError:
-        emit("review_note_error", {"message": "复盘笔记保存失败，请检查配置目录权限。"})
-        return
-    emit("review_note_saved", {"ok": True, "note": note, "state": state})
-    socketio.emit("review_notes_updated", state)
-
-
-@socketio.on("delete_review_note")
-def on_delete_review_note(data=None):
-    note_id = data.get("id") if isinstance(data, dict) else ""
-    try:
-        deleted, state = delete_review_note_by_id(note_id)
-    except ValueError as exc:
-        emit("review_note_error", {"message": str(exc)})
-        return
-    except OSError:
-        emit("review_note_error", {"message": "复盘笔记删除失败，请检查配置目录权限。"})
-        return
-    if not deleted:
-        emit("review_note_error", {"message": "未找到复盘笔记。"})
-        return
-    emit("review_note_deleted", {"ok": True, "id": str(note_id), "state": state})
-    socketio.emit("review_notes_updated", state)
-
-
-@socketio.on("export_review_report")
-def on_export_review_report(data=None):
-    try:
-        request_args = normalize_event_timeline_request(data)
-        state = build_event_timeline_state(**request_args)
-        content = build_review_report(state)
-        filename = event_timeline_core.review_report_filename(prefix=REVIEW_REPORT_EXPORT_PREFIX)
-        saved_path = save_review_report(content, filename)
-        emit("review_report_exported", {
-            "ok": True,
-            "filename": filename,
-            "saved_path": saved_path,
-            "count": state.get("summary", {}).get("total", 0),
-        })
-    except OSError as exc:
-        emit("review_report_error", build_export_error_payload(f"复盘报告导出失败: {exc}"))
-    except Exception as exc:
-        logging.warning("复盘报告导出失败: %s", exc)
-        emit("review_report_error", {"message": "复盘报告导出失败，请稍后重试。"})
-
-
-@socketio.on("export_price_history")
-def on_export_price_history(data=None):
-    minutes = None
-    if isinstance(data, dict):
-        try:
-            minutes = int(data.get("minutes")) if data.get("minutes") else None
-        except (TypeError, ValueError):
-            minutes = None
-    content, count = build_price_history_csv(minutes=minutes)
-    emit("price_history_export_ready", {
-        "filename": f"GoldMonitor-price-history-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv",
-        "content": content,
-        "count": count,
-    })
+socket_history_review_core.register_history_review_handlers(
+    socketio,
+    price_history_export_limit=PRICE_HISTORY_EXPORT_LIMIT,
+    build_price_history_state=(
+        lambda minutes=None, limit=600: build_price_history_state(
+            minutes=minutes,
+            limit=limit,
+        )
+    ),
+    normalize_timeline_request=lambda data=None: normalize_event_timeline_request(data),
+    build_timeline_state=lambda **kwargs: build_event_timeline_state(**kwargs),
+    upsert_review_note=lambda data=None: upsert_review_note(data),
+    delete_review_note=lambda note_id: delete_review_note_by_id(note_id),
+    build_review_report=lambda state: build_review_report(state),
+    review_report_filename=(
+        lambda: event_timeline_core.review_report_filename(
+            prefix=REVIEW_REPORT_EXPORT_PREFIX,
+        )
+    ),
+    save_review_report=lambda content, filename: save_review_report(content, filename),
+    build_export_error_payload=lambda message: build_export_error_payload(message),
+    build_price_history_csv=(
+        lambda minutes=None: build_price_history_csv(minutes=minutes)
+    ),
+    now_factory=lambda: datetime.now(),
+)
 
 
 @socketio.on("export_alert_log")
