@@ -247,527 +247,158 @@
 </div>
 
 <div class="settings-backdrop" id="settingsBackdrop" onclick="onSettingsBackdrop(event)">
-  <div class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+  <div class="settings-modal settings-primary-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" aria-describedby="settingsSubtitle">
     <div class="settings-head">
-      <h2 id="settingsTitle">设置</h2>
-      <button class="settings-close" onclick="closeSettings()" aria-label="关闭设置">×</button>
+      <div>
+        <div class="settings-kicker">应用偏好</div>
+        <h2 id="settingsTitle">设置</h2>
+        <p id="settingsSubtitle">管理桌面行为、通知渠道、风险分析和本机数据。</p>
+      </div>
+      <button class="settings-close" type="button" onclick="closeSettings()" aria-label="关闭设置">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+      </button>
     </div>
-    <div class="settings-tabs" role="tablist" aria-label="设置分类">
-      <button class="settings-tab active" id="settingsTabGeneral" type="button" role="tab" aria-selected="true" aria-controls="settingsPanelGeneral" onclick="switchSettingsTab('general')">通用设置</button>
-      <button class="settings-tab" id="settingsTabEmail" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelEmail" onclick="switchSettingsTab('email')">邮件通知</button>
-      <button class="settings-tab" id="settingsTabWebhook" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelWebhook" onclick="switchSettingsTab('webhook')">Webhook</button>
-      <button class="settings-tab" id="settingsTabDigest" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelDigest" onclick="switchSettingsTab('digest')">摘要通知</button>
-      <button class="settings-tab" id="settingsTabRisk" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelRisk" onclick="switchSettingsTab('risk')">风险分析</button>
-      <button class="settings-tab" id="settingsTabOps" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelOps" onclick="switchSettingsTab('ops')">运维</button>
+    <div class="settings-workspace">
+      <aside class="settings-sidebar" aria-label="设置分类导航">
+        <div class="settings-tabs" role="tablist" aria-label="设置分类" aria-orientation="vertical">
+          <button class="settings-tab active" id="settingsTabGeneral" type="button" role="tab" aria-selected="true" aria-controls="settingsPanelGeneral" tabindex="0" data-settings-tab="general" onclick="switchSettingsTab('general')"><span>通用设置</span><small>启动、窗口与提醒</small></button>
+          <button class="settings-tab" id="settingsTabEmail" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelEmail" tabindex="-1" data-settings-tab="email" onclick="switchSettingsTab('email')"><span>邮件通知</span><small>SMTP 与通知模板</small></button>
+          <button class="settings-tab" id="settingsTabWebhook" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelWebhook" tabindex="-1" data-settings-tab="webhook" onclick="switchSettingsTab('webhook')"><span>Webhook</span><small>外部通知连接</small></button>
+          <button class="settings-tab" id="settingsTabDigest" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelDigest" tabindex="-1" data-settings-tab="digest" onclick="switchSettingsTab('digest')"><span>摘要通知</span><small>计划、渠道与预览</small></button>
+          <button class="settings-tab" id="settingsTabRisk" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelRisk" tabindex="-1" data-settings-tab="risk" onclick="switchSettingsTab('risk')"><span>风险分析</span><small>模型连接与成本</small></button>
+          <button class="settings-tab" id="settingsTabOps" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelOps" tabindex="-1" data-settings-tab="ops" onclick="switchSettingsTab('ops')"><span>运维与数据</span><small>备份、诊断与恢复</small></button>
+        </div>
+      </aside>
+      <main class="settings-body">
+        <div class="settings-panel active" id="settingsPanelGeneral" role="tabpanel" aria-labelledby="settingsTabGeneral" data-settings-panel="general">
+          <div class="settings-panel-head"><span>通用设置</span><h3>控制应用在桌面上的运行方式</h3><p>这些设置只影响当前设备，不会修改行情、持仓或预警数据。</p></div>
+          <section class="setting-section">
+            <header class="setting-section-head"><h4>启动与窗口</h4><p>配置开机启动和主窗口关闭行为。</p></header>
+            <div class="setting-row"><div><div class="setting-label">开机自启动</div><div class="setting-desc">开机后自动启动金价监控。</div></div><label class="switch"><input type="checkbox" id="setStartup"><span class="slider"></span></label></div>
+            <div class="setting-row"><div><div class="setting-label" id="startupTrayLabel">自启动时进入托盘</div><div class="setting-desc" id="startupTrayDesc">开机启动后不弹出主窗口，可从右下角托盘打开。</div></div><label class="switch"><input type="checkbox" id="setStartupTray"><span class="slider"></span></label></div>
+            <div class="setting-row"><div><div class="setting-label">关闭窗口时</div><div class="setting-desc">控制点击右上角关闭按钮后的行为。</div></div><select class="settings-select" id="setCloseBehavior"><option value="ask">每次询问</option><option value="minimize_to_tray" id="closeMinimizeOption">最小化到托盘</option><option value="exit">退出程序</option></select></div>
+          </section>
+          <section class="setting-section">
+            <header class="setting-section-head"><h4>桌面悬浮条</h4><p>调整悬浮条内容、尺寸和贴边行为。</p></header>
+            <div class="setting-row"><div><div class="setting-label" id="floatingPriceLabel">桌面金价悬浮条</div><div class="setting-desc" id="floatingPriceDesc">主窗口隐藏时，仍在桌面右下角显示当前金价。</div></div><label class="switch"><input type="checkbox" id="setFloatingPrice"><span class="slider"></span></label></div>
+            <div class="setting-row"><div><div class="setting-label">悬浮条显示内容</div><div class="setting-desc" id="floatingDisplayDesc">控制桌面悬浮条显示人民币、美元或组合内容。</div></div><select class="settings-select" id="setFloatingDisplayMode"><option value="rmb_usd">人民币 + 美元</option><option value="rmb_only">仅人民币</option><option value="usd_only">仅美元</option></select></div>
+            <div class="setting-row" id="floatingPresetRow"><div><div class="setting-label">悬浮条尺寸</div><div class="setting-desc">极简适合长期贴边显示，标准模式保留更多状态信息。</div></div><select class="settings-select" id="setFloatingPreset"><option value="minimal">极简</option><option value="compact">紧凑</option><option value="standard">标准</option></select></div>
+            <div class="setting-row" id="floatingOpacityRow"><div><div class="setting-label">悬浮条透明度</div><div class="setting-desc">范围 50 到 100，数值越高越不透明。</div></div><input class="settings-input smtp-port" id="setFloatingOpacity" type="number" min="50" max="100" step="1" placeholder="94"></div>
+            <div class="setting-row" id="floatingSnapRow"><div><div class="setting-label">悬浮条贴边吸附</div><div class="setting-desc">拖动到屏幕边缘附近时自动贴齐。</div></div><label class="switch"><input type="checkbox" id="setFloatingSnapEdge"><span class="slider"></span></label></div>
+            <div class="setting-row" id="floatingTopmostRow"><div><div class="setting-label">悬浮条始终置顶</div><div class="setting-desc">关闭后，其他应用可以覆盖悬浮条，减少遮挡。</div></div><label class="switch"><input type="checkbox" id="setFloatingAlwaysOnTop"><span class="slider"></span></label></div>
+          </section>
+          <section class="setting-section">
+            <header class="setting-section-head"><h4>提醒行为</h4><p>控制本机提醒方式、冷却时间和静默时段。</p></header>
+            <div class="setting-row"><div><div class="setting-label">告警提示音</div><div class="setting-desc">达到预警条件时播放系统提示音。</div></div><label class="switch"><input type="checkbox" id="setAlertSound"><span class="slider"></span></label></div>
+            <div class="setting-row"><div><div class="setting-label">系统级告警弹窗</div><div class="setting-desc">达到预警条件时弹出置顶提示框。</div></div><label class="switch"><input type="checkbox" id="setAlertDialog"><span class="slider"></span></label></div>
+            <div class="setting-row"><div><div class="setting-label">测试提醒</div><div class="setting-desc">触发一条手动测试提醒，用于检查弹窗、声音和通知链路。</div></div><div class="settings-stack setting-action-status"><button class="settings-cancel btn-form" id="btnTestAlert" type="button" onclick="testAlert()">触发测试</button><span class="test-email-status" id="testAlertStatus"></span></div></div>
+            <div class="setting-row"><div><div class="setting-label">提醒冷却时间</div><div class="setting-desc">同一类型提醒在冷却期内只记录，不重复弹窗或发送通知。</div></div><input class="settings-input smtp-port" id="setAlertCooldownMinutes" type="number" min="0" max="240" step="1" placeholder="30"></div>
+            <div class="setting-row"><div><div class="setting-label">静默时段</div><div class="setting-desc">该时间段内只记录提醒，不弹窗、不响铃、不发送通知。</div></div><div class="settings-stack"><input class="settings-input smtp-port" id="setAlertQuietStart" type="time" aria-label="静默开始时间"><span class="settings-time-separator">至</span><input class="settings-input smtp-port" id="setAlertQuietEnd" type="time" aria-label="静默结束时间"></div></div>
+          </section>
+        </div>
+        <div class="settings-panel" id="settingsPanelEmail" role="tabpanel" aria-labelledby="settingsTabEmail" data-settings-panel="email">
+          <div class="settings-panel-head"><span>邮件通知</span><h3>配置邮件服务与通知内容</h3><p>授权码仅保存在本机凭据存储中，导出普通配置时不会包含原文。</p></div>
+          <section class="setting-section">
+            <header class="setting-section-head"><h4>SMTP 连接</h4><p>填写服务地址、端口和加密方式。</p></header>
+            <div class="setting-row"><div><div class="setting-label">SMTP 服务器</div><div class="setting-desc">邮件服务商 SMTP 地址，例如 smtp.qq.com。</div></div><input class="settings-input" id="setSmtpServer" type="text" placeholder="smtp.qq.com"></div>
+            <div class="setting-row"><div><div class="setting-label">端口</div><div class="setting-desc">SSL 通常为 465，TLS 通常为 587。</div></div><input class="settings-input smtp-port" id="setSmtpPort" type="number" min="1" max="65535" placeholder="465"></div>
+            <div class="setting-row"><div><div class="setting-label">加密方式</div><div class="setting-desc">使用 SSL 或 TLS 建立加密连接。</div></div><select class="settings-select" id="setSmtpEncryption"><option value="ssl">SSL</option><option value="tls">TLS</option></select></div>
+          </section>
+          <section class="setting-section">
+            <header class="setting-section-head"><h4>账户与密钥</h4><p>配置发件账户、授权码和收件地址。</p></header>
+            <div class="setting-row"><div><div class="setting-label">发件邮箱</div><div class="setting-desc">用于发送通知的邮箱地址。</div></div><input class="settings-input" id="setSmtpSender" type="email" placeholder="your@qq.com"></div>
+            <div class="setting-row"><div><div class="setting-label">SMTP 授权码</div><div class="setting-desc setting-status" id="smtpPasswordStatus">未保存授权码。输入授权码后保存即可启用邮件发送。</div></div><div class="settings-stack settings-secret-control"><input class="settings-input" id="setSmtpPassword" type="password" autocomplete="new-password" placeholder="留空表示不修改"><input class="hidden-control" type="checkbox" id="clearSmtpPassword"><button class="settings-cancel btn-form clear-secret-btn" id="clearSmtpPasswordButton" type="button" onclick="toggleSecretClear('clearSmtpPassword', 'smtpPasswordStatus', 'clearSmtpPasswordButton', '保存后将删除已保存的 SMTP 授权码。')">删除已保存授权码</button></div></div>
+            <div class="setting-row"><div><div class="setting-label">收件邮箱</div><div class="setting-desc">接收金价预警通知的邮箱。</div></div><input class="settings-input" id="setSmtpRecipient" type="email" placeholder="receiver@qq.com"></div>
+            <div class="setting-row"><div><div class="setting-label">连接测试</div><div class="setting-desc">发送一封测试邮件验证当前配置。</div></div><div class="settings-stack setting-action-status"><button class="btn-set btn-form" id="btnTestEmail" type="button" onclick="testEmail()">发送测试</button><span class="test-email-status" id="testEmailStatus"></span></div></div>
+          </section>
+          <section class="setting-section">
+            <header class="setting-section-head"><h4>通知模板</h4><p>自定义预警邮件的标题和正文。</p></header>
+            <div class="setting-row"><div><div class="setting-label">邮件标题模板</div><div class="setting-desc">支持 {level}、{title}、{price_rmb}、{price_usd}、{rate}。</div></div><input class="settings-input" id="setEmailSubjectTemplate" type="text" placeholder="[金价预警·{level}] {title}"></div>
+            <div class="setting-row setting-row-top"><div><div class="setting-label">邮件正文模板</div><div class="setting-desc">支持 {message}、{time}、{gold_source}、{rate_source} 等占位符。</div></div><textarea class="settings-textarea" id="setEmailBodyTemplate" placeholder="{message}"></textarea></div>
+          </section>
+        </div>
+        <div class="settings-panel" id="settingsPanelWebhook" role="tabpanel" aria-labelledby="settingsTabWebhook" data-settings-panel="webhook">
+          <div class="settings-panel-head"><span>Webhook</span><h3>将预警发送到外部服务</h3><p>使用 HTTPS 地址接收结构化 JSON，可连接企业协作工具或自建服务。</p></div>
+          <section class="setting-section">
+            <header class="setting-section-head"><h4>连接与投递</h4><p>配置接收地址和需要投递的预警级别。</p></header>
+            <div class="setting-row"><div><div class="setting-label">启用 Webhook</div><div class="setting-desc">达到预警条件时向 Webhook 地址发送 JSON 通知。</div></div><label class="switch"><input type="checkbox" id="setWebhookEnabled"><span class="slider"></span></label></div>
+            <div class="setting-row"><div><div class="setting-label">Webhook 地址</div><div class="setting-desc">支持企业微信、钉钉和自建 HTTPS 接收地址。</div></div><input class="settings-input" id="setWebhookUrl" type="url" placeholder="https://example.com/webhook"></div>
+            <div class="setting-row"><div><div class="setting-label">通知级别</div><div class="setting-desc">分别控制价格、关键和波动预警是否发送。</div></div><div class="settings-stack"><label class="inline-check"><input type="checkbox" id="setWebhookWarning">价格</label><label class="inline-check"><input type="checkbox" id="setWebhookCritical">关键</label><label class="inline-check"><input type="checkbox" id="setWebhookVolatility">波动</label></div></div>
+            <div class="setting-row"><div><div class="setting-label">连接测试</div><div class="setting-desc">发送一条测试请求验证地址是否可用。</div></div><div class="settings-stack setting-action-status"><button class="settings-cancel btn-form" id="btnTestWebhook" type="button" onclick="testWebhook()">发送测试</button><span class="test-email-status" id="testWebhookStatus"></span></div></div>
+          </section>
+        </div>
+        <div class="settings-panel" id="settingsPanelDigest" role="tabpanel" aria-labelledby="settingsTabDigest" data-settings-panel="digest">
+          <div class="settings-panel-head"><span>摘要通知</span><h3>定时汇总最近 24 小时的重要信息</h3><p>摘要包含行情、预警、风险分析、新闻、数据质量和持仓概况。</p></div>
+          <section class="setting-section">
+            <header class="setting-section-head"><h4>发送计划</h4><p>设置每日运行时间和发送渠道。</p></header>
+            <div class="setting-row"><div><div class="setting-label">启用每日摘要</div><div class="setting-desc">按本地时间执行每日摘要任务。</div></div><label class="switch"><input type="checkbox" id="setDailyDigestEnabled" aria-label="启用每日摘要"><span class="slider"></span></label></div>
+            <div class="setting-row"><div><div class="setting-label">发送时间</div><div class="setting-desc">程序在设定时间后启动时，会补发当天尚未完成的摘要。</div></div><input class="settings-input smtp-port" id="setDailyDigestTime" type="time" value="20:00" aria-label="每日摘要发送时间"></div>
+            <div class="setting-row"><div><div class="setting-label">发送渠道</div><div class="setting-desc">邮件与 Webhook 可独立启用，并复用各自连接配置。</div></div><div class="settings-stack"><label class="inline-check"><input type="checkbox" id="setDailyDigestEmail">邮件</label><label class="inline-check"><input type="checkbox" id="setDailyDigestWebhook">Webhook</label></div></div>
+            <div class="setting-row"><div><div class="setting-label">任务状态</div><div class="setting-desc">显示当前计划、渠道和最近一次执行结果。</div></div><span class="setting-status setting-status-wide" id="dailyDigestStatus" aria-live="polite">状态尚未加载。</span></div>
+          </section>
+          <section class="setting-section">
+            <header class="setting-section-head"><h4>预览与测试</h4><p>先检查摘要内容，再决定是否测试发送。</p></header>
+            <div class="setting-row"><div><div class="setting-label">摘要操作</div><div class="setting-desc">预览和测试都不会占用当天计划任务的完成状态。</div></div><div class="settings-stack"><button class="settings-cancel btn-form" id="btnPreviewDailyDigest" type="button" onclick="previewDailyDigest()">生成预览</button><button class="btn-set btn-form" id="btnTestDailyDigest" type="button" onclick="testDailyDigest()">测试发送</button></div></div>
+            <div class="setting-row setting-row-top"><div><div class="setting-label">预览内容</div><div class="setting-desc">测试发送使用相同内容及已保存的渠道配置。</div></div><textarea class="settings-textarea settings-textarea-large" id="dailyDigestPreview" aria-label="每日摘要预览内容" readonly placeholder="点击生成预览后显示摘要内容"></textarea></div>
+          </section>
+        </div>
+        <div class="settings-panel" id="settingsPanelRisk" role="tabpanel" aria-labelledby="settingsTabRisk" data-settings-panel="risk">
+          <div class="settings-panel-head"><span>风险分析</span><h3>配置分析模型和单次调用成本</h3><p>模型只在手动执行风险分析或连接测试时调用，不会后台自动消耗 token。</p></div>
+          <section class="setting-section">
+            <header class="setting-section-head"><h4>分析策略</h4><p>控制功能状态、分析深度和模型提供商。</p></header>
+            <div class="setting-row"><div><div class="setting-label">启用风险分析助手</div><div class="setting-desc">关闭后将隐藏手动风险分析入口。</div></div><label class="switch"><input type="checkbox" id="setRiskAssistantEnabled"><span class="slider"></span></label></div>
+            <div class="setting-row"><div><div class="setting-label">分析深度</div><div class="setting-desc">快速模式消耗更少，深度模式会使用更多历史样本。</div></div><select class="settings-select" id="setRiskAssistantDepth"><option value="quick">快速</option><option value="standard">标准</option><option value="deep">深度</option></select></div>
+            <div class="setting-row"><div><div class="setting-label">模型提供商</div><div class="setting-desc">可使用 DeepSeek 或 OpenAI 兼容服务。</div></div><select class="settings-select" id="setRiskAssistantProvider" onchange="updateRiskProviderFields()"><option value="deepseek">DeepSeek</option><option value="openai_compatible">OpenAI 兼容</option></select></div>
+          </section>
+          <section class="setting-section">
+            <header class="setting-section-head"><h4>模型连接</h4><p>配置当前提供商的接口地址、模型和密钥。</p></header>
+            <div class="setting-row risk-provider-row" data-provider="deepseek"><div><div class="setting-label">DeepSeek API 地址</div><div class="setting-desc">默认使用 DeepSeek 官方 OpenAI 兼容接口。</div></div><input class="settings-input" id="setDeepseekBaseUrl" type="url" placeholder="https://api.deepseek.com"></div>
+            <div class="setting-row risk-provider-row" data-provider="deepseek"><div><div class="setting-label">DeepSeek 模型</div><div class="setting-desc setting-status" id="deepseekModelStatus">默认模型为 deepseek-v4-pro，可从接口自动获取。</div></div><div class="settings-stack"><select class="settings-select" id="setDeepseekModel"></select><button class="settings-cancel btn-form" type="button" onclick="refreshRiskModels()">刷新模型</button></div></div>
+            <div class="setting-row risk-provider-row" data-provider="deepseek"><div><div class="setting-label">DeepSeek API Key</div><div class="setting-desc setting-status" id="deepseekKeyStatus">未保存密钥。输入 API Key 后保存即可启用该模型。</div></div><div class="settings-stack settings-secret-control"><input class="settings-input" id="setDeepseekApiKey" type="password" autocomplete="new-password" placeholder="留空表示不修改"><input class="hidden-control" type="checkbox" id="clearDeepseekApiKey"><button class="settings-cancel btn-form clear-secret-btn" id="clearDeepseekApiKeyButton" type="button" onclick="toggleSecretClear('clearDeepseekApiKey', 'deepseekKeyStatus', 'clearDeepseekApiKeyButton', '保存后将删除已保存的 DeepSeek API Key。')">删除已保存密钥</button></div></div>
+            <div class="setting-row risk-provider-row" data-provider="openai_compatible"><div><div class="setting-label">兼容接口地址</div><div class="setting-desc">填写兼容服务的基础地址，例如 https://example.com/v1。</div></div><input class="settings-input" id="setOpenaiCompatibleBaseUrl" type="url" placeholder="https://example.com/v1"></div>
+            <div class="setting-row risk-provider-row" data-provider="openai_compatible"><div><div class="setting-label">兼容模型</div><div class="setting-desc">填写兼容服务支持的模型名称。</div></div><input class="settings-input" id="setOpenaiCompatibleModel" type="text" placeholder="model-name"></div>
+            <div class="setting-row risk-provider-row" data-provider="openai_compatible"><div><div class="setting-label">兼容 API Key</div><div class="setting-desc setting-status" id="openaiCompatibleKeyStatus">未保存密钥。输入 API Key 后保存即可启用该接口。</div></div><div class="settings-stack settings-secret-control"><input class="settings-input" id="setOpenaiCompatibleApiKey" type="password" autocomplete="new-password" placeholder="留空表示不修改"><input class="hidden-control" type="checkbox" id="clearOpenaiCompatibleApiKey"><button class="settings-cancel btn-form clear-secret-btn" id="clearOpenaiCompatibleApiKeyButton" type="button" onclick="toggleSecretClear('clearOpenaiCompatibleApiKey', 'openaiCompatibleKeyStatus', 'clearOpenaiCompatibleApiKeyButton', '保存后将删除已保存的兼容接口 API Key。')">删除已保存密钥</button></div></div>
+            <div class="setting-row"><div><div class="setting-label">模型连接测试</div><div class="setting-desc">发送一次轻量生成请求，不保存风险分析结果。</div></div><div class="settings-stack setting-action-status"><button class="settings-cancel btn-form" type="button" onclick="testRiskModel()">测试模型</button><span class="model-test-status" id="riskModelTestStatus"></span></div></div>
+          </section>
+          <section class="setting-section">
+            <header class="setting-section-head"><h4>成本控制</h4><p>限制输出规模并避免短时间重复调用。</p></header>
+            <div class="setting-row"><div><div class="setting-label">单次输出上限</div><div class="setting-desc">限制每次分析的最大输出 token。</div></div><input class="settings-input smtp-port" id="setRiskMaxTokens" type="number" min="300" max="4000" step="100" placeholder="1200"></div>
+            <div class="setting-row"><div><div class="setting-label">分析冷却时间</div><div class="setting-desc">两次手动分析之间的最短间隔。</div></div><input class="settings-input smtp-port" id="setRiskCooldownSeconds" type="number" min="0" max="300" step="1" placeholder="15"></div>
+            <div class="setting-row"><div><div class="setting-label">重复分析缓存</div><div class="setting-desc">同一行情快照在此时间内复用最近分析。</div></div><input class="settings-input smtp-port" id="setRiskCacheMinutes" type="number" min="0" max="60" step="1" placeholder="10"></div>
+          </section>
+        </div>
+        <div class="settings-panel" id="settingsPanelOps" role="tabpanel" aria-labelledby="settingsTabOps" data-settings-panel="ops">
+          <div class="settings-panel-head"><span>运维与数据</span><h3>管理本机备份、诊断和应用维护</h3><p>归档和恢复可能包含敏感信息；执行覆盖性操作前请确认文件来源。</p></div>
+          <section class="setting-section">
+            <header class="setting-section-head"><h4>备份与恢复</h4><p>普通配置备份不包含密钥，完整归档包含本机全部数据。</p></header>
+            <div class="setting-row"><div><div class="setting-label">导出配置</div><div class="setting-desc">导出设置、阈值和通知配置，不包含密钥原文。</div></div><button class="btn-set btn-form" type="button" onclick="exportConfig()">导出配置</button></div>
+            <div class="setting-row setting-row-top"><div><div class="setting-label">导入配置</div><div class="setting-desc">粘贴配置备份 JSON 后导入，会覆盖当前相关配置。</div></div><div class="settings-stack settings-stack-column"><textarea class="settings-textarea" id="configImportText" placeholder="粘贴配置备份 JSON"></textarea><button class="settings-cancel btn-form" type="button" onclick="importConfig()">导入配置</button></div></div>
+            <div class="setting-row"><div><div class="setting-label">完整数据归档</div><div class="setting-desc">归档设置、密钥、持仓、预警、复盘和历史数据库。</div></div><button class="btn-set btn-form" type="button" onclick="exportDataArchive()">创建归档</button></div>
+            <div class="setting-row setting-row-top"><div><div class="setting-label">恢复完整数据</div><div class="setting-desc">先校验版本、哈希和数据库完整性，确认后原子恢复。</div></div><div class="settings-stack settings-stack-column"><input id="dataArchiveFile" class="portfolio-import-file" type="file" accept=".zip,application/zip" onchange="previewDataArchive(this)"><div class="settings-stack"><button class="settings-cancel btn-form" type="button" onclick="chooseDataArchive()">选择归档</button><button class="dialog-danger btn-form" id="restoreDataArchiveButton" type="button" onclick="confirmDataArchiveRestore()" hidden>确认恢复</button></div><div class="data-archive-preview" id="dataArchivePreview"></div></div></div>
+          </section>
+          <section class="setting-section">
+            <header class="setting-section-head"><h4>应用维护</h4><p>检查更新、生成诊断并管理导出目录。</p></header>
+            <div class="setting-row"><div><div class="setting-label">首次使用向导</div><div class="setting-desc">重新检查桌面显示、启动行为和本机预警偏好。</div></div><button class="settings-cancel btn-form" type="button" onclick="reopenOnboarding()">重新打开</button></div>
+            <div class="setting-row setting-row-top"><div><div class="setting-label">更新状态</div><div class="setting-desc">查看当前版本、最近检查结果和失败原因。</div></div><div class="settings-stack settings-stack-column ops-update-card"><div class="ops-update-copy"><div class="ops-update-status" id="opsUpdateStatus">尚未检查更新。</div><div class="ops-update-meta" id="opsUpdateMeta">当前版本 {{ app_version }}</div></div><div class="settings-stack"><button class="settings-cancel btn-form" type="button" onclick="checkUpdateFromOps()">检查更新</button><button class="settings-cancel btn-form" type="button" onclick="openUpdateFromOps()">打开更新</button></div></div></div>
+            <div class="setting-row setting-row-top"><div><div class="setting-label">诊断报告</div><div class="setting-desc">导出版本、数据源状态、最近日志和配置摘要。</div></div><div class="settings-stack settings-stack-column"><div class="settings-stack"><button class="btn-set btn-form" type="button" onclick="copyDiagnostics()">复制诊断</button><button class="settings-cancel btn-form" type="button" onclick="exportDiagnostics()">生成诊断</button></div><textarea class="settings-textarea diagnostics-copy-fallback" id="diagnosticsCopyFallback" aria-label="诊断摘要内容" readonly hidden></textarea></div></div>
+            <div class="setting-row setting-row-top"><div><div class="setting-label">导出目录</div><div class="setting-desc setting-status" id="exportDirStatus">留空使用默认导出目录。</div></div><div class="settings-stack settings-stack-column"><input class="settings-input" id="setExportDir" type="text" placeholder="留空使用默认导出目录"><div class="settings-stack"><button class="settings-cancel btn-form" id="chooseExportDirButton" type="button" onclick="chooseExportDir()">选择目录</button><button class="settings-cancel btn-form" type="button" onclick="resetExportDirField()">使用默认</button><button class="settings-cancel btn-form" type="button" onclick="openExportsFolder()">打开目录</button></div></div></div>
+            <div class="setting-row setting-row-top"><div><div class="setting-label">最近操作记录</div><div class="setting-desc">显示本次会话内的导出配置、生成诊断和打开目录结果。</div></div><div class="settings-stack ops-recent-card"><div class="ops-recent-list" id="recentOpsList"><div class="ops-recent-empty">暂无操作记录</div></div></div></div>
+          </section>
+          <section class="setting-section setting-section-danger">
+            <header class="setting-section-head"><h4>危险操作</h4><p>以下操作会覆盖当前设置或数据，执行前请确认已完成备份。</p></header>
+            <div class="setting-row setting-row-danger"><div><div class="setting-label">恢复默认设置</div><div class="setting-desc">重置通用、邮件、风险分析和提醒设置，并清空阈值。</div></div><button class="dialog-danger btn-form" type="button" onclick="resetSettings()">恢复默认</button></div>
+          </section>
+          <div class="ops-status" id="opsStatus"></div>
+        </div>
+      </main>
     </div>
-    <div class="settings-body">
-      <div class="settings-panel active" id="settingsPanelGeneral" role="tabpanel" aria-labelledby="settingsTabGeneral">
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">开机自启动</div>
-            <div class="setting-desc">开机后自动启动金价监控。</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="setStartup"><span class="slider"></span></label>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label" id="startupTrayLabel">自启动时进入托盘</div>
-            <div class="setting-desc" id="startupTrayDesc">开机启动后不弹出主窗口，可从右下角托盘打开。</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="setStartupTray"><span class="slider"></span></label>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label" id="floatingPriceLabel">桌面金价悬浮条</div>
-            <div class="setting-desc" id="floatingPriceDesc">主窗口隐藏时，仍在桌面右下角显示当前金价。</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="setFloatingPrice"><span class="slider"></span></label>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">悬浮条显示内容</div>
-            <div class="setting-desc" id="floatingDisplayDesc">控制桌面悬浮条显示人民币、美元或组合内容。</div>
-          </div>
-          <select class="settings-select" id="setFloatingDisplayMode">
-            <option value="rmb_usd">人民币 + 美元</option>
-            <option value="rmb_only">仅人民币</option>
-            <option value="usd_only">仅美元</option>
-          </select>
-        </div>
-        <div class="setting-row" id="floatingPresetRow">
-          <div>
-            <div class="setting-label">悬浮条尺寸</div>
-            <div class="setting-desc">极简适合长期贴边显示，标准模式保留更多状态信息。</div>
-          </div>
-          <select class="settings-select" id="setFloatingPreset">
-            <option value="minimal">极简</option>
-            <option value="compact">紧凑</option>
-            <option value="standard">标准</option>
-          </select>
-        </div>
-        <div class="setting-row" id="floatingOpacityRow">
-          <div>
-            <div class="setting-label">悬浮条透明度</div>
-            <div class="setting-desc">范围 50 到 100，数值越高越不透明。</div>
-          </div>
-          <input class="settings-input smtp-port" id="setFloatingOpacity" type="number" min="50" max="100" step="1" placeholder="94">
-        </div>
-        <div class="setting-row" id="floatingSnapRow">
-          <div>
-            <div class="setting-label">悬浮条贴边吸附</div>
-            <div class="setting-desc">拖动到屏幕边缘附近时自动贴齐。</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="setFloatingSnapEdge"><span class="slider"></span></label>
-        </div>
-        <div class="setting-row" id="floatingTopmostRow">
-          <div>
-            <div class="setting-label">悬浮条始终置顶</div>
-            <div class="setting-desc">关闭后，其他应用可以覆盖悬浮条，减少遮挡。</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="setFloatingAlwaysOnTop"><span class="slider"></span></label>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">关闭窗口时</div>
-            <div class="setting-desc">控制点击右上角关闭按钮后的行为。</div>
-          </div>
-          <select class="settings-select" id="setCloseBehavior">
-            <option value="ask">每次询问</option>
-            <option value="minimize_to_tray" id="closeMinimizeOption">最小化到托盘</option>
-            <option value="exit">退出程序</option>
-          </select>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">告警提示音</div>
-            <div class="setting-desc">达到预警条件时播放系统提示音。</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="setAlertSound"><span class="slider"></span></label>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">系统级告警弹窗</div>
-            <div class="setting-desc">达到预警条件时弹出置顶提示框。</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="setAlertDialog"><span class="slider"></span></label>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">测试提醒</div>
-            <div class="setting-desc">触发一条手动测试提醒，用于检查弹窗、声音和通知链路。</div>
-          </div>
-          <button class="settings-cancel btn-form" id="btnTestAlert" onclick="testAlert()">触发测试</button>
-          <span class="test-email-status" id="testAlertStatus"></span>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">提醒冷却时间</div>
-            <div class="setting-desc">同一类型提醒在冷却期内只记录，不重复弹窗或发送通知。</div>
-          </div>
-          <input class="settings-input smtp-port" id="setAlertCooldownMinutes" type="number" min="0" max="240" step="1" placeholder="30">
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">静默时段</div>
-            <div class="setting-desc">该时间段内只记录提醒，不弹窗、不响铃、不发送通知。</div>
-          </div>
-          <div class="settings-stack">
-            <input class="settings-input smtp-port" id="setAlertQuietStart" type="time">
-            <input class="settings-input smtp-port" id="setAlertQuietEnd" type="time">
-          </div>
-        </div>
-      </div>
-      <div class="settings-panel" id="settingsPanelEmail" role="tabpanel" aria-labelledby="settingsTabEmail">
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">SMTP 服务器</div>
-            <div class="setting-desc">邮件服务商 SMTP 地址 (如 smtp.qq.com)。</div>
-          </div>
-          <input class="settings-input" id="setSmtpServer" type="text" placeholder="smtp.qq.com">
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">端口</div>
-            <div class="setting-desc">SSL 通常为 465，TLS 通常为 587。</div>
-          </div>
-          <input class="settings-input smtp-port" id="setSmtpPort" type="number" placeholder="465">
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">加密方式</div>
-            <div class="setting-desc">SSL 或 TLS 加密连接。</div>
-          </div>
-          <select class="settings-select" id="setSmtpEncryption">
-            <option value="ssl">SSL</option>
-            <option value="tls">TLS</option>
-          </select>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">发件邮箱</div>
-            <div class="setting-desc">用于发送通知的邮箱地址。</div>
-          </div>
-          <input class="settings-input" id="setSmtpSender" type="email" placeholder="your@qq.com">
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">SMTP 授权码</div>
-            <div class="setting-desc" id="smtpPasswordStatus">未保存授权码。输入授权码后保存即可启用邮件发送。</div>
-          </div>
-          <input class="settings-input" id="setSmtpPassword" type="password" placeholder="留空表示不修改">
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">已保存授权码</div>
-            <div class="setting-desc">不再使用当前授权码时，可删除本机保存的授权码。</div>
-          </div>
-          <input class="hidden-control" type="checkbox" id="clearSmtpPassword">
-          <button class="settings-cancel btn-form clear-secret-btn" id="clearSmtpPasswordButton" type="button" onclick="toggleSecretClear('clearSmtpPassword', 'smtpPasswordStatus', 'clearSmtpPasswordButton', '保存后将删除已保存的 SMTP 授权码。')">删除已保存授权码</button>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">收件邮箱</div>
-            <div class="setting-desc">接收金价预警通知的邮箱。</div>
-          </div>
-          <input class="settings-input" id="setSmtpRecipient" type="email" placeholder="receiver@qq.com">
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">测试邮件</div>
-            <div class="setting-desc">发送一封测试邮件验证配置是否正确。</div>
-          </div>
-          <button class="btn-set btn-form" id="btnTestEmail" onclick="testEmail()">发送测试</button>
-          <span class="test-email-status" id="testEmailStatus"></span>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">邮件标题模板</div>
-            <div class="setting-desc">支持 {level}、{title}、{price_rmb}、{price_usd}、{rate}。</div>
-          </div>
-          <input class="settings-input" id="setEmailSubjectTemplate" type="text" placeholder="[金价预警·{level}] {title}">
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">邮件正文模板</div>
-            <div class="setting-desc">支持 {message}、{time}、{gold_source}、{rate_source} 等占位符。</div>
-          </div>
-          <textarea class="settings-textarea" id="setEmailBodyTemplate" placeholder="{message}"></textarea>
-        </div>
-      </div>
-      <div class="settings-panel" id="settingsPanelWebhook" role="tabpanel" aria-labelledby="settingsTabWebhook">
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">启用 Webhook</div>
-            <div class="setting-desc">达到预警条件时向 HTTPS Webhook 地址发送 JSON 通知。</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="setWebhookEnabled"><span class="slider"></span></label>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">Webhook 地址</div>
-            <div class="setting-desc">支持企业微信、钉钉、自建服务等 HTTPS 接收地址。</div>
-          </div>
-          <input class="settings-input" id="setWebhookUrl" type="url" placeholder="https://example.com/webhook">
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">Webhook 分级</div>
-            <div class="setting-desc">分别控制价格预警、关键预警和波动预警是否发送 Webhook。</div>
-          </div>
-          <div class="settings-stack">
-            <label class="inline-check"><input type="checkbox" id="setWebhookWarning"> 价格</label>
-            <label class="inline-check"><input type="checkbox" id="setWebhookCritical"> 关键</label>
-            <label class="inline-check"><input type="checkbox" id="setWebhookVolatility"> 波动</label>
-          </div>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">测试 Webhook</div>
-            <div class="setting-desc">发送一条测试 JSON 请求验证地址是否可用。</div>
-          </div>
-          <button class="settings-cancel btn-form" id="btnTestWebhook" onclick="testWebhook()">发送测试</button>
-          <span class="test-email-status" id="testWebhookStatus"></span>
-        </div>
-      </div>
-      <div class="settings-panel" id="settingsPanelDigest" role="tabpanel" aria-labelledby="settingsTabDigest">
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">启用每日摘要</div>
-            <div class="setting-desc">每天按本地时间汇总最近 24 小时的行情、预警、风险分析、新闻、数据质量和持仓。</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="setDailyDigestEnabled" aria-label="启用每日摘要"><span class="slider"></span></label>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">发送时间</div>
-            <div class="setting-desc">程序在设定时间后启动时，会补发当天尚未完成的摘要。</div>
-          </div>
-          <input class="settings-input smtp-port" id="setDailyDigestTime" type="time" value="20:00" aria-label="每日摘要发送时间">
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">发送渠道</div>
-            <div class="setting-desc">邮件与 Webhook 可独立启用，并复用各自通知页中的连接配置。</div>
-          </div>
-          <div class="settings-stack">
-            <label class="inline-check"><input type="checkbox" id="setDailyDigestEmail"> 邮件</label>
-            <label class="inline-check"><input type="checkbox" id="setDailyDigestWebhook"> Webhook</label>
-          </div>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">任务状态</div>
-            <div class="setting-desc">显示当前计划、通知渠道和最近一次执行结果。</div>
-          </div>
-          <span class="test-email-status" id="dailyDigestStatus" aria-live="polite">状态尚未加载。</span>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">摘要预览</div>
-            <div class="setting-desc">预览不会发送通知，也不会占用当天的计划发送资格。</div>
-          </div>
-          <div class="settings-stack">
-            <button class="settings-cancel btn-form" id="btnPreviewDailyDigest" type="button" onclick="previewDailyDigest()">生成预览</button>
-            <button class="btn-set btn-form" id="btnTestDailyDigest" type="button" onclick="testDailyDigest()">测试发送</button>
-          </div>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">预览内容</div>
-            <div class="setting-desc">测试发送使用相同内容及已保存的渠道配置，但不会改变当天计划任务的完成状态。</div>
-          </div>
-          <textarea class="settings-textarea" id="dailyDigestPreview" aria-label="每日摘要预览内容" readonly placeholder="点击生成预览后显示摘要内容"></textarea>
-        </div>
-      </div>
-      <div class="settings-panel" id="settingsPanelRisk" role="tabpanel" aria-labelledby="settingsTabRisk">
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">启用风险分析助手</div>
-            <div class="setting-desc">仅在手动点击风险分析时调用模型，不会自动消耗 token。</div>
-          </div>
-          <label class="switch"><input type="checkbox" id="setRiskAssistantEnabled"><span class="slider"></span></label>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">分析深度</div>
-            <div class="setting-desc">快速模式消耗更少，深度模式会使用更多历史样本。</div>
-          </div>
-          <select class="settings-select" id="setRiskAssistantDepth">
-            <option value="quick">快速</option>
-            <option value="standard">标准</option>
-            <option value="deep">深度</option>
-          </select>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">模型提供商</div>
-            <div class="setting-desc">当前版本优先支持 DeepSeek。</div>
-          </div>
-          <select class="settings-select" id="setRiskAssistantProvider" onchange="updateRiskProviderFields()">
-            <option value="deepseek">DeepSeek</option>
-            <option value="openai_compatible">OpenAI 兼容</option>
-          </select>
-        </div>
-        <div class="setting-row risk-provider-row" data-provider="deepseek">
-          <div>
-            <div class="setting-label">DeepSeek API 地址</div>
-            <div class="setting-desc">默认使用 DeepSeek 官方 OpenAI 兼容接口。</div>
-          </div>
-          <input class="settings-input" id="setDeepseekBaseUrl" type="url" placeholder="https://api.deepseek.com">
-        </div>
-        <div class="setting-row risk-provider-row" data-provider="deepseek">
-          <div>
-            <div class="setting-label">DeepSeek 模型</div>
-            <div class="setting-desc" id="deepseekModelStatus">默认模型为 deepseek-v4-pro，可从接口自动获取。</div>
-          </div>
-          <div class="settings-stack">
-            <select class="settings-select" id="setDeepseekModel"></select>
-            <button class="settings-cancel risk-history-clear" type="button" onclick="refreshRiskModels()">刷新模型</button>
-          </div>
-        </div>
-        <div class="setting-row risk-provider-row" data-provider="deepseek">
-          <div>
-            <div class="setting-label">DeepSeek API Key</div>
-            <div class="setting-desc" id="deepseekKeyStatus">未保存密钥。输入 API Key 后保存即可启用该模型。</div>
-          </div>
-          <input class="settings-input" id="setDeepseekApiKey" type="password" placeholder="留空表示不修改">
-        </div>
-        <div class="setting-row risk-provider-row" data-provider="deepseek">
-          <div>
-            <div class="setting-label">已保存 DeepSeek Key</div>
-            <div class="setting-desc">不再使用当前密钥时，可删除本机保存的 DeepSeek API Key。</div>
-          </div>
-          <input class="hidden-control" type="checkbox" id="clearDeepseekApiKey">
-          <button class="settings-cancel btn-form clear-secret-btn" id="clearDeepseekApiKeyButton" type="button" onclick="toggleSecretClear('clearDeepseekApiKey', 'deepseekKeyStatus', 'clearDeepseekApiKeyButton', '保存后将删除已保存的 DeepSeek API Key。')">删除已保存密钥</button>
-        </div>
-        <div class="setting-row risk-provider-row" data-provider="openai_compatible">
-          <div>
-            <div class="setting-label">兼容接口地址</div>
-            <div class="setting-desc">填写 OpenAI 兼容服务的基础地址，例如 https://example.com/v1。</div>
-          </div>
-          <input class="settings-input" id="setOpenaiCompatibleBaseUrl" type="url" placeholder="https://example.com/v1">
-        </div>
-        <div class="setting-row risk-provider-row" data-provider="openai_compatible">
-          <div>
-            <div class="setting-label">兼容模型</div>
-            <div class="setting-desc">填写兼容服务支持的模型名称。</div>
-          </div>
-          <input class="settings-input" id="setOpenaiCompatibleModel" type="text" placeholder="model-name">
-        </div>
-        <div class="setting-row risk-provider-row" data-provider="openai_compatible">
-          <div>
-            <div class="setting-label">兼容 API Key</div>
-            <div class="setting-desc" id="openaiCompatibleKeyStatus">未保存密钥。输入 API Key 后保存即可启用该接口。</div>
-          </div>
-          <input class="settings-input" id="setOpenaiCompatibleApiKey" type="password" placeholder="留空表示不修改">
-        </div>
-        <div class="setting-row risk-provider-row" data-provider="openai_compatible">
-          <div>
-            <div class="setting-label">已保存兼容 Key</div>
-            <div class="setting-desc">不再使用当前密钥时，可删除本机保存的兼容 API Key。</div>
-          </div>
-          <input class="hidden-control" type="checkbox" id="clearOpenaiCompatibleApiKey">
-          <button class="settings-cancel btn-form clear-secret-btn" id="clearOpenaiCompatibleApiKeyButton" type="button" onclick="toggleSecretClear('clearOpenaiCompatibleApiKey', 'openaiCompatibleKeyStatus', 'clearOpenaiCompatibleApiKeyButton', '保存后将删除已保存的兼容接口 API Key。')">删除已保存密钥</button>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">模型连接测试</div>
-            <div class="setting-desc">发送一次轻量生成请求验证当前模型，不保存风险分析结果。</div>
-          </div>
-          <div class="settings-stack">
-            <button class="settings-cancel risk-history-clear" type="button" onclick="testRiskModel()">测试模型</button>
-            <span class="model-test-status" id="riskModelTestStatus"></span>
-          </div>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">单次输出上限</div>
-            <div class="setting-desc">限制每次分析的最大输出 token，控制成本。</div>
-          </div>
-          <input class="settings-input smtp-port" id="setRiskMaxTokens" type="number" min="300" max="4000" step="100" placeholder="1200">
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">分析冷却时间</div>
-            <div class="setting-desc">两次手动分析之间的最短间隔，避免误点重复消耗。</div>
-          </div>
-          <input class="settings-input smtp-port" id="setRiskCooldownSeconds" type="number" min="0" max="300" step="1" placeholder="15">
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">重复分析缓存</div>
-            <div class="setting-desc">同一行情快照在此时间内复用最近分析，避免重复消耗 token。</div>
-          </div>
-          <input class="settings-input smtp-port" id="setRiskCacheMinutes" type="number" min="0" max="60" step="1" placeholder="10">
-        </div>
-      </div>
-      <div class="settings-panel" id="settingsPanelOps" role="tabpanel" aria-labelledby="settingsTabOps">
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">导出配置</div>
-            <div class="setting-desc">导出本机设置、阈值和通知配置，备份文件不包含密钥原文。</div>
-          </div>
-          <button class="btn-set btn-form" type="button" onclick="exportConfig()">导出配置</button>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">导入配置</div>
-            <div class="setting-desc">粘贴配置备份 JSON 后导入，会覆盖当前相关配置。</div>
-          </div>
-          <div class="settings-stack">
-            <textarea class="settings-textarea" id="configImportText" placeholder="粘贴配置备份 JSON"></textarea>
-            <button class="settings-cancel btn-form" type="button" onclick="importConfig()">导入</button>
-          </div>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">完整数据归档</div>
-            <div class="setting-desc">归档设置、密钥、持仓、预警、复盘和历史数据库。归档含敏感信息，请妥善保管。</div>
-          </div>
-          <button class="btn-set btn-form" type="button" onclick="exportDataArchive()">创建归档</button>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">恢复完整数据</div>
-            <div class="setting-desc">先校验归档版本、哈希和数据库完整性，确认后原子恢复；失败时自动回滚。</div>
-          </div>
-          <div class="settings-stack">
-            <input id="dataArchiveFile" class="portfolio-import-file" type="file" accept=".zip,application/zip" onchange="previewDataArchive(this)">
-            <button class="settings-cancel btn-form" type="button" onclick="chooseDataArchive()">选择归档</button>
-            <button class="dialog-danger btn-form" id="restoreDataArchiveButton" type="button" onclick="confirmDataArchiveRestore()" hidden>确认恢复</button>
-            <div class="data-archive-preview" id="dataArchivePreview"></div>
-          </div>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">首次使用向导</div>
-            <div class="setting-desc">重新检查桌面显示、启动行为和本机预警偏好，不修改持仓或预警规则。</div>
-          </div>
-          <button class="settings-cancel btn-form" type="button" onclick="reopenOnboarding()">重新打开</button>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">更新状态</div>
-            <div class="setting-desc">查看当前版本、最近检查结果和失败原因，必要时复制诊断摘要。</div>
-          </div>
-          <div class="settings-stack ops-update-card">
-            <div class="ops-update-copy">
-              <div class="ops-update-status" id="opsUpdateStatus">尚未检查更新。</div>
-              <div class="ops-update-meta" id="opsUpdateMeta">当前版本 {{ app_version }}</div>
-            </div>
-            <button class="settings-cancel btn-form" type="button" onclick="checkUpdateFromOps()">检查更新</button>
-            <button class="settings-cancel btn-form" type="button" onclick="openUpdateFromOps()">打开更新</button>
-            <button class="btn-set btn-form" type="button" onclick="copyDiagnostics()">复制诊断</button>
-          </div>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">诊断报告</div>
-            <div class="setting-desc">导出版本、数据源状态、最近日志和配置摘要，便于排查问题。</div>
-          </div>
-          <div class="settings-stack">
-            <button class="btn-set btn-form" type="button" onclick="copyDiagnostics()">复制诊断</button>
-            <button class="settings-cancel btn-form" type="button" onclick="exportDiagnostics()">生成诊断</button>
-            <textarea class="settings-textarea diagnostics-copy-fallback" id="diagnosticsCopyFallback" aria-label="诊断摘要内容" readonly hidden></textarea>
-          </div>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">导出目录</div>
-            <div class="setting-desc" id="exportDirStatus">留空使用默认导出目录。</div>
-          </div>
-          <div class="settings-stack">
-            <input class="settings-input" id="setExportDir" type="text" placeholder="留空使用默认导出目录">
-            <button class="settings-cancel btn-form" id="chooseExportDirButton" type="button" onclick="chooseExportDir()">选择目录</button>
-            <button class="settings-cancel btn-form" type="button" onclick="resetExportDirField()">使用默认</button>
-            <button class="settings-cancel btn-form" type="button" onclick="openExportsFolder()">打开目录</button>
-          </div>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">最近操作记录</div>
-            <div class="setting-desc">显示本次会话内的导出配置、生成诊断和打开目录结果。</div>
-          </div>
-          <div class="settings-stack ops-recent-card">
-            <div class="ops-recent-list" id="recentOpsList">
-              <div class="ops-recent-empty">暂无操作记录</div>
-            </div>
-          </div>
-        </div>
-        <div class="setting-row">
-          <div>
-            <div class="setting-label">恢复默认设置</div>
-            <div class="setting-desc">重置通用、邮件、风险分析和提醒设置，并清空阈值。</div>
-          </div>
-          <button class="dialog-danger btn-form" type="button" onclick="resetSettings()">恢复默认</button>
-        </div>
-        <div class="ops-status" id="opsStatus"></div>
-      </div>
+    <div class="settings-unsaved" id="settingsUnsavedConfirm" hidden role="alert">
+      <div><strong>有未保存的更改</strong><span>关闭设置将放弃本次修改。</span></div>
+      <div class="settings-unsaved-actions"><button class="settings-cancel" type="button" onclick="hideSettingsDiscardPrompt()">继续编辑</button><button class="dialog-danger" id="settingsDiscardButton" type="button" onclick="discardSettingsChanges()">放弃更改</button></div>
     </div>
-    <div class="settings-message" id="settingsMessage"></div>
     <div class="settings-foot">
-      <button class="settings-cancel" onclick="closeSettings()">取消</button>
-      <button class="settings-save" onclick="saveSettings()">保存</button>
+      <div class="settings-foot-copy"><span class="settings-dirty-state" id="settingsDirtyState">尚未修改</span><div class="settings-message" id="settingsMessage" role="status" aria-live="polite"></div></div>
+      <div class="settings-foot-actions"><button class="settings-cancel" id="settingsCancelButton" type="button" onclick="closeSettings()">取消</button><button class="settings-save" id="settingsSaveButton" type="button" onclick="saveSettings()" disabled>保存更改</button></div>
     </div>
   </div>
 </div>
