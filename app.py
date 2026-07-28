@@ -38,6 +38,7 @@ from goldmonitor import review_notes as review_notes_core
 from goldmonitor import risk_analysis as risk_analysis_core
 from goldmonitor import scheduler as scheduler_core
 from goldmonitor import settings_store as settings_store_core
+from goldmonitor import socket_alert_configuration as socket_alert_configuration_core
 from goldmonitor import socket_alert_log as socket_alert_log_core
 from goldmonitor import socket_alert_rules as socket_alert_rules_core
 from goldmonitor import socket_history_review as socket_history_review_core
@@ -1122,6 +1123,17 @@ def _find_alert_profile(profile_id):
         if item.get("id") == target_id:
             return item
     return None
+
+
+def _set_runtime_alert_profiles(items):
+    global alert_profiles
+    alert_profiles = list(items or [])
+    return alert_profiles
+
+
+def _clear_alert_cooldown_state():
+    global alert_cooldown_state
+    alert_cooldown_state = {}
 
 
 def _coerce_watch_target_bool(value, default=False):
@@ -6285,100 +6297,6 @@ socket_alert_rules_core.register_alert_rule_handlers(
 )
 
 
-@socketio.on("set_threshold")
-def on_set_threshold(data):
-    if not isinstance(data, dict):
-        emit("threshold_error", {"message": "阈值格式无效"})
-        return
-
-    with lock:
-        mode = data.get("mode", "rmb")
-        ttype = data.get("type")       # "upper_warning", "upper_critical", etc.
-        value = data.get("value")
-        if mode not in THRESHOLD_MODES or ttype not in THRESHOLD_TYPES:
-            emit("threshold_error", {"message": "阈值类型无效"})
-            return
-        try:
-            normalized_value = None if value in (None, "") else float(value)
-            state = _replace_legacy_threshold_rule(mode, ttype, normalized_value)
-        except (ValueError, TypeError, alert_rules_core.AlertRuleError):
-            emit("threshold_error", {"message": "请输入有效的数字"})
-            return
-        except alert_rules_core.AlertRuleStoreError:
-            emit("threshold_error", {"message": "阈值保存失败，请检查配置目录权限。"})
-            return
-
-        socketio.emit("alert_rules_updated", state)
-        socketio.emit("thresholds_updated", dict(thresholds))
-
-        cur = price_usd if mode == "usd" else price_rmb
-        if cur is not None:
-            check_alert_rules(datetime.now().strftime("%H:%M:%S"))
-
-
-@socketio.on("clear_threshold")
-def on_clear_threshold(data):
-    if not isinstance(data, dict):
-        emit("threshold_error", {"message": "阈值格式无效"})
-        return
-
-    mode = data.get("mode", "rmb")
-    ttype = data.get("type")
-    if mode not in THRESHOLD_MODES or (ttype != "all" and ttype not in THRESHOLD_TYPES):
-        emit("threshold_error", {"message": "阈值类型无效"})
-        return
-
-    with lock:
-        try:
-            next_rules = [dict(rule) for rule in alert_rules]
-            target_types = THRESHOLD_TYPES if ttype == "all" else (ttype,)
-            for threshold_type in target_types:
-                existing = _find_legacy_alert_rule("threshold", f"{threshold_type}_{mode}")
-                if existing:
-                    next_rules, _ = alert_rules_core.delete_alert_rule(next_rules, existing.get("id"))
-            state = _persist_alert_rule_items(next_rules)
-        except alert_rules_core.AlertRuleStoreError:
-            emit("threshold_error", {"message": "阈值保存失败，请检查配置目录权限。"})
-            return
-        socketio.emit("alert_rules_updated", state)
-        socketio.emit("thresholds_updated", dict(thresholds))
-
-
-@socketio.on("set_volatility")
-def on_set_volatility(data):
-    if not isinstance(data, dict):
-        emit("threshold_error", {"message": "波动率预警格式无效"})
-        return
-
-    with lock:
-        pct = data.get("percent")
-        mins = data.get("minutes", 10)
-        enabled = data.get("enabled", False)
-        normalized = _normalize_volatility_config({
-            "percent": pct,
-            "minutes": mins,
-            "enabled": enabled,
-        })
-        if bool(enabled):
-            try:
-                raw_minutes = int(mins)
-            except (TypeError, ValueError):
-                raw_minutes = 0
-            if normalized["percent"] is None or raw_minutes < 1:
-                emit("threshold_error", {"message": "请输入有效的波动率预警数字"})
-                return
-        try:
-            state = _replace_legacy_volatility_rule(normalized)
-        except ValueError:
-            emit("threshold_error", {"message": "请输入有效的数字"})
-            return
-        except alert_rules_core.AlertRuleStoreError:
-            emit("threshold_error", {"message": "波动率预警保存失败，请检查配置目录权限。"})
-            return
-        socketio.emit("alert_rules_updated", state)
-        socketio.emit("volatility_updated", dict(volatility_config))
-
-
 def _restore_alert_profile_apply_state(
     previous_alert_rules,
     previous_settings,
@@ -6405,189 +6323,92 @@ def _restore_alert_profile_apply_state(
     return rollback_ok
 
 
-@socketio.on("save_alert_profile")
-def on_save_alert_profile(data=None):
-    global alert_profiles
-    try:
-        with lock:
-            profile = alert_profiles_core.build_profile_from_state(
-                data,
-                dict(thresholds),
-                dict(volatility_config),
-                get_settings_snapshot(),
-                now_factory=datetime.now,
-            )
-            profile_id = str((data or {}).get("id") or "").strip() if isinstance(data, dict) else ""
-            existing = _find_alert_profile(profile_id)
-            if existing:
-                profile["id"] = existing["id"]
-                profile["created_at"] = existing.get("created_at") or profile.get("created_at")
-                profile["last_applied_at"] = existing.get("last_applied_at", "")
-                next_items = [
-                    profile if item.get("id") == existing["id"] else item
-                    for item in alert_profiles
-                ]
-            else:
-                next_items = list(alert_profiles) + [profile]
-            alert_profiles = save_alert_profiles(next_items)
-            state = get_alert_profiles_state()
-    except ValueError as exc:
-        emit("alert_profile_error", {"message": str(exc)})
-        return
-    except OSError:
-        emit("alert_profile_error", {"message": "预警策略模板保存失败，请检查配置目录权限。"})
-        return
-    socketio.emit("alert_profiles_updated", state)
-
-
-@socketio.on("rename_alert_profile")
-def on_rename_alert_profile(data=None):
-    global alert_profiles
-    profile_id = data.get("id") if isinstance(data, dict) else None
-    with lock:
-        existing = _find_alert_profile(profile_id)
-        if not existing:
-            emit("alert_profile_error", {"message": "未找到预警策略模板"})
-            return
-        updated = dict(existing)
-        if "name" in data:
-            name = str(data.get("name") or "").strip()
-            if not name:
-                emit("alert_profile_error", {"message": "模板名称不能为空"})
-                return
-            updated["name"] = name
-        if "description" in data:
-            updated["description"] = data.get("description", "")
-        next_items = [
-            updated if item.get("id") == existing["id"] else item
-            for item in alert_profiles
-        ]
-        try:
-            alert_profiles = save_alert_profiles(next_items)
-            state = get_alert_profiles_state()
-        except OSError:
-            emit("alert_profile_error", {"message": "预警策略模板保存失败，请检查配置目录权限。"})
-            return
-    socketio.emit("alert_profiles_updated", state)
-
-
-@socketio.on("delete_alert_profile")
-def on_delete_alert_profile(data=None):
-    global alert_profiles
-    profile_id = data.get("id") if isinstance(data, dict) else None
-    with lock:
-        existing = _find_alert_profile(profile_id)
-        if not existing:
-            emit("alert_profile_error", {"message": "未找到预警策略模板"})
-            return
-        next_items = [item for item in alert_profiles if item.get("id") != existing["id"]]
-        try:
-            alert_profiles = save_alert_profiles(next_items)
-            state = get_alert_profiles_state()
-        except OSError:
-            emit("alert_profile_error", {"message": "预警策略模板删除失败，请检查配置目录权限。"})
-            return
-    socketio.emit("alert_profiles_updated", state)
-
-
-@socketio.on("apply_alert_profile")
-def on_apply_alert_profile(data=None):
-    global alert_profiles, alert_cooldown_state
-    profile_id = data.get("id") if isinstance(data, dict) else None
-    with lock:
-        profile = _find_alert_profile(profile_id)
-        if not profile:
-            emit("alert_profile_error", {"message": "未找到预警策略模板"})
-            return
-
-        previous_thresholds = dict(thresholds)
-        previous_volatility_config = dict(volatility_config)
-        previous_alert_rules = [dict(rule) for rule in alert_rules]
-        previous_settings = get_settings_snapshot()
-        previous_alert_cooldown_state = dict(alert_cooldown_state)
-        previous_profiles = list(alert_profiles)
-
-        try:
-            applied = alert_profiles_core.apply_profile_to_state(
-                profile,
-                previous_thresholds,
-                previous_volatility_config,
-                previous_settings,
-            )
-        except ValueError:
-            emit("alert_profile_error", {"message": "未找到预警策略模板"})
-            return
-
-        try:
-            next_rules = _rules_for_legacy_threshold_snapshot(
-                applied["thresholds"],
-                applied["volatility_config"],
-            )
-            rules_state = _persist_alert_rule_items(next_rules)
-            saved_settings = save_alert_profile_settings(applied["settings"])
-
-            applied_at = datetime.now().isoformat(timespec="seconds")
-            next_profiles = []
-            for item in alert_profiles:
-                if item.get("id") == profile["id"]:
-                    updated = dict(item)
-                    updated["last_applied_at"] = applied_at
-                    next_profiles.append(updated)
-                else:
-                    next_profiles.append(item)
-            alert_profiles = save_alert_profiles(next_profiles)
-            alert_cooldown_state = {}
-
-            thresholds_state = dict(thresholds)
-            volatility_state = dict(volatility_config)
-            settings_state = public_settings_snapshot(saved_settings)
-            profiles_state = get_alert_profiles_state()
-        except OSError:
-            alert_profiles = previous_profiles
-            rollback_ok = _restore_alert_profile_apply_state(
-                previous_alert_rules,
-                previous_settings,
-                previous_alert_cooldown_state,
-            )
-            if rollback_ok:
-                message = "预警策略模板应用失败，请检查配置目录权限。"
-            else:
-                message = "预警策略模板应用失败，且部分配置可能已写入，请导出诊断后检查配置目录权限。"
-            emit("alert_profile_error", {"message": message})
-            return
-
-    socketio.emit("alert_rules_updated", rules_state)
-    socketio.emit("thresholds_updated", thresholds_state)
-    socketio.emit("volatility_updated", volatility_state)
-    socketio.emit("settings_updated", settings_state)
-    socketio.emit("alert_profiles_updated", profiles_state)
-
-
-@socketio.on("set_watch_target")
-def on_set_watch_target(data):
-    try:
-        state = upsert_watch_target(data)
-    except ValueError as exc:
-        emit("watch_target_error", {"message": str(exc)})
-        return
-    except OSError:
-        emit("watch_target_error", {"message": "观察清单保存失败，请检查配置目录权限。"})
-        return
-    _broadcast_alert_rule_views()
-
-
-@socketio.on("delete_watch_target")
-def on_delete_watch_target(data=None):
-    target_id = data.get("id") if isinstance(data, dict) else None
-    try:
-        ok, state = delete_watch_target(target_id)
-    except OSError:
-        emit("watch_target_error", {"message": "观察清单保存失败，请检查配置目录权限。"})
-        return
-    if not ok:
-        emit("watch_target_error", {"message": "未找到观察项"})
-        return
-    _broadcast_alert_rule_views()
+socket_alert_configuration_core.register_alert_configuration_handlers(
+    socketio,
+    lock=lock,
+    threshold_modes=THRESHOLD_MODES,
+    threshold_types=THRESHOLD_TYPES,
+    alert_rule_error=alert_rules_core.AlertRuleError,
+    alert_rule_store_error=alert_rules_core.AlertRuleStoreError,
+    get_alert_rules=lambda: alert_rules,
+    get_thresholds=lambda: thresholds,
+    get_volatility_config=lambda: volatility_config,
+    replace_legacy_threshold_rule=(
+        lambda mode, threshold_type, value: _replace_legacy_threshold_rule(
+            mode,
+            threshold_type,
+            value,
+        )
+    ),
+    find_legacy_alert_rule=(
+        lambda source, identifier=None: _find_legacy_alert_rule(source, identifier)
+    ),
+    delete_alert_rule=(
+        lambda items, rule_id: alert_rules_core.delete_alert_rule(items, rule_id)
+    ),
+    persist_alert_rule_items=lambda items: _persist_alert_rule_items(items),
+    normalize_volatility_config=lambda data: _normalize_volatility_config(data),
+    replace_legacy_volatility_rule=(
+        lambda data: _replace_legacy_volatility_rule(data)
+    ),
+    get_current_price=(
+        lambda mode: price_usd if mode == "usd" else price_rmb
+    ),
+    check_alert_rules=lambda time_label: check_alert_rules(time_label),
+    now_factory=lambda: datetime.now(),
+    build_alert_profile_from_state=(
+        lambda data, threshold_state, volatility_state, settings_state:
+        alert_profiles_core.build_profile_from_state(
+            data,
+            threshold_state,
+            volatility_state,
+            settings_state,
+            now_factory=datetime.now,
+        )
+    ),
+    get_settings_snapshot=lambda: get_settings_snapshot(),
+    get_alert_profiles=lambda: alert_profiles,
+    find_alert_profile=lambda profile_id: _find_alert_profile(profile_id),
+    save_alert_profiles=lambda items: save_alert_profiles(items),
+    set_alert_profiles=lambda items: _set_runtime_alert_profiles(items),
+    get_alert_profiles_state=lambda: get_alert_profiles_state(),
+    apply_alert_profile_to_state=(
+        lambda profile, threshold_state, volatility_state, settings_state:
+        alert_profiles_core.apply_profile_to_state(
+            profile,
+            threshold_state,
+            volatility_state,
+            settings_state,
+        )
+    ),
+    rules_for_legacy_threshold_snapshot=(
+        lambda threshold_state, volatility_state:
+        _rules_for_legacy_threshold_snapshot(threshold_state, volatility_state)
+    ),
+    save_alert_profile_settings=(
+        lambda settings: save_alert_profile_settings(settings)
+    ),
+    public_settings_snapshot=(
+        lambda settings: public_settings_snapshot(settings)
+    ),
+    restore_alert_profile_apply_state=(
+        lambda previous_rules, previous_settings, previous_cooldown:
+        _restore_alert_profile_apply_state(
+            previous_rules,
+            previous_settings,
+            previous_cooldown,
+        )
+    ),
+    get_alert_cooldown_state=lambda: alert_cooldown_state,
+    clear_alert_cooldown_state=lambda: _clear_alert_cooldown_state(),
+    upsert_watch_target=lambda data: upsert_watch_target(data),
+    delete_watch_target=lambda target_id: delete_watch_target(target_id),
+    toggle_watch_target=(
+        lambda target_id, enabled: toggle_watch_target(target_id, enabled)
+    ),
+    reset_watch_target=lambda target_id: reset_watch_target(target_id),
+    broadcast_alert_rule_views=lambda: _broadcast_alert_rule_views(),
+)
 
 
 socket_portfolio_core.register_portfolio_handlers(
@@ -6614,36 +6435,6 @@ socket_portfolio_core.register_portfolio_handlers(
     build_portfolio_analytics_state=lambda days: build_portfolio_analytics_state(days=days),
     now_factory=lambda: datetime.now(),
 )
-
-
-@socketio.on("toggle_watch_target")
-def on_toggle_watch_target(data=None):
-    if not isinstance(data, dict):
-        emit("watch_target_error", {"message": "观察项格式无效"})
-        return
-    try:
-        ok, state = toggle_watch_target(data.get("id"), data.get("enabled"))
-    except (ValueError, OSError):
-        emit("watch_target_error", {"message": "观察清单保存失败，请检查配置目录权限。"})
-        return
-    if not ok:
-        emit("watch_target_error", {"message": "未找到观察项"})
-        return
-    _broadcast_alert_rule_views()
-
-
-@socketio.on("reset_watch_target")
-def on_reset_watch_target(data=None):
-    target_id = data.get("id") if isinstance(data, dict) else None
-    try:
-        ok, state = reset_watch_target(target_id)
-    except (ValueError, OSError):
-        emit("watch_target_error", {"message": "观察清单保存失败，请检查配置目录权限。"})
-        return
-    if not ok:
-        emit("watch_target_error", {"message": "未找到观察项"})
-        return
-    _broadcast_alert_rule_views()
 
 
 socket_settings_core.register_settings_handlers(

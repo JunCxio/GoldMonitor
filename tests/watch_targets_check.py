@@ -10,7 +10,9 @@ import app
 
 with tempfile.TemporaryDirectory() as tmp_dir:
     original_path = app.WATCH_TARGETS_PATH
+    original_alert_rules_path = app.ALERT_RULES_PATH
     original_targets = list(app.watch_targets)
+    original_alert_rules = [dict(rule) for rule in app.alert_rules]
     original_price_usd = app.price_usd
     original_price_rmb = app.price_rmb
     original_alert_log = list(app.alert_log)
@@ -18,6 +20,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
     original_run_risk_analysis = app.run_risk_analysis
     try:
         app.WATCH_TARGETS_PATH = str(Path(tmp_dir) / "watch_targets.json")
+        app.ALERT_RULES_PATH = str(Path(tmp_dir) / "alert_rules.json")
         app.watch_targets = []
 
         if app.load_watch_targets() != []:
@@ -98,7 +101,8 @@ with tempfile.TemporaryDirectory() as tmp_dir:
                 continue
             raise SystemExit(f"invalid watch target must raise ValueError: {invalid}")
 
-        app.watch_targets = app.save_watch_targets([])
+        app.alert_rules = []
+        app._sync_legacy_alert_rule_views()
         socket_client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
         if not socket_client.is_connected():
             raise SystemExit("authorized socket client must connect for watch target checks")
@@ -156,24 +160,24 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         app.run_risk_analysis = fail_risk_analysis
         app.price_usd = 2401.0
         app.price_rmb = 688.0
-        app.watch_targets = app.save_watch_targets([
-            {
-                "mode": "usd",
-                "direction": "rise_to",
-                "price": 2400,
-                "note": "突破观察",
-                "enabled": True,
-            },
-            {
-                "mode": "rmb",
-                "direction": "fall_to",
-                "price": 690,
-                "note": "预算观察价",
-                "enabled": False,
-            },
-        ])
-        triggered = app.check_watch_targets("12:00:00")
-        if len(triggered) != 1 or triggered[0]["mode"] != "usd":
+        app.alert_rules = []
+        app._sync_legacy_alert_rule_views()
+        app.upsert_watch_target({
+            "mode": "usd",
+            "direction": "rise_to",
+            "price": 2400,
+            "note": "突破观察",
+            "enabled": True,
+        })
+        app.upsert_watch_target({
+            "mode": "rmb",
+            "direction": "fall_to",
+            "price": 690,
+            "note": "预算观察价",
+            "enabled": False,
+        })
+        triggered = app.check_alert_rules("12:00:00")
+        if len(triggered) != 1 or triggered[0]["rule"].get("kind") != "watch_target":
             raise SystemExit(f"only enabled matching watch target should trigger, got: {triggered}")
         if len(emitted_alerts) != 1:
             raise SystemExit(f"watch target trigger must emit one alert, got: {emitted_alerts}")
@@ -183,18 +187,20 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         if not app.watch_targets[0]["triggered"] or app.watch_targets[0]["last_trigger_price"] != 2401.0:
             raise SystemExit(f"triggered watch target state was not persisted: {app.watch_targets}")
 
-        triggered_again = app.check_watch_targets("12:00:10")
+        triggered_again = app.check_alert_rules("12:00:10")
         if triggered_again or len(emitted_alerts) != 1:
             raise SystemExit("triggered watch target must not repeat before reset")
 
         ok, _state = app.reset_watch_target(app.watch_targets[0]["id"])
         if not ok:
             raise SystemExit("reset_watch_target must find existing item")
-        triggered_after_reset = app.check_watch_targets("12:00:20")
+        triggered_after_reset = app.check_alert_rules("12:00:20")
         if len(triggered_after_reset) != 1 or len(emitted_alerts) != 2:
             raise SystemExit("reset watch target should be able to trigger again")
     finally:
         app.WATCH_TARGETS_PATH = original_path
+        app.ALERT_RULES_PATH = original_alert_rules_path
+        app.alert_rules = original_alert_rules
         app.watch_targets = original_targets
         app.price_usd = original_price_usd
         app.price_rmb = original_price_rmb

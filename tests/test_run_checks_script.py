@@ -14,6 +14,7 @@ EXPECTED_COMPILE_TARGETS = (
     "goldmonitor/review_notes.py",
     "goldmonitor/scheduler.py",
     "goldmonitor/socket_alert_rules.py",
+    "goldmonitor/socket_alert_configuration.py",
     "goldmonitor/socket_alert_log.py",
     "goldmonitor/socket_history_review.py",
     "goldmonitor/socket_operations.py",
@@ -21,6 +22,7 @@ EXPECTED_COMPILE_TARGETS = (
     "goldmonitor/socket_risk_analysis.py",
     "goldmonitor/socket_settings.py",
     "tests/risk_contract_check.py",
+    "tests/watch_targets_check.py",
     "tests/update_logic_check.py",
     "tests/startup_contract_check.py",
     "tests/frontend_asset_check.py",
@@ -64,6 +66,7 @@ EXPECTED_COMPILE_TARGETS = (
 
 EXPECTED_PYTHON_CHECKS = (
     "tests/risk_contract_check.py",
+    "tests/watch_targets_check.py",
     "tests/gold_cache_check.py",
     "tests/price_fetch_with_cache_check.py",
     "tests/fetch_status_check.py",

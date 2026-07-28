@@ -12,6 +12,7 @@ operations_js_path = root / "static" / "operations-center.js"
 history_review_js_path = root / "static" / "history-review-center.js"
 risk_analysis_js_path = root / "static" / "risk-analysis-center.js"
 alert_rule_js_path = root / "static" / "alert-rule-center.js"
+alert_configuration_js_path = root / "static" / "alert-configuration-center.js"
 portfolio_js_path = root / "static" / "portfolio-center.js"
 alert_log_js_path = root / "static" / "alert-log-center.js"
 
@@ -37,6 +38,9 @@ if not risk_analysis_js_path.exists():
 if not alert_rule_js_path.exists():
     raise SystemExit("alert rule center script must live in static/alert-rule-center.js")
 
+if not alert_configuration_js_path.exists():
+    raise SystemExit("alert configuration script must live in static/alert-configuration-center.js")
+
 if not portfolio_js_path.exists():
     raise SystemExit("portfolio center script must live in static/portfolio-center.js")
 
@@ -44,6 +48,8 @@ if not alert_log_js_path.exists():
     raise SystemExit("alert log center script must live in static/alert-log-center.js")
 
 app_js = js_path.read_text(encoding="utf-8")
+alert_rule_js = alert_rule_js_path.read_text(encoding="utf-8")
+alert_configuration_js = alert_configuration_js_path.read_text(encoding="utf-8")
 alert_log_js = alert_log_js_path.read_text(encoding="utf-8")
 
 js = "\n".join((
@@ -51,7 +57,8 @@ js = "\n".join((
     operations_js_path.read_text(encoding="utf-8"),
     history_review_js_path.read_text(encoding="utf-8"),
     risk_analysis_js_path.read_text(encoding="utf-8"),
-    alert_rule_js_path.read_text(encoding="utf-8"),
+    alert_rule_js,
+    alert_configuration_js,
     portfolio_js_path.read_text(encoding="utf-8"),
     alert_log_js,
     app_js,
@@ -104,6 +111,13 @@ if alert_rule_script not in template:
 if template.find(alert_rule_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
     raise SystemExit("alert rule center script must load before static/app.js")
 
+alert_configuration_script = '<script src="/static/alert-configuration-center.js?v={{ app_version }}"></script>'
+if alert_configuration_script not in template:
+    raise SystemExit("template must reference versioned /static/alert-configuration-center.js")
+
+if template.find(alert_configuration_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("alert configuration center script must load before static/app.js")
+
 portfolio_script = '<script src="/static/portfolio-center.js?v={{ app_version }}"></script>'
 if portfolio_script not in template:
     raise SystemExit("template must reference versioned /static/portfolio-center.js")
@@ -129,6 +143,44 @@ for required in (
 
 if "registerAlertLogSocketHandlers(socket);" not in app_js:
     raise SystemExit("static/app.js must register alert log socket handlers")
+
+if "registerAlertRuleSocketHandlers(socket);" not in app_js:
+    raise SystemExit("static/app.js must register alert rule socket handlers")
+
+if "registerAlertConfigurationSocketHandlers(socket);" not in app_js:
+    raise SystemExit("static/app.js must register alert configuration socket handlers")
+
+for required in (
+    "function registerAlertRuleSocketHandlers",
+    "let alertRulesState",
+    "let alertRuleDraft",
+    "socket.on('alert_rule_duplicated'",
+):
+    if required not in alert_rule_js:
+        raise SystemExit(f"static/alert-rule-center.js missing extracted rule contract: {required}")
+
+for required in (
+    "function registerAlertConfigurationSocketHandlers",
+    "function applyAlertConfigurationState",
+    "let alertProfiles",
+    "let watchTargets",
+    "socket.on('thresholds_updated'",
+    "socket.on('watch_targets_updated'",
+):
+    if required not in alert_configuration_js:
+        raise SystemExit(f"static/alert-configuration-center.js missing extracted configuration contract: {required}")
+
+for moved in (
+    "let alertProfiles",
+    "let alertRulesState",
+    "let watchTargets",
+    "function normalizeAlertProfiles",
+    "function normalizeWatchTargetItems",
+    "socket.on('alert_rules_updated'",
+    "socket.on('alert_profiles_updated'",
+):
+    if moved in app_js:
+        raise SystemExit(f"static/app.js keeps extracted alert configuration implementation: {moved}")
 
 for moved in (
     "let alertEntries = [];",
@@ -955,11 +1007,11 @@ for required in (
     "apply_alert_profile",
     "rename_alert_profile",
     "delete_alert_profile",
-    "data.alert_profiles || {}",
+    "state.alert_profiles || {}",
     "ALERT_PROFILE_SETTING_KEYS",
 ):
-    if required not in js:
-        raise SystemExit(f"static/app.js missing alert profile UI contract: {required}")
+    if required not in alert_configuration_js and required not in app_js:
+        raise SystemExit(f"frontend scripts missing alert profile UI contract: {required}")
 
 for required in (
     ".alert-profiles",
@@ -977,9 +1029,10 @@ for handler in (
     "socket.on('volatility_updated', data => {",
     "socket.on('settings_updated', data => {",
 ):
-    handler_pos = js.find(handler)
-    next_handler_pos = js.find("socket.on(", handler_pos + len(handler))
-    handler_body = js[handler_pos:next_handler_pos if next_handler_pos >= 0 else len(js)] if handler_pos >= 0 else ""
+    handler_source = alert_configuration_js if handler != "socket.on('settings_updated', data => {" else js
+    handler_pos = handler_source.find(handler)
+    next_handler_pos = handler_source.find("socket.on(", handler_pos + len(handler))
+    handler_body = handler_source[handler_pos:next_handler_pos if next_handler_pos >= 0 else len(handler_source)] if handler_pos >= 0 else ""
     if "clearCurrentAlertProfileMatch();" not in handler_body:
         raise SystemExit(f"{handler} must clear stale alert profile current marker")
 
