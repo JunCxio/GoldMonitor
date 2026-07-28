@@ -7,6 +7,7 @@ template = (root / "templates" / "index.html").read_text(encoding="utf-8")
 app_py = (root / "app.py").read_text(encoding="utf-8")
 css_path = root / "static" / "app.css"
 js_path = root / "static" / "app.js"
+market_dashboard_js_path = root / "static" / "market-dashboard.js"
 settings_js_path = root / "static" / "settings-center.js"
 operations_js_path = root / "static" / "operations-center.js"
 history_review_js_path = root / "static" / "history-review-center.js"
@@ -22,6 +23,9 @@ if not css_path.exists():
 
 if not js_path.exists():
     raise SystemExit("frontend main script must live in static/app.js")
+
+if not market_dashboard_js_path.exists():
+    raise SystemExit("market dashboard script must live in static/market-dashboard.js")
 
 if not settings_js_path.exists():
     raise SystemExit("settings center script must live in static/settings-center.js")
@@ -48,11 +52,13 @@ if not alert_log_js_path.exists():
     raise SystemExit("alert log center script must live in static/alert-log-center.js")
 
 app_js = js_path.read_text(encoding="utf-8")
+market_dashboard_js = market_dashboard_js_path.read_text(encoding="utf-8")
 alert_rule_js = alert_rule_js_path.read_text(encoding="utf-8")
 alert_configuration_js = alert_configuration_js_path.read_text(encoding="utf-8")
 alert_log_js = alert_log_js_path.read_text(encoding="utf-8")
 
 js = "\n".join((
+    market_dashboard_js,
     settings_js_path.read_text(encoding="utf-8"),
     operations_js_path.read_text(encoding="utf-8"),
     history_review_js_path.read_text(encoding="utf-8"),
@@ -75,6 +81,13 @@ if '<script src="/static/app-shell.js?v={{ app_version }}"></script>' not in tem
 
 if '<script src="/static/app.js?v={{ app_version }}"></script>' not in template:
     raise SystemExit("template must reference versioned /static/app.js")
+
+market_dashboard_script = '<script src="/static/market-dashboard.js?v={{ app_version }}"></script>'
+if market_dashboard_script not in template:
+    raise SystemExit("template must reference versioned /static/market-dashboard.js")
+
+if template.find(market_dashboard_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("market dashboard script must load before static/app.js")
 
 settings_script = '<script src="/static/settings-center.js?v={{ app_version }}"></script>'
 if settings_script not in template:
@@ -149,6 +162,30 @@ if "registerAlertRuleSocketHandlers(socket);" not in app_js:
 
 if "registerAlertConfigurationSocketHandlers(socket);" not in app_js:
     raise SystemExit("static/app.js must register alert configuration socket handlers")
+
+if "registerMarketDashboardSocketHandlers(socket);" not in app_js:
+    raise SystemExit("static/app.js must register market dashboard socket handlers")
+
+for required in (
+    "function applyMarketInitialState",
+    "function registerMarketDashboardSocketHandlers",
+    "function switchMode",
+    "function switchChartPeriod",
+    "function applyFetchStatus",
+    "function updatePriceDisplay",
+):
+    if required not in market_dashboard_js:
+        raise SystemExit(f"static/market-dashboard.js missing market dashboard contract: {required}")
+
+for moved in (
+    "function switchMode",
+    "function switchChartPeriod",
+    "function applyFetchStatus",
+    "function updatePriceDisplay",
+    "socket.on('price_update'",
+):
+    if moved in app_js:
+        raise SystemExit(f"static/app.js keeps extracted market dashboard implementation: {moved}")
 
 for required in (
     "function registerAlertRuleSocketHandlers",

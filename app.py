@@ -28,6 +28,7 @@ from goldmonitor import data_archive as data_archive_core
 from goldmonitor import event_timeline as event_timeline_core
 from goldmonitor import market_adapters as market_adapters_core
 from goldmonitor import market_data as market_data_core
+from goldmonitor import market_runtime as market_runtime_core
 from goldmonitor import news as news_core
 from goldmonitor import notifications as notifications_core
 from goldmonitor import platform as platform_core
@@ -4237,53 +4238,15 @@ def get_source_health_state():
     with lock:
         health_snapshot = {name: dict(item) for name, item in source_health.items()}
     comparison = get_source_comparison_state()
-    state = market_data_core.build_source_health_state(
+    adapters = get_market_adapter_catalog(health_snapshot=health_snapshot)
+    return market_runtime_core.build_source_health_state(
         health_snapshot,
         comparison=comparison,
+        adapters=adapters,
+        preferences=get_market_source_preferences(),
+        fetch_status=get_fetch_status(),
         window_size=SOURCE_METRICS_WINDOW,
     )
-    adapters = get_market_adapter_catalog(health_snapshot=health_snapshot)
-    adapter_by_key = {
-        item.get("key"): item
-        for category_items in adapters.values()
-        for item in category_items
-        if isinstance(item, dict) and item.get("key")
-    }
-    for item in state["items"]:
-        adapter = adapter_by_key.get(item.get("key"))
-        if not adapter:
-            continue
-        item.update({
-            "enabled": adapter.get("enabled"),
-            "active": adapter.get("active"),
-            "current": adapter.get("current"),
-            "order": adapter.get("order"),
-        })
-    operational_items = [
-        item for item in state["items"]
-        if not item.get("key") or item.get("enabled") is not False
-    ]
-    rolling_samples = sum(int(item.get("sample_count") or 0) for item in operational_items)
-    rolling_successes = sum(int(item.get("success_count") or 0) for item in operational_items)
-    state["summary"].update({
-        "total": len(operational_items),
-        "ok": sum(1 for item in operational_items if item.get("ok")),
-        "failed": sum(1 for item in operational_items if item.get("ok") is False),
-        "cached": sum(1 for item in operational_items if item.get("cached")),
-        "rolling_samples": rolling_samples,
-        "rolling_success_rate_pct": (
-            round(rolling_successes / rolling_samples * 100, 1)
-            if rolling_samples else None
-        ),
-    })
-    state["adapters"] = adapters
-    state["preferences"] = get_market_source_preferences()
-    state["quality"] = market_data_core.build_market_quality(
-        fetch_status=get_fetch_status(),
-        source_health=state,
-        comparison=comparison,
-    )
-    return state
 
 
 def record_source_price_sample(name, data, cached=False):
@@ -4422,14 +4385,7 @@ def build_market_adapter_registry():
 
 
 def _market_source_matches(descriptor, source_name):
-    source_name = str(source_name or "").strip()
-    if not source_name:
-        return False
-    candidates = {
-        str(descriptor.get("name") or "").strip(),
-        str(descriptor.get("cache_source") or "").strip(),
-    }
-    return any(candidate and (candidate == source_name or candidate in source_name) for candidate in candidates)
+    return market_runtime_core.market_source_matches(descriptor, source_name)
 
 
 def get_market_adapter_catalog(health_snapshot=None):
@@ -4438,56 +4394,12 @@ def get_market_adapter_catalog(health_snapshot=None):
         defaults=market_adapters_core.source_preference_defaults(registry),
     )
     health_snapshot = health_snapshot if isinstance(health_snapshot, dict) else source_health
-    health_by_key = {
-        str(item.get("key") or ""): item
-        for item in health_snapshot.values()
-        if isinstance(item, dict) and item.get("key")
-    }
-    fetch_sources = get_fetch_status().get("sources", {})
-    result = {}
-    metric_keys = (
-        "sample_count",
-        "success_count",
-        "failure_count",
-        "success_rate_pct",
-        "cache_rate_pct",
-        "average_latency_ms",
-        "median_latency_ms",
-        "consecutive_failures",
-        "last_checked",
-        "last_recovered_at",
-        "error",
-        "ok",
-        "cached",
+    return market_runtime_core.build_market_adapter_catalog(
+        registry,
+        preferences,
+        health_snapshot,
+        get_fetch_status(),
     )
-    for category, ordered_keys in preferences["order"].items():
-        enabled_keys = set(preferences["enabled"].get(category) or [])
-        current_source = fetch_sources.get(category) if isinstance(fetch_sources.get(category), dict) else {}
-        category_items = []
-        for index, key in enumerate(ordered_keys):
-            adapter = registry.get(key)
-            if adapter is None:
-                continue
-            descriptor = adapter.descriptor()
-            descriptor.update({
-                "priority": (index + 1) * 10,
-                "order": index,
-                "enabled": key in enabled_keys,
-                "current": _market_source_matches(descriptor, current_source.get("source")),
-                "current_cached": False,
-                "active": False,
-            })
-            descriptor["current_cached"] = bool(descriptor["current"] and current_source.get("cached"))
-            descriptor["active"] = bool(
-                descriptor["current"]
-                and descriptor["enabled"]
-                and not current_source.get("cached")
-            )
-            metrics = health_by_key.get(key) or {}
-            descriptor.update({metric_key: metrics.get(metric_key) for metric_key in metric_keys})
-            category_items.append(descriptor)
-        result[category] = category_items
-    return result
 
 
 def update_market_source_preferences(payload):
@@ -4818,42 +4730,19 @@ def fetch_goldprice_data_result():
 
 def fetch_market_data_result():
     """按优先级获取行情数据，避免单一接口失败导致应用一直无数据。"""
-    errors = []
-    for adapter in build_market_adapter_registry().category_adapters("gold"):
-        result = adapter.fetch()
-        data = result.value
-        if data is None:
-            if result.error:
-                errors.append(result.error)
-            continue
-        try:
-            save_xauusd_cache(data, adapter.cache_source)
-        except (OSError, ValueError):
-            pass
-        if result.auxiliary_rate is not None:
-            now_iso = datetime.now().isoformat()
-            try:
-                rate_info = save_usdcny_cache(result.auxiliary_rate, adapter.cache_source, now_iso)
-                return data, rate_info, adapter.cache_source, "", ""
-            except (OSError, ValueError) as exc:
-                return data, {
-                    "value": result.auxiliary_rate,
-                    "source": adapter.cache_source,
-                    "timestamp": now_iso,
-                    "cached": False,
-                }, adapter.cache_source, "", f"汇率缓存保存失败: {exc}"
-        rate_info, forex_error = fetch_usdcny_rate_result()
-        return data, rate_info, adapter.cache_source, "", forex_error
-
-    rate_info, forex_error = fetch_usdcny_rate_result()
-    cached_gold = load_valid_xauusd_cache()
-    gold_error = "；".join(errors) or "所有金价接口均不可用"
-    if cached_gold:
-        cache_source = cached_gold.get("source") or "缓存金价"
-        record_source_health("缓存金价", "gold", True, gold_error, None, cached=True)
-        return cached_gold, rate_info, f"缓存金价（{cache_source}）", gold_error, forex_error
-    return None, rate_info, "", gold_error, forex_error
-
+    return market_runtime_core.fetch_market_data_result(
+        build_market_adapter_registry(),
+        save_xauusd_cache=lambda data, source: save_xauusd_cache(data, source),
+        save_usdcny_cache=lambda value, source, timestamp: save_usdcny_cache(
+            value,
+            source,
+            timestamp,
+        ),
+        fetch_usdcny_rate_result=lambda: fetch_usdcny_rate_result(),
+        load_valid_xauusd_cache=lambda: load_valid_xauusd_cache(),
+        record_source_health=lambda *args, **kwargs: record_source_health(*args, **kwargs),
+        now_factory=lambda: datetime.now(),
+    )
 
 # ---------- 桌面通知 ----------
 def send_desktop_notification(title, body):
@@ -5868,219 +5757,130 @@ def build_risk_analysis_error_payload(message, settings=None, snapshot=None):
     return payload
 
 
-# ---------- K线聚合 ----------
-def _aggregate_klines():
-    """从 price_history 聚合 5 分钟 K 线"""
-    global klines_5min
-    klines_5min = build_5min_klines(price_history, limit=96)
+# ---------- 行情运行时 ----------
+def _market_runtime_state():
+    return {
+        "price_usd": price_usd,
+        "price_rmb": price_rmb,
+        "previous_usd": previous_usd,
+        "previous_rmb": previous_rmb,
+        "usdcny_rate": usdcny_rate,
+        "usdcny_rate_source": usdcny_rate_source,
+        "usdcny_rate_time": usdcny_rate_time,
+        "usdcny_rate_cached": usdcny_rate_cached,
+        "usdcny_rate_error": usdcny_rate_error,
+        "gold_price_source": gold_price_source,
+        "gold_price_time": gold_price_time,
+        "gold_price_cached": gold_price_cached,
+        "gold_price_error": gold_price_error,
+        "price_history": price_history,
+        "klines_5min": klines_5min,
+        "last_fetch_ok": last_fetch_ok,
+        "last_fetch_error": last_fetch_error,
+        "last_fetch_time": last_fetch_time,
+        "today_date": today_date,
+        "today_open_usd": today_open_usd,
+        "today_high_usd": today_high_usd,
+        "today_low_usd": today_low_usd,
+        "today_open_rmb": today_open_rmb,
+        "today_high_rmb": today_high_rmb,
+        "today_low_rmb": today_low_rmb,
+    }
 
 
-# ---------- 后台轮询 ----------
-def fetch_price_once():
+def _apply_market_runtime_state(state):
     global price_usd, price_rmb, previous_usd, previous_rmb
-    global usdcny_rate, price_history, alert_log, last_fetch_ok, last_fetch_error, last_fetch_time
-    global usdcny_rate_source, usdcny_rate_time, usdcny_rate_cached, usdcny_rate_error
+    global usdcny_rate, usdcny_rate_source, usdcny_rate_time
+    global usdcny_rate_cached, usdcny_rate_error
     global gold_price_source, gold_price_time, gold_price_cached, gold_price_error
+    global price_history, klines_5min
+    global last_fetch_ok, last_fetch_error, last_fetch_time
     global today_date, today_open_usd, today_high_usd, today_low_usd
     global today_open_rmb, today_high_rmb, today_low_rmb
 
-    if not price_refresh_lock.acquire(blocking=False):
-        socketio.emit("fetch_status", build_fetch_status(False, "已有行情刷新正在进行", retryable=False))
-        return False
-    try:
-        data, rate_info, source_name, gold_error, forex_error = fetch_market_data_result()
-        now = datetime.now()
-        now_str = now.strftime("%H:%M:%S")
-        now_iso = now.isoformat()
-        today_str = now.strftime("%Y-%m-%d")
-        source_comparison = refresh_source_comparison(
-            data,
-            source_name,
-            primary_cached=bool(data.get("cached")) if isinstance(data, dict) else False,
-        ) if data is not None else get_source_comparison_state()
+    price_usd = state["price_usd"]
+    price_rmb = state["price_rmb"]
+    previous_usd = state["previous_usd"]
+    previous_rmb = state["previous_rmb"]
+    usdcny_rate = state["usdcny_rate"]
+    usdcny_rate_source = state["usdcny_rate_source"]
+    usdcny_rate_time = state["usdcny_rate_time"]
+    usdcny_rate_cached = state["usdcny_rate_cached"]
+    usdcny_rate_error = state["usdcny_rate_error"]
+    gold_price_source = state["gold_price_source"]
+    gold_price_time = state["gold_price_time"]
+    gold_price_cached = state["gold_price_cached"]
+    gold_price_error = state["gold_price_error"]
+    price_history = state["price_history"]
+    klines_5min = state["klines_5min"]
+    last_fetch_ok = state["last_fetch_ok"]
+    last_fetch_error = state["last_fetch_error"]
+    last_fetch_time = state["last_fetch_time"]
+    today_date = state["today_date"]
+    today_open_usd = state["today_open_usd"]
+    today_high_usd = state["today_high_usd"]
+    today_low_usd = state["today_low_usd"]
+    today_open_rmb = state["today_open_rmb"]
+    today_high_rmb = state["today_high_rmb"]
+    today_low_rmb = state["today_low_rmb"]
 
-        with lock:
-            if data is not None:
-                cny_rate = rate_info.get("value") if isinstance(rate_info, dict) else None
-                rate_source = rate_info.get("source", "") if isinstance(rate_info, dict) else ""
-                rate_time = rate_info.get("timestamp") if isinstance(rate_info, dict) else None
-                rate_cached = bool(rate_info.get("cached")) if isinstance(rate_info, dict) else False
-                source_name = source_name or data.get("source", "")
-                gold_cached = bool(data.get("cached")) or str(source_name).startswith("缓存金价")
-                gold_time = data.get("timestamp") if gold_cached else now_iso
-                status_ok = not gold_cached and (cny_rate is not None or usdcny_rate is not None)
-                last_fetch_ok = status_ok
-                if status_ok:
-                    last_fetch_error = ""
-                elif gold_cached:
-                    last_fetch_error = gold_error or "实时金价源暂不可用，正在使用缓存金价"
-                else:
-                    last_fetch_error = forex_error or "汇率源暂未返回，人民币价格暂不可用"
-                last_fetch_time = now_iso
-                gold_price_source = source_name
-                gold_price_time = gold_time
-                gold_price_cached = gold_cached
-                gold_price_error = gold_error or ""
-                if cny_rate:
-                    usdcny_rate = cny_rate
-                    usdcny_rate_source = rate_source
-                    usdcny_rate_time = rate_time
-                    usdcny_rate_cached = rate_cached
-                    usdcny_rate_error = forex_error or ""
-                previous_usd = price_usd
-                previous_rmb = price_rmb
-                price_usd = data["close"]
 
-                if usdcny_rate:
-                    price_rmb = round(price_usd * usdcny_rate / OZ_TO_GRAM, 2)
-                if previous_rmb is None:
-                    previous_rmb = price_rmb
+def _aggregate_klines():
+    """从 price_history 聚合 5 分钟 K 线。"""
+    global klines_5min
+    klines_5min = market_runtime_core.aggregate_klines(
+        price_history,
+        build_5min_klines,
+        limit=96,
+    )
 
-                # --- 日内统计 ---
-                if today_date != today_str:
-                    today_date = today_str
-                    today_open_usd = data["open"]
-                    today_high_usd = data["high"]
-                    today_low_usd = data["low"]
-                    if usdcny_rate:
-                        today_open_rmb = round(today_open_usd * usdcny_rate / OZ_TO_GRAM, 2)
-                        today_high_rmb = round(data["high"] * usdcny_rate / OZ_TO_GRAM, 2)
-                        today_low_rmb = round(data["low"] * usdcny_rate / OZ_TO_GRAM, 2)
-                else:
-                    if today_open_usd is None:
-                        today_open_usd = data["open"]
-                    today_high_usd = max(today_high_usd or 0, data["high"])
-                    today_low_usd = min(today_low_usd or float("inf"), data["low"])
-                    if usdcny_rate:
-                        today_high_rmb = round(today_high_usd * usdcny_rate / OZ_TO_GRAM, 2)
-                        today_low_rmb = round(today_low_usd * usdcny_rate / OZ_TO_GRAM, 2)
-                        if today_open_rmb is None:
-                            today_open_rmb = round(today_open_usd * usdcny_rate / OZ_TO_GRAM, 2)
 
-                # --- 计算日内涨跌 ---
-                daily_change_usd = round(price_usd - today_open_usd, 2) if today_open_usd else 0
-                daily_pct_usd = round(daily_change_usd / today_open_usd * 100, 2) if today_open_usd else 0
-                daily_change_rmb = round(price_rmb - today_open_rmb, 2) if price_rmb and today_open_rmb else 0
-                daily_pct_rmb = round(daily_change_rmb / today_open_rmb * 100, 2) if today_open_rmb and today_open_rmb != 0 else 0
+_market_runtime_instance = None
 
-                # --- 更新历史 ---
-                history_entry = {
-                    "usd": price_usd, "rmb": price_rmb, "rate": usdcny_rate,
-                    "time": now_str, "timestamp": now_iso,
-                }
-                price_history.append(history_entry)
-                if len(price_history) > 360:  # 保留 1 小时
-                    price_history = price_history[-360:]
-                add_price_history_entry(history_entry)
 
-                _aggregate_klines()
+def _get_market_runtime():
+    global _market_runtime_instance
+    if _market_runtime_instance is None:
+        _market_runtime_instance = market_runtime_core.MarketRuntime(
+            state_getter=_market_runtime_state,
+            state_committer=_apply_market_runtime_state,
+            state_lock=lock,
+            refresh_lock=price_refresh_lock,
+            fetch_market_data_result=lambda: fetch_market_data_result(),
+            refresh_source_comparison=lambda *args, **kwargs: refresh_source_comparison(
+                *args,
+                **kwargs,
+            ),
+            get_source_comparison_state=lambda: get_source_comparison_state(),
+            aggregate_klines=lambda history: market_runtime_core.aggregate_klines(
+                history,
+                build_5min_klines,
+                limit=96,
+            ),
+            add_price_history_entry=lambda entry: add_price_history_entry(entry),
+            emit=lambda event, payload: socketio.emit(event, payload),
+            build_fetch_status=lambda *args, **kwargs: build_fetch_status(*args, **kwargs),
+            build_price_history_state=lambda **kwargs: build_price_history_state(**kwargs),
+            format_price_title=lambda rmb, usd: format_price_title(rmb, usd),
+            update_desktop_price_title=lambda title: update_desktop_price_title(title),
+            update_floating_price=lambda rmb, usd, pct: update_floating_price(rmb, usd, pct),
+            check_alert_rules=lambda *args, **kwargs: check_alert_rules(*args, **kwargs),
+            now_factory=lambda: datetime.now(),
+            ounce_to_gram=OZ_TO_GRAM,
+        )
+    return _market_runtime_instance
 
-                # --- 涨跌 ---
-                chg_usd = round(price_usd - previous_usd, 2) if previous_usd else 0
-                pct_usd = round(chg_usd / previous_usd * 100, 2) if previous_usd else 0
-                chg_rmb = round(price_rmb - previous_rmb, 2) if price_rmb and previous_rmb else 0
-                pct_rmb = round(chg_rmb / previous_rmb * 100, 2) if previous_rmb and price_rmb else 0
 
-                if previous_rmb is None and price_rmb is not None:
-                    previous_rmb = price_rmb
-
-                # 构建日内统计
-                daily_stats = {
-                    "open_usd": today_open_usd,
-                    "high_usd": today_high_usd,
-                    "low_usd": today_low_usd,
-                    "open_rmb": today_open_rmb,
-                    "high_rmb": today_high_rmb,
-                    "low_rmb": today_low_rmb,
-                    "change_usd": daily_change_usd,
-                    "pct_usd": daily_pct_usd,
-                    "change_rmb": daily_change_rmb,
-                    "pct_rmb": daily_pct_rmb,
-                }
-
-                # --- 推送价格更新 ---
-                socketio.emit("price_update", {
-                    "usd": price_usd, "rmb": price_rmb, "rate": usdcny_rate,
-                    "gold_source": gold_price_source,
-                    "gold_time": gold_price_time,
-                    "gold_cached": gold_price_cached,
-                    "gold_error": gold_price_error,
-                    "rate_source": usdcny_rate_source,
-                    "rate_time": usdcny_rate_time,
-                    "rate_cached": usdcny_rate_cached,
-                    "rate_error": usdcny_rate_error,
-                    "previous_usd": previous_usd, "previous_rmb": previous_rmb,
-                    "change_usd": chg_usd, "change_pct_usd": pct_usd,
-                    "change_rmb": chg_rmb, "change_pct_rmb": pct_rmb,
-                    "time": now_str, "timestamp": now_iso,
-                    "klines_5min": list(klines_5min[-72:]),
-                    "daily": daily_stats,
-                    "source_comparison": source_comparison,
-                })
-                desktop_title = format_price_title(price_rmb, price_usd)
-                update_desktop_price_title(desktop_title)
-                update_floating_price(price_rmb, price_usd, pct_rmb)
-
-                # --- 统一预警规则评估 ---
-                check_alert_rules(now_str, now=now)
-                if cny_rate:
-                    rate_message = (
-                        f"使用缓存汇率 {cny_rate:.4f}（{rate_source}）"
-                        if rate_cached else f"汇率已更新 {cny_rate:.4f}（{rate_source}）"
-                    )
-                else:
-                    rate_message = "汇率暂未更新"
-                gold_message = (
-                    f"使用缓存金价（{source_name}）"
-                    if gold_cached else f"金价已更新（{source_name}）"
-                )
-                socketio.emit("fetch_status", build_fetch_status(
-                    status_ok,
-                    f"{gold_message}，{rate_message}",
-                    gold_ok=not gold_cached,
-                    forex_ok=cny_rate is not None,
-                    error="" if status_ok else last_fetch_error,
-                    gold_cached=gold_cached,
-                    forex_cached=rate_cached,
-                    gold_source=source_name,
-                    forex_source=rate_source,
-                    gold_error=gold_error or "",
-                    forex_error=forex_error or "",
-                    retryable=True,
-                ))
-                history_state = build_price_history_state(limit=240)
-                history_state["scope"] = "live"
-                socketio.emit("price_history_updated", history_state)
-                return True
-            else:
-                last_fetch_ok = False
-                last_fetch_error = gold_error or "Stooq 金价接口无响应或返回格式异常"
-                last_fetch_time = now_iso
-                status = build_fetch_status(
-                    False,
-                    "无法获取金价数据，请检查网络或稍后重试",
-                    gold_ok=False,
-                    forex_ok=rate_info is not None,
-                    error=last_fetch_error,
-                    gold_source=source_name,
-                    forex_source=rate_info.get("source", "") if isinstance(rate_info, dict) else "",
-                    forex_cached=bool(rate_info.get("cached")) if isinstance(rate_info, dict) else False,
-                    gold_error=gold_error or "",
-                    forex_error=forex_error or "",
-                    retryable=True,
-                )
-                socketio.emit("fetch_error", status)
-                socketio.emit("fetch_status", status)
-                return False
-    finally:
-        price_refresh_lock.release()
+def fetch_price_once():
+    return _get_market_runtime().fetch_once()
 
 
 def background_loop():
-    while True:
-        fetch_price_once()
-
-        time.sleep(10)
+    market_runtime_core.background_loop(
+        lambda: fetch_price_once(),
+        interval=10,
+        sleep=time.sleep,
+    )
 
 
 # ---------- 阈值检查 (多级) ----------
