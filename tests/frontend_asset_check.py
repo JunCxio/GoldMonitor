@@ -218,6 +218,40 @@ apply_settings_pos = js.find("applySettings(data || {})", settings_updated_pos)
 if not (settings_updated_pos >= 0 and settings_failed_pos >= 0 and apply_settings_pos >= 0 and settings_failed_pos < apply_settings_pos):
     raise SystemExit("settings_updated must preserve visible settings_error state before repainting the form")
 
+for required in (
+    'class="settings-modal settings-primary-modal"',
+    'class="settings-workspace"',
+    'aria-orientation="vertical"',
+    'class="setting-section setting-section-danger"',
+    'id="settingsUnsavedConfirm"',
+    'id="settingsDirtyState"',
+    'id="settingsSaveButton"',
+    'function captureSettingsSnapshot',
+    'function validateSettings',
+    'function handleSettingsTabKeydown',
+    'function handleSettingsDialogKeydown',
+    'SETTINGS_TAB_STORAGE_KEY',
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing settings workspace contract: {required}")
+
+for required in (
+    '.settings-primary-modal',
+    '.settings-workspace',
+    '.settings-sidebar',
+    '.setting-section',
+    '.settings-unsaved',
+    '.setting-field-error',
+    'grid-template-columns:132px minmax(0, 1fr)',
+    'grid-template-columns:106px minmax(0, 1fr)',
+    '.settings-tab small { display:none; }',
+):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing settings workspace selector: {required}")
+
+if '.settings-workspace { display:flex; flex-direction:column; }' in css:
+    raise SystemExit("settings navigation must remain on the left at narrow widths")
+
 reset_export_dir_pos = js.find("function resetExportDirField()")
 reset_export_dir_clear_pos = js.find("clearSettingsMessage();", reset_export_dir_pos)
 reset_export_dir_status_pos = js.find("renderExportDirStatus(null", reset_export_dir_pos)
@@ -865,7 +899,7 @@ for required in (
     "socket.on('daily_digest_previewed'",
     "socket.on('daily_digest_test_result'",
     "if (data.daily_digest_status) applyDailyDigestStatus(data.daily_digest_status)",
-    "if (tab === 'digest') socket.emit('get_daily_digest_status')",
+    "if (nextTab === 'digest') socket.emit('get_daily_digest_status')",
     "daily_digest_enabled: document.getElementById('setDailyDigestEnabled').checked",
     "daily_digest_time: document.getElementById('setDailyDigestTime').value",
     "daily_digest_email_enabled: document.getElementById('setDailyDigestEmail').checked",
