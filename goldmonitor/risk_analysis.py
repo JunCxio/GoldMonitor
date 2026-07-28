@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from goldmonitor.data_contracts import unwrap_item_payload, wrap_item_payload
 
@@ -28,6 +28,242 @@ def parse_iso_datetime(value):
         return parsed
     except ValueError:
         return None
+
+
+def format_number(value, digits=2):
+    if value is None:
+        return None
+    try:
+        return round(float(value), digits)
+    except (TypeError, ValueError):
+        return None
+
+
+def valid_market_price(value):
+    try:
+        return float(value) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def market_data_error(price_usd, price_rmb):
+    if valid_market_price(price_usd) or valid_market_price(price_rmb):
+        return ""
+    return "当前没有可用于风险分析的行情价格，请先重新获取行情数据。"
+
+
+def summarize_price_series(points, field):
+    values = [item.get(field) for item in points if item.get(field) is not None]
+    if not values:
+        return {key: value for key, value in (
+            ("points", 0), ("start", None), ("end", None), ("high", None),
+            ("low", None), ("change", None), ("change_pct", None),
+        )}
+    start, end = values[0], values[-1]
+    change = end - start
+    return {
+        "points": len(values),
+        "start": format_number(start),
+        "end": format_number(end),
+        "high": format_number(max(values)),
+        "low": format_number(min(values)),
+        "change": format_number(change),
+        "change_pct": format_number(change / start * 100 if start else 0),
+    }
+
+
+def summarize_klines(candles):
+    if not candles:
+        return {"points": 0, "latest": None, "high": None, "low": None, "direction": "样本不足"}
+    closes = [item.get("close") for item in candles if item.get("close") is not None]
+    highs = [item.get("high") for item in candles if item.get("high") is not None]
+    lows = [item.get("low") for item in candles if item.get("low") is not None]
+    latest = candles[-1]
+    direction = "样本不足"
+    if len(closes) >= 2:
+        direction = "上行" if closes[-1] > closes[0] else "下行" if closes[-1] < closes[0] else "震荡"
+    return {
+        "points": len(candles),
+        "latest": {
+            "time": latest.get("time"),
+            **{key: format_number(latest.get(key)) for key in ("open", "high", "low", "close")},
+        },
+        "high": format_number(max(highs) if highs else None),
+        "low": format_number(min(lows) if lows else None),
+        "direction": direction,
+    }
+
+
+def history_window(points, minutes, now_factory=None):
+    if not points:
+        return []
+    now_factory = now_factory or datetime.now
+    latest_time = parse_iso_datetime(points[-1].get("timestamp")) or now_factory()
+    cutoff = latest_time - timedelta(minutes=minutes)
+    filtered = [
+        item for item in points
+        if (parse_iso_datetime(item.get("timestamp")) or latest_time) >= cutoff
+    ]
+    return filtered or points[-max(2, int(minutes * 6)):]
+
+
+def trend_direction(summary):
+    if summary.get("points", 0) < 2 or summary.get("change_pct") is None:
+        return "样本不足"
+    percent = summary.get("change_pct") or 0
+    return "震荡" if abs(percent) < 0.03 else "上行" if percent > 0 else "下行"
+
+
+def build_multi_period_trends(history, periods, now_factory=None):
+    trends = []
+    for minutes in periods:
+        window = history_window(history, minutes, now_factory=now_factory)
+        usd = summarize_price_series(window, "usd")
+        rmb = summarize_price_series(window, "rmb")
+        trends.append({
+            "minutes": minutes,
+            "points": len(window),
+            "usd": usd,
+            "rmb": rmb,
+            "direction_usd": trend_direction(usd),
+            "direction_rmb": trend_direction(rmb),
+        })
+    return trends
+
+
+def assess_data_quality(context, now_factory=None):
+    market = context.get("market", {})
+    history = context.get("history_summary", {}).get("usd", {})
+    kline = context.get("kline_summary", {}).get("usd", {})
+    score, issues = 100, []
+    for applies, points, message in (
+        (market.get("price_usd") is None, 35, "国际金价缺失"),
+        (market.get("price_rmb") is None, 25, "人民币金价缺失"),
+        (market.get("gold_cached"), 15, "金价来自缓存"),
+        (market.get("rate_cached"), 10, "汇率来自缓存"),
+        (not market.get("last_fetch_ok"), 10, "最近一次行情刷新异常"),
+    ):
+        if applies:
+            score -= points
+            issues.append(message)
+    history_points = history.get("points", 0)
+    if history_points < 12:
+        score -= 15
+        issues.append("历史价格样本偏少")
+    elif history_points < 60:
+        score -= 6
+        issues.append("历史样本不足 10 分钟")
+    if kline.get("points", 0) < 2:
+        score -= 10
+        issues.append("5分钟K线样本不足")
+    if not context.get("news"):
+        score -= 5
+        issues.append("近期资讯为空")
+    now = (now_factory or datetime.now)()
+    for value, seconds, points, message in (
+        (market.get("gold_time"), 15 * 60, 8, "金价更新时间超过 15 分钟"),
+        (market.get("rate_time"), 60 * 60, 5, "汇率更新时间超过 1 小时"),
+    ):
+        parsed = parse_iso_datetime(value)
+        if parsed and (now - parsed).total_seconds() > seconds:
+            score -= points
+            issues.append(message)
+    score = max(0, min(100, score))
+    return {
+        "score": score,
+        "level": "高" if score >= 85 else "中" if score >= 65 else "低",
+        "issues": issues,
+        "summary": "；".join(issues) if issues else "数据状态良好",
+    }
+
+
+def build_risk_scorecard(context):
+    trends = context.get("multi_period_trends", [])
+    history = context.get("history_summary", {})
+    news = context.get("news", [])
+    rmb = history.get("rmb", {})
+    rates = [item.get("rate") for item in history.get("latest_points", []) if item.get("rate") is not None]
+    changes = [abs((item.get("rmb") or {}).get("change_pct") or 0) for item in trends]
+    trend_strength = min(100, int((max(changes) if changes else 0) * 35))
+    high, low, end = rmb.get("high"), rmb.get("low"), rmb.get("end")
+    volatility_pct = ((high - low) / end * 100) if high is not None and low is not None and end else 0
+    volatility_risk = min(100, int(volatility_pct * 25))
+    fx_change_pct = abs((rates[-1] - rates[0]) / rates[0] * 100) if len(rates) >= 2 and rates[0] else 0
+    fx_impact = min(100, int(fx_change_pct * 40))
+    event_risk = 0
+    for item in news:
+        text = f"{item.get('topic') or ''} {item.get('title') or ''}".lower()
+        event_risk += 25 if any(key in text for key in ("fed", "fomc", "inflation", "cpi", "jobs", "payroll", "dollar", "yield")) else 12
+    event_risk = min(100, event_risk)
+    credibility = int(context.get("data_quality", {}).get("score", 0) or 0)
+    overall = int(volatility_risk * 0.28 + event_risk * 0.24 + trend_strength * 0.22 + fx_impact * 0.12 + (100 - credibility) * 0.14)
+    return {
+        "overall_risk": max(0, min(100, overall)),
+        "trend_strength": trend_strength,
+        "volatility_risk": volatility_risk,
+        "fx_impact": fx_impact,
+        "event_risk": event_risk,
+        "data_credibility": credibility,
+        "volatility_pct": format_number(volatility_pct),
+        "fx_change_pct": format_number(fx_change_pct, 4),
+    }
+
+
+def build_context(state, settings, *, trigger=None, depth=None, valid_depths, trend_periods, news_limit, source_health=None, now_factory=None):
+    now_factory = now_factory or datetime.now
+    depth = depth if depth in valid_depths else settings.get("risk_assistant_depth", "standard")
+    depth = depth if depth in valid_depths else "standard"
+    history_limit = {"quick": 120, "standard": 360, "deep": 1440}.get(depth, 360)
+    selected_news_limit = {"quick": 3, "standard": news_limit, "deep": 10}.get(depth, news_limit)
+    source_history = state["price_archive"] if depth == "deep" and state["price_archive"] else state["price_history"]
+    history = list(source_history[-history_limit:])
+    candles = list(state["klines_5min"][-72:])
+    news = list(state["news_items"][:selected_news_limit])
+    usd_change = state["price_usd"] - state["today_open_usd"] if state["price_usd"] is not None and state["today_open_usd"] else None
+    rmb_change = state["price_rmb"] - state["today_open_rmb"] if state["price_rmb"] is not None and state["today_open_rmb"] else None
+    now = now_factory()
+    context = {
+        "analysis_time": now.isoformat(timespec="seconds"),
+        "analysis_depth": depth,
+        "market": {
+            "price_usd": format_number(state["price_usd"]), "price_rmb": format_number(state["price_rmb"]),
+            "previous_usd": format_number(state["previous_usd"]), "previous_rmb": format_number(state["previous_rmb"]),
+            "usdcny_rate": format_number(state["usdcny_rate"], 4),
+            "gold_source": state["gold_price_source"], "gold_time": state["gold_price_time"],
+            "gold_cached": state["gold_price_cached"], "gold_error": state["gold_price_error"],
+            "rate_source": state["usdcny_rate_source"], "rate_time": state["usdcny_rate_time"],
+            "rate_cached": state["usdcny_rate_cached"], "rate_error": state["usdcny_rate_error"],
+            "last_fetch_ok": state["last_fetch_ok"], "last_fetch_error": state["last_fetch_error"],
+            "last_fetch_time": state["last_fetch_time"],
+        },
+        "daily": {
+            "date": state["today_date"],
+            "open_usd": format_number(state["today_open_usd"]), "high_usd": format_number(state["today_high_usd"]),
+            "low_usd": format_number(state["today_low_usd"]), "change_usd": format_number(usd_change),
+            "pct_usd": format_number(usd_change / state["today_open_usd"] * 100 if usd_change is not None and state["today_open_usd"] else None),
+            "open_rmb": format_number(state["today_open_rmb"]), "high_rmb": format_number(state["today_high_rmb"]),
+            "low_rmb": format_number(state["today_low_rmb"]), "change_rmb": format_number(rmb_change),
+            "pct_rmb": format_number(rmb_change / state["today_open_rmb"] * 100 if rmb_change is not None and state["today_open_rmb"] else None),
+        },
+        "history_summary": {
+            "minutes": 60, "usd": summarize_price_series(history, "usd"),
+            "rmb": summarize_price_series(history, "rmb"), "latest_points": history[-12:],
+        },
+        "multi_period_trends": build_multi_period_trends(history, trend_periods, now_factory=lambda: now),
+        "kline_summary": {"period": "5min", "usd": summarize_klines(candles), "latest_candles": candles[-12:]},
+        "news": [{key: item.get(key, "") for key in ("title", "source", "time", "topic", "summary")} for item in news],
+    }
+    if isinstance(trigger, dict):
+        context["manual_trigger"] = {
+            "source": str(trigger.get("source") or "manual"), "time": str(trigger.get("time") or ""),
+            "type": str(trigger.get("type") or ""), "mode": str(trigger.get("mode") or ""),
+            "message": str(trigger.get("message") or "")[:500],
+        }
+    context["market_quality"] = source_health.get("quality") if isinstance(source_health, dict) else {}
+    context["sample_warning"] = "样本不足" if len(history) < 12 or len(candles) < 2 else ""
+    context["data_quality"] = assess_data_quality(context, now_factory=lambda: now)
+    context["risk_scorecard"] = build_risk_scorecard(context)
+    return context
 
 
 class RiskAnalysisHistoryStore:

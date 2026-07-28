@@ -3,6 +3,7 @@ from pathlib import Path
 
 source = Path("app.py").read_text(encoding="utf-8")
 desktop_runtime_source = Path("goldmonitor/desktop_runtime.py").read_text(encoding="utf-8")
+platform_runtime_source = Path("goldmonitor/platform_runtime.py").read_text(encoding="utf-8")
 mac_launcher = Path("GoldMonitor.command").read_text(encoding="utf-8")
 mac_script = Path("scripts/start_mac.sh").read_text(encoding="utf-8")
 main_marker = 'if __name__ == "__main__":'
@@ -51,7 +52,7 @@ if 'runtime_platform = "macos"' not in desktop_runtime_source:
 if 'create_macos_status_item()' not in source:
     raise SystemExit("macOS desktop mode must create a menu bar status item")
 
-if 'MACOS_LAUNCH_AGENT_ID' not in source or 'plistlib.dump' not in source:
+if 'MACOS_LAUNCH_AGENT_ID' not in source or 'plistlib.dump' not in platform_runtime_source:
     raise SystemExit("macOS startup must use a user LaunchAgent")
 
 if 'exec "$ROOT_DIR/scripts/start_mac.sh"' not in mac_launcher:

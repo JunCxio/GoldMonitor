@@ -1,5 +1,7 @@
 import logging
 
+from goldmonitor import desktop_ui as desktop_ui_core
+
 
 WM_PAINT = 0x000F
 WM_LBUTTONDOWN = 0x0201
@@ -40,6 +42,8 @@ WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_LAYERED = 0x00080000
 WS_EX_NOACTIVATE = 0x08000000
 WS_POPUP = 0x80000000
+HWND_TOPMOST = -1
+HWND_NOTOPMOST = -2
 
 
 def get_lparam_point(lparam):
@@ -62,6 +66,265 @@ def _load_win32_types():
     from ctypes import wintypes
 
     return ctypes, wintypes
+
+
+def apply_window_corner_preference(
+    hwnd,
+    *,
+    os_name,
+    ctypes_loader=_load_win32_types,
+):
+    if not hwnd or os_name != "nt":
+        return
+    try:
+        ctypes, _wintypes = ctypes_loader()
+        value = ctypes.c_int(3)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            ctypes.c_void_p(hwnd),
+            ctypes.c_uint(33),
+            ctypes.byref(value),
+            ctypes.sizeof(value),
+        )
+    except Exception:
+        pass
+
+
+def get_work_area(user32, *, ctypes_loader=_load_win32_types):
+    try:
+        ctypes, wintypes = ctypes_loader()
+        rect = wintypes.RECT()
+        if user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):
+            return rect.left, rect.top, rect.right, rect.bottom
+    except Exception:
+        pass
+    return 0, 0, 1280, 720
+
+
+def clamp_window_position(
+    x,
+    y,
+    *,
+    window_size,
+    work_area,
+):
+    try:
+        return desktop_ui_core.clamp_floating_position(x, y, window_size(), work_area())
+    except Exception:
+        return int(x), int(y)
+
+
+def snap_window_position(
+    x,
+    y,
+    *,
+    settings,
+    window_size,
+    work_area,
+):
+    if not settings().get("floating_price_snap_edge", True):
+        return x, y
+    try:
+        return desktop_ui_core.snap_floating_position(
+            x,
+            y,
+            window_size(),
+            work_area(),
+            enabled=True,
+        )
+    except Exception:
+        return x, y
+
+
+def resolve_window_position(*, settings, width, height, work_area):
+    return desktop_ui_core.resolve_floating_position(
+        settings(),
+        (width, height),
+        work_area(),
+    )
+
+
+def save_window_position(
+    x,
+    y,
+    *,
+    clamp_position,
+    snap_position,
+    get_settings,
+    save_settings,
+    emit_settings_updated,
+    logger=logging,
+):
+    try:
+        x, y = clamp_position(x, y)
+        x, y = snap_position(x, y)
+        snapshot = get_settings()
+        if (
+            snapshot.get("floating_price_position_saved")
+            and snapshot.get("floating_price_x") == x
+            and snapshot.get("floating_price_y") == y
+        ):
+            return x, y
+        snapshot["floating_price_position_saved"] = True
+        snapshot["floating_price_x"] = x
+        snapshot["floating_price_y"] = y
+        save_settings(snapshot)
+        emit_settings_updated()
+        return x, y
+    except Exception:
+        logger.warning("桌面金价悬浮条位置保存失败", exc_info=True)
+        return x, y
+
+
+def position_window(
+    hwnd,
+    *,
+    user32,
+    x=None,
+    y=None,
+    window_size,
+    resolve_position,
+    clamp_position,
+    get_settings,
+    set_positioned,
+    ctypes_loader=_load_win32_types,
+    logger=logging,
+):
+    if not hwnd:
+        return
+    try:
+        ctypes, _wintypes = ctypes_loader()
+        user32.SetWindowPos.restype = ctypes.c_bool
+        user32.SetWindowPos.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint,
+        ]
+        width, height = window_size()
+        if x is None or y is None:
+            x, y = resolve_position(user32, width, height)
+        else:
+            x, y = clamp_position(x, y, user32)
+        pointer_bits = ctypes.sizeof(ctypes.c_void_p) * 8
+        topmost = ctypes.c_void_p(HWND_TOPMOST & ((1 << pointer_bits) - 1))
+        not_topmost = ctypes.c_void_p(HWND_NOTOPMOST & ((1 << pointer_bits) - 1))
+        insert_after = (
+            topmost
+            if desktop_ui_core.floating_window_z_order(get_settings()) == "topmost"
+            else not_topmost
+        )
+        ok = user32.SetWindowPos(
+            hwnd,
+            insert_after,
+            int(x),
+            int(y),
+            int(width),
+            int(height),
+            0x0010 | 0x0200,
+        )
+        set_positioned(bool(ok))
+        if not ok:
+            raise OSError(ctypes.get_last_error(), "SetWindowPos failed")
+    except Exception:
+        logger.warning("桌面金价悬浮条定位失败", exc_info=True)
+
+
+def invalidate_window(
+    hwnd,
+    *,
+    os_name,
+    ctypes_loader=_load_win32_types,
+):
+    if not hwnd or os_name != "nt":
+        return
+    try:
+        ctypes, _wintypes = ctypes_loader()
+        user32 = ctypes.windll.user32
+        user32.InvalidateRect.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_bool,
+        ]
+        user32.InvalidateRect(hwnd, None, True)
+    except Exception:
+        pass
+
+
+def set_window_visible(
+    visible,
+    *,
+    hwnd,
+    os_name,
+    get_positioned,
+    position_window,
+    apply_opacity,
+    invalidate_window,
+    ctypes_loader=_load_win32_types,
+):
+    if not hwnd or os_name != "nt":
+        return
+    try:
+        ctypes, _wintypes = ctypes_loader()
+        user32 = ctypes.windll.user32
+        user32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        if visible:
+            if not get_positioned():
+                position_window(hwnd, user32)
+            apply_opacity(hwnd, user32)
+            user32.ShowWindow(hwnd, 4)
+            invalidate_window()
+        else:
+            user32.ShowWindow(hwnd, 0)
+    except Exception:
+        pass
+
+
+def set_enabled(
+    enabled,
+    *,
+    get_settings,
+    save_settings,
+    set_window_visible,
+    apply_settings,
+    public_settings_snapshot,
+    emit,
+    logger=logging,
+):
+    try:
+        enabled = bool(enabled)
+        snapshot = get_settings()
+        if snapshot.get("floating_price_enabled", True) == enabled:
+            set_window_visible(enabled)
+            return
+        snapshot["floating_price_enabled"] = enabled
+        save_settings(snapshot)
+        apply_settings(snapshot)
+        emit("settings_updated", public_settings_snapshot(snapshot))
+    except Exception:
+        logger.warning("桌面金价悬浮条显示状态更新失败", exc_info=True)
+
+
+def apply_window_opacity(
+    hwnd,
+    *,
+    os_name,
+    get_settings,
+    user32=None,
+    ctypes_loader=_load_win32_types,
+):
+    if not hwnd or os_name != "nt":
+        return
+    try:
+        ctypes, _wintypes = ctypes_loader()
+        user32 = user32 or ctypes.windll.user32
+        opacity = get_settings().get("floating_price_opacity", 94)
+        alpha = max(1, min(255, int(int(opacity) / 100 * 255)))
+        user32.SetLayeredWindowAttributes(hwnd, 0, alpha, 0x00000002)
+    except Exception:
+        pass
 
 
 def draw_floating_window(

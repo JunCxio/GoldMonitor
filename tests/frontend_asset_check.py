@@ -5,9 +5,13 @@ import re
 root = Path(__file__).resolve().parents[1]
 template = (root / "templates" / "index.html").read_text(encoding="utf-8")
 app_py = (root / "app.py").read_text(encoding="utf-8")
+http_routes_py = (root / "goldmonitor" / "http_routes.py").read_text(encoding="utf-8")
 floating_runtime_py = (root / "goldmonitor" / "floating_runtime.py").read_text(encoding="utf-8")
 css_path = root / "static" / "app.css"
 js_path = root / "static" / "app.js"
+app_state_js_path = root / "static" / "app-state.js"
+app_utils_js_path = root / "static" / "app-utils.js"
+desktop_close_js_path = root / "static" / "desktop-close.js"
 market_dashboard_js_path = root / "static" / "market-dashboard.js"
 settings_js_path = root / "static" / "settings-center.js"
 operations_js_path = root / "static" / "operations-center.js"
@@ -24,6 +28,10 @@ if not css_path.exists():
 
 if not js_path.exists():
     raise SystemExit("frontend main script must live in static/app.js")
+
+for shared_path in (app_state_js_path, app_utils_js_path, desktop_close_js_path):
+    if not shared_path.exists():
+        raise SystemExit(f"frontend shared script is missing: {shared_path.name}")
 
 if not market_dashboard_js_path.exists():
     raise SystemExit("market dashboard script must live in static/market-dashboard.js")
@@ -56,9 +64,12 @@ app_js = js_path.read_text(encoding="utf-8")
 market_dashboard_js = market_dashboard_js_path.read_text(encoding="utf-8")
 alert_rule_js = alert_rule_js_path.read_text(encoding="utf-8")
 alert_configuration_js = alert_configuration_js_path.read_text(encoding="utf-8")
+portfolio_js = portfolio_js_path.read_text(encoding="utf-8")
 alert_log_js = alert_log_js_path.read_text(encoding="utf-8")
 
 js = "\n".join((
+    app_state_js_path.read_text(encoding="utf-8"),
+    app_utils_js_path.read_text(encoding="utf-8"),
     market_dashboard_js,
     settings_js_path.read_text(encoding="utf-8"),
     operations_js_path.read_text(encoding="utf-8"),
@@ -68,6 +79,7 @@ js = "\n".join((
     alert_configuration_js,
     portfolio_js_path.read_text(encoding="utf-8"),
     alert_log_js,
+    desktop_close_js_path.read_text(encoding="utf-8"),
     app_js,
 ))
 
@@ -82,6 +94,11 @@ if '<script src="/static/app-shell.js?v={{ app_version }}"></script>' not in tem
 
 if '<script src="/static/app.js?v={{ app_version }}"></script>' not in template:
     raise SystemExit("template must reference versioned /static/app.js")
+
+for shared_name in ("app-state.js", "app-utils.js", "desktop-close.js"):
+    shared_script = f'<script src="/static/{shared_name}?v={{{{ app_version }}}}"></script>'
+    if shared_script not in template:
+        raise SystemExit(f"template must reference versioned /static/{shared_name}")
 
 market_dashboard_script = '<script src="/static/market-dashboard.js?v={{ app_version }}"></script>'
 if market_dashboard_script not in template:
@@ -164,6 +181,9 @@ if "registerAlertRuleSocketHandlers(socket);" not in app_js:
 if "registerAlertConfigurationSocketHandlers(socket);" not in app_js:
     raise SystemExit("static/app.js must register alert configuration socket handlers")
 
+if "registerPortfolioSocketHandlers(socket);" not in app_js:
+    raise SystemExit("static/app.js must register portfolio socket handlers")
+
 if "registerMarketDashboardSocketHandlers(socket);" not in app_js:
     raise SystemExit("static/app.js must register market dashboard socket handlers")
 
@@ -229,8 +249,25 @@ for moved in (
     if moved in app_js:
         raise SystemExit(f"static/app.js keeps extracted alert log implementation: {moved}")
 
-if "render_template(\"index.html\", socket_access_token=SOCKET_ACCESS_TOKEN, app_version=APP_VERSION)" not in app_py:
-    raise SystemExit("app.py must inject app_version into index.html")
+for required in (
+    "function registerPortfolioSocketHandlers",
+    "socketClient.on('portfolio_updated'",
+    "socketClient.on('portfolio_import_previewed'",
+    "socketClient.on('portfolio_analytics_updated'",
+):
+    if required not in portfolio_js:
+        raise SystemExit(f"static/portfolio-center.js missing extracted portfolio contract: {required}")
+
+for moved in (
+    "socket.on('portfolio_updated'",
+    "socket.on('portfolio_import_previewed'",
+    "socket.on('portfolio_analytics_updated'",
+):
+    if moved in app_js:
+        raise SystemExit(f"static/app.js keeps extracted portfolio implementation: {moved}")
+
+if '"index.html"' not in http_routes_py or "app_version=app_version" not in http_routes_py:
+    raise SystemExit("HTTP routes must inject app_version into index.html")
 
 if 'id="chartEmptyState"' not in template:
     raise SystemExit("template must expose chart empty state overlay")
@@ -333,10 +370,10 @@ for required in (
 
 for required in (
     "HWND_NOTOPMOST",
-    "floating_window_z_order(get_settings_snapshot())",
+    "floating_window_z_order(get_settings())",
 ):
-    if required not in app_py:
-        raise SystemExit(f"app.py missing floating z-order contract: {required}")
+    if required not in floating_runtime_py:
+        raise SystemExit(f"floating runtime missing z-order contract: {required}")
 
 if "WS_EX_NOACTIVATE" not in floating_runtime_py:
     raise SystemExit("floating runtime missing non-activating window style")

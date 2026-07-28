@@ -288,6 +288,100 @@ def test_window_loop_failure_sets_ready_and_logs_once():
     assert warnings == [("桌面金价悬浮条启动失败", True)]
 
 
+def test_position_persistence_only_writes_changed_coordinates():
+    from goldmonitor.floating_runtime import save_window_position
+
+    settings = {
+        "floating_price_position_saved": False,
+        "floating_price_x": None,
+        "floating_price_y": None,
+    }
+    saved = []
+    emitted = []
+
+    first = save_window_position(
+        20,
+        30,
+        clamp_position=lambda x, y: (max(8, x), max(8, y)),
+        snap_position=lambda x, y: (24, 32),
+        get_settings=lambda: dict(settings),
+        save_settings=lambda snapshot: settings.update(snapshot) or saved.append(dict(snapshot)),
+        emit_settings_updated=lambda: emitted.append(True),
+    )
+    second = save_window_position(
+        24,
+        32,
+        clamp_position=lambda x, y: (x, y),
+        snap_position=lambda x, y: (x, y),
+        get_settings=lambda: dict(settings),
+        save_settings=lambda snapshot: saved.append(dict(snapshot)),
+        emit_settings_updated=lambda: emitted.append(True),
+    )
+
+    assert first == (24, 32)
+    assert second == (24, 32)
+    assert settings["floating_price_position_saved"] is True
+    assert settings["floating_price_x"] == 24
+    assert settings["floating_price_y"] == 32
+    assert len(saved) == 1
+    assert emitted == [True]
+
+
+def test_visibility_setting_persists_and_reapplies_runtime_state():
+    from goldmonitor.floating_runtime import set_enabled
+
+    settings = {"floating_price_enabled": True}
+    calls = []
+
+    set_enabled(
+        False,
+        get_settings=lambda: dict(settings),
+        save_settings=lambda snapshot: settings.update(snapshot) or calls.append("save"),
+        set_window_visible=lambda visible: calls.append(("visible", visible)),
+        apply_settings=lambda snapshot: calls.append(("apply", snapshot["floating_price_enabled"])),
+        public_settings_snapshot=lambda snapshot: dict(snapshot),
+        emit=lambda event, payload: calls.append((event, payload["floating_price_enabled"])),
+    )
+    set_enabled(
+        False,
+        get_settings=lambda: dict(settings),
+        save_settings=lambda snapshot: calls.append("unexpected_save"),
+        set_window_visible=lambda visible: calls.append(("visible", visible)),
+        apply_settings=lambda snapshot: calls.append("unexpected_apply"),
+        public_settings_snapshot=lambda snapshot: dict(snapshot),
+        emit=lambda event, payload: calls.append("unexpected_emit"),
+    )
+
+    assert settings["floating_price_enabled"] is False
+    assert calls == [
+        "save",
+        ("apply", False),
+        ("settings_updated", False),
+        ("visible", False),
+    ]
+
+
+def test_opacity_is_converted_to_layered_window_alpha():
+    from goldmonitor.floating_runtime import apply_window_opacity
+
+    calls = []
+    user32 = SimpleNamespace(
+        SetLayeredWindowAttributes=(
+            lambda hwnd, color, alpha, flags: calls.append((hwnd, color, alpha, flags))
+        )
+    )
+
+    apply_window_opacity(
+        42,
+        os_name="nt",
+        get_settings=lambda: {"floating_price_opacity": 50},
+        user32=user32,
+        ctypes_loader=lambda: (SimpleNamespace(), SimpleNamespace()),
+    )
+
+    assert calls == [(42, 0, 127, 0x00000002)]
+
+
 def test_app_window_loop_wrapper_resolves_current_runtime_callbacks(monkeypatch):
     import app
 

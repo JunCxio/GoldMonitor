@@ -29,6 +29,92 @@ PORTFOLIO_CSV_FIELDS = [
     "valuation_status",
     "note",
 ]
+
+
+def empty_import_backup():
+    return {
+        "available": False,
+        "kind": "transactions",
+        "batch_id": "",
+        "imported_at": "",
+        "count": 0,
+        "create": 0,
+        "overwrite": 0,
+        "snapshot": [],
+    }
+
+
+def import_backup_state(backup):
+    source = backup if isinstance(backup, dict) else {}
+    if not source.get("available"):
+        return {key: value for key, value in empty_import_backup().items() if key != "snapshot"}
+    return {
+        "available": True,
+        "kind": source.get("kind") or "transactions",
+        "batch_id": source.get("batch_id") or "",
+        "imported_at": source.get("imported_at") or "",
+        "count": int(source.get("count") or 0),
+        "create": int(source.get("create") or 0),
+        "overwrite": int(source.get("overwrite") or 0),
+    }
+
+
+def load_import_backup(path):
+    if not os.path.exists(path):
+        return empty_import_backup()
+    try:
+        with open(path, "r", encoding="utf-8") as file_handle:
+            payload = json.load(file_handle)
+    except (OSError, json.JSONDecodeError):
+        return empty_import_backup()
+    snapshot = payload.get("snapshot") if isinstance(payload, dict) else None
+    if not payload.get("available") or not isinstance(snapshot, list):
+        return empty_import_backup()
+    return {
+        "available": True,
+        "kind": payload.get("kind") or "transactions",
+        "batch_id": payload.get("batch_id") or "",
+        "imported_at": payload.get("imported_at") or "",
+        "count": int(payload.get("count") or 0),
+        "create": int(payload.get("create") or 0),
+        "overwrite": int(payload.get("overwrite") or 0),
+        "snapshot": [dict(item) for item in snapshot if isinstance(item, dict)],
+    }
+
+
+def save_import_backup(path, snapshot, summary=None, *, now_factory=None, token_factory=None):
+    summary = summary if isinstance(summary, dict) else {}
+    now = (now_factory or datetime.now)().isoformat(timespec="seconds")
+    token_factory = token_factory or (lambda: secrets.token_hex(4))
+    payload = {
+        "schema_version": 1,
+        "available": True,
+        "kind": "transactions",
+        "batch_id": "import-" + now.replace(":", "").replace("-", "").replace("T", "-") + "-" + token_factory(),
+        "imported_at": now,
+        "count": int(summary.get("count") or 0),
+        "create": int(summary.get("create") or 0),
+        "overwrite": int(summary.get("overwrite") or 0),
+        "snapshot": [dict(item) for item in list(snapshot or [])],
+    }
+    _write_import_backup(path, payload)
+    return payload
+
+
+def clear_import_backup(path, *, now_factory=None):
+    payload = empty_import_backup()
+    payload["schema_version"] = 1
+    payload["updated_at"] = (now_factory or datetime.now)().isoformat(timespec="seconds")
+    _write_import_backup(path, payload)
+    return empty_import_backup()
+
+
+def _write_import_backup(path, payload):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    temporary_path = path + ".tmp"
+    with open(temporary_path, "w", encoding="utf-8") as file_handle:
+        json.dump(payload, file_handle, ensure_ascii=False, indent=2)
+    os.replace(temporary_path, path)
 PORTFOLIO_POSITION_CSV_FIELDS = [
     "id",
     "name",

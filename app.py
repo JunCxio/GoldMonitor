@@ -2,13 +2,11 @@ import json
 import logging
 import math
 import os
-import plistlib
 import sqlite3
 import smtplib
 import subprocess
 import socket
 import sys
-import tempfile
 import threading
 import time
 from contextlib import ExitStack
@@ -21,19 +19,27 @@ from flask_socketio import SocketIO, emit
 from goldmonitor import alert_rules as alert_rules_core
 from goldmonitor import alert_profiles as alert_profiles_core
 from goldmonitor import app_state as app_state_core
+from goldmonitor import config_runtime as config_runtime_core
 from goldmonitor import desktop_ui as desktop_ui_core
 from goldmonitor import daily_digest as daily_digest_core
 from goldmonitor import data_archive as data_archive_core
 from goldmonitor import desktop_runtime as desktop_runtime_core
+from goldmonitor import desktop_status as desktop_status_core
+from goldmonitor import diagnostics_runtime as diagnostics_runtime_core
 from goldmonitor import event_timeline as event_timeline_core
 from goldmonitor import floating_runtime as floating_runtime_core
 from goldmonitor import instance_runtime as instance_runtime_core
+from goldmonitor import http_routes as http_routes_core
 from goldmonitor import market_adapters as market_adapters_core
+from goldmonitor import market_clients as market_clients_core
 from goldmonitor import market_data as market_data_core
 from goldmonitor import market_runtime as market_runtime_core
 from goldmonitor import news as news_core
 from goldmonitor import notifications as notifications_core
+from goldmonitor import notification_runtime as notification_runtime_core
+from goldmonitor import operations_runtime as operations_runtime_core
 from goldmonitor import platform as platform_core
+from goldmonitor import platform_runtime as platform_runtime_core
 from goldmonitor import portfolio as portfolio_core
 from goldmonitor import portfolio_analytics as portfolio_analytics_core
 from goldmonitor import portfolio_alerts as portfolio_alerts_core
@@ -49,6 +55,7 @@ from goldmonitor import socket_operations as socket_operations_core
 from goldmonitor import socket_portfolio as socket_portfolio_core
 from goldmonitor import socket_risk_analysis as socket_risk_analysis_core
 from goldmonitor import socket_settings as socket_settings_core
+from goldmonitor import socket_runtime as socket_runtime_core
 from goldmonitor import storage_manifest as storage_manifest_core
 from goldmonitor import support_files as support_files_core
 from goldmonitor import targets as targets_core
@@ -60,6 +67,7 @@ from goldmonitor.diagnostics import build_health_summary
 from goldmonitor.platform import platform_capabilities as build_platform_capabilities
 from goldmonitor.platform import runtime_platform as detect_runtime_platform
 from goldmonitor.price_history import PriceHistoryStore
+from goldmonitor import price_history as price_history_core
 
 # PyInstaller 打包后路径适配
 if getattr(sys, "frozen", False):
@@ -449,6 +457,11 @@ last_export_status = {}
 _credential_test_store = None
 _alert_dialog_lock = threading.Lock()
 _alert_dialog_active = False
+
+
+def _set_alert_dialog_active(value):
+    global _alert_dialog_active
+    _alert_dialog_active = bool(value)
 _daily_digest_scheduler_started = False
 data_archive_uploads = {}
 
@@ -463,7 +476,10 @@ def _current_executable():
 
 
 def _credential_target_name(key):
-    return f"{CREDENTIAL_TARGET_PREFIX}{key}"
+    return platform_runtime_core.credential_target_name(
+        key,
+        CREDENTIAL_TARGET_PREFIX,
+    )
 
 
 def _credential_store_override():
@@ -471,196 +487,95 @@ def _credential_store_override():
 
 
 def _read_windows_credential(key):
-    if os.name != "nt":
-        return ""
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        CRED_TYPE_GENERIC = 1
-
-        class FILETIME(ctypes.Structure):
-            _fields_ = [
-                ("dwLowDateTime", wintypes.DWORD),
-                ("dwHighDateTime", wintypes.DWORD),
-            ]
-
-        class CREDENTIALW(ctypes.Structure):
-            _fields_ = [
-                ("Flags", wintypes.DWORD),
-                ("Type", wintypes.DWORD),
-                ("TargetName", wintypes.LPWSTR),
-                ("Comment", wintypes.LPWSTR),
-                ("LastWritten", FILETIME),
-                ("CredentialBlobSize", wintypes.DWORD),
-                ("CredentialBlob", ctypes.POINTER(ctypes.c_ubyte)),
-                ("Persist", wintypes.DWORD),
-                ("AttributeCount", wintypes.DWORD),
-                ("Attributes", ctypes.c_void_p),
-                ("TargetAlias", wintypes.LPWSTR),
-                ("UserName", wintypes.LPWSTR),
-            ]
-
-        credential_ptr = ctypes.POINTER(CREDENTIALW)()
-        advapi32 = ctypes.windll.advapi32
-        if not advapi32.CredReadW(_credential_target_name(key), CRED_TYPE_GENERIC, 0, ctypes.byref(credential_ptr)):
-            return ""
-        try:
-            credential = credential_ptr.contents
-            if not credential.CredentialBlob or not credential.CredentialBlobSize:
-                return ""
-            raw = ctypes.string_at(credential.CredentialBlob, credential.CredentialBlobSize)
-            return raw.decode("utf-16-le", errors="ignore")
-        finally:
-            advapi32.CredFree(credential_ptr)
-    except Exception:
-        logging.warning("读取系统凭据失败: %s", key, exc_info=True)
-        return ""
+    return platform_runtime_core.read_windows_credential(
+        key,
+        os_name=os.name,
+        target_name=lambda name: _credential_target_name(name),
+        logger=logging,
+    )
 
 
 def _write_windows_credential(key, value):
-    if os.name != "nt":
-        return False
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        CRED_TYPE_GENERIC = 1
-        CRED_PERSIST_LOCAL_MACHINE = 2
-
-        class FILETIME(ctypes.Structure):
-            _fields_ = [
-                ("dwLowDateTime", wintypes.DWORD),
-                ("dwHighDateTime", wintypes.DWORD),
-            ]
-
-        class CREDENTIALW(ctypes.Structure):
-            _fields_ = [
-                ("Flags", wintypes.DWORD),
-                ("Type", wintypes.DWORD),
-                ("TargetName", wintypes.LPWSTR),
-                ("Comment", wintypes.LPWSTR),
-                ("LastWritten", FILETIME),
-                ("CredentialBlobSize", wintypes.DWORD),
-                ("CredentialBlob", ctypes.POINTER(ctypes.c_ubyte)),
-                ("Persist", wintypes.DWORD),
-                ("AttributeCount", wintypes.DWORD),
-                ("Attributes", ctypes.c_void_p),
-                ("TargetAlias", wintypes.LPWSTR),
-                ("UserName", wintypes.LPWSTR),
-            ]
-
-        raw = str(value or "").encode("utf-16-le")
-        blob = ctypes.create_string_buffer(raw)
-        credential = CREDENTIALW()
-        credential.Flags = 0
-        credential.Type = CRED_TYPE_GENERIC
-        credential.TargetName = _credential_target_name(key)
-        credential.Comment = "GoldMonitor 本机敏感配置"
-        credential.CredentialBlobSize = len(raw)
-        credential.CredentialBlob = ctypes.cast(blob, ctypes.POINTER(ctypes.c_ubyte))
-        credential.Persist = CRED_PERSIST_LOCAL_MACHINE
-        credential.AttributeCount = 0
-        credential.Attributes = None
-        credential.TargetAlias = None
-        credential.UserName = key
-        return bool(ctypes.windll.advapi32.CredWriteW(ctypes.byref(credential), 0))
-    except Exception:
-        logging.warning("写入系统凭据失败: %s", key, exc_info=True)
-        return False
+    return platform_runtime_core.write_windows_credential(
+        key,
+        value,
+        os_name=os.name,
+        target_name=lambda name: _credential_target_name(name),
+        logger=logging,
+    )
 
 
 def _delete_windows_credential(key):
-    if os.name != "nt":
-        return True
-    try:
-        import ctypes
-
-        CRED_TYPE_GENERIC = 1
-        ctypes.windll.advapi32.CredDeleteW(_credential_target_name(key), CRED_TYPE_GENERIC, 0)
-        return True
-    except Exception:
-        return True
+    return platform_runtime_core.delete_windows_credential(
+        key,
+        os_name=os.name,
+        target_name=lambda name: _credential_target_name(name),
+    )
 
 
 def _run_macos_security(args):
-    try:
-        completed = subprocess.run(
-            ["security", *args],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        return completed.returncode, completed.stdout, completed.stderr
-    except Exception as exc:
-        return 1, "", str(exc)
+    return platform_runtime_core.run_macos_security(
+        args,
+        runner=subprocess.run,
+    )
 
 
 def _read_macos_credential(key):
-    if sys.platform != "darwin":
-        return ""
-    code, stdout, _stderr = _run_macos_security([
-        "find-generic-password",
-        "-s", CREDENTIAL_SERVICE_NAME,
-        "-a", key,
-        "-w",
-    ])
-    if code != 0:
-        return ""
-    return stdout.rstrip("\n")
+    return platform_runtime_core.read_macos_credential(
+        key,
+        sys_platform=sys.platform,
+        service_name=CREDENTIAL_SERVICE_NAME,
+        run_security=lambda args: _run_macos_security(args),
+    )
 
 
 def _write_macos_credential(key, value):
-    if sys.platform != "darwin":
-        return False
-    code, _stdout, stderr = _run_macos_security([
-        "add-generic-password",
-        "-s", CREDENTIAL_SERVICE_NAME,
-        "-a", key,
-        "-w", str(value or ""),
-        "-U",
-    ])
-    if code != 0:
-        logging.warning("写入 macOS Keychain 失败: %s %s", key, stderr.strip())
-    return code == 0
+    return platform_runtime_core.write_macos_credential(
+        key,
+        value,
+        sys_platform=sys.platform,
+        service_name=CREDENTIAL_SERVICE_NAME,
+        run_security=lambda args: _run_macos_security(args),
+        logger=logging,
+    )
 
 
 def _delete_macos_credential(key):
-    if sys.platform != "darwin":
-        return True
-    _run_macos_security([
-        "delete-generic-password",
-        "-s", CREDENTIAL_SERVICE_NAME,
-        "-a", key,
-    ])
-    return True
+    return platform_runtime_core.delete_macos_credential(
+        key,
+        sys_platform=sys.platform,
+        service_name=CREDENTIAL_SERVICE_NAME,
+        run_security=lambda args: _run_macos_security(args),
+    )
 
 
 def read_credential_secret(key):
-    store = _credential_store_override()
-    if store is not None:
-        return str(store.get(key) or "")
-    if os.name == "nt":
-        return _read_windows_credential(key)
-    if sys.platform == "darwin":
-        return _read_macos_credential(key)
-    return ""
+    return platform_runtime_core.read_credential_secret(
+        key,
+        store_override=lambda: _credential_store_override(),
+        os_name=os.name,
+        sys_platform=sys.platform,
+        read_windows=lambda name: _read_windows_credential(name),
+        read_macos=lambda name: _read_macos_credential(name),
+    )
 
 
 def write_credential_secret(key, value):
-    store = _credential_store_override()
-    if store is not None:
-        if value:
-            store[key] = str(value)
-        else:
-            store.pop(key, None)
-        return True
-    if os.name == "nt":
-        return _write_windows_credential(key, value) if value else _delete_windows_credential(key)
-    if sys.platform == "darwin":
-        return _write_macos_credential(key, value) if value else _delete_macos_credential(key)
-    return False
+    return platform_runtime_core.write_credential_secret(
+        key,
+        value,
+        store_override=lambda: _credential_store_override(),
+        os_name=os.name,
+        sys_platform=sys.platform,
+        write_windows=(
+            lambda name, secret: _write_windows_credential(name, secret)
+        ),
+        delete_windows=lambda name: _delete_windows_credential(name),
+        write_macos=(
+            lambda name, secret: _write_macos_credential(name, secret)
+        ),
+        delete_macos=lambda name: _delete_macos_credential(name),
+    )
 
 
 def _settings_options():
@@ -1419,90 +1334,32 @@ def save_portfolio_transactions(items=None):
 
 
 def empty_portfolio_import_backup():
-    return {
-        "available": False,
-        "kind": "transactions",
-        "batch_id": "",
-        "imported_at": "",
-        "count": 0,
-        "create": 0,
-        "overwrite": 0,
-        "snapshot": [],
-    }
+    return portfolio_core.empty_import_backup()
 
 
 def portfolio_import_backup_state(backup):
-    source = backup if isinstance(backup, dict) else {}
-    if not source.get("available"):
-        return {key: value for key, value in empty_portfolio_import_backup().items() if key != "snapshot"}
-    return {
-        "available": True,
-        "kind": source.get("kind") or "transactions",
-        "batch_id": source.get("batch_id") or "",
-        "imported_at": source.get("imported_at") or "",
-        "count": int(source.get("count") or 0),
-        "create": int(source.get("create") or 0),
-        "overwrite": int(source.get("overwrite") or 0),
-    }
+    return portfolio_core.import_backup_state(backup)
 
 
 def load_portfolio_import_backup():
-    if not os.path.exists(PORTFOLIO_IMPORT_BACKUP_PATH):
-        return empty_portfolio_import_backup()
-    try:
-        with open(PORTFOLIO_IMPORT_BACKUP_PATH, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return empty_portfolio_import_backup()
-    if not isinstance(payload, dict) or not payload.get("available"):
-        return empty_portfolio_import_backup()
-    snapshot = payload.get("snapshot")
-    if not isinstance(snapshot, list):
-        return empty_portfolio_import_backup()
-    return {
-        "available": True,
-        "kind": payload.get("kind") or "transactions",
-        "batch_id": payload.get("batch_id") or "",
-        "imported_at": payload.get("imported_at") or "",
-        "count": int(payload.get("count") or 0),
-        "create": int(payload.get("create") or 0),
-        "overwrite": int(payload.get("overwrite") or 0),
-        "snapshot": [dict(item) for item in snapshot if isinstance(item, dict)],
-    }
+    return portfolio_core.load_import_backup(PORTFOLIO_IMPORT_BACKUP_PATH)
 
 
 def save_portfolio_import_backup(snapshot, summary=None):
-    summary = summary if isinstance(summary, dict) else {}
-    now = datetime.now().isoformat(timespec="seconds")
-    payload = {
-        "schema_version": 1,
-        "available": True,
-        "kind": "transactions",
-        "batch_id": "import-" + now.replace(":", "").replace("-", "").replace("T", "-") + "-" + secrets.token_hex(4),
-        "imported_at": now,
-        "count": int(summary.get("count") or 0),
-        "create": int(summary.get("create") or 0),
-        "overwrite": int(summary.get("overwrite") or 0),
-        "snapshot": [dict(item) for item in list(snapshot or [])],
-    }
-    os.makedirs(os.path.dirname(PORTFOLIO_IMPORT_BACKUP_PATH) or ".", exist_ok=True)
-    tmp_path = PORTFOLIO_IMPORT_BACKUP_PATH + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, PORTFOLIO_IMPORT_BACKUP_PATH)
-    return payload
+    return portfolio_core.save_import_backup(
+        PORTFOLIO_IMPORT_BACKUP_PATH,
+        snapshot,
+        summary,
+        now_factory=datetime.now,
+        token_factory=lambda: secrets.token_hex(4),
+    )
 
 
 def clear_portfolio_import_backup():
-    payload = empty_portfolio_import_backup()
-    payload["schema_version"] = 1
-    payload["updated_at"] = datetime.now().isoformat(timespec="seconds")
-    os.makedirs(os.path.dirname(PORTFOLIO_IMPORT_BACKUP_PATH) or ".", exist_ok=True)
-    tmp_path = PORTFOLIO_IMPORT_BACKUP_PATH + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, PORTFOLIO_IMPORT_BACKUP_PATH)
-    return empty_portfolio_import_backup()
+    return portfolio_core.clear_import_backup(
+        PORTFOLIO_IMPORT_BACKUP_PATH,
+        now_factory=datetime.now,
+    )
 
 
 def save_portfolio_alerts(items=None):
@@ -2202,12 +2059,14 @@ def build_portfolio_csv(kind="positions"):
 
 
 def _startup_command():
-    exe = _current_executable()
-    return platform_core.build_startup_command(exe)
+    return platform_core.build_startup_command(_current_executable())
 
 
 def _macos_launch_agent_path():
-    return platform_core.macos_launch_agent_path(os.path.expanduser("~"), MACOS_LAUNCH_AGENT_ID)
+    return platform_core.macos_launch_agent_path(
+        os.path.expanduser("~"),
+        MACOS_LAUNCH_AGENT_ID,
+    )
 
 
 def _macos_startup_arguments():
@@ -2219,51 +2078,34 @@ def _macos_startup_arguments():
 
 
 def _set_macos_startup_enabled(enabled):
-    path = _macos_launch_agent_path()
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        if enabled:
-            payload = platform_core.build_macos_launch_agent_payload(
-                MACOS_LAUNCH_AGENT_ID,
-                _macos_startup_arguments(),
-                _current_executable(),
-                os.path.expanduser("~"),
-            )
-            with open(path, "wb") as f:
-                plistlib.dump(payload, f, sort_keys=False)
-            subprocess.run(["launchctl", "unload", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3, check=False)
-            subprocess.run(["launchctl", "load", "-w", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3, check=False)
-        else:
-            subprocess.run(["launchctl", "unload", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3, check=False)
-            try:
-                os.remove(path)
-            except FileNotFoundError:
-                pass
-        return True, None
-    except Exception as exc:
-        return False, str(exc)
+    return platform_runtime_core.set_macos_startup_enabled(
+        enabled,
+        path=_macos_launch_agent_path(),
+        launch_agent_id=MACOS_LAUNCH_AGENT_ID,
+        startup_arguments=_macos_startup_arguments(),
+        current_executable=_current_executable(),
+        home_dir=os.path.expanduser("~"),
+        build_payload=platform_core.build_macos_launch_agent_payload,
+        runner=subprocess.run,
+    )
 
 
 def set_startup_enabled(enabled):
     if sys.platform == "darwin":
         return _set_macos_startup_enabled(enabled)
-    supported, error = platform_core.startup_support_result(enabled, sys.platform, os.name)
+    supported, error = platform_core.startup_support_result(
+        enabled,
+        sys.platform,
+        os.name,
+    )
     if supported is not None:
         return supported, error
-    try:
-        import winreg
-
-        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY_PATH, 0, winreg.KEY_SET_VALUE) as key:
-            if enabled:
-                winreg.SetValueEx(key, RUN_KEY_NAME, 0, winreg.REG_SZ, _startup_command())
-            else:
-                try:
-                    winreg.DeleteValue(key, RUN_KEY_NAME)
-                except FileNotFoundError:
-                    pass
-        return True, None
-    except Exception as exc:
-        return False, str(exc)
+    return platform_runtime_core.set_windows_startup_enabled(
+        enabled,
+        run_key_path=RUN_KEY_PATH,
+        run_key_name=RUN_KEY_NAME,
+        startup_command=_startup_command(),
+    )
 
 
 def _apply_startup_setting(saved):
@@ -2482,29 +2324,17 @@ def _json_payload_metadata(path):
 
 
 def build_config_backup():
-    settings_snapshot = get_settings_snapshot()
-    restorable_settings = {
-        key: settings_snapshot.get(key, default_value)
-        for key, default_value in DEFAULT_SETTINGS.items()
-        if key not in SECRET_SETTING_KEYS
-    }
-    return support_files_core.build_config_backup(
-        APP_VERSION,
-        restorable_settings,
-        {
-            **{key: thresholds.get(key) for key in thresholds},
-            "volatility_config": dict(volatility_config),
-        },
+    return operations_runtime_core.build_config_backup(
+        app_version=APP_VERSION,
+        settings=get_settings_snapshot(),
+        settings_defaults=DEFAULT_SETTINGS,
+        secret_keys=SECRET_SETTING_KEYS,
+        thresholds=thresholds,
+        volatility_config=volatility_config,
         alert_profiles=get_alert_profiles_state().get("items", []),
+        alert_rules=alert_rules,
+        builder=support_files_core.build_config_backup,
         now_factory=datetime.now,
-        alert_rules=[
-            {
-                key: value
-                for key, value in rule.items()
-                if key != "state"
-            }
-            for rule in alert_rules
-        ],
     )
 
 
@@ -2518,83 +2348,40 @@ def preview_config_backup(payload):
 
 
 def resolve_export_dir(settings=None):
-    if settings is None:
-        settings = get_settings_snapshot()
-    raw_dir = settings.get("export_dir") if isinstance(settings, dict) else ""
-    export_dir = str(raw_dir or "").strip()
-    if not export_dir:
-        return EXPORT_DIR
-    return os.path.abspath(os.path.expandvars(os.path.expanduser(export_dir)))
+    return operations_runtime_core.resolve_export_dir(
+        get_settings_snapshot() if settings is None else settings,
+        EXPORT_DIR,
+    )
 
 
 def _probe_export_dir_writable(export_dir):
-    os.makedirs(export_dir, exist_ok=True)
-    probe_path = os.path.join(export_dir, ".goldmonitor-write-check")
-    with open(probe_path, "w", encoding="utf-8") as f:
-        f.write("ok")
-    try:
-        os.remove(probe_path)
-    except OSError:
-        pass
+    return operations_runtime_core.probe_export_dir_writable(export_dir)
 
 
 def build_export_dir_check(settings=None, probe_writer=None):
-    export_dir = resolve_export_dir(settings)
-    writer = probe_writer or _probe_export_dir_writable
-    try:
-        writer(export_dir)
-        return {
-            "ok": True,
-            "path": export_dir,
-            "status": "writable",
-            "message": f"导出目录可写：{export_dir}",
-            "actions": [],
-        }
-    except OSError as exc:
-        return {
-            "ok": False,
-            "path": export_dir,
-            "status": "unwritable",
-            "message": f"导出目录不可写：{export_dir}。请重新选择目录、使用默认目录，或检查权限后重试。",
-            "error": str(exc),
-            "actions": list(EXPORT_DIR_CHECK_ACTIONS),
-        }
+    return operations_runtime_core.build_export_dir_check(
+        resolve_export_dir(settings),
+        actions=EXPORT_DIR_CHECK_ACTIONS,
+        probe_writer=probe_writer or _probe_export_dir_writable,
+    )
 
 
 def _export_dir_dialog_initial_dir(settings=None):
-    export_dir = resolve_export_dir(settings)
-    if os.path.isdir(export_dir):
-        return export_dir
-    parent = os.path.dirname(export_dir)
-    if parent and os.path.isdir(parent):
-        return parent
-    return os.path.expanduser("~")
+    return operations_runtime_core.export_dir_dialog_initial_dir(
+        resolve_export_dir(settings),
+        home_dir=os.path.expanduser("~"),
+    )
 
 
 def _normalize_export_dir_selection(selection):
-    if not selection:
-        return ""
-    selected = selection[0] if isinstance(selection, (list, tuple)) else selection
-    selected_dir = str(selected or "").strip()
-    if not selected_dir:
-        return ""
-    return os.path.abspath(os.path.expandvars(os.path.expanduser(selected_dir)))
+    return operations_runtime_core.normalize_export_dir_selection(selection)
 
 
 def build_export_dir_picker_payload(dialog, settings=None):
-    initial_dir = _export_dir_dialog_initial_dir(settings)
-    selected_dir = _normalize_export_dir_selection(dialog(initial_dir))
-    if not selected_dir:
-        return {
-            "ok": False,
-            "cancelled": True,
-            "message": "已取消选择导出目录。",
-        }
-    return {
-        "ok": True,
-        "path": selected_dir,
-        "message": f"已选择导出目录：{selected_dir}",
-    }
+    return operations_runtime_core.build_export_dir_picker_payload(
+        dialog,
+        _export_dir_dialog_initial_dir(settings),
+    )
 
 
 def reset_last_export_status():
@@ -2615,79 +2402,44 @@ def _set_last_export_status(status):
 
 
 def _export_failure_category(exc):
-    if isinstance(exc, PermissionError):
-        return "permission_denied"
-    if isinstance(exc, NotADirectoryError):
-        return "invalid_path"
-    if isinstance(exc, FileNotFoundError):
-        return "path_missing"
-    return "write_failed"
+    return operations_runtime_core.export_failure_category(exc)
 
 
 def _export_failure_message(category, export_dir):
-    if category == "permission_denied":
-        return f"导出目录不可写：{export_dir}。请重新选择目录、使用默认目录，或检查权限后重试。"
-    if category == "invalid_path":
-        return f"导出路径不是有效目录：{export_dir}。请重新选择导出目录后重试。"
-    if category == "path_missing":
-        return f"导出目录不存在或无法创建：{export_dir}。请检查上级目录权限后重试。"
-    return f"导出文件写入失败：{export_dir}。请检查目录权限、磁盘空间或文件占用后重试。"
+    return operations_runtime_core.export_failure_message(category, export_dir)
 
 
 def _build_export_failure_status(filename, export_dir, exc):
-    category = _export_failure_category(exc)
-    return {
-        "ok": False,
-        "status": "failed",
-        "filename": os.path.basename(str(filename or "")),
-        "export_dir": export_dir,
-        "category": category,
-        "message": _export_failure_message(category, export_dir),
-        "error": str(exc),
-        "exception": exc.__class__.__name__,
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
-    }
+    return operations_runtime_core.build_export_failure_status(
+        filename,
+        export_dir,
+        exc,
+        now_factory=datetime.now,
+    )
 
 
 def build_export_status_snapshot(settings=None):
-    return {
-        "directory": build_export_dir_check(settings),
-        "last_export": get_last_export_status(),
-    }
+    return operations_runtime_core.build_export_status_snapshot(
+        build_export_dir_check(settings),
+        get_last_export_status(),
+    )
 
 
 def build_export_error_payload(default_message):
-    status = get_last_export_status()
-    if not (isinstance(status, dict) and status.get("ok") is False):
-        status = {}
-    detail_message = status.get("message")
-    return {
-        "ok": False,
-        "message": detail_message or default_message,
-        "error_detail": status,
-        "export_dir_check": build_export_dir_check(),
-    }
+    return operations_runtime_core.build_export_error_payload(
+        default_message,
+        get_last_export_status(),
+        build_export_dir_check(),
+    )
 
 
 def build_open_exports_folder_error_payload(export_dir, exc):
-    category = _export_failure_category(exc)
-    detail = {
-        "ok": False,
-        "status": "failed",
-        "operation": "open_exports_folder",
-        "export_dir": export_dir,
-        "category": category,
-        "message": f"无法打开导出目录：{export_dir}。请检查目录权限，或手动打开该路径。",
-        "error": str(exc),
-        "exception": exc.__class__.__name__,
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
-    }
-    return {
-        "ok": False,
-        "message": detail["message"],
-        "error_detail": detail,
-        "export_dir_check": build_export_dir_check(),
-    }
+    return operations_runtime_core.build_open_exports_folder_error_payload(
+        export_dir,
+        exc,
+        directory_status=build_export_dir_check(),
+        now_factory=datetime.now,
+    )
 
 
 def choose_export_dir_for_desktop():
@@ -2713,23 +2465,14 @@ def choose_export_dir_for_desktop():
 
 
 def save_export_file(filename, content):
-    export_dir = resolve_export_dir()
-    safe_name = os.path.basename(str(filename or ""))
-    try:
-        saved_path = support_files_core.save_export_file(export_dir, filename, content)
-    except OSError as exc:
-        _set_last_export_status(_build_export_failure_status(safe_name, export_dir, exc))
-        raise
-    _set_last_export_status({
-        "ok": True,
-        "status": "success",
-        "filename": safe_name,
-        "saved_path": saved_path,
-        "export_dir": export_dir,
-        "message": f"已导出：{saved_path}",
-        "timestamp": datetime.now().isoformat(timespec="seconds"),
-    })
-    return saved_path
+    return operations_runtime_core.save_export_file(
+        filename,
+        content,
+        export_dir=resolve_export_dir(),
+        writer=support_files_core.save_export_file,
+        set_status=_set_last_export_status,
+        now_factory=datetime.now,
+    )
 
 
 def _data_archive_paths():
@@ -2764,48 +2507,20 @@ def _data_archive_manager(now_factory=None):
 
 
 def _data_archive_filename(now=None):
-    now = now or datetime.now()
-    return f"GoldMonitor-full-backup-{now.strftime('%Y%m%d-%H%M%S')}.zip"
+    return operations_runtime_core.data_archive_filename(now or datetime.now())
 
 
 def create_data_archive(now=None):
     now = now or datetime.now()
-    export_dir = resolve_export_dir()
-    filename = _data_archive_filename(now)
-    destination_path = os.path.join(export_dir, filename)
-    settings_content = json.dumps(
-        get_settings_snapshot(),
-        ensure_ascii=False,
-        indent=2,
-    ).encode("utf-8")
-    try:
-        with data_archive_lock:
-            result = _data_archive_manager(now_factory=lambda: now).create(
-                destination_path,
-                content_overrides={"settings": settings_content},
-            )
-    except (OSError, sqlite3.Error, data_archive_core.DataArchiveError) as exc:
-        _set_last_export_status(_build_export_failure_status(filename, export_dir, exc))
-        raise
-    _set_last_export_status({
-        "ok": True,
-        "status": "success",
-        "filename": filename,
-        "saved_path": result["path"],
-        "export_dir": export_dir,
-        "message": f"完整数据归档已保存：{result['path']}",
-        "timestamp": now.isoformat(timespec="seconds"),
-    })
-    return {
-        "ok": True,
-        "saved_path": result["path"],
-        "filename": result["filename"],
-        "files": result["files"],
-        "bytes": result["bytes"],
-        "contains_sensitive_data": result["contains_sensitive_data"],
-        "message": f"已归档 {result['files']} 项本地数据",
-        "export_dir_check": build_export_dir_check(),
-    }
+    return operations_runtime_core.create_data_archive(
+        now=now,
+        export_dir=resolve_export_dir(),
+        settings=get_settings_snapshot(),
+        archive_lock=data_archive_lock,
+        manager=_data_archive_manager(now_factory=lambda: now),
+        set_status=_set_last_export_status,
+        directory_status=build_export_dir_check(),
+    )
 
 
 def _reload_application_data_from_disk():
@@ -2904,97 +2619,73 @@ def _authorized_http_request():
 
 
 def _cleanup_data_archive_uploads(now_monotonic=None):
-    now_monotonic = time.monotonic() if now_monotonic is None else float(now_monotonic)
-    expired_paths = []
-    with data_archive_upload_lock:
-        for token, item in list(data_archive_uploads.items()):
-            if now_monotonic - float(item.get("created_at") or 0) <= DATA_ARCHIVE_UPLOAD_TTL_SECONDS:
-                continue
-            expired_paths.append(str(item.get("path") or ""))
-            data_archive_uploads.pop(token, None)
-    for path in expired_paths:
-        try:
-            os.remove(path)
-        except FileNotFoundError:
-            pass
+    return operations_runtime_core.cleanup_uploads(
+        data_archive_uploads,
+        data_archive_upload_lock,
+        DATA_ARCHIVE_UPLOAD_TTL_SECONDS,
+        now_monotonic=now_monotonic,
+        remove=os.remove,
+    )
 
 
 def _store_data_archive_upload(path, preview):
-    _cleanup_data_archive_uploads()
-    token = secrets.token_urlsafe(24)
-    with data_archive_upload_lock:
-        data_archive_uploads[token] = {
-            "path": path,
-            "preview": dict(preview),
-            "created_at": time.monotonic(),
-        }
-    return token
+    return operations_runtime_core.store_upload(
+        data_archive_uploads,
+        data_archive_upload_lock,
+        path,
+        preview,
+        cleanup=_cleanup_data_archive_uploads,
+        token_factory=lambda: secrets.token_urlsafe(24),
+        monotonic_factory=time.monotonic,
+    )
 
 
 def _consume_data_archive_upload(token):
-    _cleanup_data_archive_uploads()
-    with data_archive_upload_lock:
-        return data_archive_uploads.pop(str(token or ""), None)
+    return operations_runtime_core.consume_upload(
+        data_archive_uploads,
+        data_archive_upload_lock,
+        token,
+        cleanup=_cleanup_data_archive_uploads,
+    )
 
 
 def open_exports_folder():
-    export_dir = resolve_export_dir()
-    os.makedirs(export_dir, exist_ok=True)
-    plan = support_files_core.build_open_folder_plan(export_dir, os_name=os.name, sys_platform=sys.platform)
-    if plan["kind"] == "startfile":
-        os.startfile(plan["path"])  # type: ignore[attr-defined]
-        return
-    subprocess.Popen(plan["args"], **plan["kwargs"])
+    return operations_runtime_core.open_exports_folder(
+        resolve_export_dir(),
+        build_plan=support_files_core.build_open_folder_plan,
+        os_name=os.name,
+        sys_platform=sys.platform,
+        startfile=getattr(os, "startfile", None),
+        popen=subprocess.Popen,
+    )
 
 
 def _normalize_alert_profiles_for_import(alert_profiles_payload):
-    if not isinstance(alert_profiles_payload, list):
-        return None
-    return _alert_profile_store().normalize(alert_profiles_payload, existing_items=alert_profiles)
+    return config_runtime_core.normalize_alert_profiles_for_import(
+        alert_profiles_payload,
+        normalize=lambda payload: _alert_profile_store().normalize(
+            payload,
+            existing_items=alert_profiles,
+        ),
+    )
 
 
 def _normalize_alert_rules_for_import(alert_rules_payload):
-    if not isinstance(alert_rules_payload, list):
-        return None
-    normalized, invalid_count = alert_rules_core.normalize_alert_rules(
+    return config_runtime_core.normalize_alert_rules_for_import(
         alert_rules_payload,
+        normalize=alert_rules_core.normalize_alert_rules,
         now_factory=datetime.now,
         id_factory=alert_rules_core.generate_alert_rule_id,
     )
-    if invalid_count:
-        raise ValueError("备份中的预警规则包含无效或重复数据")
-    return normalized
 
 
 def _alert_profiles_payload_for_import(alert_profiles_payload):
-    if not isinstance(alert_profiles_payload, list):
-        return []
-    current_thresholds = dict(thresholds)
-    current_volatility_config = dict(volatility_config)
-    current_settings = get_settings_snapshot()
-    prepared = []
-    for item in alert_profiles_payload:
-        if not isinstance(item, dict):
-            prepared.append(item)
-            continue
-        next_item = dict(item)
-        raw_thresholds = next_item.get("thresholds")
-        if isinstance(raw_thresholds, dict):
-            next_item["thresholds"] = {**current_thresholds, **raw_thresholds}
-        else:
-            next_item["thresholds"] = dict(current_thresholds)
-        raw_volatility_config = next_item.get("volatility_config")
-        if isinstance(raw_volatility_config, dict):
-            next_item["volatility_config"] = {**current_volatility_config, **raw_volatility_config}
-        else:
-            next_item["volatility_config"] = dict(current_volatility_config)
-        raw_settings = next_item.get("settings")
-        if isinstance(raw_settings, dict):
-            next_item["settings"] = {**current_settings, **raw_settings}
-        else:
-            next_item["settings"] = dict(current_settings)
-        prepared.append(next_item)
-    return prepared
+    return config_runtime_core.prepare_alert_profiles_for_import(
+        alert_profiles_payload,
+        current_thresholds=dict(thresholds),
+        current_volatility_config=dict(volatility_config),
+        current_settings=get_settings_snapshot(),
+    )
 
 
 def _snapshot_config_import_files(restore_settings, restore_alert_rules, restore_alert_profiles):
@@ -3006,29 +2697,11 @@ def _snapshot_config_import_files(restore_settings, restore_alert_rules, restore
     if restore_alert_profiles:
         paths.append(ALERT_PROFILES_PATH)
 
-    snapshots = {}
-    for path in paths:
-        try:
-            with open(path, "rb") as f:
-                snapshots[path] = {"exists": True, "content": f.read()}
-        except FileNotFoundError:
-            snapshots[path] = {"exists": False, "content": b""}
-    return snapshots
+    return config_runtime_core.snapshot_import_files(paths)
 
 
 def _restore_config_import_files(snapshots):
-    rollback_ok = True
-    for path, snapshot in snapshots.items():
-        try:
-            if snapshot.get("exists"):
-                os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-                with open(path, "wb") as f:
-                    f.write(snapshot.get("content", b""))
-            elif os.path.exists(path):
-                os.remove(path)
-        except OSError:
-            rollback_ok = False
-    return rollback_ok
+    return config_runtime_core.restore_import_files(snapshots)
 
 
 def _restore_config_import_state(
@@ -3288,256 +2961,82 @@ def build_diagnostics_report():
     watch_targets_state = get_watch_targets_state()
     risk_history_count = len(get_risk_analysis_history_state().get("items", []))
     recent_alerts = list(alert_log[-20:])
-    rules_state = get_alert_rules_state()
-    alert_rules_diagnostics = {
-        "schema_version": rules_state.get("schema_version", 0),
-        "total": rules_state.get("total", 0),
-        "summary": dict(rules_state.get("summary") or {}),
-        "by_kind": dict(rules_state.get("by_kind") or {}),
-        "migration": dict(rules_state.get("migration") or {}),
-        "invalid_count": rules_state.get("invalid_count", 0),
-        "load_error": rules_state.get("load_error", ""),
-    }
-    data_schemas = {
-        key: dict(item)
-        for key, item in sorted(storage_manifest.items())
-        if item.get("schema") in {"item_payload", "versioned_object"}
-    }
-    report = {
-        "app": APP_NAME,
-        "version": APP_VERSION,
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "paths": paths,
-        "export_status": build_export_status_snapshot(),
-        "health_summary": build_health_summary(
-            fetch_status=fetch_status,
-            source_health=source_health_state,
-            price_history=price_history_state,
-            watch_targets=watch_targets_state,
-            risk_history_count=risk_history_count,
-            recent_alerts=recent_alerts,
-            paths=paths,
-            storage_manifest=storage_manifest,
-        ),
-        "storage_manifest": storage_manifest,
-        "data_schemas": data_schemas,
-        "settings": diagnostic_settings_snapshot(),
-        "fetch_status": fetch_status,
-        "source_health": source_health_state,
-        "price_history": price_history_state,
-        "watch_targets": watch_targets_state,
-        "alert_rules": alert_rules_diagnostics,
-        "risk_history_count": risk_history_count,
-        "last_update_status": get_last_update_status(),
-        "recent_alerts": recent_alerts,
-        "logs": read_log_tail(),
-    }
-    return json.dumps(report, ensure_ascii=False, indent=2)
+    report = diagnostics_runtime_core.build_diagnostics_report(
+        app_name=APP_NAME,
+        app_version=APP_VERSION,
+        paths=paths,
+        storage_manifest=storage_manifest,
+        fetch_status=fetch_status,
+        source_health=source_health_state,
+        price_history=price_history_state,
+        watch_targets=watch_targets_state,
+        risk_history_count=risk_history_count,
+        recent_alerts=recent_alerts,
+        alert_rules=get_alert_rules_state(),
+        settings=diagnostic_settings_snapshot(),
+        last_update_status=get_last_update_status(),
+        logs=read_log_tail(),
+        health_summary_builder=build_health_summary,
+        now_factory=datetime.now,
+    )
+    payload = json.loads(report)
+    payload["export_status"] = build_export_status_snapshot()
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 def _diagnostics_report_payload(report=None):
-    raw = build_diagnostics_report() if report is None else report
-    if isinstance(raw, dict):
-        return raw
-    if not isinstance(raw, str):
-        return {}
-    try:
-        payload = json.loads(raw)
-    except (TypeError, json.JSONDecodeError):
-        return {}
-    if isinstance(payload, str):
-        try:
-            payload = json.loads(payload)
-        except (TypeError, json.JSONDecodeError):
-            return {}
-    return payload if isinstance(payload, dict) else {}
+    return diagnostics_runtime_core.diagnostics_report_payload(
+        build_diagnostics_report() if report is None else report
+    )
 
 
 def _diagnostics_value(value, empty="未记录"):
-    if isinstance(value, bool):
-        return "是" if value else "否"
-    if value is None or value == "":
-        return empty
-    return str(value)
+    return diagnostics_runtime_core.diagnostics_value(value, empty)
 
 
 def _diagnostics_source_label(source):
-    source = source if isinstance(source, dict) else {}
-    name = str(source.get("source") or "").strip() or "未记录"
-    suffixes = []
-    if source.get("cached"):
-        suffixes.append("缓存")
-    if source.get("ok") is False:
-        suffixes.append("异常")
-    error = str(source.get("error") or "").strip()
-    text = name
-    if suffixes:
-        text += "（" + "、".join(suffixes) + "）"
-    if error:
-        text += "，错误：" + error
-    return text
+    return diagnostics_runtime_core.diagnostics_source_label(source)
 
 
 def build_diagnostics_clipboard_text(report=None):
-    payload = _diagnostics_report_payload(report)
-    fetch_status = payload.get("fetch_status") if isinstance(payload.get("fetch_status"), dict) else {}
-    source_health = payload.get("source_health") if isinstance(payload.get("source_health"), dict) else {}
-    quality = source_health.get("quality") if isinstance(source_health.get("quality"), dict) else {}
-    settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
-    price_history_state = payload.get("price_history") if isinstance(payload.get("price_history"), dict) else {}
-    paths = payload.get("paths") if isinstance(payload.get("paths"), dict) else {}
-    sources = fetch_status.get("sources") if isinstance(fetch_status.get("sources"), dict) else {}
-    source_summary = source_health.get("summary") if isinstance(source_health.get("summary"), dict) else {}
-    export_status = payload.get("export_status") if isinstance(payload.get("export_status"), dict) else build_export_status_snapshot()
-    export_dir_status = export_status.get("directory") if isinstance(export_status.get("directory"), dict) else {}
-    last_export = export_status.get("last_export") if isinstance(export_status.get("last_export"), dict) else {}
-    update_status = payload.get("last_update_status") if isinstance(payload.get("last_update_status"), dict) else get_last_update_status()
-    rules_state = payload.get("alert_rules") if isinstance(payload.get("alert_rules"), dict) else {}
-    update_message = update_status.get("message") or ("尚未检查更新" if not update_status else "更新状态未知")
-    logs = payload.get("logs")
-    log_count = len(logs) if isinstance(logs, list) else len(str(logs or "").splitlines()) if logs else 0
     with lock:
         kline_count = len(klines_5min)
-
-    provider = settings.get("risk_assistant_provider") or DEFAULT_SETTINGS["risk_assistant_provider"]
-    if provider == "deepseek":
-        model = settings.get("deepseek_model") or DEFAULT_SETTINGS["deepseek_model"]
-    else:
-        model = settings.get("openai_compatible_model") or DEFAULT_SETTINGS["openai_compatible_model"]
-    risk_enabled = "开启" if settings.get("risk_assistant_enabled") else "关闭"
-    quality_label = quality.get("label") or "未评估"
-    quality_score = quality.get("score")
-    quality_text = f"{quality_label} / {quality_score}分" if quality_score is not None else quality_label
-    quality_reasons = quality.get("reasons") if isinstance(quality.get("reasons"), list) else []
-    export_dir_ok = export_dir_status.get("ok")
-    export_dir_state = "可写" if export_dir_ok is True else "不可写" if export_dir_ok is False else "未检查"
-    last_export_ok = last_export.get("ok")
-    last_export_state = "成功" if last_export_ok is True else "失败" if last_export_ok is False else "未记录"
-
-    lines = [
-        "GoldMonitor 诊断摘要",
-        f"生成时间: {_diagnostics_value(payload.get('generated_at'))}",
-        f"版本: {_diagnostics_value(payload.get('version'))}",
-        f"运行平台: {_diagnostics_value(settings.get('platform') or sys.platform)}",
-        "",
-        "行情状态",
-        f"- 状态: {_diagnostics_value(fetch_status.get('message'))}（{_diagnostics_value(fetch_status.get('status'))}）",
-        f"- 金价源: {_diagnostics_source_label(sources.get('gold'))}",
-        f"- 汇率源: {_diagnostics_source_label(sources.get('forex'))}",
-        f"- 行情质量: {quality_text}",
-        f"- 数据源统计: 正常 {source_summary.get('ok', 0)}，异常 {source_summary.get('failed', 0)}，缓存 {source_summary.get('cached', 0)}",
-        f"- 历史样本数: {price_history_state.get('total', 0)}",
-        f"- 5 分钟 K 线样本数: {kline_count}",
-        "",
-        "风险分析",
-        f"- 状态: {risk_enabled}",
-        f"- 模型: {provider} / {model}",
-        f"- 历史记录数: {payload.get('risk_history_count', 0)}",
-        "",
-        "预警规则",
-        f"- 文件版本: {_diagnostics_value(rules_state.get('schema_version'))}",
-        f"- 规则数量: {rules_state.get('total', 0)}",
-        f"- 无效规则: {rules_state.get('invalid_count', 0)}",
-        f"- 迁移状态: {'已完成' if (rules_state.get('migration') or {}).get('completed') else '未完成'}",
-        f"- 加载错误: {_diagnostics_value(rules_state.get('load_error'), '无')}",
-        "",
-        "更新状态",
-        f"- 当前版本: {_diagnostics_value(update_status.get('current_version') or payload.get('version'))}",
-        f"- 最新版本: {_diagnostics_value(update_status.get('latest_version'))}",
-        f"- 检查状态: {_diagnostics_value(update_status.get('state'), '尚未检查')}",
-        f"- 检查时间: {_diagnostics_value(update_status.get('checked_at'))}",
-        f"- 状态说明: {update_message}",
-        "",
-        "悬浮条",
-        f"- 状态: {'开启' if settings.get('floating_price_enabled') else '关闭'}",
-        f"- 置顶: {'开启' if settings.get('floating_price_always_on_top') else '关闭'}",
-        f"- 显示模式: {_diagnostics_value(settings.get('floating_price_display_mode'))}",
-        f"- 透明度: {_diagnostics_value(settings.get('floating_price_opacity'))}",
-        "",
-        "存储与日志",
-        f"- 导出目录: {_diagnostics_value(paths.get('exports'))}",
-        f"- 数据目录: {_diagnostics_value(paths.get('appdata'))}",
-        f"- 最近日志: {log_count} 行",
-        "",
-        "导出状态",
-        f"- 导出目录: {_diagnostics_value(export_dir_status.get('path') or paths.get('exports'))}",
-        f"- 目录状态: {export_dir_state}",
-        f"- 最近导出: {last_export_state}",
-    ]
-    if last_export_ok is True:
-        lines.append(f"- 最近保存路径: {_diagnostics_value(last_export.get('saved_path'))}")
-    elif last_export_ok is False:
-        lines.append(f"- 最近失败原因: {_diagnostics_value(last_export.get('message'))}")
-    if quality_reasons:
-        lines.extend(["", "数据质量提示", *[f"- {item}" for item in quality_reasons[:5]]])
-    lines.extend([
-        "",
-        "排查建议",
-        "- 若行情状态异常，先点击重新获取行情，并检查网络或数据源状态。",
-        "- 若风险分析失败，先在设置中测试模型，并确认 API Key、模型和接口地址可用。",
-        "- 如需完整原始结构，请使用“生成诊断”导出 JSON 文件。",
-    ])
-    return "\n".join(lines)
+    return diagnostics_runtime_core.build_diagnostics_clipboard_text(
+        build_diagnostics_report() if report is None else report,
+        default_settings=DEFAULT_SETTINGS,
+        platform_name=sys.platform,
+        kline_count=kline_count,
+        fallback_export_status=build_export_status_snapshot(),
+        fallback_update_status=get_last_update_status(),
+    )
 
 
 def show_alert_dialog(title, message):
-    if not get_settings_snapshot().get("alert_dialog_enabled", True):
-        return
-    global _alert_dialog_active
-    with _alert_dialog_lock:
-        if _alert_dialog_active:
-            logging.info("告警弹窗已存在，跳过新的系统消息框。")
-            return
-        _alert_dialog_active = True
-
-    def _show():
-        global _alert_dialog_active
-        try:
-            if sys.platform == "darwin":
-                script = (
-                    "display alert "
-                    + _applescript_string(title)
-                    + " message "
-                    + _applescript_string(message)
-                    + ' as warning buttons {"知道了"} default button "知道了"'
-                )
-                _run_macos_osascript(script, wait=True, timeout=3600)
-            elif os.name == "nt":
-                import ctypes
-                MB_OK = 0x00000000
-                MB_ICONWARNING = 0x00000030
-                MB_TOPMOST = 0x00040000
-                MB_SETFOREGROUND = 0x00010000
-                ctypes.windll.user32.MessageBoxW(None, message, title, MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND)
-        except Exception:
-            pass
-        finally:
-            with _alert_dialog_lock:
-                _alert_dialog_active = False
-
-    threading.Thread(target=_show, daemon=True).start()
+    return notification_runtime_core.show_alert_dialog(
+        title,
+        message,
+        enabled=get_settings_snapshot().get("alert_dialog_enabled", True),
+        active_lock=_alert_dialog_lock,
+        get_active=lambda: _alert_dialog_active,
+        set_active=_set_alert_dialog_active,
+        sys_platform=sys.platform,
+        os_name=os.name,
+        applescript_string=_applescript_string,
+        run_applescript=_run_macos_osascript,
+        thread_factory=threading.Thread,
+        logger=logging,
+    )
 
 
 def play_system_alert_sound(level):
-    if not get_settings_snapshot().get("alert_sound_enabled", True):
-        return
-    if sys.platform == "darwin":
-        try:
-            sound = "Basso" if level == "critical" else "Glass"
-            path = f"/System/Library/Sounds/{sound}.aiff"
-            if os.path.exists(path):
-                subprocess.Popen(["afplay", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
-            else:
-                _run_macos_osascript("beep", wait=False)
-        except Exception:
-            pass
-        return
-    try:
-        import winsound
-        sound = "SystemHand" if level == "critical" else "SystemExclamation"
-        winsound.PlaySound(sound, winsound.SND_ALIAS | winsound.SND_ASYNC)
-    except Exception:
-        pass
+    return notification_runtime_core.play_system_alert_sound(
+        level,
+        enabled=get_settings_snapshot().get("alert_sound_enabled", True),
+        sys_platform=sys.platform,
+        path_exists=os.path.exists,
+        popen=subprocess.Popen,
+        run_applescript=_run_macos_osascript,
+    )
 
 
 def select_related_news(title, items=None, limit=3):
@@ -3594,14 +3093,10 @@ class EmailNotifier:
 
     @staticmethod
     def send(alert_type, title, message, timeout=10, blocking=False):
-        settings = get_settings_snapshot()
-        values = build_alert_template_values(alert_type, title, message)
-        return notifications_core.send_email_notification(
-            settings,
-            alert_type,
-            title,
-            message,
-            values,
+        return notification_runtime_core.send_email_alert(
+            alert_type, title, message,
+            get_settings=get_settings_snapshot,
+            build_values=build_alert_template_values,
             smtp_module=smtplib,
             default_subject_template=DEFAULT_EMAIL_SUBJECT_TEMPLATE,
             default_body_template=DEFAULT_EMAIL_BODY_TEMPLATE,
@@ -3617,14 +3112,10 @@ class WebhookNotifier:
 
     @staticmethod
     def send(alert_type, title, message, timeout=8, blocking=False):
-        settings = get_settings_snapshot()
-        values = build_alert_template_values(alert_type, title, message)
-        return notifications_core.send_webhook_notification(
-            settings,
-            alert_type,
-            title,
-            message,
-            values,
+        return notification_runtime_core.send_webhook_alert(
+            alert_type, title, message,
+            get_settings=get_settings_snapshot,
+            build_values=build_alert_template_values,
             post=requests.post,
             require_https_url=_require_https_url,
             app_name="GoldMonitor",
@@ -3641,11 +3132,9 @@ class WebhookNotifier:
 class DailyDigestEmailNotifier:
     @staticmethod
     def send(digest, timeout=10, blocking=False):
-        settings = get_settings_snapshot()
-        return notifications_core.send_email_message(
-            settings,
-            digest.get("subject", "GoldMonitor 每日摘要"),
-            digest.get("message", ""),
+        return notification_runtime_core.send_daily_digest_email(
+            digest,
+            get_settings=get_settings_snapshot,
             smtp_module=smtplib,
             timeout=timeout,
             blocking=blocking,
@@ -3657,10 +3146,9 @@ class DailyDigestEmailNotifier:
 class DailyDigestWebhookNotifier:
     @staticmethod
     def send(digest, timeout=8, blocking=False):
-        settings = get_settings_snapshot()
-        return notifications_core.send_webhook_payload(
-            settings,
-            digest.get("payload") if isinstance(digest.get("payload"), dict) else {},
+        return notification_runtime_core.send_daily_digest_webhook(
+            digest,
+            get_settings=get_settings_snapshot,
             post=requests.post,
             require_https_url=_require_https_url,
             user_agent=HTTP_USER_AGENT,
@@ -3701,16 +3189,12 @@ def _plan_alert_notifications(entry, settings=None):
 
 
 def _persist_alert_notification_update(alert_id, notifications):
-    def updater(entry):
-        updated = dict(entry)
-        updated["notifications"] = [dict(item) for item in notifications]
-        updated["notification_summary"] = _notification_summary(updated["notifications"])
-        return updated
-
-    ok, updated = _update_alert_log_entry_payload(alert_id, updater)
-    if ok and updated:
-        socketio.emit("alert_log_status_updated", {"ok": True, "entry": updated})
-    return ok, updated
+    return notification_runtime_core.persist_alert_notification_update(
+        alert_id,
+        notifications,
+        update_entry=_update_alert_log_entry_payload,
+        emit=socketio.emit,
+    )
 
 
 def _deliver_alert_notifications(alert_id, entry, title, settings, notifications):
@@ -3727,26 +3211,13 @@ def _deliver_alert_notifications(alert_id, entry, title, settings, notifications
 
 
 def _start_alert_notification_delivery(entry, title, settings=None):
-    notifications = entry.get("notifications") if isinstance(entry.get("notifications"), list) else []
-    if not any(item.get("status") == "pending" for item in notifications if isinstance(item, dict)):
-        return False
-    alert_id = str(entry.get("id") or "").strip()
-    if not alert_id:
-        return False
-    settings_snapshot = dict(settings or get_settings_snapshot())
-    entry_snapshot = dict(entry)
-    notification_snapshot = [dict(item) for item in notifications if isinstance(item, dict)]
-    threading.Thread(
-        target=lambda: _deliver_alert_notifications(
-            alert_id,
-            entry_snapshot,
-            title,
-            settings_snapshot,
-            notification_snapshot,
-        ),
-        daemon=True,
-    ).start()
-    return True
+    return notification_runtime_core.start_alert_notification_delivery(
+        entry,
+        title,
+        get_settings=lambda: settings or get_settings_snapshot(),
+        deliver=_deliver_alert_notifications,
+        thread_factory=threading.Thread,
+    )
 
 
 def _daily_digest_state_store(now_factory=None):
@@ -3761,199 +3232,86 @@ def get_daily_digest_state():
 
 
 def selected_daily_digest_channels(settings=None):
-    settings = settings or get_settings_snapshot()
-    channels = []
-    if settings.get("daily_digest_email_enabled", True):
-        channels.append("email")
-    if settings.get("daily_digest_webhook_enabled", False):
-        channels.append("webhook")
-    return channels
+    return notification_runtime_core.selected_daily_digest_channels(
+        settings or get_settings_snapshot()
+    )
 
 
 def build_daily_digest_snapshot(now=None):
     now = now or datetime.now()
-    timeline_state = build_event_timeline_state(
-        minutes=1440,
-        limit=EVENT_TIMELINE_MAX_LIMIT,
-        types=EVENT_TIMELINE_TYPES,
-    )
-    portfolio_state = build_portfolio_state()
-    source_health_state = get_source_health_state()
-    market_quality = (
-        source_health_state.get("quality")
-        if isinstance(source_health_state.get("quality"), dict)
-        else {}
-    )
-    return daily_digest_core.build_daily_digest(
-        timeline_state,
-        portfolio_state=portfolio_state,
-        market_quality=market_quality,
+    return notification_runtime_core.build_daily_digest_snapshot(
         now=now,
+        build_timeline=build_event_timeline_state,
+        build_portfolio=build_portfolio_state,
+        get_source_health=get_source_health_state,
+        timeline_max_limit=EVENT_TIMELINE_MAX_LIMIT,
+        timeline_types=EVENT_TIMELINE_TYPES,
     )
 
 
 def daily_digest_status_payload(now=None):
     now = now or datetime.now()
-    settings = get_settings_snapshot()
-    state = get_daily_digest_state()
-    decision = scheduler_core.daily_task_due(
-        settings.get("daily_digest_time", "20:00"),
-        state.get("last_completed_at", ""),
+    return notification_runtime_core.daily_digest_status_payload(
         now=now,
+        settings=get_settings_snapshot(),
+        state=get_daily_digest_state(),
     )
-    return {
-        "enabled": bool(settings.get("daily_digest_enabled")),
-        "time": settings.get("daily_digest_time", "20:00"),
-        "channels": selected_daily_digest_channels(settings),
-        "state": state,
-        "schedule": decision,
-    }
 
 
 def _dispatch_daily_digest(digest, settings, blocking=False):
-    notifications = []
-    channels = selected_daily_digest_channels(settings)
-    if "email" in channels:
-        notifications.append(notifications_core.deliver_notification(
-            _notification_status(
-                "email",
-                "邮件",
-                "pending",
-                "等待发送",
-                attempts=0,
-                started_at="",
-                completed_at="",
-            ),
-            DailyDigestEmailNotifier.send,
-            (digest,),
-            logger=logging,
-        ))
-    if "webhook" in channels:
-        notifications.append(notifications_core.deliver_notification(
-            _notification_status(
-                "webhook",
-                "Webhook",
-                "pending",
-                "等待发送",
-                attempts=0,
-                started_at="",
-                completed_at="",
-            ),
-            DailyDigestWebhookNotifier.send,
-            (digest,),
-            logger=logging,
-        ))
-    return notifications
+    return notification_runtime_core.dispatch_daily_digest(
+        digest,
+        settings,
+        email_sender=DailyDigestEmailNotifier.send,
+        webhook_sender=DailyDigestWebhookNotifier.send,
+        logger=logging,
+    )
 
 
 def run_daily_digest_once(now=None, force=False, manual=False, blocking=False):
     now = now or datetime.now()
     settings = get_settings_snapshot()
-    with daily_digest_lock:
-        store = _daily_digest_state_store(now_factory=lambda: now)
-        state = store.load()
-        if not force:
-            if not settings.get("daily_digest_enabled", False):
-                return {
-                    "ok": False,
-                    "status": "disabled",
-                    "reason": "disabled",
-                    "message": "每日摘要未启用",
-                    "state": state,
-                }
-            decision = scheduler_core.daily_task_due(
-                settings.get("daily_digest_time", "20:00"),
-                state.get("last_completed_at", ""),
-                now=now,
-            )
-            if not decision.get("due"):
-                return {
-                    "ok": False,
-                    "status": "not_due",
-                    "reason": decision.get("reason", "not_due"),
-                    "message": "当前无需发送每日摘要",
-                    "schedule": decision,
-                    "state": state,
-                }
-
-        digest = build_daily_digest_snapshot(now=now)
-        channels = selected_daily_digest_channels(settings)
-        notifications = _dispatch_daily_digest(digest, settings, blocking=blocking) if channels else []
-        summary = _notification_summary(notifications)
-        sent = summary.get("sent", 0) > 0
-        if not channels:
-            summary = {
-                **summary,
-                "status": "skipped",
-                "label": "未选择渠道",
-                "message": "请至少选择一个每日摘要通知渠道",
-            }
-        state = store.record_result(
-            status=summary.get("status", "none"),
-            message=summary.get("message", ""),
-            channels=channels,
-            sent=sent,
-            manual=manual,
-        )
-        result = {
-            "ok": sent,
-            "status": summary.get("status", "none"),
-            "message": summary.get("message", ""),
-            "notifications": notifications,
-            "state": state,
-            "digest": digest,
-        }
-    if not manual:
-        socketio.emit("daily_digest_status", daily_digest_status_payload(now=now))
-    return result
+    return notification_runtime_core.run_daily_digest_once(
+        now=now,
+        force=force,
+        manual=manual,
+        settings=settings,
+        lock=daily_digest_lock,
+        state_store=_daily_digest_state_store(now_factory=lambda: now),
+        build_digest=lambda value: build_daily_digest_snapshot(now=value),
+        email_sender=DailyDigestEmailNotifier.send,
+        webhook_sender=DailyDigestWebhookNotifier.send,
+        emit_status=socketio.emit,
+        status_payload=lambda value: daily_digest_status_payload(now=value),
+        logger=logging,
+    )
 
 
 def emit_alert(entry, title):
     settings = get_settings_snapshot()
-    entry["title"] = str(title or "")
-    if entry.get("trigger_price") in (None, ""):
-        with lock:
-            if entry.get("mode") == "usd":
-                entry["trigger_price"] = price_usd
-            elif entry.get("mode") == "rmb":
-                entry["trigger_price"] = price_rmb
-    entry["id"] = str(entry.get("id") or _generate_alert_log_id())
-    entry["timestamp"] = str(entry.get("timestamp") or datetime.now().isoformat(timespec="seconds"))
-    delivery = evaluate_alert_delivery(entry, settings)
-    if not delivery.get("deliver"):
-        reason = delivery.get("reason", "")
-        entry["notification_muted"] = True
-        entry["notification_reason"] = reason
-        if reason == "quiet_time":
-            entry["notification_message"] = "当前处于静默时段，仅记录提醒。"
-        elif reason == "cooldown":
-            entry["notification_message"] = "提醒冷却中，仅记录本次触发。"
-        elif reason == "no_channels":
-            entry["notification_message"] = "该规则未选择通知渠道，仅记录本次触发。"
-        entry["notifications"] = [
-            _notification_status("all", "通知", "muted", entry.get("notification_message", "仅记录提醒")),
-        ]
-    else:
-        entry["notifications"] = _plan_alert_notifications(entry, settings)
-    entry["notification_summary"] = _notification_summary(entry.get("notifications"))
-    entry["related_news"] = select_related_news(title)
-    alert_log.append(entry)
-    while len(alert_log) > ALERT_LOG_MEMORY_LIMIT:
-        alert_log.pop(0)
-    try:
-        save_alert_log_entry(entry)
-    except (OSError, sqlite3.Error) as exc:
-        logging.warning("告警记录保存失败: %s", exc)
-    socketio.emit("alert", entry)
-    if delivery.get("deliver"):
-        _start_alert_notification_delivery(entry, title, settings=settings)
-    history_state = build_price_history_state(limit=240)
-    history_state["scope"] = "live"
-    socketio.emit("price_history_updated", history_state)
-    if delivery.get("deliver") and notifications_core.alert_local_delivery_enabled(entry):
-        send_desktop_notification(title, entry["message"])
-        play_system_alert_sound(entry.get("type", "warning"))
-        show_alert_dialog(title, f"{entry['message']}\n\n时间: {entry['time']}")
+    return notification_runtime_core.emit_alert(
+        entry,
+        title,
+        settings=settings,
+        market_lock=lock,
+        market_price=lambda mode: price_usd if mode == "usd" else price_rmb if mode == "rmb" else None,
+        generate_id=_generate_alert_log_id,
+        evaluate_delivery=evaluate_alert_delivery,
+        plan_notifications=_plan_alert_notifications,
+        select_news=select_related_news,
+        alert_log=alert_log,
+        alert_log_limit=ALERT_LOG_MEMORY_LIMIT,
+        save_entry=save_alert_log_entry,
+        emit=socketio.emit,
+        start_delivery=_start_alert_notification_delivery,
+        build_history_state=build_price_history_state,
+        local_delivery_enabled=notifications_core.alert_local_delivery_enabled,
+        send_desktop_notification=send_desktop_notification,
+        play_system_alert_sound=play_system_alert_sound,
+        show_alert_dialog=show_alert_dialog,
+        now_factory=datetime.now,
+        logger=logging,
+    )
 
 
 def initialize_market_cache():
@@ -4248,72 +3606,15 @@ def get_source_comparison_state():
 
 def _build_market_adapter_registry():
     """构建完整的内置行情源注册表。"""
-    adapter = market_adapters_core.MarketSourceAdapter
-    return market_adapters_core.MarketAdapterRegistry([
-        adapter(
-            key="sina_gold",
-            name="新浪贵金属",
-            category="gold",
-            priority=10,
-            cache_source="新浪贵金属",
-            provides_forex_rate=False,
-            fetcher=lambda: fetch_sina_gold_result(),
-        ),
-        adapter(
-            key="eastmoney_gold",
-            name="东方财富",
-            category="gold",
-            priority=20,
-            cache_source="东方财富",
-            provides_forex_rate=False,
-            fetcher=lambda: fetch_eastmoney_gold_result(),
-        ),
-        adapter(
-            key="goldprice",
-            name="GoldPrice",
-            category="gold",
-            priority=30,
-            cache_source="GoldPrice",
-            provides_forex_rate=True,
-            fetcher=lambda: fetch_goldprice_data_result(),
-        ),
-        adapter(
-            key="stooq_gold",
-            name="Stooq",
-            category="gold",
-            priority=40,
-            cache_source="Stooq",
-            provides_forex_rate=False,
-            fetcher=lambda: fetch_gold_data_result(GOLD_URL, "Stooq 金价源"),
-        ),
-        adapter(
-            key="sina_forex",
-            name="新浪",
-            category="forex",
-            priority=10,
-            cache_source="新浪",
-            provides_forex_rate=False,
-            fetcher=lambda: fetch_sina_forex_result(),
-        ),
-        adapter(
-            key="frankfurter_forex",
-            name="Frankfurter",
-            category="forex",
-            priority=20,
-            cache_source="Frankfurter",
-            provides_forex_rate=False,
-            fetcher=lambda: fetch_frankfurter_forex_result(),
-        ),
-        adapter(
-            key="stooq_forex",
-            name="Stooq",
-            category="forex",
-            priority=30,
-            cache_source="Stooq",
-            provides_forex_rate=False,
-            fetcher=lambda: fetch_csv_price_result(FOREX_URL, "Stooq 汇率源"),
-        ),
-    ])
+    return market_clients_core.build_default_registry(
+        fetch_sina_gold=lambda: fetch_sina_gold_result(),
+        fetch_eastmoney_gold=lambda: fetch_eastmoney_gold_result(),
+        fetch_goldprice=lambda: fetch_goldprice_data_result(),
+        fetch_stooq_gold=lambda: fetch_gold_data_result(GOLD_URL, "Stooq 金价源"),
+        fetch_sina_forex=lambda: fetch_sina_forex_result(),
+        fetch_frankfurter_forex=lambda: fetch_frankfurter_forex_result(),
+        fetch_stooq_forex=lambda: fetch_csv_price_result(FOREX_URL, "Stooq 汇率源"),
+    )
 
 
 def get_market_source_preferences(settings=None, strict=False, defaults=None):
@@ -4436,21 +3737,17 @@ def fetch_gold_data(url):
 
 def fetch_gold_data_result(url, source_label="数据源"):
     """从 Stooq CSV 解析完整 OHLC 数据，并返回用户可读的失败原因。"""
-    result = market_adapters_core.fetch_http_source(
+    category = "gold" if "金价" in source_label else "forex"
+    result = market_clients_core.fetch_http_result(
         url,
         source_label,
         lambda payload: market_data_core.parse_stooq_ohlc_csv(payload, source_label),
+        category=category,
         timeout=REQUEST_TIMEOUT,
         proxies=REQ_PROXY,
         requests_module=requests,
-    )
-    category = "gold" if "金价" in source_label else "forex"
-    record_source_health(
-        source_label,
-        category,
-        result.value is not None,
-        result.error,
-        result.started_at,
+        fetcher=market_adapters_core.fetch_http_source,
+        record_health=record_source_health,
     )
     return result.value, result.error
 
@@ -4527,10 +3824,11 @@ def parse_sina_forex(text):
 
 
 def fetch_sina_forex_result():
-    result = market_adapters_core.fetch_http_source(
+    result = market_clients_core.fetch_http_result(
         SINA_FOREX_URL,
         "新浪汇率",
         parse_sina_forex,
+        category="forex",
         headers={
             "User-Agent": BROWSER_USER_AGENT,
             "Referer": "https://finance.sina.com.cn/",
@@ -4538,13 +3836,8 @@ def fetch_sina_forex_result():
         timeout=REQUEST_TIMEOUT,
         proxies=REQ_PROXY,
         requests_module=requests,
-    )
-    record_source_health(
-        "新浪汇率",
-        "forex",
-        result.value is not None,
-        result.error,
-        result.started_at,
+        fetcher=market_adapters_core.fetch_http_source,
+        record_health=record_source_health,
     )
     return result.value, result.error
 
@@ -4554,51 +3847,30 @@ def parse_frankfurter_forex(payload):
 
 
 def fetch_frankfurter_forex_result():
-    result = market_adapters_core.fetch_http_source(
+    result = market_clients_core.fetch_http_result(
         FRANKFURTER_FOREX_URL,
         "Frankfurter",
         parse_frankfurter_forex,
-        "json",
+        category="forex",
+        response_type="json",
         headers={"User-Agent": HTTP_USER_AGENT},
         timeout=REQUEST_TIMEOUT,
         proxies=REQ_PROXY,
         requests_module=requests,
-    )
-    record_source_health(
-        "Frankfurter",
-        "forex",
-        result.value is not None,
-        result.error,
-        result.started_at,
+        fetcher=market_adapters_core.fetch_http_source,
+        record_health=record_source_health,
     )
     return result.value, result.error
 
 
 def fetch_usdcny_rate_result():
-    errors = []
-    for adapter in build_market_adapter_registry().category_adapters("forex"):
-        result = adapter.fetch()
-        rate = result.value
-        error = result.error
-        if rate is not None:
-            now_iso = datetime.now().isoformat()
-            try:
-                return save_usdcny_cache(rate, adapter.cache_source, now_iso), ""
-            except (OSError, ValueError) as exc:
-                return {
-                    "value": rate,
-                    "source": adapter.cache_source,
-                    "timestamp": now_iso,
-                    "cached": False,
-                }, f"汇率缓存保存失败: {exc}"
-        if error:
-            errors.append(error)
-
-    cached = load_valid_usdcny_cache()
-    if cached:
-        record_source_health("缓存汇率", "forex", True, "实时汇率源不可用，使用缓存", None, cached=True)
-        return cached, "；".join(errors)
-    return None, "；".join(errors) or "所有汇率源均不可用"
+    return market_clients_core.fetch_usdcny_rate_result(
+        build_market_adapter_registry(),
+        save_cache=save_usdcny_cache,
+        load_valid_cache=load_valid_usdcny_cache,
+        record_health=record_source_health,
+        now_factory=datetime.now,
+    )
 
 
 def parse_sina_gold(text):
@@ -4606,10 +3878,11 @@ def parse_sina_gold(text):
 
 
 def fetch_sina_gold_result():
-    result = market_adapters_core.fetch_http_source(
+    result = market_clients_core.fetch_http_result(
         SINA_GOLD_URL,
         "新浪贵金属",
         parse_sina_gold,
+        category="gold",
         headers={
             "User-Agent": BROWSER_USER_AGENT,
             "Referer": "https://finance.sina.com.cn/futures/quotes/XAU.shtml",
@@ -4617,13 +3890,8 @@ def fetch_sina_gold_result():
         timeout=REQUEST_TIMEOUT,
         proxies=REQ_PROXY,
         requests_module=requests,
-    )
-    record_source_health(
-        "新浪贵金属",
-        "gold",
-        result.value is not None,
-        result.error,
-        result.started_at,
+        fetcher=market_adapters_core.fetch_http_source,
+        record_health=record_source_health,
     )
     return result.value, result.error
 
@@ -4635,11 +3903,12 @@ def parse_eastmoney_gold(payload):
 
 def fetch_eastmoney_gold_result():
     """从东方财富公开行情接口获取 XAU/USD，并返回用户可读的失败原因。"""
-    result = market_adapters_core.fetch_http_source(
+    result = market_clients_core.fetch_http_result(
         EASTMONEY_GOLD_URL,
         "东方财富",
         parse_eastmoney_gold,
-        "json",
+        category="gold",
+        response_type="json",
         headers={
             "User-Agent": HTTP_USER_AGENT,
             "Referer": "https://hf-wap.eastmoney.com/quote/stock/122.xau.html",
@@ -4647,13 +3916,8 @@ def fetch_eastmoney_gold_result():
         timeout=REQUEST_TIMEOUT,
         proxies=REQ_PROXY,
         requests_module=requests,
-    )
-    record_source_health(
-        "东方财富",
-        "gold",
-        result.value is not None,
-        result.error,
-        result.started_at,
+        fetcher=market_adapters_core.fetch_http_source,
+        record_health=record_source_health,
     )
     return result.value, result.error
 
@@ -4665,22 +3929,18 @@ def parse_goldprice_rates(payload):
 
 def fetch_goldprice_data_result():
     """从 GoldPrice.org 公开接口获取实时金价，并返回用户可读的失败原因。"""
-    result = market_adapters_core.fetch_http_source(
+    result = market_clients_core.fetch_http_result(
         GOLDPRICE_URL,
         "GoldPrice",
         parse_goldprice_rates,
-        "json",
+        category="gold",
+        response_type="json",
         headers={"User-Agent": HTTP_USER_AGENT},
         timeout=REQUEST_TIMEOUT,
         proxies=REQ_PROXY,
         requests_module=requests,
-    )
-    record_source_health(
-        "GoldPrice",
-        "gold",
-        result.value is not None,
-        result.error,
-        result.started_at,
+        fetcher=market_adapters_core.fetch_http_source,
+        record_health=record_source_health,
     )
     return result.value, result.auxiliary_rate, result.error
 
@@ -4703,23 +3963,16 @@ def fetch_market_data_result():
 
 # ---------- 桌面通知 ----------
 def send_desktop_notification(title, body):
-    if sys.platform == "darwin":
-        script = (
-            "display notification "
-            + _applescript_string(body)
-            + " with title "
-            + _applescript_string(title)
-        )
-        _run_macos_osascript(script, wait=False)
-        return
-    try:
-        from win11toast import notify
-        notification_icon = os.path.join(_basedir, "static", "icon.ico")
-        if not os.path.exists(notification_icon):
-            notification_icon = os.path.join(_basedir, "static", "icon-64.png")
-        notify(title, body, app_id=APP_USER_MODEL_ID, icon=notification_icon)
-    except Exception:
-        pass
+    return notification_runtime_core.send_desktop_notification(
+        title,
+        body,
+        sys_platform=sys.platform,
+        base_dir=_basedir,
+        app_id=APP_USER_MODEL_ID,
+        applescript_string=_applescript_string,
+        run_applescript=_run_macos_osascript,
+        path_exists=os.path.exists,
+    )
 
 
 # ---------- 资讯 ----------
@@ -4764,19 +4017,16 @@ def save_news_cache(items):
 
 
 def fetch_gold_news():
-    items = []
-    gdelt_response = requests.get(GDELT_NEWS_URL, timeout=REQUEST_TIMEOUT, proxies=REQ_PROXY)
-    gdelt_response.raise_for_status()
-    items.extend(parse_gdelt_articles(gdelt_response.json()))
-
-    for source in NEWS_RSS_SOURCES:
-        try:
-            response = requests.get(source["url"], timeout=REQUEST_TIMEOUT, proxies=REQ_PROXY)
-            response.raise_for_status()
-            items.extend(parse_rss_items(response.text, source["name"], source["kind"]))
-        except Exception:
-            continue
-    return normalize_news_items(items)
+    return market_clients_core.fetch_gold_news(
+        request_get=requests.get,
+        gdelt_url=GDELT_NEWS_URL,
+        rss_sources=NEWS_RSS_SOURCES,
+        parse_gdelt=parse_gdelt_articles,
+        parse_rss=parse_rss_items,
+        normalize=normalize_news_items,
+        timeout=REQUEST_TIMEOUT,
+        proxies=REQ_PROXY,
+    )
 
 
 def refresh_gold_news(emit_update=True):
@@ -5181,92 +4431,23 @@ def build_alert_log_csv():
 
 
 def _history_number(value):
-    if value in (None, ""):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
+    return price_history_core.history_number(value)
 
 
 def _history_timestamp(value):
-    parsed = _parse_iso_datetime(value)
-    if not parsed:
-        return None
-    if parsed.tzinfo:
-        parsed = parsed.replace(tzinfo=None)
-    return parsed
+    return price_history_core.history_timestamp(value)
 
 
 def _kline_bucket_start(timestamp):
-    return timestamp.replace(minute=(timestamp.minute // 5) * 5, second=0, microsecond=0)
+    return price_history_core.kline_bucket_start(timestamp)
 
 
 def _ohlc(values):
-    if not values:
-        return {"open": None, "high": None, "low": None, "close": None}
-    return {
-        "open": values[0],
-        "high": max(values),
-        "low": min(values),
-        "close": values[-1],
-    }
+    return price_history_core.ohlc(values)
 
 
 def build_5min_klines(history_items, limit=96):
-    points = []
-    for item in history_items or []:
-        if not isinstance(item, dict):
-            continue
-        timestamp = _history_timestamp(item.get("timestamp"))
-        if not timestamp:
-            continue
-        usd = _history_number(item.get("usd"))
-        rmb = _history_number(item.get("rmb"))
-        if usd is None and rmb is None:
-            continue
-        points.append((timestamp, usd, rmb))
-
-    if len(points) < 2:
-        return []
-
-    points.sort(key=lambda point: point[0])
-    buckets = []
-    bucket_by_timestamp = {}
-    for timestamp, usd, rmb in points:
-        bucket_start = _kline_bucket_start(timestamp)
-        bucket_key = bucket_start.isoformat(timespec="seconds")
-        if bucket_key not in bucket_by_timestamp:
-            bucket_by_timestamp[bucket_key] = {
-                "time": bucket_start.strftime("%H:%M"),
-                "timestamp": bucket_key,
-                "usd": [],
-                "rmb": [],
-            }
-            buckets.append(bucket_by_timestamp[bucket_key])
-        if usd is not None:
-            bucket_by_timestamp[bucket_key]["usd"].append(usd)
-        if rmb is not None:
-            bucket_by_timestamp[bucket_key]["rmb"].append(rmb)
-
-    candles = []
-    for bucket in buckets:
-        usd_ohlc = _ohlc(bucket["usd"])
-        rmb_ohlc = _ohlc(bucket["rmb"])
-        candles.append({
-            "open": usd_ohlc["open"],
-            "high": usd_ohlc["high"],
-            "low": usd_ohlc["low"],
-            "close": usd_ohlc["close"],
-            "open_rmb": rmb_ohlc["open"],
-            "high_rmb": rmb_ohlc["high"],
-            "low_rmb": rmb_ohlc["low"],
-            "close_rmb": rmb_ohlc["close"],
-            "time": bucket["time"],
-            "timestamp": bucket["timestamp"],
-        })
-    return candles[-int(limit or 96):]
+    return price_history_core.build_5min_klines(history_items, limit=limit)
 
 
 def restore_price_history_state(archive):
@@ -5290,346 +4471,96 @@ initialize_market_cache()
 
 
 def _format_number(value, digits=2):
-    if value is None:
-        return None
-    try:
-        return round(float(value), digits)
-    except (TypeError, ValueError):
-        return None
+    return risk_analysis_core.format_number(value, digits)
 
 
 def _valid_market_price(value):
-    try:
-        return float(value) > 0
-    except (TypeError, ValueError):
-        return False
+    return risk_analysis_core.valid_market_price(value)
 
 
 def risk_analysis_market_data_error():
     with lock:
-        has_price = _valid_market_price(price_usd) or _valid_market_price(price_rmb)
-    if not has_price:
-        return "当前没有可用于风险分析的行情价格，请先重新获取行情数据。"
-    return ""
+        return risk_analysis_core.market_data_error(price_usd, price_rmb)
 
 
 def _summarize_price_series(points, field):
-    values = [p.get(field) for p in points if p.get(field) is not None]
-    if not values:
-        return {
-            "points": 0,
-            "start": None,
-            "end": None,
-            "high": None,
-            "low": None,
-            "change": None,
-            "change_pct": None,
-        }
-    start = values[0]
-    end = values[-1]
-    change = end - start
-    return {
-        "points": len(values),
-        "start": _format_number(start),
-        "end": _format_number(end),
-        "high": _format_number(max(values)),
-        "low": _format_number(min(values)),
-        "change": _format_number(change),
-        "change_pct": _format_number(change / start * 100 if start else 0),
-    }
+    return risk_analysis_core.summarize_price_series(points, field)
 
 
 def _summarize_klines(candles):
-    if not candles:
-        return {
-            "points": 0,
-            "latest": None,
-            "high": None,
-            "low": None,
-            "direction": "样本不足",
-        }
-    closes = [c.get("close") for c in candles if c.get("close") is not None]
-    highs = [c.get("high") for c in candles if c.get("high") is not None]
-    lows = [c.get("low") for c in candles if c.get("low") is not None]
-    latest = candles[-1]
-    if len(closes) < 2:
-        direction = "样本不足"
-    elif closes[-1] > closes[0]:
-        direction = "上行"
-    elif closes[-1] < closes[0]:
-        direction = "下行"
-    else:
-        direction = "震荡"
-    return {
-        "points": len(candles),
-        "latest": {
-            "time": latest.get("time"),
-            "open": _format_number(latest.get("open")),
-            "high": _format_number(latest.get("high")),
-            "low": _format_number(latest.get("low")),
-            "close": _format_number(latest.get("close")),
-        },
-        "high": _format_number(max(highs) if highs else None),
-        "low": _format_number(min(lows) if lows else None),
-        "direction": direction,
-    }
+    return risk_analysis_core.summarize_klines(candles)
 
 
 def _parse_iso_datetime(value):
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
-    except (TypeError, ValueError):
-        return None
+    return risk_analysis_core.parse_iso_datetime(value)
 
 
 def _history_window(points, minutes):
-    if not points:
-        return []
-    latest_time = _parse_iso_datetime(points[-1].get("timestamp")) or datetime.now()
-    cutoff = latest_time - timedelta(minutes=minutes)
-    filtered = [
-        item for item in points
-        if (_parse_iso_datetime(item.get("timestamp")) or latest_time) >= cutoff
-    ]
-    if filtered:
-        return filtered
-    fallback_points = max(2, int(minutes * 6))
-    return points[-fallback_points:]
+    return risk_analysis_core.history_window(points, minutes, now_factory=datetime.now)
 
 
 def _trend_direction(summary):
-    if summary.get("points", 0) < 2 or summary.get("change_pct") is None:
-        return "样本不足"
-    pct = summary.get("change_pct") or 0
-    if abs(pct) < 0.03:
-        return "震荡"
-    return "上行" if pct > 0 else "下行"
+    return risk_analysis_core.trend_direction(summary)
 
 
 def build_multi_period_trends(history):
-    trends = []
-    for minutes in RISK_ASSISTANT_TREND_PERIODS:
-        window = _history_window(history, minutes)
-        usd_summary = _summarize_price_series(window, "usd")
-        rmb_summary = _summarize_price_series(window, "rmb")
-        trends.append({
-            "minutes": minutes,
-            "points": len(window),
-            "usd": usd_summary,
-            "rmb": rmb_summary,
-            "direction_usd": _trend_direction(usd_summary),
-            "direction_rmb": _trend_direction(rmb_summary),
-        })
-    return trends
+    return risk_analysis_core.build_multi_period_trends(
+        history,
+        RISK_ASSISTANT_TREND_PERIODS,
+        now_factory=datetime.now,
+    )
 
 
 def assess_risk_data_quality(context):
-    market = context.get("market", {})
-    history = context.get("history_summary", {}).get("usd", {})
-    kline = context.get("kline_summary", {}).get("usd", {})
-    news_count = len(context.get("news", []))
-    score = 100
-    issues = []
-
-    if market.get("price_usd") is None:
-        score -= 35
-        issues.append("国际金价缺失")
-    if market.get("price_rmb") is None:
-        score -= 25
-        issues.append("人民币金价缺失")
-    if market.get("gold_cached"):
-        score -= 15
-        issues.append("金价来自缓存")
-    if market.get("rate_cached"):
-        score -= 10
-        issues.append("汇率来自缓存")
-    if not market.get("last_fetch_ok"):
-        score -= 10
-        issues.append("最近一次行情刷新异常")
-
-    history_points = history.get("points", 0)
-    if history_points < 12:
-        score -= 15
-        issues.append("历史价格样本偏少")
-    elif history_points < 60:
-        score -= 6
-        issues.append("历史样本不足 10 分钟")
-
-    if kline.get("points", 0) < 2:
-        score -= 10
-        issues.append("5分钟K线样本不足")
-    if news_count == 0:
-        score -= 5
-        issues.append("近期资讯为空")
-
-    now = datetime.now()
-    gold_time = _parse_iso_datetime(market.get("gold_time"))
-    rate_time = _parse_iso_datetime(market.get("rate_time"))
-    if gold_time and (now - gold_time).total_seconds() > 15 * 60:
-        score -= 8
-        issues.append("金价更新时间超过 15 分钟")
-    if rate_time and (now - rate_time).total_seconds() > 60 * 60:
-        score -= 5
-        issues.append("汇率更新时间超过 1 小时")
-
-    score = max(0, min(100, score))
-    if score >= 85:
-        level = "高"
-    elif score >= 65:
-        level = "中"
-    else:
-        level = "低"
-    return {
-        "score": score,
-        "level": level,
-        "issues": issues,
-        "summary": "；".join(issues) if issues else "数据状态良好",
-    }
+    return risk_analysis_core.assess_data_quality(context, now_factory=datetime.now)
 
 
 def build_risk_scorecard(context):
-    trends = context.get("multi_period_trends", [])
-    history = context.get("history_summary", {})
-    news = context.get("news", [])
-    quality = context.get("data_quality", {})
-    rmb_60 = history.get("rmb", {})
-    rate_points = [p.get("rate") for p in history.get("latest_points", []) if p.get("rate") is not None]
-
-    trend_changes = [
-        abs((item.get("rmb") or {}).get("change_pct") or 0)
-        for item in trends
-        if (item.get("rmb") or {}).get("change_pct") is not None
-    ]
-    trend_strength = min(100, int((max(trend_changes) if trend_changes else 0) * 35))
-
-    high = rmb_60.get("high")
-    low = rmb_60.get("low")
-    end = rmb_60.get("end")
-    volatility_pct = ((high - low) / end * 100) if high is not None and low is not None and end else 0
-    volatility_risk = min(100, int(volatility_pct * 25))
-
-    if len(rate_points) >= 2 and rate_points[0]:
-        fx_change_pct = abs((rate_points[-1] - rate_points[0]) / rate_points[0] * 100)
-    else:
-        fx_change_pct = 0
-    fx_impact = min(100, int(fx_change_pct * 40))
-
-    event_risk = 0
-    for item in news:
-        topic = str(item.get("topic") or "").lower()
-        title = str(item.get("title") or "").lower()
-        if any(key in f"{topic} {title}" for key in ("fed", "fomc", "inflation", "cpi", "jobs", "payroll", "dollar", "yield")):
-            event_risk += 25
-        else:
-            event_risk += 12
-    event_risk = min(100, event_risk)
-
-    data_credibility = int(quality.get("score", 0) or 0)
-    overall_risk = int(
-        volatility_risk * 0.28
-        + event_risk * 0.24
-        + trend_strength * 0.22
-        + fx_impact * 0.12
-        + (100 - data_credibility) * 0.14
-    )
-    return {
-        "overall_risk": max(0, min(100, overall_risk)),
-        "trend_strength": trend_strength,
-        "volatility_risk": volatility_risk,
-        "fx_impact": fx_impact,
-        "event_risk": event_risk,
-        "data_credibility": data_credibility,
-        "volatility_pct": _format_number(volatility_pct),
-        "fx_change_pct": _format_number(fx_change_pct, 4),
-    }
+    return risk_analysis_core.build_risk_scorecard(context)
 
 
 def build_risk_analysis_context(trigger=None, depth=None):
-    depth = depth if depth in VALID_RISK_ASSISTANT_DEPTHS else get_settings_snapshot().get("risk_assistant_depth", "standard")
-    if depth not in VALID_RISK_ASSISTANT_DEPTHS:
-        depth = "standard"
-    history_limit = {"quick": 120, "standard": 360, "deep": 1440}.get(depth, 360)
-    news_limit = {"quick": 3, "standard": RISK_ASSISTANT_NEWS_LIMIT, "deep": 10}.get(depth, RISK_ASSISTANT_NEWS_LIMIT)
     with lock:
-        source_history = price_archive if depth == "deep" and price_archive else price_history
-        history = list(source_history[-history_limit:])
-        candles = list(klines_5min[-72:])
-        news = list(news_items[:news_limit])
-        daily_change_usd = price_usd - today_open_usd if price_usd is not None and today_open_usd else None
-        daily_change_rmb = price_rmb - today_open_rmb if price_rmb is not None and today_open_rmb else None
-        context = {
-            "analysis_time": datetime.now().isoformat(timespec="seconds"),
-            "analysis_depth": depth,
-            "market": {
-                "price_usd": _format_number(price_usd),
-                "price_rmb": _format_number(price_rmb),
-                "previous_usd": _format_number(previous_usd),
-                "previous_rmb": _format_number(previous_rmb),
-                "usdcny_rate": _format_number(usdcny_rate, 4),
-                "gold_source": gold_price_source,
-                "gold_time": gold_price_time,
-                "gold_cached": gold_price_cached,
-                "gold_error": gold_price_error,
-                "rate_source": usdcny_rate_source,
-                "rate_time": usdcny_rate_time,
-                "rate_cached": usdcny_rate_cached,
-                "rate_error": usdcny_rate_error,
-                "last_fetch_ok": last_fetch_ok,
-                "last_fetch_error": last_fetch_error,
-                "last_fetch_time": last_fetch_time,
-            },
-            "daily": {
-                "date": today_date,
-                "open_usd": _format_number(today_open_usd),
-                "high_usd": _format_number(today_high_usd),
-                "low_usd": _format_number(today_low_usd),
-                "change_usd": _format_number(daily_change_usd),
-                "pct_usd": _format_number(daily_change_usd / today_open_usd * 100 if daily_change_usd is not None and today_open_usd else None),
-                "open_rmb": _format_number(today_open_rmb),
-                "high_rmb": _format_number(today_high_rmb),
-                "low_rmb": _format_number(today_low_rmb),
-                "change_rmb": _format_number(daily_change_rmb),
-                "pct_rmb": _format_number(daily_change_rmb / today_open_rmb * 100 if daily_change_rmb is not None and today_open_rmb else None),
-            },
-            "history_summary": {
-                "minutes": 60,
-                "usd": _summarize_price_series(history, "usd"),
-                "rmb": _summarize_price_series(history, "rmb"),
-                "latest_points": history[-12:],
-            },
-            "multi_period_trends": build_multi_period_trends(history),
-            "kline_summary": {
-                "period": "5min",
-                "usd": _summarize_klines(candles),
-                "latest_candles": candles[-12:],
-            },
-            "news": [
-                {
-                    "title": item.get("title", ""),
-                    "source": item.get("source", ""),
-                    "time": item.get("time"),
-                    "topic": item.get("topic", ""),
-                    "summary": item.get("summary", ""),
-                }
-                for item in news
-            ],
+        state = {
+            "price_archive": list(price_archive),
+            "price_history": list(price_history),
+            "klines_5min": list(klines_5min),
+            "news_items": list(news_items),
+            "price_usd": price_usd,
+            "price_rmb": price_rmb,
+            "previous_usd": previous_usd,
+            "previous_rmb": previous_rmb,
+            "usdcny_rate": usdcny_rate,
+            "gold_price_source": gold_price_source,
+            "gold_price_time": gold_price_time,
+            "gold_price_cached": gold_price_cached,
+            "gold_price_error": gold_price_error,
+            "usdcny_rate_source": usdcny_rate_source,
+            "usdcny_rate_time": usdcny_rate_time,
+            "usdcny_rate_cached": usdcny_rate_cached,
+            "usdcny_rate_error": usdcny_rate_error,
+            "last_fetch_ok": last_fetch_ok,
+            "last_fetch_error": last_fetch_error,
+            "last_fetch_time": last_fetch_time,
+            "today_date": today_date,
+            "today_open_usd": today_open_usd,
+            "today_high_usd": today_high_usd,
+            "today_low_usd": today_low_usd,
+            "today_open_rmb": today_open_rmb,
+            "today_high_rmb": today_high_rmb,
+            "today_low_rmb": today_low_rmb,
         }
-    if isinstance(trigger, dict):
-        context["manual_trigger"] = {
-            "source": str(trigger.get("source") or "manual"),
-            "time": str(trigger.get("time") or ""),
-            "type": str(trigger.get("type") or ""),
-            "mode": str(trigger.get("mode") or ""),
-            "message": str(trigger.get("message") or "")[:500],
-        }
-    source_health_state = get_source_health_state()
-    context["market_quality"] = source_health_state.get("quality") if isinstance(source_health_state, dict) else {}
-    context["sample_warning"] = "样本不足" if len(history) < 12 or len(candles) < 2 else ""
-    context["data_quality"] = assess_risk_data_quality(context)
-    context["risk_scorecard"] = build_risk_scorecard(context)
-    return context
+    return risk_analysis_core.build_context(
+        state,
+        get_settings_snapshot(),
+        trigger=trigger,
+        depth=depth,
+        valid_depths=VALID_RISK_ASSISTANT_DEPTHS,
+        trend_periods=RISK_ASSISTANT_TREND_PERIODS,
+        news_limit=RISK_ASSISTANT_NEWS_LIMIT,
+        source_health=get_source_health_state(),
+        now_factory=datetime.now,
+    )
 
 
 def _risk_model_client():
@@ -5870,136 +4801,32 @@ def _check_volatility(now_str):
         emit_alert(plan["alert"], plan["title"])
 
 
-# ---------- Flask 路由 ----------
-@app.route("/")
-def index():
-    return render_template("index.html", socket_access_token=SOCKET_ACCESS_TOKEN, app_version=APP_VERSION)
-
-
-@app.route("/api/price")
-def api_price():
+def _price_api_state():
     with lock:
-        return jsonify(app_state_core.build_price_api_state(_market_state_locked()))
+        return app_state_core.build_price_api_state(_market_state_locked())
 
 
-@app.route("/api/health")
-def api_health():
-    return jsonify({
-        "app": APP_NAME,
-        "version": APP_VERSION,
+def _health_api_state():
+    return {
         "port": server_port,
         "desktop": bool(_desktop_runtime_active),
-    })
+    }
 
 
-@app.route("/api/activate", methods=["POST"])
-def api_activate():
+def _activate_application():
     if _desktop_runtime_active:
         if sys.platform == "darwin":
             _call_macos_main(show_main_window)
         else:
             show_main_window()
-    return jsonify({
+    return {
         "ok": True,
         "desktop": bool(_desktop_runtime_active),
         "port": server_port,
-    })
+    }
 
 
-@app.route("/api/data-archive/preview", methods=["POST"])
-def api_preview_data_archive():
-    if not _authorized_http_request():
-        return jsonify({"ok": False, "message": "未授权的数据归档请求"}), 403
-    uploaded = request.files.get("archive")
-    if uploaded is None or not str(uploaded.filename or "").strip():
-        return jsonify({"ok": False, "message": "请选择数据归档文件"}), 400
-    file_descriptor, upload_path = tempfile.mkstemp(prefix="goldmonitor-restore-", suffix=".zip")
-    os.close(file_descriptor)
-    try:
-        uploaded.save(upload_path)
-        preview = _data_archive_manager().preview(upload_path)
-        restore_token = _store_data_archive_upload(upload_path, preview)
-        return jsonify({**preview, "restore_token": restore_token})
-    except data_archive_core.DataArchiveError as exc:
-        try:
-            os.remove(upload_path)
-        except FileNotFoundError:
-            pass
-        logging.warning("数据归档预检失败: %s", exc)
-        return jsonify({
-            "ok": False,
-            "restorable": False,
-            "message": "数据归档校验失败，请确认文件来自 GoldMonitor 且未损坏",
-        }), 400
-    except OSError as exc:
-        try:
-            os.remove(upload_path)
-        except FileNotFoundError:
-            pass
-        logging.warning("读取数据归档失败: %s", exc)
-        return jsonify({
-            "ok": False,
-            "restorable": False,
-            "message": "读取数据归档失败，请检查文件后重试",
-        }), 400
-
-
-@app.route("/api/data-archive/restore", methods=["POST"])
-def api_restore_data_archive():
-    if not _authorized_http_request():
-        return jsonify({"ok": False, "message": "未授权的数据归档请求"}), 403
-    payload = request.get_json(silent=True)
-    token = str(payload.get("restore_token") or "") if isinstance(payload, dict) else ""
-    upload = _consume_data_archive_upload(token)
-    if not upload:
-        return jsonify({"ok": False, "message": "归档预检已失效，请重新选择文件"}), 400
-    archive_path = str(upload.get("path") or "")
-    try:
-        result = restore_data_archive(archive_path)
-        socketio.emit("data_archive_restored", result)
-        return jsonify(result)
-    except (data_archive_core.DataArchiveError, OSError, sqlite3.Error) as exc:
-        logging.warning("完整数据恢复失败: %s", exc)
-        return jsonify({
-            "ok": False,
-            "message": "数据恢复失败，原数据已回滚。请检查归档文件后重试。",
-        }), 400
-    except Exception:
-        logging.exception("完整数据恢复失败")
-        return jsonify({"ok": False, "message": "数据恢复失败，原数据已回滚。请检查运行日志。"}), 500
-    finally:
-        try:
-            os.remove(archive_path)
-        except FileNotFoundError:
-            pass
-
-
-@app.route("/favicon.ico")
-def favicon():
-    return send_from_directory(os.path.join(_basedir, "static"), "icon-64.png", mimetype="image/png")
-
-
-@app.route("/manifest.json")
-def manifest():
-    return send_from_directory(_basedir, "manifest.json")
-
-
-@app.route("/sw.js")
-def service_worker():
-    return send_from_directory(_basedir, "sw.js", mimetype="application/javascript")
-
-
-@app.route("/static/<path:filename>")
-def static_files(filename):
-    return send_from_directory(os.path.join(_basedir, "static"), filename)
-
-
-# ---------- Socket.IO 事件 ----------
-@socketio.on("connect")
-def on_connect(auth=None):
-    if not is_socket_authorized(auth):
-        return False
-
+def _build_socket_init_state():
     with lock:
         state = app_state_core.build_socket_init_state(
             _market_state_locked(),
@@ -6023,7 +4850,40 @@ def on_connect(auth=None):
         state["daily_digest_status"] = daily_digest_status_payload()
     state["news"] = get_news_state()
     state["risk_analysis_history"] = get_risk_analysis_history_state()
-    emit("init_state", state)
+    return state
+
+
+_http_handlers = http_routes_core.register_http_routes(
+    app,
+    jsonify=jsonify,
+    render_template=render_template,
+    send_from_directory=send_from_directory,
+    request=request,
+    base_dir=_basedir,
+    socket_access_token=SOCKET_ACCESS_TOKEN,
+    app_name=APP_NAME,
+    app_version=APP_VERSION,
+    get_price_state=_price_api_state,
+    get_health_state=_health_api_state,
+    activate_application=_activate_application,
+    authorized_request=_authorized_http_request,
+    archive_manager=lambda: _data_archive_manager(),
+    store_upload=_store_data_archive_upload,
+    consume_upload=_consume_data_archive_upload,
+    restore_archive=lambda path: restore_data_archive(path),
+    emit=lambda event, payload: socketio.emit(event, payload),
+    logger=logging,
+)
+index = _http_handlers["index"]
+api_price = _http_handlers["api_price"]
+api_health = _http_handlers["api_health"]
+api_activate = _http_handlers["api_activate"]
+api_preview_data_archive = _http_handlers["api_preview_data_archive"]
+api_restore_data_archive = _http_handlers["api_restore_data_archive"]
+favicon = _http_handlers["favicon"]
+manifest = _http_handlers["manifest"]
+service_worker = _http_handlers["service_worker"]
+static_files = _http_handlers["static_files"]
 
 
 def _broadcast_alert_rule_views(state=None):
@@ -6267,50 +5127,27 @@ socket_risk_analysis_core.register_risk_analysis_handlers(
 
 
 
-@socketio.on("close_choice")
-def on_close_choice(data):
-    if not isinstance(data, dict):
-        data = {}
-
-    choice = data.get("choice")
-    remember = bool(data.get("remember"))
-    if choice not in ("minimize_to_tray", "exit", "cancel"):
-        return
-
-    if remember and choice in ("minimize_to_tray", "exit"):
-        snapshot = get_settings_snapshot()
-        snapshot["close_behavior"] = choice
-        snapshot["close_remembered"] = True
-        try:
-            save_settings(snapshot)
-        except OSError:
-            pass
-        socketio.emit("settings_updated", public_settings_snapshot())
-
-    if choice == "minimize_to_tray":
-        hide_main_window()
-    elif choice == "exit":
-        exit_app()
-
-
-@socketio.on("get_news")
-def on_get_news():
-    emit("news_updated", get_news_state())
-
-
-@socketio.on("refresh_price")
-def on_refresh_price():
-    emit("fetch_status", build_fetch_status(False, "正在重新获取行情数据...", retryable=False))
-    threading.Thread(target=fetch_price_once, daemon=True).start()
-
-
-@socketio.on("refresh_news")
-def on_refresh_news():
-    emit("news_updated", {
-        **get_news_state(),
-        "loading": True,
-    })
-    threading.Thread(target=refresh_gold_news, daemon=True).start()
+_base_socket_handlers = socket_runtime_core.register_base_handlers(
+    socketio,
+    emit=emit,
+    authorize=is_socket_authorized,
+    build_init_state=_build_socket_init_state,
+    get_settings=get_settings_snapshot,
+    save_settings=save_settings,
+    public_settings=public_settings_snapshot,
+    hide_window=lambda: hide_main_window(),
+    exit_application=lambda: exit_app(),
+    get_news_state=get_news_state,
+    build_fetch_status=build_fetch_status,
+    fetch_price=lambda: fetch_price_once(),
+    refresh_news=lambda: refresh_gold_news(emit_update=True),
+    thread_factory=lambda **kwargs: threading.Thread(**kwargs),
+)
+on_connect = _base_socket_handlers["connect"]
+on_close_choice = _base_socket_handlers["close_choice"]
+on_get_news = _base_socket_handlers["get_news"]
+on_refresh_price = _base_socket_handlers["refresh_price"]
+on_refresh_news = _base_socket_handlers["refresh_news"]
 
 
 socket_operations_core.register_operations_handlers(
@@ -6474,6 +5311,25 @@ def _set_floating_drag_state(value):
     _floating_drag_state = value
 
 
+def _set_floating_positioned(value):
+    global _floating_positioned
+    _floating_positioned = bool(value)
+
+
+def _set_macos_status_state(state):
+    global _macos_status_item, _macos_status_delegate, _macos_status_menu
+    global _macos_status_menu_items
+    _macos_status_item = state.get("status_item")
+    _macos_status_delegate = state.get("delegate")
+    _macos_status_menu = state.get("menu")
+    _macos_status_menu_items = dict(state.get("menu_items") or {})
+
+
+def _set_last_desktop_title(value):
+    global _last_desktop_title
+    _last_desktop_title = str(value or APP_NAME)
+
+
 def format_price_title(rmb=None, usd=None):
     if rmb is None and usd is None:
         with lock:
@@ -6491,110 +5347,49 @@ def format_macos_status_title():
 
 
 def _call_macos_main(callback):
-    if sys.platform != "darwin":
-        return
-    try:
-        from PyObjCTools import AppHelper
-        AppHelper.callAfter(callback)
-    except Exception:
-        try:
-            callback()
-        except Exception:
-            pass
+    return desktop_status_core.call_macos_main(
+        callback,
+        sys_platform=sys.platform,
+    )
 
 
 def _refresh_macos_status_item():
-    if sys.platform != "darwin" or not _macos_status_item:
-        return
-
-    def _apply():
-        try:
-            button = _macos_status_item.button()
-            if button:
-                button.setTitle_(format_macos_status_title())
-                button.setToolTip_(format_price_title())
-            toggle_item = _macos_status_menu_items.get("toggle_price")
-            if toggle_item:
-                enabled = get_settings_snapshot().get("floating_price_enabled", True)
-                toggle_item.setTitle_("隐藏菜单栏金价" if enabled else "显示菜单栏金价")
-        except Exception:
-            pass
-
-    _call_macos_main(_apply)
+    return desktop_status_core.refresh_macos_status_item(
+        sys_platform=sys.platform,
+        get_status_item=lambda: _macos_status_item,
+        get_menu_items=lambda: _macos_status_menu_items,
+        format_status_title=lambda: format_macos_status_title(),
+        format_price_title=lambda: format_price_title(),
+        get_settings=lambda: get_settings_snapshot(),
+        call_main=lambda callback: _call_macos_main(callback),
+    )
 
 
 def create_macos_status_item():
-    global _macos_status_item, _macos_status_delegate, _macos_status_menu, _macos_status_menu_items
-    if sys.platform != "darwin" or _macos_status_item:
-        return
-    try:
-        from Foundation import NSObject
-        from AppKit import NSMenu, NSMenuItem, NSStatusBar, NSVariableStatusItemLength
-
-        class MacOSStatusDelegate(NSObject):
-            def showWindow_(self, sender):
-                show_main_window()
-
-            def refreshPrice_(self, sender):
-                _refresh_price_from_tray_menu()
-
-            def openRiskAnalysis_(self, sender):
-                _open_risk_analysis_from_tray_menu()
-
-            def toggleMenuBarPrice_(self, sender):
-                _toggle_floating_price_from_tray_menu()
-
-            def quitApp_(self, sender):
-                exit_app()
-
-        delegate = MacOSStatusDelegate.alloc().init()
-        menu = NSMenu.alloc().init()
-
-        def add_item(title, action):
-            item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, action, "")
-            item.setTarget_(delegate)
-            menu.addItem_(item)
-            return item
-
-        add_item("显示窗口", "showWindow:")
-        add_item("刷新行情", "refreshPrice:")
-        add_item("风险分析", "openRiskAnalysis:")
-        toggle_item = add_item("隐藏菜单栏金价", "toggleMenuBarPrice:")
-        menu.addItem_(NSMenuItem.separatorItem())
-        add_item("退出", "quitApp:")
-
-        status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
-        status_item.setMenu_(menu)
-
-        _macos_status_delegate = delegate
-        _macos_status_menu = menu
-        _macos_status_item = status_item
-        _macos_status_menu_items = {"toggle_price": toggle_item}
-        _refresh_macos_status_item()
-    except Exception:
-        logging.warning("macOS 菜单栏状态项启动失败", exc_info=True)
+    return desktop_status_core.create_macos_status_item(
+        sys_platform=sys.platform,
+        get_status_item=lambda: _macos_status_item,
+        set_status_state=_set_macos_status_state,
+        show_window=lambda: show_main_window(),
+        refresh_price=lambda: _refresh_price_from_tray_menu(),
+        open_risk_analysis=lambda: _open_risk_analysis_from_tray_menu(),
+        toggle_price=lambda: _toggle_floating_price_from_tray_menu(),
+        exit_application=lambda: exit_app(),
+        refresh_status=lambda: _refresh_macos_status_item(),
+        logger=logging,
+    )
 
 
 def update_desktop_price_title(title=None):
-    global _last_desktop_title
     title = title or format_price_title()
-    if title == _last_desktop_title:
-        _refresh_macos_status_item()
-        return
-    _last_desktop_title = title
-    window = _window_instance
-    if window:
-        try:
-            window.set_title(title)
-        except Exception:
-            pass
-    icon = _tray_icon
-    if icon:
-        try:
-            icon.title = title
-        except Exception:
-            pass
-    _refresh_macos_status_item()
+    return desktop_status_core.update_desktop_price_title(
+        title,
+        last_title=lambda: _last_desktop_title,
+        set_last_title=_set_last_desktop_title,
+        get_window=lambda: _window_instance,
+        get_tray_icon=lambda: _tray_icon,
+        refresh_status=lambda: _refresh_macos_status_item(),
+    )
 
 
 def format_floating_price_text(rmb=None, usd=None, pct=None):
@@ -6664,36 +5459,14 @@ def _floating_window_radius():
 
 
 def _apply_floating_window_corner_preference(hwnd):
-    if not hwnd or os.name != "nt":
-        return
-    try:
-        import ctypes
-
-        DWMWA_WINDOW_CORNER_PREFERENCE = 33
-        DWMWCP_ROUND_SMALL = 3
-        value = ctypes.c_int(DWMWCP_ROUND_SMALL)
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(
-            ctypes.c_void_p(hwnd),
-            ctypes.c_uint(DWMWA_WINDOW_CORNER_PREFERENCE),
-            ctypes.byref(value),
-            ctypes.sizeof(value),
-        )
-    except Exception:
-        pass
+    return floating_runtime_core.apply_window_corner_preference(
+        hwnd,
+        os_name=os.name,
+    )
 
 
 def _get_work_area(user32):
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        rect = wintypes.RECT()
-        SPI_GETWORKAREA = 0x0030
-        if user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(rect), 0):
-            return rect.left, rect.top, rect.right, rect.bottom
-    except Exception:
-        pass
-    return 0, 0, 1280, 720
+    return floating_runtime_core.get_work_area(user32)
 
 
 def _clamp_floating_position(x, y, user32=None):
@@ -6701,179 +5474,138 @@ def _clamp_floating_position(x, y, user32=None):
         import ctypes
 
         user32 = user32 or ctypes.windll.user32
-        return desktop_ui_core.clamp_floating_position(x, y, _floating_window_size(), _get_work_area(user32))
+        return floating_runtime_core.clamp_window_position(
+            x,
+            y,
+            window_size=lambda: _floating_window_size(),
+            work_area=lambda: _get_work_area(user32),
+        )
     except Exception:
         return int(x), int(y)
 
 
 def _default_floating_position(user32, width, height):
-    return desktop_ui_core.default_floating_position(_get_work_area(user32), width, height)
+    return desktop_ui_core.default_floating_position(
+        _get_work_area(user32),
+        width,
+        height,
+    )
 
 
 def _snap_floating_position(x, y, user32=None):
-    settings = get_settings_snapshot()
-    if not settings.get("floating_price_snap_edge", True):
-        return x, y
     try:
         import ctypes
 
         user32 = user32 or ctypes.windll.user32
-        return desktop_ui_core.snap_floating_position(
+        return floating_runtime_core.snap_window_position(
             x,
             y,
-            _floating_window_size(),
-            _get_work_area(user32),
-            enabled=True,
+            settings=lambda: get_settings_snapshot(),
+            window_size=lambda: _floating_window_size(),
+            work_area=lambda: _get_work_area(user32),
         )
     except Exception:
-        pass
-    return x, y
+        return x, y
 
 
 def _resolve_floating_position(user32, width, height):
-    return desktop_ui_core.resolve_floating_position(
-        get_settings_snapshot(),
-        (width, height),
-        _get_work_area(user32),
+    return floating_runtime_core.resolve_window_position(
+        settings=lambda: get_settings_snapshot(),
+        width=width,
+        height=height,
+        work_area=lambda: _get_work_area(user32),
     )
 
 
 def _save_floating_position(x, y):
-    try:
-        x, y = _clamp_floating_position(x, y)
-        x, y = _snap_floating_position(x, y)
-        snapshot = get_settings_snapshot()
-        if (
-            snapshot.get("floating_price_position_saved")
-            and snapshot.get("floating_price_x") == x
-            and snapshot.get("floating_price_y") == y
-        ):
-            return x, y
-        snapshot["floating_price_position_saved"] = True
-        snapshot["floating_price_x"] = x
-        snapshot["floating_price_y"] = y
-        save_settings(snapshot)
-        socketio.emit("settings_updated", public_settings_snapshot())
-        return x, y
-    except Exception:
-        logging.warning("桌面金价悬浮条位置保存失败", exc_info=True)
-    return x, y
+    return floating_runtime_core.save_window_position(
+        x,
+        y,
+        clamp_position=lambda px, py: _clamp_floating_position(px, py),
+        snap_position=lambda px, py: _snap_floating_position(px, py),
+        get_settings=lambda: get_settings_snapshot(),
+        save_settings=lambda snapshot: save_settings(snapshot),
+        emit_settings_updated=(
+            lambda: socketio.emit("settings_updated", public_settings_snapshot())
+        ),
+        logger=logging,
+    )
 
 
 def _position_floating_window(hwnd, user32=None, x=None, y=None):
-    global _floating_positioned
     if not hwnd:
         return
     try:
         import ctypes
 
         user32 = user32 or ctypes.windll.user32
-        user32.SetWindowPos.restype = ctypes.c_bool
-        user32.SetWindowPos.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_uint,
-        ]
-        width, height = _floating_window_size()
-        if x is None or y is None:
-            x, y = _resolve_floating_position(user32, width, height)
-        else:
-            x, y = _clamp_floating_position(x, y, user32)
-        SWP_NOACTIVATE = 0x0010
-        SWP_NOOWNERZORDER = 0x0200
-        HWND_TOPMOST = ctypes.c_void_p(-1 & ((1 << (ctypes.sizeof(ctypes.c_void_p) * 8)) - 1))
-        HWND_NOTOPMOST = ctypes.c_void_p(-2 & ((1 << (ctypes.sizeof(ctypes.c_void_p) * 8)) - 1))
-        insert_after = (
-            HWND_TOPMOST
-            if desktop_ui_core.floating_window_z_order(get_settings_snapshot()) == "topmost"
-            else HWND_NOTOPMOST
-        )
-        ok = user32.SetWindowPos(
+        return floating_runtime_core.position_window(
             hwnd,
-            insert_after,
-            int(x),
-            int(y),
-            int(width),
-            int(height),
-            SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+            user32=user32,
+            x=x,
+            y=y,
+            window_size=lambda: _floating_window_size(),
+            resolve_position=(
+                lambda target, width, height:
+                _resolve_floating_position(target, width, height)
+            ),
+            clamp_position=(
+                lambda px, py, target:
+                _clamp_floating_position(px, py, target)
+            ),
+            get_settings=lambda: get_settings_snapshot(),
+            set_positioned=_set_floating_positioned,
+            logger=logging,
         )
-        _floating_positioned = bool(ok)
-        if not ok:
-            raise OSError(ctypes.get_last_error(), "SetWindowPos failed")
     except Exception:
         logging.warning("桌面金价悬浮条定位失败", exc_info=True)
 
 
 def _invalidate_floating_window():
-    hwnd = _floating_hwnd
-    if not hwnd or os.name != "nt":
-        return
-    try:
-        import ctypes
-
-        user32 = ctypes.windll.user32
-        user32.InvalidateRect.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool]
-        user32.InvalidateRect(hwnd, None, True)
-    except Exception:
-        pass
+    return floating_runtime_core.invalidate_window(
+        _floating_hwnd,
+        os_name=os.name,
+    )
 
 
 def _set_floating_window_visible(visible):
-    global _floating_positioned
-    hwnd = _floating_hwnd
-    if not hwnd or os.name != "nt":
-        return
-    try:
-        import ctypes
-
-        user32 = ctypes.windll.user32
-        user32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
-        SW_HIDE = 0
-        SW_SHOWNOACTIVATE = 4
-        if visible:
-            if not _floating_positioned:
-                _position_floating_window(hwnd, user32)
-            _apply_floating_opacity(hwnd, user32)
-            user32.ShowWindow(hwnd, SW_SHOWNOACTIVATE)
-            _invalidate_floating_window()
-        else:
-            user32.ShowWindow(hwnd, SW_HIDE)
-    except Exception:
-        pass
+    return floating_runtime_core.set_window_visible(
+        visible,
+        hwnd=_floating_hwnd,
+        os_name=os.name,
+        get_positioned=lambda: _floating_positioned,
+        position_window=(
+            lambda hwnd, user32: _position_floating_window(hwnd, user32)
+        ),
+        apply_opacity=(
+            lambda hwnd, user32: _apply_floating_opacity(hwnd, user32)
+        ),
+        invalidate_window=lambda: _invalidate_floating_window(),
+    )
 
 
 def _set_floating_price_enabled(enabled):
-    try:
-        snapshot = get_settings_snapshot()
-        if snapshot.get("floating_price_enabled", True) == bool(enabled):
-            _set_floating_window_visible(bool(enabled))
-            return
-        snapshot["floating_price_enabled"] = bool(enabled)
-        save_settings(snapshot)
-        apply_floating_price_settings(snapshot)
-        socketio.emit("settings_updated", public_settings_snapshot(snapshot))
-    except Exception:
-        logging.warning("桌面金价悬浮条显示状态更新失败", exc_info=True)
+    return floating_runtime_core.set_enabled(
+        enabled,
+        get_settings=lambda: get_settings_snapshot(),
+        save_settings=lambda snapshot: save_settings(snapshot),
+        set_window_visible=lambda visible: _set_floating_window_visible(visible),
+        apply_settings=lambda snapshot: apply_floating_price_settings(snapshot),
+        public_settings_snapshot=(
+            lambda snapshot: public_settings_snapshot(snapshot)
+        ),
+        emit=lambda event, payload: socketio.emit(event, payload),
+        logger=logging,
+    )
 
 
 def _apply_floating_opacity(hwnd=None, user32=None):
-    hwnd = hwnd or _floating_hwnd
-    if not hwnd or os.name != "nt":
-        return
-    try:
-        import ctypes
-
-        user32 = user32 or ctypes.windll.user32
-        LWA_ALPHA = 0x00000002
-        opacity = get_settings_snapshot().get("floating_price_opacity", 94)
-        alpha = max(1, min(255, int(int(opacity) / 100 * 255)))
-        user32.SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA)
-    except Exception:
-        pass
+    return floating_runtime_core.apply_window_opacity(
+        hwnd or _floating_hwnd,
+        os_name=os.name,
+        get_settings=lambda: get_settings_snapshot(),
+        user32=user32,
+    )
 
 
 def _refresh_price_from_floating_menu():
@@ -7120,98 +5852,6 @@ def create_tray_icon():
         thread_factory=threading.Thread,
         sleep=lambda seconds: time.sleep(seconds),
     )
-
-
-def ask_close_choice():
-    snapshot = get_settings_snapshot()
-    decision = platform_core.close_behavior_decision(snapshot, _runtime_platform())
-    if decision != "ask":
-        return decision
-
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        class TASKDIALOG_BUTTON(ctypes.Structure):
-            _fields_ = [
-                ("nButtonID", ctypes.c_int),
-                ("pszButtonText", wintypes.LPCWSTR),
-            ]
-
-        class TASKDIALOGCONFIG(ctypes.Structure):
-            _fields_ = [
-                ("cbSize", wintypes.UINT),
-                ("hwndParent", wintypes.HWND),
-                ("hInstance", wintypes.HINSTANCE),
-                ("dwFlags", wintypes.DWORD),
-                ("dwCommonButtons", wintypes.DWORD),
-                ("pszWindowTitle", wintypes.LPCWSTR),
-                ("hMainIcon", wintypes.HANDLE),
-                ("pszMainInstruction", wintypes.LPCWSTR),
-                ("pszContent", wintypes.LPCWSTR),
-                ("cButtons", wintypes.UINT),
-                ("pButtons", ctypes.POINTER(TASKDIALOG_BUTTON)),
-                ("nDefaultButton", ctypes.c_int),
-                ("cRadioButtons", wintypes.UINT),
-                ("pRadioButtons", ctypes.c_void_p),
-                ("nDefaultRadioButton", ctypes.c_int),
-                ("pszVerificationText", wintypes.LPCWSTR),
-                ("pszExpandedInformation", wintypes.LPCWSTR),
-                ("pszExpandedControlText", wintypes.LPCWSTR),
-                ("pszCollapsedControlText", wintypes.LPCWSTR),
-                ("hFooterIcon", wintypes.HANDLE),
-                ("pszFooter", wintypes.LPCWSTR),
-                ("pfCallback", ctypes.c_void_p),
-                ("lpCallbackData", ctypes.c_void_p),
-                ("cxWidth", wintypes.UINT),
-            ]
-
-        TDF_ALLOW_DIALOG_CANCELLATION = 0x0008
-        TDF_SIZE_TO_CONTENT = 0x01000000
-        ID_MINIMIZE = 1001
-        ID_EXIT = 1002
-        ID_CANCEL = 1003
-        buttons = (TASKDIALOG_BUTTON * 3)(
-            TASKDIALOG_BUTTON(ID_MINIMIZE, "最小化到托盘"),
-            TASKDIALOG_BUTTON(ID_EXIT, "退出程序"),
-            TASKDIALOG_BUTTON(ID_CANCEL, "取消"),
-        )
-        selected = ctypes.c_int(ID_CANCEL)
-        selected_radio = ctypes.c_int(0)
-        verification_checked = wintypes.BOOL(False)
-
-        config = TASKDIALOGCONFIG()
-        config.cbSize = ctypes.sizeof(TASKDIALOGCONFIG)
-        config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_SIZE_TO_CONTENT
-        config.pszWindowTitle = "关闭金价监控"
-        config.pszMainInstruction = "是否最小化到桌面右下角托盘并继续监控？"
-        config.pszContent = "最小化后程序会继续监控金价；也可以选择直接退出程序。"
-        config.cButtons = len(buttons)
-        config.pButtons = buttons
-        config.nDefaultButton = ID_MINIMIZE
-        config.pszVerificationText = "不再提示，记住本次选择"
-        ctypes.windll.comctl32.TaskDialogIndirect(
-            ctypes.byref(config),
-            ctypes.byref(selected),
-            ctypes.byref(selected_radio),
-            ctypes.byref(verification_checked),
-        )
-
-        if selected.value == ID_MINIMIZE:
-            choice = "minimize_to_tray"
-        elif selected.value == ID_EXIT:
-            choice = "exit"
-        else:
-            choice = "cancel"
-
-        if choice in ("minimize_to_tray", "exit") and verification_checked.value:
-            snapshot["close_behavior"] = choice
-            snapshot["close_remembered"] = True
-            save_settings(snapshot)
-            socketio.emit("settings_updated", public_settings_snapshot())
-        return choice
-    except Exception:
-        return "minimize_to_tray"
 
 
 # ---------- 桌面原生窗口 ----------
