@@ -17,6 +17,7 @@ COMPILE_TARGETS = (
     "goldmonitor/review_notes.py",
     "goldmonitor/scheduler.py",
     "goldmonitor/socket_alert_rules.py",
+    "goldmonitor/socket_alert_log.py",
     "goldmonitor/socket_history_review.py",
     "goldmonitor/socket_operations.py",
     "goldmonitor/socket_portfolio.py",

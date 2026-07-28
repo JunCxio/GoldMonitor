@@ -692,6 +692,8 @@ function handleRiskHistoryTimelineClick(event) {
 
 document.addEventListener('click', handleRiskHistoryTimelineClick, true);
 
+window.openRiskTimelineFromHistory = openRiskTimelineFromHistory;
+
 function clearRiskHistory() {
   if (riskAnalysisRunning) return;
   socket.emit('clear_risk_analysis_history');

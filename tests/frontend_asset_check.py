@@ -13,6 +13,7 @@ history_review_js_path = root / "static" / "history-review-center.js"
 risk_analysis_js_path = root / "static" / "risk-analysis-center.js"
 alert_rule_js_path = root / "static" / "alert-rule-center.js"
 portfolio_js_path = root / "static" / "portfolio-center.js"
+alert_log_js_path = root / "static" / "alert-log-center.js"
 
 
 if not css_path.exists():
@@ -39,6 +40,12 @@ if not alert_rule_js_path.exists():
 if not portfolio_js_path.exists():
     raise SystemExit("portfolio center script must live in static/portfolio-center.js")
 
+if not alert_log_js_path.exists():
+    raise SystemExit("alert log center script must live in static/alert-log-center.js")
+
+app_js = js_path.read_text(encoding="utf-8")
+alert_log_js = alert_log_js_path.read_text(encoding="utf-8")
+
 js = "\n".join((
     settings_js_path.read_text(encoding="utf-8"),
     operations_js_path.read_text(encoding="utf-8"),
@@ -46,7 +53,8 @@ js = "\n".join((
     risk_analysis_js_path.read_text(encoding="utf-8"),
     alert_rule_js_path.read_text(encoding="utf-8"),
     portfolio_js_path.read_text(encoding="utf-8"),
-    js_path.read_text(encoding="utf-8"),
+    alert_log_js,
+    app_js,
 ))
 
 if '<link rel="stylesheet" href="/static/app.css">' not in template:
@@ -102,6 +110,34 @@ if portfolio_script not in template:
 
 if template.find(portfolio_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
     raise SystemExit("portfolio center script must load before static/app.js")
+
+alert_log_script = '<script src="/static/alert-log-center.js?v={{ app_version }}"></script>'
+if alert_log_script not in template:
+    raise SystemExit("template must reference versioned /static/alert-log-center.js")
+
+if template.find(alert_log_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("alert log center script must load before static/app.js")
+
+for required in (
+    "function registerAlertLogSocketHandlers",
+    "function showAlertModal",
+    "function renderAlertLog",
+    "function flashTitle",
+):
+    if required not in alert_log_js:
+        raise SystemExit(f"static/alert-log-center.js missing alert log contract: {required}")
+
+if "registerAlertLogSocketHandlers(socket);" not in app_js:
+    raise SystemExit("static/app.js must register alert log socket handlers")
+
+for moved in (
+    "let alertEntries = [];",
+    "function showAlertModal",
+    "function renderAlertLog",
+    "socket.on('alert'",
+):
+    if moved in app_js:
+        raise SystemExit(f"static/app.js keeps extracted alert log implementation: {moved}")
 
 if "render_template(\"index.html\", socket_access_token=SOCKET_ACCESS_TOKEN, app_version=APP_VERSION)" not in app_py:
     raise SystemExit("app.py must inject app_version into index.html")

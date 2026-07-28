@@ -3,8 +3,21 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 template = (root / "templates" / "index.html").read_text(encoding="utf-8")
-js = (root / "static" / "app.js").read_text(encoding="utf-8")
+alert_log_js = (root / "static" / "alert-log-center.js").read_text(encoding="utf-8")
+app_js = (root / "static" / "app.js").read_text(encoding="utf-8")
+js = "\n".join((alert_log_js, app_js))
 css = (root / "static" / "app.css").read_text(encoding="utf-8")
+
+
+alert_log_script = '<script src="/static/alert-log-center.js?v={{ app_version }}"></script>'
+if alert_log_script not in template:
+    raise SystemExit("alert log UI must load static/alert-log-center.js")
+
+if template.find(alert_log_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("alert log center must load before static/app.js")
+
+if "registerAlertLogSocketHandlers(socket);" not in app_js:
+    raise SystemExit("frontend must register alert log socket handlers")
 
 
 for forbidden in (
