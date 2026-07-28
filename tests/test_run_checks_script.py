@@ -14,6 +14,7 @@ EXPECTED_COMPILE_TARGETS = (
     "goldmonitor/review_notes.py",
     "goldmonitor/scheduler.py",
     "goldmonitor/socket_alert_rules.py",
+    "goldmonitor/socket_portfolio.py",
     "tests/risk_contract_check.py",
     "tests/update_logic_check.py",
     "tests/startup_contract_check.py",

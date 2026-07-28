@@ -8,6 +8,7 @@ app_py = (root / "app.py").read_text(encoding="utf-8")
 css_path = root / "static" / "app.css"
 js_path = root / "static" / "app.js"
 alert_rule_js_path = root / "static" / "alert-rule-center.js"
+portfolio_js_path = root / "static" / "portfolio-center.js"
 
 
 if not css_path.exists():
@@ -19,8 +20,12 @@ if not js_path.exists():
 if not alert_rule_js_path.exists():
     raise SystemExit("alert rule center script must live in static/alert-rule-center.js")
 
+if not portfolio_js_path.exists():
+    raise SystemExit("portfolio center script must live in static/portfolio-center.js")
+
 js = "\n".join((
     alert_rule_js_path.read_text(encoding="utf-8"),
+    portfolio_js_path.read_text(encoding="utf-8"),
     js_path.read_text(encoding="utf-8"),
 ))
 
@@ -42,6 +47,13 @@ if alert_rule_script not in template:
 
 if template.find(alert_rule_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
     raise SystemExit("alert rule center script must load before static/app.js")
+
+portfolio_script = '<script src="/static/portfolio-center.js?v={{ app_version }}"></script>'
+if portfolio_script not in template:
+    raise SystemExit("template must reference versioned /static/portfolio-center.js")
+
+if template.find(portfolio_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("portfolio center script must load before static/app.js")
 
 if "render_template(\"index.html\", socket_access_token=SOCKET_ACCESS_TOKEN, app_version=APP_VERSION)" not in app_py:
     raise SystemExit("app.py must inject app_version into index.html")
