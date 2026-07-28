@@ -40,8 +40,10 @@ from goldmonitor import scheduler as scheduler_core
 from goldmonitor import settings_store as settings_store_core
 from goldmonitor import socket_alert_rules as socket_alert_rules_core
 from goldmonitor import socket_history_review as socket_history_review_core
+from goldmonitor import socket_operations as socket_operations_core
 from goldmonitor import socket_portfolio as socket_portfolio_core
 from goldmonitor import socket_risk_analysis as socket_risk_analysis_core
+from goldmonitor import socket_settings as socket_settings_core
 from goldmonitor import storage_manifest as storage_manifest_core
 from goldmonitor import support_files as support_files_core
 from goldmonitor import targets as targets_core
@@ -6643,67 +6645,28 @@ def on_reset_watch_target(data=None):
     _broadcast_alert_rule_views()
 
 
-@socketio.on("get_settings")
-def on_get_settings():
-    emit("settings_updated", public_settings_snapshot())
-
-
-@socketio.on("start_onboarding")
-def on_start_onboarding():
-    try:
-        settings_state = start_onboarding()
-        emit("onboarding_started", {"ok": True, "settings": settings_state})
-    except OSError:
-        emit("onboarding_error", {"message": "首次使用状态保存失败，请检查配置目录权限。"})
-
-
-@socketio.on("complete_onboarding")
-def on_complete_onboarding(data=None):
-    try:
-        result = complete_onboarding(data if isinstance(data, dict) else {})
-    except OSError:
-        emit("onboarding_error", {"message": "首次使用设置保存失败，请检查配置目录权限。"})
-        return
-    socketio.emit("settings_updated", result["settings"])
-    emit("onboarding_completed", result)
-
-
-@socketio.on("update_settings")
-def on_update_settings(data):
-    if not isinstance(data, dict):
-        emit("settings_error", {"message": "设置格式无效"})
-        return
-
-    current = get_settings_snapshot()
-    secret_clear_flags = {
-        "smtp_password": "smtp_password_clear",
-        "deepseek_api_key": "deepseek_api_key_clear",
-        "openai_compatible_api_key": "openai_compatible_api_key_clear",
-    }
-    current = settings_store_core.merge_settings_update(
-        current,
-        data,
-        allowed_keys=set(DEFAULT_SETTINGS),
-        secret_clear_flags=secret_clear_flags,
-    )
-    if "export_dir" in data:
-        export_dir_check = build_export_dir_check(current)
-        if not export_dir_check.get("ok"):
-            emit("settings_error", {
-                "message": export_dir_check.get("message") or "导出目录不可写，请检查目录权限。",
-                "export_dir_check": export_dir_check,
-            })
-            emit("settings_updated", public_settings_snapshot())
-            return
-    try:
-        updated, startup_error = apply_settings(current)
-    except OSError:
-        emit("settings_error", {"message": "设置保存失败，请检查配置目录权限。"})
-        emit("settings_updated", public_settings_snapshot())
-        return
-    if startup_error:
-        emit("settings_error", {"message": "开机自启动设置失败，请检查系统权限。"})
-    socketio.emit("settings_updated", public_settings_snapshot(updated))
+socket_settings_core.register_settings_handlers(
+    socketio,
+    public_settings_snapshot=lambda settings=None: public_settings_snapshot(settings),
+    start_onboarding=lambda: start_onboarding(),
+    complete_onboarding=lambda preferences=None: complete_onboarding(preferences),
+    get_settings_snapshot=lambda: get_settings_snapshot(),
+    default_setting_keys=DEFAULT_SETTINGS.keys(),
+    merge_settings_update=(
+        lambda current, data, **kwargs: settings_store_core.merge_settings_update(
+            current,
+            data,
+            **kwargs,
+        )
+    ),
+    build_export_dir_check=lambda settings=None: build_export_dir_check(settings),
+    apply_settings=lambda settings: apply_settings(settings),
+    send_test_email=lambda **kwargs: EmailNotifier.send(**kwargs),
+    send_test_webhook=lambda **kwargs: WebhookNotifier.send(**kwargs),
+    build_daily_digest_snapshot=lambda: build_daily_digest_snapshot(),
+    daily_digest_status_payload=lambda: daily_digest_status_payload(),
+    run_daily_digest_once=lambda **kwargs: run_daily_digest_once(**kwargs),
+)
 
 
 def _set_risk_analysis_last_started(value):
@@ -6753,101 +6716,6 @@ socket_risk_analysis_core.register_risk_analysis_handlers(
 )
 
 
-@socketio.on("test_email")
-def on_test_email():
-    """发送测试邮件，验证 SMTP 配置是否正确"""
-    settings = get_settings_snapshot()
-    server = settings.get("smtp_server", "").strip()
-    sender = settings.get("smtp_sender", "").strip()
-    recipient = settings.get("smtp_recipient", "").strip()
-
-    if not (server and sender and recipient):
-        emit("test_email_result", {"ok": False, "message": "SMTP 配置不完整，请先填写服务器、发件邮箱和收件邮箱。"})
-        return
-
-    def _test():
-        error = EmailNotifier.send(
-            alert_type="warning",
-            title="测试邮件 - 金价监控",
-            message="这是一封测试邮件。\n\n如果您收到此邮件，说明 SMTP 配置正确，金价预警通知将正常工作。",
-            timeout=10,
-            blocking=True,
-        )
-        if error:
-            socketio.emit("test_email_result", {"ok": False, "message": f"发送失败: {error}"})
-        else:
-            socketio.emit("test_email_result", {"ok": True, "message": "测试邮件发送成功！请检查收件箱（如未收到请查看垃圾邮件文件夹）。"})
-
-    threading.Thread(target=_test, daemon=True).start()
-
-
-@socketio.on("test_webhook")
-def on_test_webhook():
-    """发送测试 Webhook，验证通知地址是否正确"""
-    settings = get_settings_snapshot()
-    if not settings.get("webhook_enabled", False):
-        emit("test_webhook_result", {"ok": False, "message": "Webhook 通知未启用，请先打开开关。"})
-        return
-    if not settings.get("webhook_url", "").strip():
-        emit("test_webhook_result", {"ok": False, "message": "Webhook 地址未配置，请先填写 HTTPS 地址。"})
-        return
-
-    def _test():
-        error = WebhookNotifier.send(
-            alert_type="warning",
-            title="测试 Webhook - 金价监控",
-            message="这是一条测试 Webhook，用于验证金价预警通知配置。",
-            timeout=8,
-            blocking=True,
-        )
-        if error:
-            socketio.emit("test_webhook_result", {"ok": False, "message": f"发送失败: {error}"})
-        else:
-            socketio.emit("test_webhook_result", {"ok": True, "message": "测试 Webhook 发送成功。"})
-
-    threading.Thread(target=_test, daemon=True).start()
-
-
-@socketio.on("preview_daily_digest")
-def on_preview_daily_digest():
-    try:
-        digest = build_daily_digest_snapshot()
-        emit("daily_digest_previewed", {"ok": True, **digest})
-    except Exception as exc:
-        logging.exception("生成每日摘要预览失败")
-        emit("daily_digest_previewed", {
-            "ok": False,
-            "message": f"生成摘要预览失败: {exc}",
-        })
-
-
-@socketio.on("get_daily_digest_status")
-def on_get_daily_digest_status():
-    emit("daily_digest_status", daily_digest_status_payload())
-
-
-@socketio.on("test_daily_digest")
-def on_test_daily_digest():
-    sid = request.sid
-
-    def _test():
-        try:
-            result = run_daily_digest_once(
-                force=True,
-                manual=True,
-                blocking=True,
-            )
-        except Exception as exc:
-            logging.exception("发送每日摘要测试失败")
-            result = {
-                "ok": False,
-                "status": "error",
-                "message": f"发送摘要测试失败: {exc}",
-            }
-        socketio.emit("daily_digest_test_result", result, room=sid)
-        socketio.emit("daily_digest_status", daily_digest_status_payload(), room=sid)
-
-    threading.Thread(target=_test, daemon=True).start()
 
 
 @socketio.on("close_choice")
@@ -6896,76 +6764,49 @@ def on_refresh_news():
     threading.Thread(target=refresh_gold_news, daemon=True).start()
 
 
-@socketio.on("get_source_health")
-def on_get_source_health():
-    emit("source_health_updated", get_source_health_state())
-
-
-@socketio.on("update_market_sources")
-def on_update_market_sources(data=None):
-    try:
-        preferences = update_market_source_preferences(data)
-    except ValueError as exc:
-        emit("market_sources_error", {"message": str(exc)})
-        emit("source_health_updated", get_source_health_state())
-        return
-    except OSError:
-        emit("market_sources_error", {"message": "数据源配置保存失败，请检查配置目录权限。"})
-        emit("source_health_updated", get_source_health_state())
-        return
-    state = get_source_health_state()
-    socketio.emit("settings_updated", public_settings_snapshot())
-    socketio.emit("source_health_updated", state)
-    emit("market_sources_updated", {
-        "ok": True,
-        "preferences": preferences,
-        "message": "数据源配置已保存，将按新顺序刷新行情。",
-    })
-    threading.Thread(target=fetch_price_once, daemon=True).start()
-
-
-@socketio.on("reset_market_sources")
-def on_reset_market_sources():
-    try:
-        preferences = reset_market_source_preferences()
-    except OSError:
-        emit("market_sources_error", {"message": "默认数据源配置恢复失败，请检查配置目录权限。"})
-        return
-    socketio.emit("settings_updated", public_settings_snapshot())
-    socketio.emit("source_health_updated", get_source_health_state())
-    emit("market_sources_updated", {
-        "ok": True,
-        "preferences": preferences,
-        "message": "已恢复默认数据源顺序。",
-    })
-    threading.Thread(target=fetch_price_once, daemon=True).start()
-
-
-@socketio.on("retry_market_source")
-def on_retry_market_source(data=None):
-    source_key = str(data.get("key") or "").strip() if isinstance(data, dict) else ""
-    if not source_key:
-        emit("market_sources_error", {"message": "请选择需要探测的数据源。"})
-        return
-
-    emit("market_source_retry_result", {
-        "ok": None,
-        "pending": True,
-        "key": source_key,
-        "message": "正在探测数据源...",
-    })
-
-    def run_retry():
-        try:
-            result = retry_market_source(source_key)
-        except ValueError as exc:
-            result = {"ok": False, "key": source_key, "message": str(exc)}
-        socketio.emit("market_source_retry_result", result)
-        if isinstance(result.get("source_health"), dict):
-            socketio.emit("source_health_updated", result["source_health"])
-
-    threading.Thread(target=run_retry, daemon=True).start()
-
+socket_operations_core.register_operations_handlers(
+    socketio,
+    get_source_health_state=lambda: get_source_health_state(),
+    public_settings_snapshot=lambda settings=None: public_settings_snapshot(settings),
+    update_market_source_preferences=(
+        lambda data=None: update_market_source_preferences(data)
+    ),
+    reset_market_source_preferences=lambda: reset_market_source_preferences(),
+    fetch_price_once=lambda: fetch_price_once(),
+    retry_market_source=lambda source_key: retry_market_source(source_key),
+    now_factory=lambda: datetime.now(),
+    build_config_backup=lambda: build_config_backup(),
+    save_export_file=lambda filename, content: save_export_file(filename, content),
+    build_export_error_payload=lambda message: build_export_error_payload(message),
+    create_data_archive=lambda: create_data_archive(),
+    data_archive_errors=(
+        OSError,
+        sqlite3.Error,
+        data_archive_core.DataArchiveError,
+    ),
+    preview_config_backup=lambda payload: preview_config_backup(payload),
+    restore_config_backup=lambda payload: restore_config_backup(payload),
+    reset_to_default_settings=lambda: reset_to_default_settings(),
+    build_diagnostics_report=lambda: build_diagnostics_report(),
+    build_diagnostics_clipboard_text=lambda: build_diagnostics_clipboard_text(),
+    resolve_export_dir=lambda: resolve_export_dir(),
+    open_exports_folder=lambda: open_exports_folder(),
+    build_open_exports_folder_error_payload=(
+        lambda export_dir, exc: build_open_exports_folder_error_payload(
+            export_dir,
+            exc,
+        )
+    ),
+    emit_alert=lambda entry, title: emit_alert(entry, title),
+    get_update_status=lambda **kwargs: get_update_status(**kwargs),
+    emit_update_status=lambda status: emit_update_status(status),
+    current_version=lambda: APP_VERSION,
+    record_update_status=lambda status: record_update_status(status),
+    download_update_installer=(
+        lambda update_info, **kwargs: download_update_installer(update_info, **kwargs)
+    ),
+    launch_update_installer=lambda installer_path: launch_update_installer(installer_path),
+)
 
 socket_history_review_core.register_history_review_handlers(
     socketio,
@@ -7063,221 +6904,6 @@ def on_resend_alert_notification(data=None):
     socketio.emit("alert_notification_resent", {"ok": True, "entry": entry})
     _start_alert_notification_delivery(entry, _alert_resend_title(entry))
 
-
-@socketio.on("export_config")
-def on_export_config():
-    filename = f"GoldMonitor-config-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
-    try:
-        content = json.dumps(build_config_backup(), ensure_ascii=False, indent=2)
-        saved_path = save_export_file(filename, content)
-        emit("config_backup_ready", {
-            "ok": True,
-            "filename": filename,
-            "content": content,
-            "saved_path": saved_path,
-        })
-    except OSError:
-        emit("config_backup_ready", build_export_error_payload("配置导出失败，请检查导出目录权限。"))
-
-
-@socketio.on("export_data_archive")
-def on_export_data_archive():
-    try:
-        emit("data_archive_exported", create_data_archive())
-    except (OSError, sqlite3.Error, data_archive_core.DataArchiveError) as exc:
-        logging.warning("完整数据归档失败: %s", exc)
-        emit("data_archive_export_error", build_export_error_payload("完整数据归档失败，请检查导出目录和本地数据文件。"))
-
-
-@socketio.on("preview_import_config")
-def on_preview_import_config(data=None):
-    try:
-        payload = data.get("payload") if isinstance(data, dict) else data
-        if isinstance(payload, str):
-            payload = json.loads(payload)
-        emit("config_import_previewed", preview_config_backup(payload))
-    except json.JSONDecodeError as exc:
-        emit("config_import_previewed", {
-            "ok": False,
-            "importable": False,
-            "message": str(exc),
-        })
-
-
-@socketio.on("import_config")
-def on_import_config(data=None):
-    try:
-        payload = data.get("payload") if isinstance(data, dict) else data
-        if isinstance(payload, str):
-            payload = json.loads(payload)
-        result = restore_config_backup(payload)
-        emit("config_import_result", {**result, "message": "配置导入完成。"})
-        if "settings" in result.get("imported", []):
-            socketio.emit("source_health_updated", get_source_health_state())
-            threading.Thread(target=fetch_price_once, daemon=True).start()
-    except (ValueError, json.JSONDecodeError) as exc:
-        emit("config_import_result", {"ok": False, "message": str(exc)})
-    except OSError:
-        emit("config_import_result", {"ok": False, "message": "配置导入失败，请检查配置目录权限。"})
-
-
-@socketio.on("reset_settings")
-def on_reset_settings():
-    try:
-        result = reset_to_default_settings()
-        emit("settings_reset_result", {**result, "message": "已恢复默认设置。"})
-        socketio.emit("source_health_updated", get_source_health_state())
-        threading.Thread(target=fetch_price_once, daemon=True).start()
-    except OSError:
-        emit("settings_reset_result", {"ok": False, "message": "恢复默认设置失败，请检查配置目录权限。"})
-
-
-@socketio.on("get_diagnostics")
-def on_get_diagnostics():
-    filename = f"GoldMonitor-diagnostics-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
-    try:
-        content = build_diagnostics_report()
-        saved_path = save_export_file(filename, content)
-        emit("diagnostics_ready", {
-            "ok": True,
-            "filename": filename,
-            "content": content,
-            "saved_path": saved_path,
-        })
-    except OSError:
-        emit("diagnostics_ready", build_export_error_payload("诊断报告导出失败，请检查导出目录权限。"))
-
-
-@socketio.on("copy_diagnostics")
-def on_copy_diagnostics():
-    try:
-        emit("diagnostics_copy_ready", {
-            "ok": True,
-            "content": build_diagnostics_clipboard_text(),
-        })
-    except Exception:
-        logging.exception("failed to build diagnostics clipboard text")
-        emit("diagnostics_copy_ready", {"ok": False, "message": "诊断摘要生成失败，请稍后重试。"})
-
-
-@socketio.on("open_exports_folder")
-def on_open_exports_folder():
-    export_dir = resolve_export_dir()
-    try:
-        open_exports_folder()
-        emit("exports_folder_opened", {"ok": True, "export_dir": export_dir, "message": f"已打开导出目录：{export_dir}"})
-    except Exception as exc:
-        emit("exports_folder_opened", build_open_exports_folder_error_payload(export_dir, exc))
-
-
-@socketio.on("test_alert")
-def on_test_alert(data=None):
-    alert_type = "warning"
-    if isinstance(data, dict) and data.get("type") in {"warning", "critical", "volatility"}:
-        alert_type = data.get("type")
-    now_str = datetime.now().strftime("%H:%M:%S")
-    entry = {
-        "time": now_str,
-        "type": alert_type,
-        "mode": "rmb",
-        "message": "这是一条手动测试提醒，用于验证弹窗、声音和邮件通知配置。",
-        "force_notify": True,
-    }
-    emit_alert(entry, "金价监控测试提醒")
-    emit("test_alert_result", {"ok": True, "message": "测试提醒已触发。"})
-
-
-@socketio.on("check_update")
-def on_check_update():
-    try:
-        emit_update_status(get_update_status())
-    except ValueError as exc:
-        emit_update_status({
-            "state": "error",
-            "current_version": APP_VERSION,
-            "checked_at": datetime.now().isoformat(timespec="seconds"),
-            "message": str(exc),
-        })
-    except Exception:
-        emit_update_status({
-            "state": "error",
-            "current_version": APP_VERSION,
-            "checked_at": datetime.now().isoformat(timespec="seconds"),
-            "message": "检查更新失败，请确认网络连接后重试。",
-        })
-
-
-@socketio.on("install_update")
-def on_install_update(data=None):
-    try:
-        status = get_update_status(expose_download=True)
-        if status.get("state") != "available":
-            emit_update_status(status)
-            return
-        update_info = {
-            "version": status["latest_version"],
-            "url": status["url"],
-            "notes": status.get("notes", ""),
-            "sha256": status["sha256"],
-        }
-        emit_update_status({
-            "state": "downloading",
-            "current_version": APP_VERSION,
-            "latest_version": update_info["version"],
-            "checked_at": datetime.now().isoformat(timespec="seconds"),
-            "message": "正在下载更新安装包...",
-            "progress_percent": 0,
-        })
-
-        def emit_progress(received_bytes, total_bytes):
-            percent = int(received_bytes / total_bytes * 100) if total_bytes else None
-            status = record_update_status({
-                "state": "downloading",
-                "current_version": APP_VERSION,
-                "latest_version": update_info["version"],
-                "checked_at": datetime.now().isoformat(timespec="seconds"),
-                "message": "正在下载更新安装包...",
-                "downloaded_bytes": received_bytes,
-                "total_bytes": total_bytes,
-                "progress_percent": percent,
-            })
-            socketio.emit("update_status", status, room=request.sid)
-
-        try:
-            installer_path = download_update_installer(update_info, progress_callback=emit_progress)
-        except TypeError:
-            installer_path = download_update_installer(update_info)
-        emit_update_status({
-            "state": "installing",
-            "current_version": APP_VERSION,
-            "latest_version": update_info["version"],
-            "checked_at": datetime.now().isoformat(timespec="seconds"),
-            "message": "安装包已下载，正在启动更新程序。",
-            "progress_percent": 100,
-        })
-        launch_update_installer(installer_path)
-        emit_update_status({
-            "state": "installer_opened",
-            "current_version": APP_VERSION,
-            "latest_version": update_info["version"],
-            "checked_at": datetime.now().isoformat(timespec="seconds"),
-            "message": "安装程序已打开，请按提示完成更新。安装过程中当前程序可能会被关闭。",
-            "progress_percent": 100,
-        })
-    except ValueError as exc:
-        emit_update_status({
-            "state": "error",
-            "current_version": APP_VERSION,
-            "checked_at": datetime.now().isoformat(timespec="seconds"),
-            "message": str(exc),
-        })
-    except Exception:
-        emit_update_status({
-            "state": "error",
-            "current_version": APP_VERSION,
-            "checked_at": datetime.now().isoformat(timespec="seconds"),
-            "message": "更新失败，请稍后重试或手动下载安装包。",
-        })
 
 
 # ---------- 共享状态 (托盘与窗口通信) ----------

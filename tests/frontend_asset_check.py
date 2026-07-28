@@ -7,6 +7,8 @@ template = (root / "templates" / "index.html").read_text(encoding="utf-8")
 app_py = (root / "app.py").read_text(encoding="utf-8")
 css_path = root / "static" / "app.css"
 js_path = root / "static" / "app.js"
+settings_js_path = root / "static" / "settings-center.js"
+operations_js_path = root / "static" / "operations-center.js"
 history_review_js_path = root / "static" / "history-review-center.js"
 risk_analysis_js_path = root / "static" / "risk-analysis-center.js"
 alert_rule_js_path = root / "static" / "alert-rule-center.js"
@@ -18,6 +20,12 @@ if not css_path.exists():
 
 if not js_path.exists():
     raise SystemExit("frontend main script must live in static/app.js")
+
+if not settings_js_path.exists():
+    raise SystemExit("settings center script must live in static/settings-center.js")
+
+if not operations_js_path.exists():
+    raise SystemExit("operations center script must live in static/operations-center.js")
 
 if not history_review_js_path.exists():
     raise SystemExit("history review center script must live in static/history-review-center.js")
@@ -32,6 +40,8 @@ if not portfolio_js_path.exists():
     raise SystemExit("portfolio center script must live in static/portfolio-center.js")
 
 js = "\n".join((
+    settings_js_path.read_text(encoding="utf-8"),
+    operations_js_path.read_text(encoding="utf-8"),
     history_review_js_path.read_text(encoding="utf-8"),
     risk_analysis_js_path.read_text(encoding="utf-8"),
     alert_rule_js_path.read_text(encoding="utf-8"),
@@ -50,6 +60,20 @@ if '<script src="/static/app-shell.js?v={{ app_version }}"></script>' not in tem
 
 if '<script src="/static/app.js?v={{ app_version }}"></script>' not in template:
     raise SystemExit("template must reference versioned /static/app.js")
+
+settings_script = '<script src="/static/settings-center.js?v={{ app_version }}"></script>'
+if settings_script not in template:
+    raise SystemExit("template must reference versioned /static/settings-center.js")
+
+if template.find(settings_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("settings center script must load before static/app.js")
+
+operations_script = '<script src="/static/operations-center.js?v={{ app_version }}"></script>'
+if operations_script not in template:
+    raise SystemExit("template must reference versioned /static/operations-center.js")
+
+if template.find(operations_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("operations center script must load before static/app.js")
 
 history_review_script = '<script src="/static/history-review-center.js?v={{ app_version }}"></script>'
 if history_review_script not in template:
