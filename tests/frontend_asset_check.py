@@ -7,6 +7,7 @@ template = (root / "templates" / "index.html").read_text(encoding="utf-8")
 app_py = (root / "app.py").read_text(encoding="utf-8")
 css_path = root / "static" / "app.css"
 js_path = root / "static" / "app.js"
+alert_rule_js_path = root / "static" / "alert-rule-center.js"
 
 
 if not css_path.exists():
@@ -14,6 +15,14 @@ if not css_path.exists():
 
 if not js_path.exists():
     raise SystemExit("frontend main script must live in static/app.js")
+
+if not alert_rule_js_path.exists():
+    raise SystemExit("alert rule center script must live in static/alert-rule-center.js")
+
+js = "\n".join((
+    alert_rule_js_path.read_text(encoding="utf-8"),
+    js_path.read_text(encoding="utf-8"),
+))
 
 if '<link rel="stylesheet" href="/static/app.css">' not in template:
     raise SystemExit("template must reference /static/app.css")
@@ -27,6 +36,13 @@ if '<script src="/static/app-shell.js?v={{ app_version }}"></script>' not in tem
 if '<script src="/static/app.js?v={{ app_version }}"></script>' not in template:
     raise SystemExit("template must reference versioned /static/app.js")
 
+alert_rule_script = '<script src="/static/alert-rule-center.js?v={{ app_version }}"></script>'
+if alert_rule_script not in template:
+    raise SystemExit("template must reference versioned /static/alert-rule-center.js")
+
+if template.find(alert_rule_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("alert rule center script must load before static/app.js")
+
 if "render_template(\"index.html\", socket_access_token=SOCKET_ACCESS_TOKEN, app_version=APP_VERSION)" not in app_py:
     raise SystemExit("app.py must inject app_version into index.html")
 
@@ -38,7 +54,7 @@ for required in ('data-period="30d"', 'data-period="90d"', 'value="43200"', 'val
         raise SystemExit(f"frontend missing long history range: {required}")
 
 for required in ("resolution_seconds", "chartResolutionDate", "43200", "129600"):
-    if required not in js_path.read_text(encoding="utf-8"):
+    if required not in js:
         raise SystemExit(f"frontend missing multi-resolution history contract: {required}")
 
 for required in ('id="riskEvidence"', 'id="riskDiagnostic"'):
@@ -84,7 +100,6 @@ if inline_scripts:
     raise SystemExit("template must not contain inline script blocks")
 
 css = css_path.read_text(encoding="utf-8")
-js = js_path.read_text(encoding="utf-8")
 
 for required in (
     'id="alertRuleSelectVisible"',
@@ -95,6 +110,8 @@ for required in (
     "function buildAlertRuleDetail",
     "function buildAlertRuleSimulationPanel",
     "function simulateUnifiedAlertRule",
+    "function alertRuleSimulationValueText",
+    "function alertRuleSimulationPortfolioMeta",
     "socket.emit('batch_update_alert_rules'",
     "socket.emit('get_alert_rule_insight'",
     "socket.emit('simulate_alert_rule'",
@@ -104,6 +121,9 @@ for required in (
 ):
     if required not in template + js:
         raise SystemExit(f"frontend missing alert rule operations contract: {required}")
+
+if "当前没有历史持仓估值快照，本版不模拟持仓规则" in js:
+    raise SystemExit("frontend must allow portfolio alert rule history simulation")
 
 for required in (
     ".alert-center-tools",

@@ -82,6 +82,149 @@ def test_portfolio_performance_uses_current_price_as_latest_point_and_tracks_dra
     assert performance["summary"]["max_drawdown"] == -30.0
 
 
+def test_portfolio_position_performance_replays_target_position_for_rule_simulation():
+    from goldmonitor.portfolio_analytics import build_portfolio_position_performance
+
+    transactions = [
+        {
+            "id": "buy-target",
+            "position_id": "position-target",
+            "name": "金条",
+            "type": "buy",
+            "mode": "rmb",
+            "price": 100,
+            "quantity": 10,
+            "fee": 0,
+            "trade_date": "2026-07-01",
+        },
+        {
+            "id": "sell-target",
+            "position_id": "position-target",
+            "name": "金条",
+            "type": "sell",
+            "mode": "rmb",
+            "price": 120,
+            "quantity": 2,
+            "fee": 0,
+            "trade_date": "2026-07-03",
+        },
+        {
+            "id": "buy-other",
+            "position_id": "position-other",
+            "name": "金币",
+            "type": "buy",
+            "mode": "rmb",
+            "price": 90,
+            "quantity": 1,
+            "fee": 0,
+            "trade_date": "2026-07-01",
+        },
+    ]
+    history = [
+        {"timestamp": "2026-07-01T12:00:00", "rmb": 100},
+        {"timestamp": "2026-07-02T12:00:00", "rmb": 110},
+        {"timestamp": "2026-07-03T12:00:00", "rmb": 120},
+    ]
+
+    result = build_portfolio_position_performance(
+        transactions,
+        history,
+        "position-target",
+    )
+
+    assert result["position_found"] is True
+    assert result["position_id"] == "position-target"
+    assert result["position_name"] == "金条"
+    assert result["mode"] == "rmb"
+    assert result["transaction_count"] == 2
+    assert result["unknown_date_count"] == 0
+    assert [point["quantity"] for point in result["points"]] == [10.0, 10.0, 8.0]
+    assert [point["unrealized_pnl_percent"] for point in result["points"]] == [0.0, 10.0, 20.0]
+    assert result["points"][-1]["average_cost"] == 100.0
+    assert result["points"][-1]["near_cost_percent"] == 20.0
+
+
+def test_portfolio_position_performance_reports_unknown_transaction_dates():
+    from goldmonitor.portfolio_analytics import build_portfolio_position_performance
+
+    result = build_portfolio_position_performance(
+        [{
+            "id": "buy-undated",
+            "position_id": "position-undated",
+            "name": "无日期持仓",
+            "type": "buy",
+            "mode": "rmb",
+            "price": 100,
+            "quantity": 1,
+            "fee": 0,
+            "trade_date": "",
+            "created_at": "2026-07-01T08:00:00",
+        }],
+        [{"timestamp": "2026-07-01T12:00:00", "rmb": 110}],
+        "position-undated",
+    )
+
+    assert result["position_found"] is True
+    assert result["transaction_count"] == 1
+    assert result["dated_transaction_count"] == 0
+    assert result["unknown_date_count"] == 1
+    assert result["points"] == []
+
+
+def test_portfolio_position_performance_resets_cost_after_close_and_reentry():
+    from goldmonitor.portfolio_analytics import build_portfolio_position_performance
+
+    transactions = [
+        {
+            "id": "buy-first",
+            "position_id": "position-gold",
+            "type": "buy",
+            "mode": "rmb",
+            "price": 100,
+            "quantity": 1,
+            "fee": 0,
+            "trade_date": "2026-07-01",
+        },
+        {
+            "id": "sell-all",
+            "position_id": "position-gold",
+            "type": "sell",
+            "mode": "rmb",
+            "price": 105,
+            "quantity": 1,
+            "fee": 0,
+            "trade_date": "2026-07-02",
+        },
+        {
+            "id": "buy-again",
+            "position_id": "position-gold",
+            "type": "buy",
+            "mode": "rmb",
+            "price": 90,
+            "quantity": 2,
+            "fee": 0,
+            "trade_date": "2026-07-03",
+        },
+    ]
+    history = [
+        {"timestamp": "2026-07-01T12:00:00", "rmb": 100},
+        {"timestamp": "2026-07-02T12:00:00", "rmb": 105},
+        {"timestamp": "2026-07-03T12:00:00", "rmb": 99},
+    ]
+
+    result = build_portfolio_position_performance(
+        transactions,
+        history,
+        "position-gold",
+    )
+
+    assert [point["active"] for point in result["points"]] == [True, False, True]
+    assert result["points"][1]["average_cost"] is None
+    assert result["points"][2]["quantity"] == 2
+    assert result["points"][2]["average_cost"] == 90
+    assert result["points"][2]["unrealized_pnl_percent"] == 10
+
+
 def test_alert_effectiveness_separates_delivery_response_and_market_follow_through():
     from goldmonitor.portfolio_analytics import build_alert_effectiveness
 

@@ -209,6 +209,101 @@ def build_portfolio_performance(transactions, price_history, current_prices=None
     return result
 
 
+def build_portfolio_position_performance(transactions, price_history, position_id):
+    position_id = str(position_id or "").strip()
+    source_transactions = []
+    dated_transactions = []
+    unknown_date_count = 0
+    mode = ""
+    position_name = ""
+
+    for item in list(transactions or []):
+        if not isinstance(item, dict):
+            continue
+        item_position_id = str(item.get("position_id") or item.get("id") or "").strip()
+        if not position_id or item_position_id != position_id:
+            continue
+        transaction = dict(item)
+        source_transactions.append(transaction)
+        item_mode = str(transaction.get("mode") or "").strip().lower()
+        if not mode and item_mode in PORTFOLIO_ANALYTICS_MODES:
+            mode = item_mode
+        if not position_name and str(transaction.get("name") or "").strip():
+            position_name = str(transaction.get("name") or "").strip()
+        timestamp = _parse_datetime(transaction.get("trade_date"))
+        if timestamp is None:
+            unknown_date_count += 1
+            continue
+        dated_transactions.append((timestamp, transaction))
+
+    dated_transactions.sort(key=lambda pair: (pair[0], str(pair[1].get("id") or "")))
+    prices = _price_points(price_history, mode) if mode else []
+    states = {}
+    transaction_index = 0
+    points = []
+    for price_point in prices:
+        while (
+            transaction_index < len(dated_transactions)
+            and dated_transactions[transaction_index][0] <= price_point["timestamp"]
+        ):
+            _apply_transaction(states, dated_transactions[transaction_index][1])
+            transaction_index += 1
+        if transaction_index == 0:
+            continue
+        state = states.get(position_id) or _empty_position_state()
+        quantity = max(0.0, float(state.get("quantity") or 0.0))
+        cost_basis = max(0.0, float(state.get("cost_basis") or 0.0))
+        active = quantity > 1e-9 and cost_basis > 0
+        average_cost = cost_basis / quantity if active else None
+        current_price = float(price_point["price"])
+        market_value = current_price * quantity if active else None
+        unrealized_pnl = market_value - cost_basis if active else None
+        unrealized_pnl_percent = (
+            unrealized_pnl / cost_basis * 100
+            if active and cost_basis
+            else None
+        )
+        near_cost_percent = (
+            abs(current_price - average_cost) / average_cost * 100
+            if active and average_cost
+            else None
+        )
+        points.append({
+            "timestamp": price_point["timestamp_text"],
+            "active": active,
+            "mode": mode,
+            "current_price": round(current_price, 4),
+            "quantity": round(quantity, 4),
+            "cost_basis": round(cost_basis, 4),
+            "average_cost": round(average_cost, 4) if average_cost is not None else None,
+            "market_value": round(market_value, 4) if market_value is not None else None,
+            "unrealized_pnl": round(unrealized_pnl, 4) if unrealized_pnl is not None else None,
+            "unrealized_pnl_percent": (
+                round(unrealized_pnl_percent, 4)
+                if unrealized_pnl_percent is not None
+                else None
+            ),
+            "near_cost_percent": (
+                round(near_cost_percent, 4)
+                if near_cost_percent is not None
+                else None
+            ),
+        })
+
+    return {
+        "position_found": bool(source_transactions),
+        "position_id": position_id,
+        "position_name": position_name,
+        "mode": mode,
+        "transaction_count": len(source_transactions),
+        "dated_transaction_count": len(dated_transactions),
+        "unknown_date_count": unknown_date_count,
+        "price_point_count": len(prices),
+        "active_point_count": sum(1 for point in points if point["active"]),
+        "points": points,
+    }
+
+
 def _alert_direction(entry):
     explicit = str(entry.get("alert_direction") or "").lower()
     if explicit in {"up", "down"}:
