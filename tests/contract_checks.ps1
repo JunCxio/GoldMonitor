@@ -28,6 +28,8 @@ function Assert-NotContains {
 
 Assert-Contains -Path "app.py" -Pattern 'settings\.json' -Message "app.py must persist settings to settings.json"
 Assert-Contains -Path "app.py" -Pattern 'find_available_port' -Message "app.py must avoid stale services by selecting an available port"
+Assert-Contains -Path "goldmonitor\instance_runtime.py" -Pattern 'def find_existing_instance' -Message "instance runtime must identify an existing application process"
+Assert-Contains -Path "goldmonitor\instance_runtime.py" -Pattern 'def wait_for_server_ready' -Message "instance runtime must coordinate local server readiness"
 Assert-Contains -Path "app.py" -Pattern 'startup_enabled' -Message "app.py must define startup_enabled"
 Assert-Contains -Path "app.py" -Pattern 'floating_price_enabled' -Message "app.py must support a desktop floating price setting"
 Assert-Contains -Path "app.py" -Pattern 'floating_price_position_saved' -Message "app.py must ignore stale floating price coordinates without a saved-position marker"
@@ -327,6 +329,8 @@ Assert-Contains -Path "static\operations-center.js" -Pattern 'function renderOps
 Assert-Contains -Path "static\operations-center.js" -Pattern 'function checkUpdateFromOps' -Message "frontend must check updates from ops panel"
 Assert-Contains -Path "static\operations-center.js" -Pattern 'function openUpdateFromOps' -Message "frontend must open update dialog from ops panel"
 Assert-Contains -Path "app.py" -Pattern 'record_update_status' -Message "backend must keep a sanitized runtime update status"
+Assert-Contains -Path "goldmonitor\update_runtime.py" -Pattern 'def fetch_update_manifest' -Message "update runtime must own update source fallback orchestration"
+Assert-Contains -Path "goldmonitor\update_runtime.py" -Pattern 'def download_update_installer' -Message "update runtime must own installer download and checksum validation"
 Assert-Contains -Path "app.py" -Pattern 'last_update_status' -Message "diagnostics must include last update status"
 Assert-Contains -Path "templates\index.html" -Pattern 'testRiskModel' -Message "frontend must expose a model diagnostic action"
 Assert-Contains -Path "static\risk-analysis-center.js" -Pattern 'socket\.on\(''risk_model_test_result''' -Message "frontend must render model diagnostic results"

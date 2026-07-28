@@ -1,4 +1,3 @@
-import hashlib
 import json
 import logging
 import math
@@ -26,6 +25,7 @@ from goldmonitor import desktop_ui as desktop_ui_core
 from goldmonitor import daily_digest as daily_digest_core
 from goldmonitor import data_archive as data_archive_core
 from goldmonitor import event_timeline as event_timeline_core
+from goldmonitor import instance_runtime as instance_runtime_core
 from goldmonitor import market_adapters as market_adapters_core
 from goldmonitor import market_data as market_data_core
 from goldmonitor import market_runtime as market_runtime_core
@@ -51,6 +51,7 @@ from goldmonitor import storage_manifest as storage_manifest_core
 from goldmonitor import support_files as support_files_core
 from goldmonitor import targets as targets_core
 from goldmonitor import update_manager as update_manager_core
+from goldmonitor import update_runtime as update_runtime_core
 from goldmonitor.alert_log import AlertLogStore
 from goldmonitor.data_contracts import item_payload_metadata, unwrap_item_payload, wrap_item_payload
 from goldmonitor.diagnostics import build_health_summary
@@ -2353,42 +2354,42 @@ def github_release_api_url_from_manifest(manifest_url):
 
 
 def _update_request_headers():
-    return {
-        "Accept": "application/json",
-        "User-Agent": HTTP_USER_AGENT,
-    }
+    return update_runtime_core.update_request_headers(HTTP_USER_AGENT)
 
 
 def _get_update_json(url, request_get=None, timeout=REQUEST_TIMEOUT):
-    request_get = request_get or requests.get
-    response = request_get(url, timeout=timeout, headers=_update_request_headers())
-    response.raise_for_status()
-    return response.json()
-
-
-def _update_fetch_error_message(manifest_error, api_error):
-    detail = str(api_error or manifest_error or "").strip()
-    suffix = f" 原因: {detail}" if detail else ""
-    return (
-        "检查更新失败：无法访问 GitHub 更新服务。请确认当前网络允许访问 "
-        "github.com、api.github.com 和 release-assets.githubusercontent.com，或检查系统代理/VPN。"
-        f"{suffix}"
+    return update_runtime_core.get_update_json(
+        url,
+        request_get=request_get or requests.get,
+        timeout=timeout,
+        headers=_update_request_headers(),
     )
 
 
+def _update_fetch_error_message(manifest_error, api_error):
+    return update_runtime_core.update_fetch_error_message(manifest_error, api_error)
+
+
 def fetch_update_manifest(manifest_url=None, request_get=None):
-    manifest_url = str(manifest_url or get_update_manifest_url()).strip()
-    if not manifest_url:
-        raise ValueError("未配置更新源")
-    _require_official_update_url(manifest_url, "更新源", {"version.json"})
-    api_url = github_release_api_url_from_manifest(manifest_url)
-    try:
-        return normalize_update_manifest(_get_update_json(manifest_url, request_get=request_get), manifest_url)
-    except Exception as manifest_error:
-        try:
-            return normalize_github_release_manifest(_get_update_json(api_url, request_get=request_get))
-        except Exception as api_error:
-            raise ValueError(_update_fetch_error_message(manifest_error, api_error)) from api_error
+    return update_runtime_core.fetch_update_manifest(
+        manifest_url or get_update_manifest_url(),
+        require_official_update_url=lambda *args, **kwargs: _require_official_update_url(
+            *args,
+            **kwargs,
+        ),
+        github_release_api_url_from_manifest=(
+            lambda url: github_release_api_url_from_manifest(url)
+        ),
+        get_update_json=lambda url: _get_update_json(
+            url,
+            request_get=request_get,
+        ),
+        normalize_update_manifest=lambda raw, base_url=None: normalize_update_manifest(
+            raw,
+            base_url,
+        ),
+        normalize_github_release_manifest=lambda raw: normalize_github_release_manifest(raw),
+    )
 
 
 def get_update_status(expose_download=False):
@@ -2416,21 +2417,26 @@ PUBLIC_UPDATE_STATUS_KEYS = (
 
 
 def public_update_status(status=None):
-    status = status if isinstance(status, dict) else {}
-    return {key: status[key] for key in PUBLIC_UPDATE_STATUS_KEYS if key in status}
+    return update_runtime_core.public_update_status(
+        status,
+        PUBLIC_UPDATE_STATUS_KEYS,
+    )
 
 
 def record_update_status(status):
-    snapshot = public_update_status(status)
-    with last_update_status_lock:
-        last_update_status.clear()
-        last_update_status.update(snapshot)
-    return dict(snapshot)
+    return update_runtime_core.record_update_status(
+        last_update_status,
+        last_update_status_lock,
+        status,
+        PUBLIC_UPDATE_STATUS_KEYS,
+    )
 
 
 def get_last_update_status():
-    with last_update_status_lock:
-        return dict(last_update_status)
+    return update_runtime_core.get_last_update_status(
+        last_update_status,
+        last_update_status_lock,
+    )
 
 
 def emit_update_status(status):
@@ -2440,51 +2446,29 @@ def emit_update_status(status):
 
 
 def download_update_installer(update_info, progress_callback=None):
-    os.makedirs(UPDATE_DIR, exist_ok=True)
-    installer_path = os.path.join(UPDATE_DIR, UPDATE_INSTALLER_NAME)
-    response = requests.get(update_info["url"], stream=True, timeout=60, proxies=REQ_PROXY)
-    response.raise_for_status()
-    try:
-        total_bytes = int(response.headers.get("content-length") or 0)
-    except (TypeError, ValueError):
-        total_bytes = 0
-
-    digest = hashlib.sha256()
-    tmp_path = installer_path + ".tmp"
-    received_bytes = 0
-    with open(tmp_path, "wb") as f:
-        for chunk in response.iter_content(chunk_size=1024 * 128):
-            if chunk:
-                f.write(chunk)
-                digest.update(chunk)
-                received_bytes += len(chunk)
-                if progress_callback:
-                    progress_callback(received_bytes, total_bytes)
-
-    expected = update_info.get("sha256")
-    actual = digest.hexdigest()
-    if expected and actual != expected:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        raise ValueError("安装包校验失败")
-
-    os.replace(tmp_path, installer_path)
-    return installer_path
+    return update_runtime_core.download_update_installer(
+        update_info,
+        update_dir=UPDATE_DIR,
+        installer_name=UPDATE_INSTALLER_NAME,
+        request_get=lambda *args, **kwargs: requests.get(*args, **kwargs),
+        proxies=REQ_PROXY,
+        progress_callback=progress_callback,
+    )
 
 
 def launch_update_installer(installer_path):
-    if not os.path.exists(installer_path):
-        raise FileNotFoundError(installer_path)
-    plan = update_manager_core.build_installer_launch_plan(
+    return update_runtime_core.launch_update_installer(
         installer_path,
-        os_name=os.name,
-        sys_platform=sys.platform,
-        create_new_process_group=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
-        detached_process=getattr(subprocess, "DETACHED_PROCESS", 0),
+        path_exists=lambda path: os.path.exists(path),
+        build_installer_launch_plan=lambda path: update_manager_core.build_installer_launch_plan(
+            path,
+            os_name=os.name,
+            sys_platform=sys.platform,
+            create_new_process_group=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            detached_process=getattr(subprocess, "DETACHED_PROCESS", 0),
+        ),
+        popen=lambda *args, **kwargs: subprocess.Popen(*args, **kwargs),
     )
-    subprocess.Popen(plan["args"], **plan["kwargs"])
 
 
 def read_log_tail(max_lines=120):
@@ -4002,42 +3986,28 @@ _sync_legacy_alert_rule_views()
 
 
 def find_available_port(preferred=DEFAULT_PORT):
-    for port in range(preferred, preferred + 50):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            probe.settimeout(0.2)
-            if probe.connect_ex((DEFAULT_HOST, port)) == 0:
-                continue
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            try:
-                probe.bind((DEFAULT_HOST, port))
-                return port
-            except OSError:
-                continue
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind((DEFAULT_HOST, 0))
-        return probe.getsockname()[1]
+    return instance_runtime_core.find_available_port(
+        preferred,
+        host=DEFAULT_HOST,
+        socket_factory=socket.socket,
+    )
 
 
 def local_app_url(host=DEFAULT_HOST, port=DEFAULT_PORT, path="/"):
-    normalized_path = path or "/"
-    if not normalized_path.startswith("/"):
-        normalized_path = f"/{normalized_path}"
-    return f"http://{host}:{int(port)}{normalized_path}"
+    return instance_runtime_core.local_app_url(host, port, path)
 
 
 def is_tcp_port_open(host, port, timeout=0.05):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.settimeout(timeout)
-        return probe.connect_ex((host, int(port))) == 0
+    return instance_runtime_core.is_tcp_port_open(
+        host,
+        port,
+        timeout=timeout,
+        socket_factory=socket.socket,
+    )
 
 
 def is_goldmonitor_health_payload(payload):
-    return (
-        isinstance(payload, dict)
-        and payload.get("app") == APP_NAME
-        and isinstance(payload.get("version"), str)
-        and bool(payload.get("version"))
-    )
+    return instance_runtime_core.is_application_health_payload(payload, APP_NAME)
 
 
 def find_existing_goldmonitor_instance(
@@ -4048,21 +4018,16 @@ def find_existing_goldmonitor_instance(
     port_probe=None,
     timeout=0.2,
 ):
-    request_get = request_get or requests.get
-    port_probe = port_probe or is_tcp_port_open
-    for port in range(int(preferred), int(preferred) + max(1, int(port_count))):
-        try:
-            if port_probe and not port_probe(host, port, timeout):
-                continue
-        except Exception:
-            continue
-        try:
-            response = request_get(local_app_url(host, port, "/api/health"), timeout=timeout, proxies=REQ_PROXY)
-            if getattr(response, "status_code", 0) == 200 and is_goldmonitor_health_payload(response.json()):
-                return port
-        except Exception:
-            continue
-    return None
+    return instance_runtime_core.find_existing_instance(
+        host,
+        preferred,
+        app_name=APP_NAME,
+        proxies=REQ_PROXY,
+        request_get=request_get or requests.get,
+        port_probe=port_probe or (lambda *args: is_tcp_port_open(*args)),
+        port_count=port_count,
+        timeout=timeout,
+    )
 
 
 def open_existing_goldmonitor_instance(
@@ -4073,28 +4038,18 @@ def open_existing_goldmonitor_instance(
     browser_open=None,
     timeout=0.5,
 ):
-    request_post = request_post or requests.post
     if browser_open is None:
         import webbrowser
         browser_open = webbrowser.open
-
-    activated = False
-    try:
-        response = request_post(local_app_url(host, port, "/api/activate"), timeout=timeout, proxies=REQ_PROXY)
-        payload = response.json() if getattr(response, "ok", False) else {}
-        activated = bool(isinstance(payload, dict) and payload.get("ok"))
-    except Exception:
-        activated = False
-
-    if desktop_mode and activated:
-        return True
-
-    try:
-        browser_open(local_app_url(host, port))
-        return True
-    except Exception:
-        return activated
-
+    return instance_runtime_core.open_existing_instance(
+        host,
+        port,
+        desktop_mode=desktop_mode,
+        proxies=REQ_PROXY,
+        request_post=request_post or requests.post,
+        browser_open=browser_open,
+        timeout=timeout,
+    )
 
 # ---------- 数据获取 ----------
 def _fetch_source_status(ok=None, cached=False, source="", error=""):
@@ -7509,14 +7464,14 @@ def start_daily_digest_scheduler():
 
 
 def wait_for_server_ready(timeout=3.0):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            probe.settimeout(0.1)
-            if probe.connect_ex((DEFAULT_HOST, server_port)) == 0:
-                return True
-        time.sleep(0.05)
-    return False
+    return instance_runtime_core.wait_for_server_ready(
+        DEFAULT_HOST,
+        server_port,
+        timeout=timeout,
+        socket_factory=socket.socket,
+        clock=time.time,
+        sleep=time.sleep,
+    )
 
 
 # ---------- 系统托盘 ----------
