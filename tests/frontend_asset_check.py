@@ -5,6 +5,7 @@ import re
 root = Path(__file__).resolve().parents[1]
 template = (root / "templates" / "index.html").read_text(encoding="utf-8")
 app_py = (root / "app.py").read_text(encoding="utf-8")
+floating_runtime_py = (root / "goldmonitor" / "floating_runtime.py").read_text(encoding="utf-8")
 css_path = root / "static" / "app.css"
 js_path = root / "static" / "app.js"
 market_dashboard_js_path = root / "static" / "market-dashboard.js"
@@ -333,10 +334,12 @@ for required in (
 for required in (
     "HWND_NOTOPMOST",
     "floating_window_z_order(get_settings_snapshot())",
-    "WS_EX_NOACTIVATE",
 ):
     if required not in app_py:
         raise SystemExit(f"app.py missing floating z-order contract: {required}")
+
+if "WS_EX_NOACTIVATE" not in floating_runtime_py:
+    raise SystemExit("floating runtime missing non-activating window style")
 
 if "{{" in css or "{{" in js:
     raise SystemExit("static frontend assets must not contain template expressions")
