@@ -93,6 +93,10 @@ let activeAlertRuleDetailId = null;
 let alertRuleDraft = null;
 let alertRuleInsights = {};
 let alertRuleInsightLoading = {};
+let alertRuleSimulation = null;
+let alertRuleSimulationLoading = false;
+let alertRuleSimulationRequestId = '';
+let alertRuleSimulationDays = 30;
 let watchTargets = [];
 let portfolioState = { items: [], transactions: [], total: 0, rmb_summary: {}, usd_summary: {}, prices: {}, review: { rmb: {}, usd: {} }, alerts: { items: [], total: 0, enabled: 0, triggered: 0 }, import_backup: { available: false } };
 let portfolioAnalyticsState = null;
@@ -683,6 +687,7 @@ socket.on('alert_rules_updated', data => {
 socket.on('alert_rule_saved', data => {
   activeUnifiedAlertRuleId = null;
   alertRuleDraft = null;
+  resetAlertRuleSimulation();
   setAlertRuleCenterStatus('预警规则已保存。', 'ok');
 });
 
@@ -720,10 +725,29 @@ socket.on('alert_rule_insight', data => {
   renderAlertRuleCenter();
 });
 
+socket.on('alert_rule_simulation', data => {
+  const requestId = data && data.request_id ? String(data.request_id) : '';
+  if (!requestId || requestId !== alertRuleSimulationRequestId) return;
+  alertRuleSimulationLoading = false;
+  alertRuleSimulation = data;
+  setAlertRuleCenterStatus(data && data.usable ? '历史模拟已完成。' : (data && data.message) || '现有历史数据无法完成模拟。', data && data.usable ? 'ok' : 'fail');
+  renderAlertRuleCenter();
+});
+
+socket.on('alert_rule_simulation_error', data => {
+  const requestId = data && data.request_id ? String(data.request_id) : '';
+  if (!requestId || requestId !== alertRuleSimulationRequestId) return;
+  alertRuleSimulationLoading = false;
+  alertRuleSimulation = { error: (data && data.message) || '历史模拟失败，请稍后重试。' };
+  setAlertRuleCenterStatus(alertRuleSimulation.error, 'fail');
+  renderAlertRuleCenter();
+});
+
 socket.on('alert_rule_duplicated', data => {
   const rule = data && data.rule ? data.rule : null;
   activeUnifiedAlertRuleId = rule && rule.id ? rule.id : null;
   alertRuleDraft = rule ? cloneAlertRuleDraft(rule) : null;
+  resetAlertRuleSimulation();
   setAlertRuleCenterStatus('已复制规则，可继续编辑。', 'ok');
   renderAlertRuleCenter();
 });
@@ -4497,10 +4521,26 @@ function cloneAlertRuleDraft(rule) {
   return JSON.parse(JSON.stringify(rule));
 }
 
+function resetAlertRuleSimulation() {
+  alertRuleSimulation = null;
+  alertRuleSimulationLoading = false;
+  alertRuleSimulationRequestId = '';
+}
+
+function invalidateAlertRuleSimulation() {
+  const hadResult = alertRuleSimulationLoading || !!alertRuleSimulation;
+  resetAlertRuleSimulation();
+  if (!hadResult) return;
+  const result = document.getElementById('alertRuleSimulationResult');
+  if (result) result.innerHTML = '<div class="alert-center-simulation-empty">规则已修改，请重新运行历史模拟。</div>';
+  setAlertRuleCenterStatus('规则已修改，请重新运行历史模拟。', '');
+}
+
 function openNewAlertRule(kind) {
   activeUnifiedAlertRuleId = 'new';
   activeAlertRuleDetailId = null;
   alertRuleDraft = cloneAlertRuleDraft(null);
+  resetAlertRuleSimulation();
   if (kind && ['price_threshold', 'volatility', 'watch_target', 'portfolio'].includes(kind)) {
     alertRuleDraft.kind = kind;
   }
@@ -4518,7 +4558,9 @@ function editUnifiedAlertRule(id) {
   activeUnifiedAlertRuleId = id;
   activeAlertRuleDetailId = null;
   alertRuleDraft = cloneAlertRuleDraft(rule);
+  resetAlertRuleSimulation();
   alertRuleFilter = 'all';
+  setAlertRuleCenterStatus('', '');
   renderAlertRuleCenter();
   requestAnimationFrame(() => document.getElementById('alertRuleName')?.focus());
 }
@@ -4526,6 +4568,8 @@ function editUnifiedAlertRule(id) {
 function cancelUnifiedAlertRuleEdit() {
   activeUnifiedAlertRuleId = null;
   alertRuleDraft = null;
+  resetAlertRuleSimulation();
+  setAlertRuleCenterStatus('', '');
   renderAlertRuleCenter();
 }
 
@@ -4638,7 +4682,7 @@ function alertRuleEditorChecked(id) {
   return !!document.getElementById(id)?.checked;
 }
 
-function captureAlertRuleDraft() {
+function captureAlertRuleDraft(preserveSimulation) {
   if (!activeUnifiedAlertRuleId || !document.getElementById('alertRuleKind')) return;
   const existing = activeUnifiedAlertRuleId === 'new' ? null : findUnifiedAlertRule(activeUnifiedAlertRuleId);
   const kind = alertRuleEditorValue('alertRuleKind');
@@ -4681,6 +4725,7 @@ function captureAlertRuleDraft() {
     alert_level: kind === 'volatility' ? 'volatility' : alertRuleEditorValue('alertRuleLevel') || 'warning',
     legacy: existing && existing.kind === kind ? (existing.legacy || {}) : {},
   };
+  if (!preserveSimulation) invalidateAlertRuleSimulation();
 }
 
 function changeAlertRuleKind(kind) {
@@ -4714,6 +4759,110 @@ function changeAlertRuleDeliveryMode(mode) {
   else if (mode === 'record') alertRuleDraft.delivery.channels = [];
   else alertRuleDraft.delivery.channels = 'inherit';
   renderAlertRuleCenter();
+}
+
+function validatedAlertRuleDraft() {
+  captureAlertRuleDraft(true);
+  const payload = alertRuleDraft ? JSON.parse(JSON.stringify(alertRuleDraft)) : null;
+  const value = Number(payload && payload.condition && payload.condition.value);
+  if (!payload || !Number.isFinite(value) || value <= 0) {
+    setAlertRuleCenterStatus('请输入大于 0 的条件值。', 'fail');
+    return null;
+  }
+  if (payload.kind === 'portfolio' && !(payload.scope && payload.scope.position_id)) {
+    setAlertRuleCenterStatus('请选择要关联的持仓。', 'fail');
+    return null;
+  }
+  if (payload.kind === 'volatility') {
+    const minutes = Number(payload.condition.window_minutes);
+    if (!Number.isInteger(minutes) || minutes < 1) {
+      setAlertRuleCenterStatus('观察窗口必须是大于 0 的整数分钟。', 'fail');
+      return null;
+    }
+  }
+  return payload;
+}
+
+function setAlertRuleSimulationDays(value) {
+  const days = Number(value);
+  alertRuleSimulationDays = [7, 30, 90].includes(days) ? days : 30;
+  resetAlertRuleSimulation();
+  renderAlertRuleCenter();
+}
+
+function simulateUnifiedAlertRule() {
+  const payload = validatedAlertRuleDraft();
+  if (!payload) return;
+  alertRuleSimulationRequestId = 'rule-simulation-' + Date.now().toString(36);
+  alertRuleSimulation = null;
+  alertRuleSimulationLoading = true;
+  setAlertRuleCenterStatus('正在模拟历史行情...', '');
+  socket.emit('simulate_alert_rule', {
+    request_id: alertRuleSimulationRequestId,
+    days: alertRuleSimulationDays,
+    rule: payload,
+  });
+  renderAlertRuleCenter();
+}
+
+function alertRuleSimulationEventText(event, draft) {
+  if (!event) return '';
+  const mode = (draft.scope || {}).mode || 'rmb';
+  const value = alertRuleValueText(event.value, mode, '');
+  const change = event.change_percent == null ? '' : ' · 波动 ' + Number(event.change_percent).toFixed(2) + '%';
+  return String(event.timestamp || '').replace('T', ' ').slice(0, 16) + ' · ' + value + change;
+}
+
+function buildAlertRuleSimulationPanel(draft) {
+  const isPortfolio = draft.kind === 'portfolio';
+  let resultHtml = '<div class="alert-center-simulation-empty">根据本地历史行情估算规则命中与冷却后的触发次数，不修改规则和历史数据。</div>';
+  if (isPortfolio) {
+    resultHtml = '<div class="alert-center-simulation-empty">当前没有历史持仓估值快照，本版不模拟持仓规则。</div>';
+  } else if (alertRuleSimulationLoading) {
+    resultHtml = '<div class="alert-center-insight-loading">正在读取并模拟历史行情...</div>';
+  } else if (alertRuleSimulation && alertRuleSimulation.error) {
+    resultHtml = '<div class="alert-center-simulation-error">' + escapeHtml(alertRuleSimulation.error) + '</div>';
+  } else if (alertRuleSimulation) {
+    const simulation = alertRuleSimulation;
+    const coverage = simulation.coverage || {};
+    if (!simulation.supported || !simulation.usable) {
+      resultHtml = [
+        '<div class="alert-center-simulation-error">' + escapeHtml(simulation.message || '现有历史数据不足，无法完成模拟。') + '</div>',
+        coverage.point_count ? '<div class="alert-center-simulation-meta">已读取 ' + Number(coverage.point_count) + ' 个价格点，采样间隔约 ' + escapeHtml(coverage.sampling_interval_label || '未知') + '。</div>' : '',
+      ].join('');
+    } else {
+      const distribution = (simulation.time_distribution || []).map(item => '<span>' + escapeHtml(item.label || '') + '<strong>' + (Number(item.count) || 0) + '</strong></span>').join('');
+      const recent = (simulation.recent_triggers || []).slice(0, 3).map(item => '<li>' + escapeHtml(alertRuleSimulationEventText(item, draft)) + '</li>').join('');
+      const coverageText = coverage.from && coverage.to
+        ? String(coverage.from).replace('T', ' ').slice(0, 16) + ' 至 ' + String(coverage.to).replace('T', ' ').slice(0, 16)
+        : '无可用时间范围';
+      resultHtml = [
+        '<div class="alert-center-simulation-grid">',
+        '<div><span>历史样本</span><strong>' + (Number(coverage.point_count) || 0) + '</strong></div>',
+        '<div><span>规则命中</span><strong>' + (Number(simulation.match_count) || 0) + '</strong></div>',
+        '<div><span>冷却后触发</span><strong>' + (Number(simulation.effective_trigger_count) || 0) + '</strong></div>',
+        '<div><span>被抑制</span><strong>' + (Number(simulation.suppressed_count) || 0) + '</strong></div>',
+        '</div>',
+        '<div class="alert-center-simulation-meta">覆盖 ' + escapeHtml(coverageText) + ' · 采样间隔约 ' + escapeHtml(coverage.sampling_interval_label || '未知') + ' · 冷却 ' + (Number(simulation.cooldown_minutes) || 0) + ' 分钟' + (coverage.partial ? ' · 覆盖不足' : '') + '</div>',
+        '<div class="alert-center-simulation-distribution">' + distribution + '</div>',
+        recent ? '<ul class="alert-center-simulation-events">' + recent + '</ul>' : '<div class="alert-center-simulation-empty">该范围内没有估算触发记录。</div>',
+        '<div class="alert-center-simulation-note">' + escapeHtml(simulation.message || '') + ' 历史模拟仅用于配置评估，不代表预测准确率或投资建议。</div>',
+      ].join('');
+    }
+  }
+  return [
+    '<div class="alert-center-simulation">',
+    '<div class="alert-center-simulation-head"><div><strong>历史模拟</strong><span>忽略当前启停和有效期，仅按条件与冷却策略计算。</span></div><div>',
+    '<select id="alertRuleSimulationDays" aria-label="历史模拟范围" onchange="setAlertRuleSimulationDays(this.value)"' + (isPortfolio ? ' disabled' : '') + '>',
+    '<option value="7"' + (alertRuleSimulationDays === 7 ? ' selected' : '') + '>7 天</option>',
+    '<option value="30"' + (alertRuleSimulationDays === 30 ? ' selected' : '') + '>30 天</option>',
+    '<option value="90"' + (alertRuleSimulationDays === 90 ? ' selected' : '') + '>90 天</option>',
+    '</select>',
+    '<button class="btn-clear-sm" type="button" onclick="simulateUnifiedAlertRule()"' + (isPortfolio || alertRuleSimulationLoading ? ' disabled' : '') + '>运行模拟</button>',
+    '</div></div>',
+    '<div id="alertRuleSimulationResult">' + resultHtml + '</div>',
+    '</div>',
+  ].join('');
 }
 
 function alertRuleEditorConditionFields(draft) {
@@ -4777,30 +4926,15 @@ function buildUnifiedAlertRuleEditor() {
     deliveryMode === 'custom' ? '<div class="alert-center-channel-field"><span>通知渠道</span><label><input id="alertRuleChannel_local" type="checkbox"' + (selectedChannels.includes('local') ? ' checked' : '') + '>本机</label><label><input id="alertRuleChannel_email" type="checkbox"' + (selectedChannels.includes('email') ? ' checked' : '') + '>邮件</label><label><input id="alertRuleChannel_webhook" type="checkbox"' + (selectedChannels.includes('webhook') ? ' checked' : '') + '>Webhook</label></div>' : '<input id="alertRuleChannel_local" type="hidden"><input id="alertRuleChannel_email" type="hidden"><input id="alertRuleChannel_webhook" type="hidden">',
     '<label class="alert-center-field alert-center-field-wide"><span>备注</span><input id="alertRuleNote" type="text" maxlength="200" value="' + escapeHtml(draft.note || '') + '" placeholder="可选"></label>',
     '</div>',
+    buildAlertRuleSimulationPanel(draft),
     '<div class="alert-center-editor-foot"><label class="alert-center-enabled"><input id="alertRuleEnabled" type="checkbox"' + (draft.enabled === false ? '' : ' checked') + '>保存后启用</label><div><button class="btn-clear-sm" type="button" onclick="cancelUnifiedAlertRuleEdit()">取消</button><button class="btn-set" type="button" onclick="saveUnifiedAlertRule()">保存规则</button></div></div>',
     '</div>',
   ].join('');
 }
 
 function saveUnifiedAlertRule() {
-  captureAlertRuleDraft();
-  const payload = alertRuleDraft ? JSON.parse(JSON.stringify(alertRuleDraft)) : null;
-  const value = Number(payload && payload.condition && payload.condition.value);
-  if (!payload || !Number.isFinite(value) || value <= 0) {
-    setAlertRuleCenterStatus('请输入大于 0 的条件值。', 'fail');
-    return;
-  }
-  if (payload.kind === 'portfolio' && !(payload.scope && payload.scope.position_id)) {
-    setAlertRuleCenterStatus('请选择要关联的持仓。', 'fail');
-    return;
-  }
-  if (payload.kind === 'volatility') {
-    const minutes = Number(payload.condition.window_minutes);
-    if (!Number.isInteger(minutes) || minutes < 1) {
-      setAlertRuleCenterStatus('观察窗口必须是大于 0 的整数分钟。', 'fail');
-      return;
-    }
-  }
+  const payload = validatedAlertRuleDraft();
+  if (!payload) return;
   setAlertRuleCenterStatus('正在保存预警规则...', '');
   socket.emit('save_alert_rule', payload);
 }

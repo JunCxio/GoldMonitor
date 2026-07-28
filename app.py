@@ -175,6 +175,7 @@ PRICE_HISTORY_SAVE_INTERVAL_SECONDS = 60
 ALERT_LOG_MEMORY_LIMIT = 50
 ALERT_LOG_EXPORT_LIMIT = 1000
 ALERT_LOG_DB_LIMIT = 5000
+ALERT_RULE_SIMULATION_POINT_LIMIT = 30000
 EVENT_TIMELINE_TYPES = (
     "price_summary",
     "alert",
@@ -1719,6 +1720,44 @@ def build_alert_rule_insight(rule_id, days=30, now=None):
         "delivery": _alert_rule_delivery_insight(rule, now=now),
         "effectiveness": effectiveness,
         "recent_alerts": recent_alerts,
+    }
+
+
+def build_alert_rule_simulation(rule_payload, days=30, now=None):
+    if not isinstance(rule_payload, dict):
+        raise alert_rules_core.AlertRuleError("预警规则格式无效")
+    now = now or datetime.now()
+    try:
+        days = int(days)
+    except (TypeError, ValueError) as exc:
+        raise alert_rules_core.AlertRuleError("历史模拟范围无效") from exc
+    if days not in alert_rules_core.ALERT_RULE_SIMULATION_PERIODS:
+        raise alert_rules_core.AlertRuleError("历史模拟仅支持 7、30 或 90 天")
+
+    rule_id = str(rule_payload.get("id") or "")
+    with lock:
+        existing = _find_alert_rule(rule_id) if rule_id else None
+        existing = dict(existing) if isinstance(existing, dict) else None
+    rule = alert_rules_core.normalize_alert_rule(
+        rule_payload,
+        existing=existing,
+        now_factory=lambda: now,
+        id_factory=lambda: "rule-preview",
+    )
+    delivery = _alert_rule_delivery_insight(rule, now=now)
+    history = []
+    if rule.get("kind") in alert_rules_core.ALERT_RULE_SIMULATION_KINDS:
+        history = _analytics_price_history(days, limit=ALERT_RULE_SIMULATION_POINT_LIMIT)
+    simulation = alert_rules_core.simulate_alert_rule(
+        rule,
+        history,
+        cooldown_minutes=delivery.get("cooldown_minutes", 0),
+        period_days=days,
+    )
+    return {
+        "rule_id": rule.get("id"),
+        "generated_at": now.isoformat(timespec="seconds"),
+        **simulation,
     }
 
 
@@ -6325,6 +6364,25 @@ def on_get_alert_rule_insight(data=None):
         emit("alert_rule_error", {"message": "未找到预警规则。"})
         return
     emit("alert_rule_insight", insight)
+
+
+@socketio.on("simulate_alert_rule")
+def on_simulate_alert_rule(data=None):
+    data = data if isinstance(data, dict) else {}
+    request_id = str(data.get("request_id") or "")[:80]
+    try:
+        result = build_alert_rule_simulation(data.get("rule"), days=data.get("days", 30))
+    except alert_rules_core.AlertRuleError as exc:
+        emit("alert_rule_simulation_error", {"request_id": request_id, "message": str(exc)})
+        return
+    except Exception:
+        logging.exception("预警规则历史模拟失败")
+        emit("alert_rule_simulation_error", {
+            "request_id": request_id,
+            "message": "历史模拟失败，请检查价格历史数据后重试。",
+        })
+        return
+    emit("alert_rule_simulation", {"request_id": request_id, **result})
 
 
 @socketio.on("set_threshold")

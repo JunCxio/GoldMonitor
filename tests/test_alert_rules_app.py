@@ -199,3 +199,66 @@ def test_alert_rule_insight_reports_delivery_and_effectiveness(monkeypatch, tmp_
     assert payload["rule_id"] == rule["id"]
     assert payload["effectiveness"]["period_alerts"] == 1
     client.disconnect()
+
+
+def test_alert_rule_history_simulation_supports_drafts_and_socket_errors(monkeypatch, tmp_path):
+    app = _prepare_rules_state(monkeypatch, tmp_path)
+    monkeypatch.setattr(app, "get_settings_snapshot", lambda: {
+        "email_warning_enabled": True,
+        "webhook_enabled": False,
+        "alert_quiet_start": "",
+        "alert_quiet_end": "",
+        "alert_cooldown_minutes": 30,
+    })
+    monkeypatch.setattr(app, "_analytics_price_history", lambda days, limit=1000: [
+        {"timestamp": "2026-07-20T09:00:00", "rmb": 719},
+        {"timestamp": "2026-07-20T09:01:00", "rmb": 721},
+        {"timestamp": "2026-07-20T09:02:00", "rmb": 719},
+        {"timestamp": "2026-07-20T09:20:00", "rmb": 722},
+    ])
+    draft = {
+        "kind": "price_threshold",
+        "name": "历史模拟草稿",
+        "scope": {"mode": "rmb"},
+        "condition": {"operator": "gte", "value": 720},
+        "delivery": {"channels": [], "cooldown_minutes": 10},
+    }
+
+    result = app.build_alert_rule_simulation(
+        draft,
+        days=7,
+        now=datetime(2026, 7, 27, 15, 0, 0),
+    )
+    assert result["rule_id"] == "rule-preview"
+    assert result["match_count"] == 2
+    assert result["effective_trigger_count"] == 2
+    assert result["cooldown_minutes"] == 10
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+    client.emit("simulate_alert_rule", {
+        "request_id": "simulation-one",
+        "days": 7,
+        "rule": draft,
+    })
+    payload = next(
+        event["args"][0]
+        for event in client.get_received()
+        if event["name"] == "alert_rule_simulation"
+    )
+    assert payload["request_id"] == "simulation-one"
+    assert payload["usable"] is True
+
+    client.emit("simulate_alert_rule", {
+        "request_id": "simulation-invalid",
+        "days": 14,
+        "rule": draft,
+    })
+    error = next(
+        event["args"][0]
+        for event in client.get_received()
+        if event["name"] == "alert_rule_simulation_error"
+    )
+    assert error["request_id"] == "simulation-invalid"
+    assert "7、30 或 90 天" in error["message"]
+    client.disconnect()

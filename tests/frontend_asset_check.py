@@ -93,9 +93,14 @@ for required in (
     'onchange="setAlertRuleStatusFilter(this.value)"',
     "function batchUpdateSelectedAlertRules",
     "function buildAlertRuleDetail",
+    "function buildAlertRuleSimulationPanel",
+    "function simulateUnifiedAlertRule",
     "socket.emit('batch_update_alert_rules'",
     "socket.emit('get_alert_rule_insight'",
+    "socket.emit('simulate_alert_rule'",
     "socket.on('alert_rule_insight'",
+    "socket.on('alert_rule_simulation'",
+    "socket.on('alert_rule_simulation_error'",
 ):
     if required not in template + js:
         raise SystemExit(f"frontend missing alert rule operations contract: {required}")
@@ -106,6 +111,8 @@ for required in (
     ".alert-center-detail",
     ".alert-center-inspection-grid",
     ".alert-center-insight-grid",
+    ".alert-center-simulation-grid",
+    ".alert-center-simulation-distribution",
 ):
     if required not in css:
         raise SystemExit(f"static/app.css missing alert rule operations selector: {required}")
