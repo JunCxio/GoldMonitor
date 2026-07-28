@@ -2,12 +2,16 @@ import json
 import math
 import os
 import secrets
+from bisect import bisect_left
 from datetime import datetime, timedelta
 
 
 ALERT_RULE_SCHEMA_VERSION = 1
 ALERT_RULE_KINDS = {"price_threshold", "volatility", "watch_target", "portfolio"}
 ALERT_RULE_CHANNELS = {"local", "email", "webhook"}
+ALERT_RULE_BATCH_ACTIONS = {"enable", "disable", "reset", "delete"}
+ALERT_RULE_SIMULATION_KINDS = {"price_threshold", "volatility", "watch_target"}
+ALERT_RULE_SIMULATION_PERIODS = {7, 30, 90}
 ALERT_RULE_STATUSES = {
     "watching",
     "triggered",
@@ -629,6 +633,360 @@ def _portfolio_condition_met(condition_key, current, target):
     return False
 
 
+def _finite_number(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _distance_to_trigger(rule, current, target):
+    current = _finite_number(current)
+    target = _finite_number(target)
+    if current is None or target is None:
+        return None
+    kind = rule.get("kind")
+    condition = rule.get("condition") or {}
+    if kind == "volatility":
+        return max(0.0, target - current)
+    if kind == "portfolio":
+        condition_key = condition.get("condition_key")
+        if condition_key in {"take_profit", "profit_percent"}:
+            return max(0.0, target - current)
+        if condition_key == "loss_percent":
+            return max(0.0, current + target)
+        return max(0.0, current - target)
+    if condition.get("operator") == "gte":
+        return max(0.0, target - current)
+    return max(0.0, current - target)
+
+
+def inspect_alert_rule(rule, positions=None, prices=None, price_history=None, now=None):
+    now = now or datetime.now()
+    positions = [item for item in list(positions or []) if isinstance(item, dict)]
+    positions_by_id = {item.get("id"): item for item in positions if item.get("id")}
+    prices = prices if isinstance(prices, dict) else {}
+    scope = rule.get("scope") or {}
+    condition = rule.get("condition") or {}
+    kind = rule.get("kind")
+    target_value = _finite_number(condition.get("value"))
+    current_value = None
+    source_value = None
+    sample_count = 0
+    required_samples = 0
+    condition_met = False
+    status = _rule_runtime_status(rule, now, positions_by_id=positions_by_id, prices=prices)
+    reason = status
+    value_kind = "price"
+
+    if kind in {"price_threshold", "watch_target"}:
+        current_value = _finite_number(prices.get(scope.get("mode")))
+        condition_met = _condition_met(condition.get("operator"), current_value, target_value)
+        if current_value is None and status not in {"disabled", "scheduled", "expired"}:
+            status = "waiting_data"
+            reason = "price_missing"
+    elif kind == "portfolio":
+        position = positions_by_id.get(scope.get("position_id"))
+        condition_key = condition.get("condition_key")
+        value_kind = "percent" if condition_key in {"profit_percent", "loss_percent", "near_cost"} else "price"
+        if position:
+            current_value = _finite_number(_position_value(position, condition_key))
+            condition_met = _portfolio_condition_met(condition_key, current_value, target_value)
+            if current_value is None and status not in {"disabled", "scheduled", "expired"}:
+                status = "waiting_data"
+                reason = "position_data_missing"
+        elif status == "orphaned":
+            reason = "position_missing"
+    elif kind == "volatility":
+        value_kind = "percent"
+        window_minutes = condition.get("window_minutes") or 10
+        required_samples = max(2, int(window_minutes * 60 / 10))
+        values = _volatility_values(price_history, scope.get("mode"), required_samples)
+        sample_count = len(values)
+        if len(values) >= required_samples and values[0] != 0:
+            current_value = abs((values[-1] - values[0]) / values[0] * 100)
+            source_value = values[-1]
+            condition_met = current_value >= target_value
+        elif status not in {"disabled", "scheduled", "expired"}:
+            status = "waiting_data"
+            reason = "history_insufficient"
+
+    if reason not in {"price_missing", "position_missing", "position_data_missing", "history_insufficient"}:
+        if status == "triggered":
+            reason = "triggered_condition_met" if condition_met else "triggered_latched"
+        elif status in {"disabled", "scheduled", "expired", "orphaned", "waiting_data"}:
+            reason = status
+        elif condition_met:
+            reason = "condition_met"
+        else:
+            reason = "watching"
+
+    distance = _distance_to_trigger(rule, current_value, target_value)
+    distance_percent = None
+    if distance is not None and target_value not in (None, 0):
+        distance_percent = distance / abs(target_value) * 100
+    return {
+        "status": status,
+        "reason": reason,
+        "value_kind": value_kind,
+        "current_value": round(current_value, 6) if current_value is not None else None,
+        "source_value": round(source_value, 6) if source_value is not None else None,
+        "target_value": round(target_value, 6) if target_value is not None else None,
+        "distance_to_trigger": round(distance, 6) if distance is not None else None,
+        "distance_percent": round(distance_percent, 4) if distance_percent is not None else None,
+        "condition_met": bool(condition_met),
+        "sample_count": sample_count,
+        "required_samples": required_samples,
+        "last_evaluated_at": str((rule.get("state") or {}).get("last_evaluated_at") or ""),
+    }
+
+
+def _simulation_points(price_history, mode):
+    field = "usd" if mode == "usd" else "rmb"
+    points_by_timestamp = {}
+    for item in list(price_history or []):
+        if not isinstance(item, dict):
+            continue
+        timestamp = _parse_iso(item.get("timestamp"))
+        value = _finite_number(item.get(field))
+        if timestamp is None or value is None:
+            continue
+        points_by_timestamp[timestamp] = value
+    return sorted(points_by_timestamp.items(), key=lambda item: item[0])
+
+
+def _simulation_interval_seconds(points):
+    intervals = sorted(
+        (points[index][0] - points[index - 1][0]).total_seconds()
+        for index in range(1, len(points))
+        if points[index][0] > points[index - 1][0]
+    )
+    if not intervals:
+        return 0
+    middle = len(intervals) // 2
+    if len(intervals) % 2:
+        return int(round(intervals[middle]))
+    return int(round((intervals[middle - 1] + intervals[middle]) / 2))
+
+
+def _simulation_interval_label(seconds):
+    seconds = max(0, int(seconds or 0))
+    if seconds < 60:
+        return f"{seconds} 秒" if seconds else "未知"
+    if seconds < 3600:
+        return f"{max(1, round(seconds / 60))} 分钟"
+    if seconds < 86400:
+        return f"{max(1, round(seconds / 3600))} 小时"
+    return f"{max(1, round(seconds / 86400))} 天"
+
+
+def _simulation_event(timestamp, value, change_percent=None):
+    event = {
+        "timestamp": timestamp.isoformat(timespec="seconds"),
+        "value": round(float(value), 6),
+    }
+    if change_percent is not None:
+        event["change_percent"] = round(float(change_percent), 4)
+    return event
+
+
+def _apply_simulation_cooldown(events, cooldown_minutes):
+    cooldown = timedelta(minutes=max(0, int(cooldown_minutes or 0)))
+    accepted = []
+    last_triggered_at = None
+    for event in events:
+        timestamp = _parse_iso(event.get("timestamp"))
+        if timestamp is None:
+            continue
+        if last_triggered_at is not None and timestamp - last_triggered_at < cooldown:
+            continue
+        accepted.append(event)
+        last_triggered_at = timestamp
+    return accepted
+
+
+def _simulation_time_distribution(events):
+    buckets = [
+        {"key": "overnight", "label": "凌晨", "start_hour": 0, "end_hour": 6, "count": 0},
+        {"key": "morning", "label": "上午", "start_hour": 6, "end_hour": 12, "count": 0},
+        {"key": "afternoon", "label": "下午", "start_hour": 12, "end_hour": 18, "count": 0},
+        {"key": "evening", "label": "晚间", "start_hour": 18, "end_hour": 24, "count": 0},
+    ]
+    for event in events:
+        timestamp = _parse_iso(event.get("timestamp"))
+        if timestamp is None:
+            continue
+        for bucket in buckets:
+            if bucket["start_hour"] <= timestamp.hour < bucket["end_hour"]:
+                bucket["count"] += 1
+                break
+    return [
+        {"key": bucket["key"], "label": bucket["label"], "count": bucket["count"]}
+        for bucket in buckets
+    ]
+
+
+def simulate_alert_rule(rule, price_history=None, cooldown_minutes=0, period_days=30):
+    if not isinstance(rule, dict):
+        raise AlertRuleError("预警规则格式无效")
+    try:
+        period_days = int(period_days)
+    except (TypeError, ValueError) as exc:
+        raise AlertRuleError("历史模拟范围无效") from exc
+    if period_days not in ALERT_RULE_SIMULATION_PERIODS:
+        raise AlertRuleError("历史模拟仅支持 7、30 或 90 天")
+    try:
+        cooldown_minutes = int(float(cooldown_minutes or 0))
+    except (TypeError, ValueError) as exc:
+        raise AlertRuleError("冷却时间格式无效") from exc
+    cooldown_minutes = max(0, min(1440, cooldown_minutes))
+
+    kind = str(rule.get("kind") or "")
+    mode = str((rule.get("scope") or {}).get("mode") or "rmb")
+    response = {
+        "supported": kind in ALERT_RULE_SIMULATION_KINDS,
+        "usable": False,
+        "reason": "",
+        "message": "",
+        "rule_kind": kind,
+        "mode": mode,
+        "period_days": period_days,
+        "cooldown_minutes": cooldown_minutes,
+        "trigger_policy": "single" if kind == "watch_target" else "repeat",
+        "evaluated_count": 0,
+        "match_count": 0,
+        "effective_trigger_count": 0,
+        "suppressed_count": 0,
+        "recent_triggers": [],
+        "time_distribution": _simulation_time_distribution([]),
+        "coverage": {
+            "point_count": 0,
+            "from": "",
+            "to": "",
+            "actual_days": 0,
+            "sampling_interval_seconds": 0,
+            "sampling_interval_label": "未知",
+            "gap_count": 0,
+            "partial": True,
+        },
+    }
+    if not response["supported"]:
+        response.update({
+            "reason": "portfolio_history_unavailable",
+            "message": "当前没有可用于还原历史持仓估值的快照，本版不模拟持仓规则。",
+        })
+        return response
+
+    points = _simulation_points(price_history, mode)
+    interval_seconds = _simulation_interval_seconds(points)
+    if points:
+        actual_seconds = max(0, (points[-1][0] - points[0][0]).total_seconds())
+        gap_threshold = max(interval_seconds * 3, 15 * 60) if interval_seconds else 15 * 60
+        gap_count = sum(
+            1 for index in range(1, len(points))
+            if (points[index][0] - points[index - 1][0]).total_seconds() > gap_threshold
+        )
+        response["coverage"] = {
+            "point_count": len(points),
+            "from": points[0][0].isoformat(timespec="seconds"),
+            "to": points[-1][0].isoformat(timespec="seconds"),
+            "actual_days": round(actual_seconds / 86400, 2),
+            "sampling_interval_seconds": interval_seconds,
+            "sampling_interval_label": _simulation_interval_label(interval_seconds),
+            "gap_count": gap_count,
+            "partial": actual_seconds < period_days * 86400 * 0.8,
+        }
+    if len(points) < 2:
+        response.update({
+            "reason": "history_insufficient",
+            "message": "可用历史行情不足，至少需要两个有效价格点。",
+        })
+        return response
+
+    condition = rule.get("condition") or {}
+    target_value = _finite_number(condition.get("value"))
+    if target_value is None or target_value <= 0:
+        raise AlertRuleError("条件值必须大于 0")
+    matched_events = []
+
+    if kind == "volatility":
+        window_minutes = max(1, int(condition.get("window_minutes") or 10))
+        window_seconds = window_minutes * 60
+        if interval_seconds > window_seconds:
+            response.update({
+                "reason": "history_resolution_too_coarse",
+                "message": (
+                    f"历史采样间隔约为 {_simulation_interval_label(interval_seconds)}，"
+                    f"无法可靠模拟 {window_minutes} 分钟波动窗口。"
+                ),
+            })
+            return response
+        timestamps = [item[0] for item in points]
+        last_evaluated_at = None
+        tolerance_seconds = max(60, int((interval_seconds or 60) * 0.75))
+        for index, (timestamp, current_value) in enumerate(points):
+            if last_evaluated_at and (timestamp - last_evaluated_at).total_seconds() < 60:
+                continue
+            target_timestamp = timestamp - timedelta(seconds=window_seconds)
+            insertion = bisect_left(timestamps, target_timestamp, 0, index)
+            if insertion < index and timestamps[insertion] == target_timestamp:
+                candidates = [insertion]
+            else:
+                candidates = [insertion - 1] if insertion > 0 else []
+            if not candidates:
+                continue
+            start_index = min(
+                candidates,
+                key=lambda candidate: abs((timestamps[candidate] - target_timestamp).total_seconds()),
+            )
+            if abs((timestamps[start_index] - target_timestamp).total_seconds()) > tolerance_seconds:
+                continue
+            start_value = points[start_index][1]
+            if start_value == 0:
+                continue
+            last_evaluated_at = timestamp
+            response["evaluated_count"] += 1
+            change_percent = abs((current_value - start_value) / start_value * 100)
+            if change_percent >= target_value:
+                matched_events.append(_simulation_event(timestamp, current_value, change_percent))
+        if response["evaluated_count"] == 0:
+            response.update({
+                "reason": "history_window_unavailable",
+                "message": "历史行情存在，但没有足够连续的窗口样本完成波动模拟。",
+            })
+            return response
+    else:
+        previous_met = False
+        operator = condition.get("operator")
+        for timestamp, current_value in points:
+            response["evaluated_count"] += 1
+            condition_met = _condition_met(operator, current_value, target_value)
+            if condition_met and not previous_met:
+                matched_events.append(_simulation_event(timestamp, current_value))
+            previous_met = condition_met
+
+    if kind == "watch_target":
+        effective_events = matched_events[:1]
+    else:
+        effective_events = _apply_simulation_cooldown(matched_events, cooldown_minutes)
+    response.update({
+        "usable": True,
+        "reason": "ok",
+        "message": (
+            "历史覆盖不足，结果仅代表现有样本。"
+            if response["coverage"]["partial"]
+            else "模拟完成。结果按历史行情与当前冷却策略计算。"
+        ),
+        "match_count": len(matched_events),
+        "effective_trigger_count": len(effective_events),
+        "suppressed_count": max(0, len(matched_events) - len(effective_events)),
+        "recent_triggers": list(reversed(effective_events[-5:])),
+        "time_distribution": _simulation_time_distribution(effective_events),
+    })
+    return response
+
+
 def _volatility_values(history, mode, points_needed):
     field = "usd" if mode == "usd" else "rmb"
     values = []
@@ -773,6 +1131,16 @@ def evaluate_alert_rules(rules, prices=None, price_history=None, positions=None,
         elif kind == "portfolio":
             position = positions_by_id.get(scope.get("position_id"))
             trigger_value = _position_value(position or {}, condition.get("condition_key"))
+            if trigger_value is None:
+                state["status"] = "waiting_data"
+                rule["state"] = state
+                rule["updated_at"] = (
+                    now.isoformat(timespec="seconds")
+                    if state != source_state
+                    else source_updated_at or rule.get("updated_at", "")
+                )
+                next_rules.append(rule)
+                continue
             condition_met = _portfolio_condition_met(
                 condition.get("condition_key"), trigger_value, condition.get("value")
             )
@@ -823,7 +1191,16 @@ def evaluate_alert_rules(rules, prices=None, price_history=None, positions=None,
     return next_rules, triggers
 
 
-def alert_rules_state(rules, positions=None, prices=None, migration=None, invalid_count=0, load_error="", now=None):
+def alert_rules_state(
+    rules,
+    positions=None,
+    prices=None,
+    price_history=None,
+    migration=None,
+    invalid_count=0,
+    load_error="",
+    now=None,
+):
     now = now or datetime.now()
     positions = [item for item in list(positions or []) if isinstance(item, dict)]
     positions_by_id = {item.get("id"): item for item in positions if item.get("id")}
@@ -834,10 +1211,18 @@ def alert_rules_state(rules, positions=None, prices=None, migration=None, invali
         if not isinstance(source_rule, dict):
             continue
         rule = dict(source_rule)
-        status = _rule_runtime_status(rule, now, positions_by_id=positions_by_id, prices=prices or {})
+        inspection = inspect_alert_rule(
+            rule,
+            positions=positions,
+            prices=prices or {},
+            price_history=price_history,
+            now=now,
+        )
+        status = inspection.get("status") or "watching"
         state = dict(rule.get("state") or {})
         state["status"] = status
         rule["state"] = state
+        rule["inspection"] = inspection
         position = positions_by_id.get((rule.get("scope") or {}).get("position_id"))
         if position:
             rule["scope_label"] = position.get("name") or position.get("id")
@@ -930,6 +1315,51 @@ def duplicate_alert_rule(rules, rule_id, now_factory=None, id_factory=None):
         "last_evaluated_at": "",
     }
     return upsert_alert_rule(rules, source, now_factory=now_factory, id_factory=id_factory)
+
+
+def batch_update_alert_rules(rules, rule_ids, action, now_factory=None):
+    if not isinstance(rule_ids, list):
+        raise AlertRuleError("批量操作规则编号格式无效")
+    action = str(action or "").strip().lower()
+    if action not in ALERT_RULE_BATCH_ACTIONS:
+        raise AlertRuleError("批量操作类型无效")
+    normalized_ids = []
+    for raw_id in rule_ids:
+        rule_id = _safe_identifier(raw_id)
+        if not rule_id:
+            raise AlertRuleError("批量操作包含无效规则编号")
+        if rule_id not in normalized_ids:
+            normalized_ids.append(rule_id)
+    if not normalized_ids:
+        raise AlertRuleError("请至少选择一条预警规则")
+    if len(normalized_ids) > 200:
+        raise AlertRuleError("单次最多操作 200 条预警规则")
+
+    existing_ids = {
+        rule.get("id")
+        for rule in list(rules or [])
+        if isinstance(rule, dict) and rule.get("id")
+    }
+    missing = [rule_id for rule_id in normalized_ids if rule_id not in existing_ids]
+    if missing:
+        raise AlertRuleError("部分预警规则已不存在，请刷新后重试")
+
+    next_rules = [dict(rule) for rule in list(rules or []) if isinstance(rule, dict)]
+    if action == "delete":
+        selected = set(normalized_ids)
+        next_rules = [rule for rule in next_rules if rule.get("id") not in selected]
+        return next_rules, normalized_ids
+
+    operation_now = now_factory() if callable(now_factory) else datetime.now()
+    fixed_now_factory = lambda: operation_now
+    for rule_id in normalized_ids:
+        if action == "enable":
+            next_rules, _ = toggle_alert_rule(next_rules, rule_id, True, now_factory=fixed_now_factory)
+        elif action == "disable":
+            next_rules, _ = toggle_alert_rule(next_rules, rule_id, False, now_factory=fixed_now_factory)
+        else:
+            next_rules, _ = reset_alert_rule(next_rules, rule_id, now_factory=fixed_now_factory)
+    return next_rules, normalized_ids
 
 
 class AlertRuleStore:

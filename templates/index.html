@@ -119,6 +119,21 @@
               <button class="alert-center-filter" type="button" data-filter="watch_target" onclick="setAlertRuleFilter('watch_target')">目标价</button>
               <button class="alert-center-filter" type="button" data-filter="portfolio" onclick="setAlertRuleFilter('portfolio')">持仓</button>
             </div>
+            <div class="alert-center-tools">
+              <input type="search" placeholder="搜索规则" aria-label="搜索预警规则" oninput="setAlertRuleSearch(this.value)">
+              <select aria-label="按状态筛选预警规则" onchange="setAlertRuleStatusFilter(this.value)">
+                <option value="all">全部状态</option>
+                <option value="watching">监控中</option>
+                <option value="triggered">已触发</option>
+                <option value="waiting_data">等待数据</option>
+                <option value="scheduled">待生效</option>
+                <option value="expired">已过期</option>
+                <option value="orphaned">关联失效</option>
+                <option value="disabled">已停用</option>
+              </select>
+              <label class="alert-center-select-visible"><input id="alertRuleSelectVisible" type="checkbox" onchange="toggleVisibleAlertRuleSelection(this.checked)">选择当前</label>
+            </div>
+            <div class="alert-center-batch" id="alertRuleBatchBar"></div>
             <div class="alert-center-status" id="alertRuleCenterStatus"></div>
             <div class="alert-center-list" id="alertRuleCenterList"></div>
             <div class="alert-profiles" id="alertProfilesPanel">

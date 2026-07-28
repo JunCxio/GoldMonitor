@@ -60,7 +60,7 @@ app.config["MAX_CONTENT_LENGTH"] = 256 * 1024 * 1024
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.9"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 OFFICIAL_UPDATE_HOST = "github.com"
@@ -175,6 +175,7 @@ PRICE_HISTORY_SAVE_INTERVAL_SECONDS = 60
 ALERT_LOG_MEMORY_LIMIT = 50
 ALERT_LOG_EXPORT_LIMIT = 1000
 ALERT_LOG_DB_LIMIT = 5000
+ALERT_RULE_SIMULATION_POINT_LIMIT = 30000
 EVENT_TIMELINE_TYPES = (
     "price_summary",
     "alert",
@@ -837,6 +838,7 @@ def get_alert_rules_state():
         alert_rules,
         positions=positions,
         prices={"usd": price_usd, "rmb": price_rmb},
+        price_history=list(price_history),
         migration=alert_rule_migration_status,
         invalid_count=alert_rules_invalid_count,
         load_error=alert_rules_load_error,
@@ -926,6 +928,18 @@ def duplicate_alert_rule_entry(rule_id):
         )
         state = _persist_alert_rule_items(next_rules) if duplicated else get_alert_rules_state()
     return duplicated is not None, state, duplicated
+
+
+def batch_update_alert_rules_entry(rule_ids, action):
+    with lock:
+        next_rules, affected_ids = alert_rules_core.batch_update_alert_rules(
+            alert_rules,
+            rule_ids,
+            action,
+            now_factory=datetime.now,
+        )
+        state = _persist_alert_rule_items(next_rules)
+    return state, affected_ids
 
 
 def _replace_legacy_threshold_rule(mode, threshold_type, value):
@@ -1585,6 +1599,165 @@ def build_portfolio_analytics_state(days=90, now=None):
                 horizon_hours=24,
             ),
         },
+    }
+
+
+def _alert_rule_delivery_insight(rule, now=None):
+    settings = get_settings_snapshot()
+    now = now or datetime.now()
+    delivery = rule.get("delivery") if isinstance(rule.get("delivery"), dict) else {}
+    configured_channels = delivery.get("channels", "inherit")
+    alert_level = str(rule.get("alert_level") or "warning")
+    email_key = notifications_core.ALERT_CHANNEL_KEYS["email"].get(alert_level, "email_warning_enabled")
+    webhook_key = notifications_core.ALERT_CHANNEL_KEYS["webhook"].get(alert_level, "webhook_warning_enabled")
+    if configured_channels == "inherit" or configured_channels is None:
+        selected_channels = ["local"]
+        if settings.get(email_key, True):
+            selected_channels.append("email")
+        if settings.get("webhook_enabled", False) and settings.get(webhook_key, True):
+            selected_channels.append("webhook")
+        inherited = True
+    else:
+        selected_channels = [
+            channel for channel in list(configured_channels or [])
+            if channel in alert_rules_core.ALERT_RULE_CHANNELS
+        ]
+        inherited = False
+
+    channel_items = []
+    for channel in selected_channels:
+        ready = True
+        reason = ""
+        if channel == "email":
+            if not settings.get(email_key, True):
+                ready = False
+                reason = "全局邮件开关已关闭"
+            elif not all([
+                settings.get("smtp_server"),
+                settings.get("smtp_sender"),
+                settings.get("smtp_recipient"),
+                settings.get("smtp_password"),
+            ]):
+                ready = False
+                reason = "邮件配置不完整"
+        elif channel == "webhook":
+            if not settings.get("webhook_enabled", False) or not settings.get(webhook_key, True):
+                ready = False
+                reason = "全局 Webhook 开关已关闭"
+            elif not settings.get("webhook_url"):
+                ready = False
+                reason = "Webhook 地址未配置"
+        channel_items.append({
+            "channel": channel,
+            "label": {"local": "本机", "email": "邮件", "webhook": "Webhook"}[channel],
+            "ready": ready,
+            "reason": reason,
+        })
+
+    cooldown = delivery.get("cooldown_minutes", "inherit")
+    if cooldown in (None, "", "inherit"):
+        cooldown = settings.get("alert_cooldown_minutes", 0)
+        cooldown_inherited = True
+    else:
+        cooldown_inherited = False
+    try:
+        cooldown = max(0, int(cooldown or 0))
+    except (TypeError, ValueError):
+        cooldown = 0
+    return {
+        "inherited": inherited,
+        "record_only": not selected_channels,
+        "channels": channel_items,
+        "cooldown_minutes": cooldown,
+        "cooldown_inherited": cooldown_inherited,
+        "quiet_time_active": notifications_core.is_alert_quiet_time(settings, now=now),
+    }
+
+
+def build_alert_rule_insight(rule_id, days=30, now=None):
+    now = now or datetime.now()
+    try:
+        days = max(1, min(90, int(days or 30)))
+    except (TypeError, ValueError):
+        days = 30
+    with lock:
+        rule = _find_alert_rule(rule_id)
+        rule = dict(rule) if isinstance(rule, dict) else None
+    if not rule:
+        return None
+    cutoff = now - timedelta(days=days)
+    alert_entries = [
+        dict(item) for item in alert_log_export_entries(limit=ALERT_LOG_EXPORT_LIMIT)
+        if str(item.get("rule_id") or "") == str(rule_id or "")
+        and _history_timestamp(item.get("timestamp"))
+        and _history_timestamp(item.get("timestamp")) >= cutoff
+    ]
+    effectiveness = portfolio_analytics_core.build_alert_effectiveness(
+        alert_entries,
+        _analytics_price_history(days, limit=1000),
+        horizon_hours=24,
+    )
+    recent_alerts = []
+    for entry in reversed(alert_entries[-5:]):
+        notification_summary = entry.get("notification_summary")
+        notification_status = (
+            str(notification_summary.get("status") or "")
+            if isinstance(notification_summary, dict)
+            else ""
+        )
+        recent_alerts.append({
+            "id": str(entry.get("id") or ""),
+            "timestamp": str(entry.get("timestamp") or ""),
+            "message": str(entry.get("message") or ""),
+            "notification_status": notification_status,
+            "acknowledged": bool(entry.get("acknowledged")),
+            "handled": bool(entry.get("handled")),
+        })
+    return {
+        "rule_id": rule.get("id"),
+        "period_days": days,
+        "generated_at": now.isoformat(timespec="seconds"),
+        "delivery": _alert_rule_delivery_insight(rule, now=now),
+        "effectiveness": effectiveness,
+        "recent_alerts": recent_alerts,
+    }
+
+
+def build_alert_rule_simulation(rule_payload, days=30, now=None):
+    if not isinstance(rule_payload, dict):
+        raise alert_rules_core.AlertRuleError("预警规则格式无效")
+    now = now or datetime.now()
+    try:
+        days = int(days)
+    except (TypeError, ValueError) as exc:
+        raise alert_rules_core.AlertRuleError("历史模拟范围无效") from exc
+    if days not in alert_rules_core.ALERT_RULE_SIMULATION_PERIODS:
+        raise alert_rules_core.AlertRuleError("历史模拟仅支持 7、30 或 90 天")
+
+    rule_id = str(rule_payload.get("id") or "")
+    with lock:
+        existing = _find_alert_rule(rule_id) if rule_id else None
+        existing = dict(existing) if isinstance(existing, dict) else None
+    rule = alert_rules_core.normalize_alert_rule(
+        rule_payload,
+        existing=existing,
+        now_factory=lambda: now,
+        id_factory=lambda: "rule-preview",
+    )
+    delivery = _alert_rule_delivery_insight(rule, now=now)
+    history = []
+    if rule.get("kind") in alert_rules_core.ALERT_RULE_SIMULATION_KINDS:
+        history = _analytics_price_history(days, limit=ALERT_RULE_SIMULATION_POINT_LIMIT)
+    simulation = alert_rules_core.simulate_alert_rule(
+        rule,
+        history,
+        cooldown_minutes=delivery.get("cooldown_minutes", 0),
+        period_days=days,
+    )
+    return {
+        "rule_id": rule.get("id"),
+        "generated_at": now.isoformat(timespec="seconds"),
+        **simulation,
     }
 
 
@@ -6159,6 +6332,57 @@ def on_reset_alert_rule_state(data=None):
         return
     emit("alert_rule_reset", {"ok": True, "id": str(rule_id or "")})
     _broadcast_alert_rule_views(state)
+
+
+@socketio.on("batch_update_alert_rules")
+def on_batch_update_alert_rules(data=None):
+    data = data if isinstance(data, dict) else {}
+    action = data.get("action")
+    rule_ids = data.get("ids")
+    try:
+        state, affected_ids = batch_update_alert_rules_entry(rule_ids, action)
+    except alert_rules_core.AlertRuleError as exc:
+        emit("alert_rule_error", {"message": str(exc)})
+        return
+    except alert_rules_core.AlertRuleStoreError:
+        emit("alert_rule_error", {"message": "批量保存预警规则失败，请检查配置目录权限。"})
+        return
+    emit("alert_rules_batch_updated", {
+        "ok": True,
+        "action": str(action or ""),
+        "ids": affected_ids,
+        "count": len(affected_ids),
+    })
+    _broadcast_alert_rule_views(state)
+
+
+@socketio.on("get_alert_rule_insight")
+def on_get_alert_rule_insight(data=None):
+    data = data if isinstance(data, dict) else {}
+    insight = build_alert_rule_insight(data.get("id"), days=data.get("days", 30))
+    if not insight:
+        emit("alert_rule_error", {"message": "未找到预警规则。"})
+        return
+    emit("alert_rule_insight", insight)
+
+
+@socketio.on("simulate_alert_rule")
+def on_simulate_alert_rule(data=None):
+    data = data if isinstance(data, dict) else {}
+    request_id = str(data.get("request_id") or "")[:80]
+    try:
+        result = build_alert_rule_simulation(data.get("rule"), days=data.get("days", 30))
+    except alert_rules_core.AlertRuleError as exc:
+        emit("alert_rule_simulation_error", {"request_id": request_id, "message": str(exc)})
+        return
+    except Exception:
+        logging.exception("预警规则历史模拟失败")
+        emit("alert_rule_simulation_error", {
+            "request_id": request_id,
+            "message": "历史模拟失败，请检查价格历史数据后重试。",
+        })
+        return
+    emit("alert_rule_simulation", {"request_id": request_id, **result})
 
 
 @socketio.on("set_threshold")

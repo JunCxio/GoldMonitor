@@ -87,6 +87,37 @@ css = css_path.read_text(encoding="utf-8")
 js = js_path.read_text(encoding="utf-8")
 
 for required in (
+    'id="alertRuleSelectVisible"',
+    'id="alertRuleBatchBar"',
+    'oninput="setAlertRuleSearch(this.value)"',
+    'onchange="setAlertRuleStatusFilter(this.value)"',
+    "function batchUpdateSelectedAlertRules",
+    "function buildAlertRuleDetail",
+    "function buildAlertRuleSimulationPanel",
+    "function simulateUnifiedAlertRule",
+    "socket.emit('batch_update_alert_rules'",
+    "socket.emit('get_alert_rule_insight'",
+    "socket.emit('simulate_alert_rule'",
+    "socket.on('alert_rule_insight'",
+    "socket.on('alert_rule_simulation'",
+    "socket.on('alert_rule_simulation_error'",
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing alert rule operations contract: {required}")
+
+for required in (
+    ".alert-center-tools",
+    ".alert-center-batch.active",
+    ".alert-center-detail",
+    ".alert-center-inspection-grid",
+    ".alert-center-insight-grid",
+    ".alert-center-simulation-grid",
+    ".alert-center-simulation-distribution",
+):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing alert rule operations selector: {required}")
+
+for required in (
     'id="floatingTopmostRow"',
     'id="setFloatingAlwaysOnTop"',
     'floating_price_always_on_top',

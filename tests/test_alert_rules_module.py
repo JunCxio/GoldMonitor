@@ -74,6 +74,197 @@ def test_rule_normalization_crud_and_delivery_contract():
         })
 
 
+def test_rule_inspection_explains_current_value_distance_and_blockers():
+    from goldmonitor.alert_rules import inspect_alert_rule, normalize_alert_rule
+
+    price_rule = normalize_alert_rule({
+        "id": "rule-price",
+        "kind": "price_threshold",
+        "scope": {"mode": "rmb"},
+        "condition": {"operator": "gte", "value": 720},
+    }, now_factory=fixed_now)
+    price_inspection = inspect_alert_rule(
+        price_rule,
+        prices={"rmb": 714},
+        now=fixed_now(),
+    )
+    assert price_inspection["status"] == "watching"
+    assert price_inspection["reason"] == "watching"
+    assert price_inspection["current_value"] == 714
+    assert price_inspection["distance_to_trigger"] == 6
+
+    loss_rule = normalize_alert_rule({
+        "id": "rule-loss",
+        "kind": "portfolio",
+        "scope": {"position_id": "position-gold"},
+        "condition": {"condition_key": "loss_percent", "value": 5},
+    }, now_factory=fixed_now)
+    loss_inspection = inspect_alert_rule(
+        loss_rule,
+        positions=[{"id": "position-gold", "unrealized_pnl_percent": -3}],
+        now=fixed_now(),
+    )
+    assert loss_inspection["value_kind"] == "percent"
+    assert loss_inspection["distance_to_trigger"] == 2
+
+    orphaned = inspect_alert_rule(loss_rule, positions=[], now=fixed_now())
+    assert orphaned["status"] == "orphaned"
+    assert orphaned["reason"] == "position_missing"
+
+    disabled_rule = dict(price_rule)
+    disabled_rule["enabled"] = False
+    disabled = inspect_alert_rule(disabled_rule, prices={}, now=fixed_now())
+    assert disabled["status"] == "disabled"
+    assert disabled["reason"] == "disabled"
+
+    volatility_rule = normalize_alert_rule({
+        "id": "rule-volatility",
+        "kind": "volatility",
+        "scope": {"mode": "usd"},
+        "condition": {"value": 1, "window_minutes": 1},
+    }, now_factory=fixed_now)
+    waiting = inspect_alert_rule(
+        volatility_rule,
+        prices={"usd": 2300},
+        price_history=[{"usd": 2300}],
+        now=fixed_now(),
+    )
+    assert waiting["status"] == "waiting_data"
+    assert waiting["reason"] == "history_insufficient"
+    assert waiting["required_samples"] == 6
+
+
+def test_rule_history_simulation_covers_crossings_cooldown_and_unsupported_rules():
+    from goldmonitor.alert_rules import normalize_alert_rule, simulate_alert_rule
+
+    price_rule = normalize_alert_rule({
+        "id": "rule-price-simulation",
+        "kind": "price_threshold",
+        "scope": {"mode": "rmb"},
+        "condition": {"operator": "gte", "value": 100},
+    }, now_factory=fixed_now)
+    price_history = [
+        {"timestamp": timestamp, "rmb": value}
+        for timestamp, value in (
+            ("2026-07-27T09:00:00", 99),
+            ("2026-07-27T09:01:00", 101),
+            ("2026-07-27T09:02:00", 102),
+            ("2026-07-27T09:03:00", 99),
+            ("2026-07-27T09:05:00", 101),
+            ("2026-07-27T09:15:00", 99),
+            ("2026-07-27T09:16:00", 102),
+        )
+    ]
+    simulated = simulate_alert_rule(
+        price_rule,
+        price_history,
+        cooldown_minutes=10,
+        period_days=7,
+    )
+    assert simulated["usable"] is True
+    assert simulated["match_count"] == 3
+    assert simulated["effective_trigger_count"] == 2
+    assert simulated["suppressed_count"] == 1
+    assert simulated["coverage"]["point_count"] == 7
+    assert next(item for item in simulated["time_distribution"] if item["key"] == "morning")["count"] == 2
+
+    watch_rule = normalize_alert_rule({
+        "id": "rule-watch-simulation",
+        "kind": "watch_target",
+        "scope": {"mode": "rmb"},
+        "condition": {"operator": "gte", "value": 100},
+    }, now_factory=fixed_now)
+    watch_simulation = simulate_alert_rule(watch_rule, price_history, period_days=7)
+    assert watch_simulation["match_count"] == 3
+    assert watch_simulation["effective_trigger_count"] == 1
+    assert watch_simulation["trigger_policy"] == "single"
+
+    portfolio_rule = normalize_alert_rule({
+        "id": "rule-portfolio-simulation",
+        "kind": "portfolio",
+        "scope": {"position_id": "position-gold"},
+        "condition": {"condition_key": "take_profit", "value": 760},
+    }, now_factory=fixed_now)
+    unsupported = simulate_alert_rule(portfolio_rule, price_history, period_days=7)
+    assert unsupported["supported"] is False
+    assert unsupported["reason"] == "portfolio_history_unavailable"
+
+
+def test_volatility_history_simulation_requires_usable_window_resolution():
+    from goldmonitor.alert_rules import normalize_alert_rule, simulate_alert_rule
+
+    rule = normalize_alert_rule({
+        "id": "rule-volatility-simulation",
+        "kind": "volatility",
+        "scope": {"mode": "usd"},
+        "condition": {"value": 1, "window_minutes": 2},
+    }, now_factory=fixed_now)
+    history = [
+        {"timestamp": timestamp, "usd": value}
+        for timestamp, value in (
+            ("2026-07-27T10:00:00", 100),
+            ("2026-07-27T10:01:00", 100),
+            ("2026-07-27T10:02:00", 102),
+            ("2026-07-27T10:03:00", 102),
+            ("2026-07-27T10:04:00", 100),
+        )
+    ]
+    simulated = simulate_alert_rule(rule, history, cooldown_minutes=3, period_days=7)
+    assert simulated["usable"] is True
+    assert simulated["evaluated_count"] == 3
+    assert simulated["match_count"] == 3
+    assert simulated["effective_trigger_count"] == 1
+
+    coarse = simulate_alert_rule(
+        rule,
+        [
+            {"timestamp": "2026-07-27T10:00:00", "usd": 100},
+            {"timestamp": "2026-07-27T11:00:00", "usd": 105},
+        ],
+        period_days=7,
+    )
+    assert coarse["usable"] is False
+    assert coarse["reason"] == "history_resolution_too_coarse"
+
+
+def test_batch_rule_updates_are_atomic_and_cover_supported_actions():
+    from goldmonitor.alert_rules import AlertRuleError, batch_update_alert_rules, normalize_alert_rule
+
+    rules = [
+        normalize_alert_rule({
+            "id": rule_id,
+            "kind": "watch_target",
+            "scope": {"mode": "rmb"},
+            "condition": {"operator": "lte", "value": value},
+        }, now_factory=fixed_now)
+        for rule_id, value in (("rule-one", 700), ("rule-two", 690))
+    ]
+
+    disabled, affected = batch_update_alert_rules(
+        rules,
+        ["rule-one", "rule-two", "rule-one"],
+        "disable",
+        now_factory=fixed_now,
+    )
+    assert affected == ["rule-one", "rule-two"]
+    assert all(rule["enabled"] is False for rule in disabled)
+
+    enabled, _ = batch_update_alert_rules(disabled, affected, "enable", now_factory=fixed_now)
+    assert all(rule["enabled"] is True for rule in enabled)
+
+    enabled[0]["state"]["triggered"] = True
+    reset, _ = batch_update_alert_rules(enabled, ["rule-one"], "reset", now_factory=fixed_now)
+    assert reset[0]["state"]["triggered"] is False
+
+    deleted, _ = batch_update_alert_rules(reset, ["rule-two"], "delete", now_factory=fixed_now)
+    assert [rule["id"] for rule in deleted] == ["rule-one"]
+
+    snapshot = [dict(rule) for rule in rules]
+    with pytest.raises(AlertRuleError, match="已不存在"):
+        batch_update_alert_rules(rules, ["rule-one", "rule-missing"], "disable", now_factory=fixed_now)
+    assert rules == snapshot
+
+
 def test_legacy_migration_and_compatibility_snapshots():
     from goldmonitor.alert_rules import (
         legacy_portfolio_alerts,
