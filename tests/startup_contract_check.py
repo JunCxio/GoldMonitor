@@ -2,6 +2,7 @@ from pathlib import Path
 
 
 source = Path("app.py").read_text(encoding="utf-8")
+desktop_runtime_source = Path("goldmonitor/desktop_runtime.py").read_text(encoding="utf-8")
 mac_launcher = Path("GoldMonitor.command").read_text(encoding="utf-8")
 mac_script = Path("scripts/start_mac.sh").read_text(encoding="utf-8")
 main_marker = 'if __name__ == "__main__":'
@@ -35,10 +36,16 @@ if 'if os.name == "nt":\n        tray_thread = threading.Thread(target=create_tr
 if 'start_hidden = (os.name == "nt" or sys.platform == "darwin") and startup_mode' not in main_block:
     raise SystemExit("startup hidden mode must support Windows tray and macOS menu bar")
 
-if 'webview.start(gui="edgechromium")' not in source or 'webview.start()' not in source:
+if 'from goldmonitor import desktop_runtime as desktop_runtime_core' not in source:
+    raise SystemExit("app.py must delegate desktop lifecycle orchestration to desktop_runtime")
+
+if 'return desktop_runtime_core.start_desktop_window(' not in source:
+    raise SystemExit("app.py must keep a compatible desktop window wrapper")
+
+if 'webview.start(gui="edgechromium")' not in desktop_runtime_source or 'webview.start()' not in desktop_runtime_source:
     raise SystemExit("desktop window must choose the pywebview backend by platform")
 
-if 'if sys.platform == "darwin":\n                snapshot = get_settings_snapshot()' not in source:
+if 'runtime_platform = "macos"' not in desktop_runtime_source:
     raise SystemExit("macOS desktop close must support hiding to menu bar")
 
 if 'create_macos_status_item()' not in source:

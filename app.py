@@ -24,6 +24,7 @@ from goldmonitor import app_state as app_state_core
 from goldmonitor import desktop_ui as desktop_ui_core
 from goldmonitor import daily_digest as daily_digest_core
 from goldmonitor import data_archive as data_archive_core
+from goldmonitor import desktop_runtime as desktop_runtime_core
 from goldmonitor import event_timeline as event_timeline_core
 from goldmonitor import instance_runtime as instance_runtime_core
 from goldmonitor import market_adapters as market_adapters_core
@@ -6432,6 +6433,36 @@ _background_fetch_started = False
 _news_fetch_started = False
 
 
+def _set_window_instance(value):
+    global _window_instance
+    _window_instance = value
+
+
+def _set_tray_icon(value):
+    global _tray_icon
+    _tray_icon = value
+
+
+def _set_window_hwnd(value):
+    global _window_hwnd
+    _window_hwnd = value
+
+
+def _set_background_fetch_started(value):
+    global _background_fetch_started
+    _background_fetch_started = bool(value)
+
+
+def _set_news_fetch_started(value):
+    global _news_fetch_started
+    _news_fetch_started = bool(value)
+
+
+def _set_daily_digest_scheduler_started(value):
+    global _daily_digest_scheduler_started
+    _daily_digest_scheduler_started = bool(value)
+
+
 def format_price_title(rmb=None, usd=None):
     if rmb is None and usd is None:
         with lock:
@@ -7368,99 +7399,72 @@ def _find_main_window_hwnd():
 
 
 def hide_main_window():
-    global _window_hwnd
-    window = _window_instance
-    if window:
-        try:
-            window.hide()
-        except Exception:
-            pass
-
-    if os.name == "nt":
-        try:
-            import ctypes
-            SW_HIDE = 0
-            hwnd = _window_hwnd or _find_main_window_hwnd()
-            if hwnd:
-                _window_hwnd = hwnd
-                ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
-        except Exception:
-            pass
+    return desktop_runtime_core.hide_main_window(
+        get_window=lambda: _window_instance,
+        os_name=os.name,
+        get_window_hwnd=lambda: _window_hwnd,
+        set_window_hwnd=_set_window_hwnd,
+        find_window_hwnd=lambda: _find_main_window_hwnd(),
+        ctypes_loader=lambda: __import__("ctypes"),
+    )
 
 
 def show_main_window():
-    global _window_hwnd
-    window = _window_instance
-    if window:
-        try:
-            window.show()
-            window.restore()
-        except Exception:
-            pass
-
-    if sys.platform == "darwin":
-        script = f'''
-tell application "System Events"
-    set targetProcesses to every process whose unix id is {os.getpid()}
-    if (count of targetProcesses) > 0 then set frontmost of item 1 of targetProcesses to true
-end tell
-'''
-        _run_macos_osascript(script, wait=False)
-
-    if os.name == "nt":
-        try:
-            import ctypes
-            SW_RESTORE = 9
-            hwnd = _window_hwnd or _find_main_window_hwnd()
-            if hwnd:
-                _window_hwnd = hwnd
-                ctypes.windll.user32.ShowWindow(hwnd, SW_RESTORE)
-                ctypes.windll.user32.SetForegroundWindow(hwnd)
-        except Exception:
-            pass
+    return desktop_runtime_core.show_main_window(
+        get_window=lambda: _window_instance,
+        os_name=os.name,
+        sys_platform=sys.platform,
+        process_id=os.getpid(),
+        run_macos_script=lambda script, wait=False: _run_macos_osascript(script, wait=wait),
+        get_window_hwnd=lambda: _window_hwnd,
+        set_window_hwnd=_set_window_hwnd,
+        find_window_hwnd=lambda: _find_main_window_hwnd(),
+        ctypes_loader=lambda: __import__("ctypes"),
+    )
 
 
 def exit_app():
-    icon = _tray_icon
-    if icon:
-        try:
-            icon.stop()
-        except Exception:
-            pass
-    os._exit(0)
+    return desktop_runtime_core.exit_application(
+        get_tray_icon=lambda: _tray_icon,
+        process_exit=os._exit,
+    )
 
 
 def start_background_fetching():
-    global _background_fetch_started
-    if _background_fetch_started:
-        return
-    _background_fetch_started = True
-    threading.Thread(target=background_loop, daemon=True).start()
+    return desktop_runtime_core.start_thread_once(
+        is_started=lambda: _background_fetch_started,
+        mark_started=_set_background_fetch_started,
+        target=background_loop,
+        thread_factory=threading.Thread,
+    )
 
 
 def start_news_fetching():
-    global _news_fetch_started
-    if _news_fetch_started:
-        return
-    _news_fetch_started = True
-    threading.Thread(target=news_loop, daemon=True).start()
+    return desktop_runtime_core.start_thread_once(
+        is_started=lambda: _news_fetch_started,
+        mark_started=_set_news_fetch_started,
+        target=news_loop,
+        thread_factory=threading.Thread,
+    )
 
 
 def daily_digest_loop():
-    while True:
-        try:
-            run_daily_digest_once()
-        except Exception:
-            logging.exception("执行每日摘要任务失败")
-        time.sleep(30)
+    return desktop_runtime_core.run_periodic_task(
+        lambda: run_daily_digest_once(),
+        interval=30,
+        sleep=lambda seconds: time.sleep(seconds),
+        logger=logging,
+        error_message="执行每日摘要任务失败",
+    )
 
 
 def start_daily_digest_scheduler():
-    global _daily_digest_scheduler_started
-    if _daily_digest_scheduler_started:
-        return
-    _daily_digest_scheduler_started = True
-    threading.Thread(target=daily_digest_loop, daemon=True).start()
+    return desktop_runtime_core.start_thread_once(
+        is_started=lambda: _daily_digest_scheduler_started,
+        mark_started=_set_daily_digest_scheduler_started,
+        target=daily_digest_loop,
+        thread_factory=threading.Thread,
+    )
 
 
 def wait_for_server_ready(timeout=3.0):
@@ -7476,58 +7480,18 @@ def wait_for_server_ready(timeout=3.0):
 
 # ---------- 系统托盘 ----------
 def create_tray_icon():
-    global _window_instance, _tray_icon
-    try:
-        from PIL import Image
-        import pystray
-
-        icon_path = os.path.join(_basedir, "static", "icon-64.png")
-        if os.path.exists(icon_path):
-            icon_img = Image.open(icon_path)
-        else:
-            from PIL import ImageDraw
-            icon_img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-            ImageDraw.Draw(icon_img).ellipse([4, 4, 60, 60], fill="#e8b830")
-
-        def on_show(icon, item):
-            show_main_window()
-
-        def on_refresh(icon, item):
-            _refresh_price_from_tray_menu()
-
-        def on_risk_analysis(icon, item):
-            _open_risk_analysis_from_tray_menu()
-
-        def on_toggle_floating(icon, item):
-            _toggle_floating_price_from_tray_menu()
-
-        def on_quit(icon, item):
-            exit_app()
-
-        menu = (
-            pystray.MenuItem("显示窗口", on_show, default=True),
-            pystray.MenuItem("刷新行情", on_refresh),
-            pystray.MenuItem("风险分析", on_risk_analysis),
-            pystray.MenuItem("切换悬浮条", on_toggle_floating),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("退出", on_quit),
-        )
-
-        icon = pystray.Icon("gold_monitor", icon_img, "金价监控", menu)
-        _tray_icon = icon
-
-        def update_tooltip():
-            while True:
-                try:
-                    icon.title = format_price_title()
-                except Exception:
-                    pass
-                time.sleep(5)
-
-        threading.Thread(target=update_tooltip, daemon=True).start()
-        icon.run()
-    except Exception:
-        pass
+    return desktop_runtime_core.create_tray_icon(
+        base_dir=_basedir,
+        set_tray_icon=_set_tray_icon,
+        show_window=lambda: show_main_window(),
+        refresh_price=lambda: _refresh_price_from_tray_menu(),
+        open_risk_analysis=lambda: _open_risk_analysis_from_tray_menu(),
+        toggle_floating_price=lambda: _toggle_floating_price_from_tray_menu(),
+        exit_application=lambda: exit_app(),
+        format_title=lambda: format_price_title(),
+        thread_factory=threading.Thread,
+        sleep=lambda seconds: time.sleep(seconds),
+    )
 
 
 def ask_close_choice():
@@ -7623,107 +7587,35 @@ def ask_close_choice():
 
 
 # ---------- 桌面原生窗口 ----------
-class DesktopBridge:
-    def choose_export_dir(self):
-        return choose_export_dir_for_desktop()
+class DesktopBridge(desktop_runtime_core.DesktopBridge):
+    def __init__(self):
+        super().__init__(lambda: choose_export_dir_for_desktop())
 
 
 def start_desktop_window(start_hidden=False):
     """使用 pywebview 创建原生桌面窗口"""
-    global _window_instance, _window_hwnd
-    try:
-        import webview
-        if sys.platform == "darwin":
-            create_macos_status_item()
-
-        def on_shown():
-            global _window_hwnd
-            if os.name != "nt":
-                return
-            # 窗口显示后: 最大化 + 设置金块图标
-            try:
-                import ctypes
-                user32 = ctypes.windll.user32
-                hwnd = user32.FindWindowW(None, APP_NAME)
-                if hwnd:
-                    _window_hwnd = hwnd
-                    # 设置图标
-                    icon_path = os.path.join(_basedir, "static", "icon.ico")
-                    if os.path.exists(icon_path):
-                        hicon = user32.LoadImageW(None, icon_path, 1, 64, 64, 0x10)
-                        if hicon:
-                            user32.SendMessageW(hwnd, 0x0080, 0, hicon)
-                            user32.SendMessageW(hwnd, 0x0080, 1, hicon)
-                    if start_hidden and _window_instance:
-                        hide_main_window()
-                    else:
-                        # 最大化窗口 (SW_MAXIMIZE=3)
-                        user32.ShowWindow(hwnd, 3)
-            except Exception:
-                pass
-
-        def on_closing():
-            if sys.platform == "darwin":
-                snapshot = get_settings_snapshot()
-                decision = platform_core.close_behavior_decision(snapshot, "macos")
-                if decision == "exit":
-                    exit_app()
-                    return False
-
-                if decision == "minimize_to_tray":
-                    hide_main_window()
-                    return False
-
-                socketio.emit("show_close_dialog", {
-                    "close_behavior": snapshot.get("close_behavior", "ask"),
-                    "close_remembered": bool(snapshot.get("close_remembered")),
-                })
-                return False
-
-            if os.name != "nt":
-                exit_app()
-                return False
-
-            snapshot = get_settings_snapshot()
-            decision = platform_core.close_behavior_decision(snapshot, "windows")
-            if decision == "exit":
-                exit_app()
-                return False
-
-            if decision == "minimize_to_tray":
-                hide_main_window()
-                return False
-
-            socketio.emit("show_close_dialog", {
-                "close_behavior": snapshot.get("close_behavior", "ask"),
-                "close_remembered": bool(snapshot.get("close_remembered")),
-            })
-            return False
-
-        _window_instance = webview.create_window(
-            title=APP_NAME,
-            url=f"http://{DEFAULT_HOST}:{server_port}",
-            width=1200,
-            height=780,
-            min_size=(860, 500),
-            hidden=start_hidden,
-            resizable=True,
-            easy_drag=False,
-            on_top=False,
-            maximized=not start_hidden,  # 启动即最大化
-            js_api=DesktopBridge(),
-        )
-
-        _window_instance.events.shown += on_shown
-        _window_instance.events.closing += on_closing
-
-        if os.name == "nt":
-            webview.start(gui="edgechromium")
-        else:
-            webview.start()
-
-    except Exception:
-        pass
+    return desktop_runtime_core.start_desktop_window(
+        app_name=APP_NAME,
+        url=f"http://{DEFAULT_HOST}:{server_port}",
+        base_dir=_basedir,
+        start_hidden=start_hidden,
+        os_name=os.name,
+        sys_platform=sys.platform,
+        bridge=DesktopBridge(),
+        get_window=lambda: _window_instance,
+        set_window=_set_window_instance,
+        set_window_hwnd=_set_window_hwnd,
+        create_macos_status_item=lambda: create_macos_status_item(),
+        get_settings_snapshot=lambda: get_settings_snapshot(),
+        close_behavior_decision=(
+            lambda snapshot, runtime_platform:
+            platform_core.close_behavior_decision(snapshot, runtime_platform)
+        ),
+        hide_window=lambda: hide_main_window(),
+        exit_application=lambda: exit_app(),
+        emit=lambda event, payload: socketio.emit(event, payload),
+        ctypes_loader=lambda: __import__("ctypes"),
+    )
 
 
 # ---------- 启动 ----------
