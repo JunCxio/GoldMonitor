@@ -2,6 +2,7 @@ from datetime import datetime
 from pathlib import Path
 import sys
 import threading
+from types import SimpleNamespace
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -10,7 +11,13 @@ from goldmonitor.market_adapters import MarketAdapterRegistry, MarketSourceAdapt
 from goldmonitor.market_runtime import (
     MarketRuntime,
     build_market_adapter_catalog,
+    build_fetch_status,
+    commit_runtime_state,
     fetch_market_data_result,
+    market_state_snapshot,
+    record_runtime_source_price_sample,
+    refresh_runtime_source_comparison,
+    runtime_state_snapshot,
 )
 
 
@@ -189,3 +196,93 @@ def test_market_runtime_updates_state_and_emits_price_status_and_history():
     ]
     assert emitted[0][1]["source_comparison"] == {"status": "ok"}
     assert emitted[-1][1]["scope"] == "live"
+
+
+def test_market_runtime_state_helpers_roundtrip_explicit_fields():
+    from goldmonitor.runtime_state import ApplicationRuntimeState
+
+    runtime = ApplicationRuntimeState(price_usd=2300.0, price_rmb=535.0)
+    snapshot = runtime_state_snapshot(runtime)
+    snapshot["price_usd"] = 2310.0
+    snapshot["today_high_usd"] = 2320.0
+    commit_runtime_state(runtime, snapshot)
+
+    assert runtime.price_usd == 2310.0
+    assert runtime.today_high_usd == 2320.0
+    assert market_state_snapshot(runtime)["price_rmb"] == 535.0
+
+
+def test_fetch_status_and_source_sample_helpers_are_deterministic():
+    from goldmonitor.runtime_state import ApplicationRuntimeState
+
+    status = build_fetch_status(
+        False,
+        gold_ok=True,
+        forex_ok=False,
+        gold_source="测试金价",
+        forex_error="汇率失败",
+        now_factory=lambda: datetime(2026, 7, 28, 12, 0),
+    )
+    assert status["status"] == "degraded"
+    assert status["sources"]["gold"]["source"] == "测试金价"
+    assert status["time"] == "12:00:00"
+
+    runtime = ApplicationRuntimeState()
+    record_runtime_source_price_sample(
+        runtime,
+        "测试金价",
+        {"close": "2350.25", "open": "2340", "cached": True},
+        number_formatter=lambda value: float(value) if value is not None else None,
+        now_factory=lambda: datetime(2026, 7, 28, 12, 30),
+    )
+    assert runtime.source_price_samples["测试金价"] == {
+        "name": "测试金价",
+        "usd": 2350.25,
+        "open": 2340.0,
+        "high": None,
+        "low": None,
+        "source_time": "",
+        "checked_at": "2026-07-28T12:30:00",
+        "cached": True,
+    }
+
+
+def test_refresh_source_comparison_records_primary_and_periodic_probes():
+    from goldmonitor.runtime_state import ApplicationRuntimeState
+
+    runtime = ApplicationRuntimeState(last_source_comparison_probe_at=0.0)
+    samples = []
+    secondary = SimpleNamespace(
+        cache_source="备用金价",
+        fetch=lambda: SimpleNamespace(value={"close": 2348.0}),
+    )
+    primary = SimpleNamespace(
+        cache_source="主金价",
+        fetch=lambda: SimpleNamespace(value={"close": 2350.0}),
+    )
+    registry = SimpleNamespace(
+        category_adapters=lambda category: [primary, secondary]
+    )
+
+    result = refresh_runtime_source_comparison(
+        runtime,
+        {"close": 2350.0},
+        "主金价",
+        False,
+        record_sample=(
+            lambda name, data, cached=False:
+            samples.append((name, data["close"], cached))
+        ),
+        registry_builder=lambda: registry,
+        comparison_builder=lambda: {"status": "ok"},
+        refresh_seconds=60,
+        monotonic_factory=lambda: 100.0,
+    )
+
+    assert result == {"status": "ok"}
+    assert samples == [
+        ("主金价", 2350.0, False),
+        ("备用金价", 2348.0, False),
+    ]
+    assert runtime.source_comparison_state == {"status": "ok"}
+    assert runtime.last_source_comparison_probe_at == 100.0

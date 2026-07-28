@@ -4,7 +4,7 @@ set -euxo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="GoldMonitor"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-APP_VERSION="$("$PYTHON_BIN" -c 'import re; from pathlib import Path; print(re.search(r"APP_VERSION\s*=\s*\"([^\"]+)\"", Path("app.py").read_text(encoding="utf-8")).group(1))')"
+APP_VERSION="$("$PYTHON_BIN" -c 'import re; from pathlib import Path; print(re.search(r"APP_VERSION\s*=\s*\"([^\"]+)\"", Path("goldmonitor/application.py").read_text(encoding="utf-8")).group(1))')"
 BUILD_DIR="$ROOT_DIR/build/macos"
 ICONSET_DIR="$BUILD_DIR/icon.iconset"
 ICON_FILE="$BUILD_DIR/icon.icns"

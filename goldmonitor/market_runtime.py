@@ -1,7 +1,290 @@
+import math
 import time
 from datetime import datetime
 
 from goldmonitor import market_data as market_data_core
+
+
+RUNTIME_MARKET_STATE_FIELDS = (
+    "price_usd",
+    "price_rmb",
+    "previous_usd",
+    "previous_rmb",
+    "usdcny_rate",
+    "usdcny_rate_source",
+    "usdcny_rate_time",
+    "usdcny_rate_cached",
+    "usdcny_rate_error",
+    "gold_price_source",
+    "gold_price_time",
+    "gold_price_cached",
+    "gold_price_error",
+    "price_history",
+    "klines_5min",
+    "last_fetch_ok",
+    "last_fetch_error",
+    "last_fetch_time",
+    "today_date",
+    "today_open_usd",
+    "today_high_usd",
+    "today_low_usd",
+    "today_open_rmb",
+    "today_high_rmb",
+    "today_low_rmb",
+)
+
+
+def runtime_state_snapshot(runtime):
+    return {
+        field_name: getattr(runtime, field_name)
+        for field_name in RUNTIME_MARKET_STATE_FIELDS
+    }
+
+
+def commit_runtime_state(runtime, state):
+    for field_name in RUNTIME_MARKET_STATE_FIELDS:
+        setattr(runtime, field_name, state[field_name])
+
+
+def fetch_source_status(ok=None, cached=False, source="", error=""):
+    status = {
+        "ok": ok,
+        "cached": bool(cached),
+        "source": str(source or ""),
+    }
+    if error:
+        status["error"] = str(error)
+    return status
+
+
+def build_fetch_status(
+    ok,
+    message="",
+    gold_ok=None,
+    forex_ok=None,
+    error="",
+    retryable=True,
+    gold_cached=False,
+    forex_cached=False,
+    gold_source="",
+    forex_source="",
+    gold_error="",
+    forex_error="",
+    *,
+    now_factory=datetime.now,
+):
+    failed = []
+    if gold_ok is False:
+        failed.append("金价源")
+    if forex_ok is False:
+        failed.append("汇率源")
+    source_text = "、".join(failed)
+    base = message or ("行情数据正常" if ok else "行情数据获取失败")
+    if source_text and source_text not in base:
+        base = f"{source_text}: {base}"
+    if error:
+        base = f"{base}（{error}）"
+    degraded = bool(gold_cached or forex_cached)
+    if not degraded and not ok:
+        degraded = gold_ok is True or forex_ok is True
+    status = (
+        "ok"
+        if ok and not degraded
+        else "degraded"
+        if degraded
+        else "busy"
+        if retryable is False
+        else "error"
+    )
+    return {
+        "ok": status == "ok",
+        "status": status,
+        "degraded": status == "degraded",
+        "message": base,
+        "gold_ok": gold_ok,
+        "forex_ok": forex_ok,
+        "gold_cached": bool(gold_cached),
+        "forex_cached": bool(forex_cached),
+        "sources": {
+            "gold": fetch_source_status(
+                gold_ok,
+                gold_cached,
+                gold_source,
+                gold_error,
+            ),
+            "forex": fetch_source_status(
+                forex_ok,
+                forex_cached,
+                forex_source,
+                forex_error,
+            ),
+        },
+        "error": error,
+        "retryable": bool(retryable),
+        "time": now_factory().strftime("%H:%M:%S"),
+    }
+
+
+def current_fetch_status(runtime, status_builder=build_fetch_status):
+    if runtime.price_usd is None:
+        return status_builder(
+            False,
+            "正在等待首次行情数据返回",
+            error=runtime.last_fetch_error,
+            retryable=True,
+        )
+    return status_builder(
+        runtime.last_fetch_ok,
+        "行情数据正常" if runtime.last_fetch_ok else "行情数据获取失败",
+        error=runtime.last_fetch_error,
+        gold_ok=(
+            False
+            if runtime.gold_price_error and not runtime.gold_price_cached
+            else not runtime.gold_price_cached
+        ),
+        forex_ok=runtime.usdcny_rate is not None,
+        gold_cached=runtime.gold_price_cached,
+        forex_cached=runtime.usdcny_rate_cached,
+        gold_source=runtime.gold_price_source,
+        forex_source=runtime.usdcny_rate_source,
+        gold_error=runtime.gold_price_error,
+        forex_error=runtime.usdcny_rate_error,
+        retryable=True,
+    )
+
+
+def market_state_snapshot(runtime):
+    return {
+        "price_usd": runtime.price_usd,
+        "price_rmb": runtime.price_rmb,
+        "usdcny_rate": runtime.usdcny_rate,
+        "gold_price_source": runtime.gold_price_source,
+        "gold_price_time": runtime.gold_price_time,
+        "gold_price_cached": runtime.gold_price_cached,
+        "gold_price_error": runtime.gold_price_error,
+        "usdcny_rate_source": runtime.usdcny_rate_source,
+        "usdcny_rate_time": runtime.usdcny_rate_time,
+        "usdcny_rate_cached": runtime.usdcny_rate_cached,
+        "usdcny_rate_error": runtime.usdcny_rate_error,
+        "previous_usd": runtime.previous_usd,
+        "previous_rmb": runtime.previous_rmb,
+        "price_history": runtime.price_history,
+        "last_fetch_ok": runtime.last_fetch_ok,
+        "klines_5min": runtime.klines_5min,
+    }
+
+
+def record_runtime_source_health(
+    runtime,
+    name,
+    category,
+    ok,
+    *,
+    error="",
+    started_at=None,
+    cached=False,
+    source_health_keys,
+    source_health_limit,
+    metrics_window,
+    metrics_store,
+    state_builder,
+    emit,
+    logger,
+):
+    if not name:
+        return
+    source_key = source_health_keys.get(
+        (str(category or ""), str(name or "")),
+        "",
+    )
+    with runtime.lock:
+        market_data_core.record_source_health(
+            runtime.source_health,
+            name,
+            category,
+            ok,
+            error=error,
+            started_at=started_at,
+            cached=cached,
+            limit=source_health_limit,
+            window_size=metrics_window,
+            source_key=source_key,
+        )
+        health_snapshot = {
+            item_name: dict(item)
+            for item_name, item in runtime.source_health.items()
+        }
+    try:
+        metrics_store().save(health_snapshot)
+    except OSError as exc:
+        logger.warning("数据源滚动指标保存失败: %s", exc)
+    emit("source_health_updated", state_builder())
+
+
+def record_runtime_source_price_sample(
+    runtime,
+    name,
+    data,
+    *,
+    cached=False,
+    number_formatter,
+    now_factory=datetime.now,
+):
+    if not name or not isinstance(data, dict):
+        return
+    try:
+        close = float(data.get("close"))
+    except (TypeError, ValueError):
+        return
+    if not math.isfinite(close) or close <= 0:
+        return
+    with runtime.lock:
+        runtime.source_price_samples[name] = {
+            "name": name,
+            "usd": round(close, 4),
+            "open": number_formatter(data.get("open")),
+            "high": number_formatter(data.get("high")),
+            "low": number_formatter(data.get("low")),
+            "source_time": data.get("timestamp") or data.get("time") or "",
+            "checked_at": now_factory().isoformat(timespec="seconds"),
+            "cached": bool(cached or data.get("cached")),
+        }
+
+
+def refresh_runtime_source_comparison(
+    runtime,
+    primary_data=None,
+    primary_source="",
+    primary_cached=False,
+    *,
+    record_sample,
+    registry_builder,
+    comparison_builder,
+    refresh_seconds,
+    monotonic_factory=time.monotonic,
+):
+    if primary_data is not None and primary_source:
+        record_sample(primary_source, primary_data, cached=primary_cached)
+
+    now_monotonic = monotonic_factory()
+    should_probe = (
+        now_monotonic - runtime.last_source_comparison_probe_at
+        >= refresh_seconds
+    )
+    if should_probe:
+        runtime.last_source_comparison_probe_at = now_monotonic
+        for adapter in registry_builder().category_adapters("gold"):
+            name = adapter.cache_source
+            if name == primary_source:
+                continue
+            data = adapter.fetch().value
+            if data is not None:
+                record_sample(name, data)
+
+    state = comparison_builder()
+    with runtime.lock:
+        runtime.source_comparison_state = state
+    return state
 
 
 def market_source_matches(descriptor, source_name):

@@ -539,3 +539,49 @@ def emit_alert(
         send_desktop_notification(title, entry["message"])
         play_system_alert_sound(entry.get("type", "warning"))
         show_alert_dialog(title, f"{entry['message']}\n\n时间: {entry['time']}")
+
+
+def resend_alert_notification(
+    alert_id,
+    *,
+    settings,
+    blocking,
+    start_delivery,
+    update_entry,
+    plan_notifications,
+    summarize_notifications,
+    deliver_notifications,
+    persist_update,
+    start_notification_delivery,
+    title_builder,
+    now_factory=datetime.now,
+):
+    def updater(entry):
+        updated = dict(entry)
+        updated["notifications"] = plan_notifications(updated, settings)
+        updated["notification_summary"] = summarize_notifications(
+            updated.get("notifications")
+        )
+        updated["notification_muted"] = False
+        updated["notification_reason"] = ""
+        updated["notification_message"] = ""
+        updated["last_notification_resend_at"] = now_factory().isoformat(
+            timespec="seconds"
+        )
+        return updated
+
+    ok, updated = update_entry(alert_id, updater)
+    if not (ok and updated and start_delivery):
+        return ok, updated
+    title = title_builder(updated)
+    if blocking:
+        notifications = deliver_notifications(
+            updated["id"],
+            updated,
+            title,
+            settings,
+            updated.get("notifications", []),
+        )
+        return persist_update(updated["id"], notifications)
+    start_notification_delivery(updated, title, settings=settings)
+    return ok, updated

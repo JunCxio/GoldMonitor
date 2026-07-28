@@ -73,3 +73,50 @@ def build_socket_init_state(
     if risk_analysis_history is not None:
         state["risk_analysis_history"] = risk_analysis_history
     return state
+
+
+def build_runtime_socket_init_state(
+    runtime,
+    *,
+    market_state,
+    get_watch_targets,
+    get_portfolio,
+    get_settings,
+    get_fetch_status,
+    get_source_health,
+    get_source_comparison,
+    get_price_history,
+    get_alert_rules,
+    get_alert_profiles,
+    get_daily_digest_status,
+    get_news,
+    get_risk_history,
+):
+    with runtime.lock:
+        state = build_socket_init_state(
+            market_state(),
+            thresholds=dict(runtime.thresholds),
+            volatility_config=dict(runtime.volatility_config),
+            watch_targets=get_watch_targets(),
+            portfolio=get_portfolio(),
+            settings=get_settings(),
+            alert_log=runtime.alert_log,
+            fetch_status=get_fetch_status(),
+            source_health=get_source_health(),
+            source_comparison=get_source_comparison(),
+            price_history_state=get_price_history(limit=240),
+            daily={
+                "open_usd": runtime.today_open_usd,
+                "high_usd": runtime.today_high_usd,
+                "low_usd": runtime.today_low_usd,
+                "open_rmb": runtime.today_open_rmb,
+                "high_rmb": runtime.today_high_rmb,
+                "low_rmb": runtime.today_low_rmb,
+            },
+        )
+        state["alert_rules"] = get_alert_rules()
+        state["alert_profiles"] = get_alert_profiles()
+        state["daily_digest_status"] = get_daily_digest_status()
+    state["news"] = get_news()
+    state["risk_analysis_history"] = get_risk_history()
+    return state

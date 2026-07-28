@@ -1,0 +1,57 @@
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def read_text(path):
+    return (ROOT / path).read_text(encoding="utf-8")
+
+
+def test_root_app_is_only_a_compatibility_entrypoint():
+    source = read_text("app.py")
+
+    assert "from goldmonitor import application" in source
+    assert "application.main()" in source
+    assert "sys.modules[__name__] = application" in source
+    assert "Flask(" not in source
+    assert "SocketIO(" not in source
+
+
+def test_application_composes_routes_sockets_state_and_desktop_services():
+    source = read_text("goldmonitor/application.py")
+
+    assert "application_state_bootstrap_core.ApplicationStateBootstrap(" in source
+    assert "floating_controller_core.FloatingPriceController(" in source
+    assert "http_routes_core.register_http_routes(" in source
+    assert "socket_bootstrap_core.register_socket_handlers(" in source
+    assert "application_bootstrap_core.run_application(" in source
+    assert "@socketio.on(" not in source
+    assert "@app.route(" not in source
+
+
+def test_runtime_data_initialization_has_one_explicit_entrypoint():
+    source = read_text("goldmonitor/application.py")
+    stripped_lines = [line.strip() for line in source.splitlines()]
+    direct_boot_assignments = (
+        "runtime.app_settings = load_settings()",
+        "runtime.alert_rules = load_alert_rules()",
+        "runtime.news_items = load_news_cache()",
+        "runtime.price_archive = load_price_history_archive()",
+    )
+
+    assert stripped_lines.count("initialize_application_state()") == 1
+    for assignment in direct_boot_assignments:
+        assert assignment not in stripped_lines
+
+
+def test_frontend_center_entries_only_bootstrap_split_modules():
+    expected_entries = {
+        "static/settings-center.js": "setupSettingsInteractions();",
+        "static/alert-rule-center.js": "void 0;",
+        "static/operations-center.js": "void 0;",
+    }
+
+    for path, expected in expected_entries.items():
+        lines = [line.strip() for line in read_text(path).splitlines() if line.strip()]
+        assert lines == [expected]

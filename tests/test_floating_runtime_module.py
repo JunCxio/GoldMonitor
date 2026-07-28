@@ -384,10 +384,11 @@ def test_opacity_is_converted_to_layered_window_alpha():
 
 def test_app_window_loop_wrapper_resolves_current_runtime_callbacks(monkeypatch):
     import app
+    from goldmonitor import floating_controller as controller_module
 
     captured = {}
     monkeypatch.setattr(
-        app.floating_runtime_core,
+        controller_module.floating_runtime_core,
         "run_floating_price_window",
         lambda **kwargs: captured.update(kwargs) or "started",
     )

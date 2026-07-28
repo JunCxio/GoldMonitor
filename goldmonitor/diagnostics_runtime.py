@@ -218,3 +218,85 @@ def build_diagnostics_clipboard_text(
         "- 如需完整原始结构，请使用“生成诊断”导出 JSON 文件。",
     ])
     return "\n".join(lines)
+
+
+class DiagnosticsRuntime:
+    def __init__(
+        self,
+        runtime,
+        *,
+        app_name,
+        app_version,
+        paths_builder,
+        storage_manifest_builder,
+        get_fetch_status,
+        get_source_health,
+        get_price_history,
+        get_watch_targets,
+        get_risk_history,
+        get_alert_rules,
+        get_settings,
+        get_update_status,
+        read_logs,
+        health_summary_builder,
+        get_export_status,
+        default_settings,
+        platform_name,
+        now_factory=datetime.now,
+    ):
+        self.runtime = runtime
+        self.app_name = app_name
+        self.app_version = app_version
+        self.paths_builder = paths_builder
+        self.storage_manifest_builder = storage_manifest_builder
+        self.get_fetch_status = get_fetch_status
+        self.get_source_health = get_source_health
+        self.get_price_history = get_price_history
+        self.get_watch_targets = get_watch_targets
+        self.get_risk_history = get_risk_history
+        self.get_alert_rules = get_alert_rules
+        self.get_settings = get_settings
+        self.get_update_status = get_update_status
+        self.read_logs = read_logs
+        self.health_summary_builder = health_summary_builder
+        self.get_export_status = get_export_status
+        self.default_settings = default_settings
+        self.platform_name = platform_name
+        self.now_factory = now_factory
+
+    def build_report(self):
+        paths = self.paths_builder()
+        risk_history = self.get_risk_history()
+        report = build_diagnostics_report(
+            app_name=self.app_name,
+            app_version=self.app_version,
+            paths=paths,
+            storage_manifest=self.storage_manifest_builder(paths),
+            fetch_status=self.get_fetch_status(),
+            source_health=self.get_source_health(),
+            price_history=self.get_price_history(limit=120),
+            watch_targets=self.get_watch_targets(),
+            risk_history_count=len(risk_history.get("items", [])),
+            recent_alerts=list(self.runtime.alert_log[-20:]),
+            alert_rules=self.get_alert_rules(),
+            settings=self.get_settings(),
+            last_update_status=self.get_update_status(),
+            logs=self.read_logs(),
+            health_summary_builder=self.health_summary_builder,
+            now_factory=self.now_factory,
+        )
+        payload = json.loads(report)
+        payload["export_status"] = self.get_export_status()
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    def build_clipboard_text(self, report=None):
+        with self.runtime.lock:
+            kline_count = len(self.runtime.klines_5min)
+        return build_diagnostics_clipboard_text(
+            self.build_report() if report is None else report,
+            default_settings=self.default_settings,
+            platform_name=self.platform_name,
+            kline_count=kline_count,
+            fallback_export_status=self.get_export_status(),
+            fallback_update_status=self.get_update_status(),
+        )

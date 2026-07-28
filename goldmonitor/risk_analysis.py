@@ -266,6 +266,61 @@ def build_context(state, settings, *, trigger=None, depth=None, valid_depths, tr
     return context
 
 
+def build_context_from_runtime(
+    runtime,
+    settings,
+    *,
+    trigger=None,
+    depth=None,
+    valid_depths,
+    trend_periods,
+    news_limit,
+    source_health=None,
+    now_factory=None,
+):
+    with runtime.lock:
+        state = {
+            "price_archive": list(runtime.price_archive),
+            "price_history": list(runtime.price_history),
+            "klines_5min": list(runtime.klines_5min),
+            "news_items": list(runtime.news_items),
+            "price_usd": runtime.price_usd,
+            "price_rmb": runtime.price_rmb,
+            "previous_usd": runtime.previous_usd,
+            "previous_rmb": runtime.previous_rmb,
+            "usdcny_rate": runtime.usdcny_rate,
+            "gold_price_source": runtime.gold_price_source,
+            "gold_price_time": runtime.gold_price_time,
+            "gold_price_cached": runtime.gold_price_cached,
+            "gold_price_error": runtime.gold_price_error,
+            "usdcny_rate_source": runtime.usdcny_rate_source,
+            "usdcny_rate_time": runtime.usdcny_rate_time,
+            "usdcny_rate_cached": runtime.usdcny_rate_cached,
+            "usdcny_rate_error": runtime.usdcny_rate_error,
+            "last_fetch_ok": runtime.last_fetch_ok,
+            "last_fetch_error": runtime.last_fetch_error,
+            "last_fetch_time": runtime.last_fetch_time,
+            "today_date": runtime.today_date,
+            "today_open_usd": runtime.today_open_usd,
+            "today_high_usd": runtime.today_high_usd,
+            "today_low_usd": runtime.today_low_usd,
+            "today_open_rmb": runtime.today_open_rmb,
+            "today_high_rmb": runtime.today_high_rmb,
+            "today_low_rmb": runtime.today_low_rmb,
+        }
+    return build_context(
+        state,
+        settings,
+        trigger=trigger,
+        depth=depth,
+        valid_depths=valid_depths,
+        trend_periods=trend_periods,
+        news_limit=news_limit,
+        source_health=source_health,
+        now_factory=now_factory,
+    )
+
+
 class RiskAnalysisHistoryStore:
     def __init__(self, json_path, history_limit=20, now_factory=None, logger=None):
         self.json_path = json_path
