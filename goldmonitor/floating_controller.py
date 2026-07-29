@@ -5,6 +5,12 @@ from goldmonitor import floating_runtime as floating_runtime_core
 
 
 class FloatingPriceController:
+    TOGGLE_SETTING_KEYS = {
+        "floating_price_lock_position",
+        "floating_price_hide_on_fullscreen",
+        "floating_price_always_on_top",
+    }
+
     def __init__(
         self,
         *,
@@ -205,6 +211,20 @@ class FloatingPriceController:
             position_window=self.position_window,
             apply_opacity=self.apply_opacity,
             invalidate_window=self.invalidate_window,
+            should_suppress=self.should_hide_for_fullscreen,
+        )
+
+    def should_hide_for_fullscreen(self, hwnd, user32):
+        return floating_runtime_core.should_hide_for_fullscreen(
+            hwnd,
+            user32=user32,
+            get_settings=self.get_settings,
+        )
+
+    def sync_visibility(self):
+        settings = self.get_settings()
+        return self.set_window_visible(
+            bool(settings.get("floating_price_enabled", True))
         )
 
     def set_enabled(self, enabled):
@@ -233,6 +253,29 @@ class FloatingPriceController:
     def open_risk_analysis(self, source="floating_price"):
         self.show_main_window()
         self.emit("open_risk_analysis", {"run": True, "source": source})
+
+    def toggle_setting(self, key):
+        if key not in self.TOGGLE_SETTING_KEYS:
+            raise ValueError(f"unsupported floating setting: {key}")
+        snapshot = self.get_settings()
+        snapshot[key] = not bool(snapshot.get(key, False))
+        saved = self.save_settings(snapshot) or snapshot
+        self.apply_settings(saved)
+        self.emit("settings_updated", self.public_settings_snapshot(saved))
+        return bool(saved.get(key))
+
+    def reset_position(self):
+        snapshot = self.get_settings()
+        snapshot["floating_price_position_saved"] = False
+        snapshot["floating_price_x"] = None
+        snapshot["floating_price_y"] = None
+        saved = self.save_settings(snapshot) or snapshot
+        self.runtime.floating_positioned = False
+        if self.runtime.floating_hwnd:
+            self.position_window(self.runtime.floating_hwnd)
+            self.sync_visibility()
+        self.emit("settings_updated", self.public_settings_snapshot(saved))
+        return None
 
     @staticmethod
     def get_lparam_point(lparam):
@@ -276,6 +319,13 @@ class FloatingPriceController:
             is_topmost=lambda: desktop_ui_core.floating_window_z_order(
                 self.get_settings()
             ) == "topmost",
+            get_settings=self.get_settings,
+            toggle_setting=self.toggle_setting,
+            reset_position=self.reset_position,
+            is_position_locked=lambda: bool(
+                self.get_settings().get("floating_price_lock_position", False)
+            ),
+            sync_visibility=self.sync_visibility,
             logger=self.logger,
         )
 

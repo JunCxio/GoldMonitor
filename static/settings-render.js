@@ -64,6 +64,8 @@ function applyPlatformLabels() {
   setRowHidden('floatingOpacityRow', menuBarMode);
   setRowHidden('floatingSnapRow', menuBarMode);
   setRowHidden('floatingTopmostRow', menuBarMode);
+  setRowHidden('floatingFullscreenRow', menuBarMode);
+  setRowHidden('floatingLockRow', menuBarMode);
 }
 
 function dailyDigestSelectedChannels() {
@@ -149,6 +151,8 @@ function applySettings(data) {
   document.getElementById('setFloatingOpacity').value = appSettings.floating_price_opacity || 94;
   document.getElementById('setFloatingSnapEdge').checked = appSettings.floating_price_snap_edge !== false;
   document.getElementById('setFloatingAlwaysOnTop').checked = !!appSettings.floating_price_always_on_top;
+  document.getElementById('setFloatingHideOnFullscreen').checked = appSettings.floating_price_hide_on_fullscreen !== false;
+  document.getElementById('setFloatingLockPosition').checked = !!appSettings.floating_price_lock_position;
   document.getElementById('setCloseBehavior').value = closeBehavior;
   document.getElementById('setAlertSound').checked = !!appSettings.alert_sound_enabled;
   document.getElementById('setAlertDialog').checked = !!appSettings.alert_dialog_enabled;

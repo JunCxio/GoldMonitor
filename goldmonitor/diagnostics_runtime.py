@@ -191,6 +191,8 @@ def build_diagnostics_clipboard_text(
         "悬浮条",
         f"- 状态: {'开启' if settings.get('floating_price_enabled') else '关闭'}",
         f"- 置顶: {'开启' if settings.get('floating_price_always_on_top') else '关闭'}",
+        f"- 全屏自动隐藏: {'开启' if settings.get('floating_price_hide_on_fullscreen', True) else '关闭'}",
+        f"- 位置锁定: {'开启' if settings.get('floating_price_lock_position') else '关闭'}",
         f"- 显示模式: {value(settings.get('floating_price_display_mode'))}",
         f"- 透明度: {value(settings.get('floating_price_opacity'))}",
         "",

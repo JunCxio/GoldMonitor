@@ -15,6 +15,8 @@ function saveSettings() {
     floating_price_opacity: document.getElementById('setFloatingOpacity').value.trim(),
     floating_price_snap_edge: document.getElementById('setFloatingSnapEdge').checked,
     floating_price_always_on_top: document.getElementById('setFloatingAlwaysOnTop').checked,
+    floating_price_hide_on_fullscreen: document.getElementById('setFloatingHideOnFullscreen').checked,
+    floating_price_lock_position: document.getElementById('setFloatingLockPosition').checked,
     close_behavior: closeBehavior,
     close_remembered: closeBehavior !== 'ask',
     alert_sound_enabled: document.getElementById('setAlertSound').checked,
