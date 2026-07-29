@@ -129,7 +129,7 @@ Assert-Contains -Path "static\operations-update.js" -Pattern 'socket\.emit\(''in
 Assert-Contains -Path "templates\index.html" -Pattern 'updateProgress' -Message "update dialog must show download progress"
 Assert-NotContains -Path "templates\index.html" -Pattern 'socket\.emit\(''install_update'',\s*pendingUpdateInfo\)' -Message "frontend must not send installer URLs back to install_update"
 Assert-Contains -Path "static\operations-socket.js" -Pattern 'socket\.on\(''update_status''' -Message "index.html must handle update status"
-Assert-Contains -Path "goldmonitor\application.py" -Pattern 'APP_VERSION' -Message "app.py must expose a current app version"
+Assert-Contains -Path "goldmonitor\application.py" -Pattern 'APP_VERSION' -Message "goldmonitor/application.py must expose a current app version"
 Assert-Contains -Path "goldmonitor\application.py" -Pattern 'DEFAULT_UPDATE_MANIFEST_URL' -Message "app.py must define a default update source URL in code"
 Assert-Contains -Path "goldmonitor\application.py" -Pattern 'get_update_manifest_url' -Message "backend must use a fixed built-in update source"
 Assert-NotContains -Path "templates\index.html" -Pattern 'setUpdateManifestUrl' -Message "settings must not expose editable update source"
@@ -149,7 +149,7 @@ Assert-Contains -Path "scripts\generate_release_manifest.py" -Pattern 'missing r
 $appSource = Get-Content -Path "goldmonitor\application.py" -Raw -Encoding UTF8
 $appVersionMatch = [regex]::Match($appSource, 'APP_VERSION\s*=\s*"([^"]+)"')
 if (-not $appVersionMatch.Success) {
-    throw "app.py must expose APP_VERSION as a quoted string"
+    throw "goldmonitor/application.py must expose APP_VERSION as a quoted string"
 }
 $currentReleasePattern = '##\s+' + [regex]::Escape($appVersionMatch.Groups[1].Value)
 Assert-Contains -Path "CHANGELOG.md" -Pattern $currentReleasePattern -Message "CHANGELOG.md must document the current release"
