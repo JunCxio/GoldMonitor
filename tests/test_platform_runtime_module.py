@@ -1,5 +1,6 @@
 import plistlib
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 
 def test_credential_store_override_handles_read_write_and_delete():
@@ -69,6 +70,56 @@ def test_macos_security_and_credential_commands_use_expected_contract():
         run_security=lambda args: commands.append(args) or (0, "", ""),
     ) is True
     assert commands[1][-2:] == ["value", "-U"]
+
+
+def test_credential_failures_do_not_log_sensitive_context():
+    from goldmonitor.platform_runtime import (
+        read_windows_credential,
+        write_macos_credential,
+        write_windows_credential,
+    )
+
+    windows_logger = Mock()
+
+    def fail_windows_types():
+        raise RuntimeError("sensitive failure detail")
+
+    assert read_windows_credential(
+        "api_key",
+        os_name="nt",
+        target_name=lambda key: f"GoldMonitor:{key}",
+        ctypes_loader=fail_windows_types,
+        logger=windows_logger,
+    ) == ""
+    windows_logger.warning.assert_called_once_with(
+        "读取系统凭据失败",
+        exc_info=True,
+    )
+
+    windows_logger.reset_mock()
+    assert write_windows_credential(
+        "api_key",
+        "secret",
+        os_name="nt",
+        target_name=lambda key: f"GoldMonitor:{key}",
+        ctypes_loader=fail_windows_types,
+        logger=windows_logger,
+    ) is False
+    windows_logger.warning.assert_called_once_with(
+        "写入系统凭据失败",
+        exc_info=True,
+    )
+
+    macos_logger = Mock()
+    assert write_macos_credential(
+        "api_key",
+        "secret",
+        sys_platform="darwin",
+        service_name="GoldMonitor",
+        run_security=lambda args: (1, "", "sensitive failure detail"),
+        logger=macos_logger,
+    ) is False
+    macos_logger.warning.assert_called_once_with("写入 macOS Keychain 失败")
 
 
 def test_windows_startup_runtime_writes_and_deletes_run_value():

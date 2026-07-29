@@ -1,3 +1,4 @@
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -365,7 +366,11 @@ def test_desktop_window_wires_events_backend_and_windows_shell_state():
     window.events.shown.handlers[0]()
     assert stored_hwnds == [42]
     assert hidden == [True]
-    assert any(call[0] == "load" and call[1].endswith("static/icon.ico") for call in user32.calls)
+    assert any(
+        call[0] == "load"
+        and call[1].endswith(os.path.join("static", "icon.ico"))
+        for call in user32.calls
+    )
 
     assert window.events.closing.handlers[0]() is False
     assert emitted == [(

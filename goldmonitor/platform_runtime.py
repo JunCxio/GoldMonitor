@@ -66,7 +66,7 @@ def read_windows_credential(
         finally:
             advapi32.CredFree(credential_ptr)
     except Exception:
-        logger.warning("读取系统凭据失败: %s", key, exc_info=True)
+        logger.warning("读取系统凭据失败", exc_info=True)
         return ""
 
 
@@ -125,7 +125,7 @@ def write_windows_credential(
         credential.UserName = key
         return bool(ctypes.windll.advapi32.CredWriteW(ctypes.byref(credential), 0))
     except Exception:
-        logger.warning("写入系统凭据失败: %s", key, exc_info=True)
+        logger.warning("写入系统凭据失败", exc_info=True)
         return False
 
 
@@ -189,7 +189,7 @@ def write_macos_credential(
 ):
     if sys_platform != "darwin":
         return False
-    code, _stdout, stderr = run_security([
+    code, _stdout, _stderr = run_security([
         "add-generic-password",
         "-s", service_name,
         "-a", key,
@@ -197,7 +197,7 @@ def write_macos_credential(
         "-U",
     ])
     if code != 0:
-        logger.warning("写入 macOS Keychain 失败: %s %s", key, stderr.strip())
+        logger.warning("写入 macOS Keychain 失败")
     return code == 0
 
 
