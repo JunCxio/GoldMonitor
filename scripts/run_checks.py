@@ -60,6 +60,7 @@ COMPILE_TARGETS = (
     "tests/test_alert_rules_module.py",
     "tests/test_architecture_boundaries.py",
     "tests/test_alert_rules_app.py",
+    "tests/test_http_assets_app.py",
     "tests/test_single_instance_app.py",
     "tests/test_update_app.py",
     "tests/test_portfolio_module.py",
@@ -150,6 +151,7 @@ PYTHON_CHECKS = (
 )
 
 RELEASE_PYTEST_TARGETS = (
+    "tests/test_http_assets_app.py",
     "tests/test_single_instance_app.py",
     "tests/test_update_app.py",
     "tests/test_verify_release_assets_script.py",
