@@ -144,7 +144,7 @@ def test_taskbar_theme_detection_reads_windows_system_theme():
 
 
 def test_taskbar_window_uses_per_pixel_alpha_transparency():
-    from PIL import Image
+    Image = pytest.importorskip("PIL.Image")
 
     from goldmonitor.taskbar_runtime import (
         WS_EX_LAYERED,
@@ -169,7 +169,7 @@ def test_taskbar_window_uses_per_pixel_alpha_transparency():
     assert surface.mode == "RGBA"
     assert surface.getpixel((0, 0))[3] == 0
     assert surface.getchannel("A").getextrema() == (0, 255)
-    assert any(0 < alpha < 255 for alpha in surface.getchannel("A").getdata())
+    assert any(0 < alpha < 255 for alpha in surface.getchannel("A").tobytes())
 
     pixel = Image.new("RGBA", (1, 1), (100, 50, 25, 128))
     assert premultiply_taskbar_surface(pixel) == bytes((13, 25, 50, 128))
@@ -179,7 +179,7 @@ def test_taskbar_layered_window_uploads_premultiplied_pixels():
     import ctypes
     from ctypes import wintypes
 
-    from PIL import Image
+    Image = pytest.importorskip("PIL.Image")
 
     from goldmonitor.taskbar_runtime import update_layered_taskbar_window
 
