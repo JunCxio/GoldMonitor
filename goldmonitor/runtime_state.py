@@ -120,6 +120,8 @@ class ApplicationRuntimeState:
     taskbar_hwnd: Any = None
     taskbar_thread_started: bool = False
     taskbar_price_text: str = "金价 --"
+    taskbar_price_value_text: str = "--"
+    taskbar_price_change_text: str = ""
     taskbar_trend_state: str = "neutral"
     taskbar_source_state: str = "waiting"
     taskbar_layout_state: Dict[str, Any] = field(default_factory=dict)

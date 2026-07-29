@@ -40,6 +40,8 @@ def test_taskbar_controller_updates_compact_runtime_text_off_windows():
     controller.update_price(528.16, 2345.6, 0.42)
 
     assert runtime.taskbar_price_text == "¥528.16  $2,346  +0.42%"
+    assert runtime.taskbar_price_value_text == "¥528.16  $2,346"
+    assert runtime.taskbar_price_change_text == "+0.42%"
     assert runtime.taskbar_trend_state == "up"
     assert runtime.taskbar_source_state == "waiting"
     assert calls == []
