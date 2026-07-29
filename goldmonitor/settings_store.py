@@ -191,7 +191,7 @@ def persistable_settings_snapshot(
         elif credentials_required:
             credential_failures.append(key)
         else:
-            logger.warning("系统凭据不可用，保留兼容配置字段: %s", key)
+            logger.warning("系统凭据不可用，保留兼容配置字段")
     if credential_failures:
         raise OSError("系统凭据写入失败: " + ", ".join(credential_failures))
     return persisted
