@@ -195,7 +195,7 @@ PYTHON_BIN=.venv/bin/python ./scripts/build_macos_dmg.sh
 
 发布前必须同步三处版本：
 
-- `app.py` 中的 `APP_VERSION`
+- `goldmonitor/application.py` 中的 `APP_VERSION`
 - `installer/GoldMonitor.iss` 中的 `MyAppVersion`
 - `CHANGELOG.md` 中对应版本的变更内容
 
