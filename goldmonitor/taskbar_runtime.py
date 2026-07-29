@@ -41,6 +41,7 @@ TASKBAR_CONTENT_PADDING = 6
 TASKBAR_CONTENT_GAP = 5
 TASKBAR_ARROW_WIDTH = 9
 TASKBAR_MINIMUM_PRICE_WIDTH = 42
+TASKBAR_HIT_TARGET_ALPHA = 1
 TASKBAR_DEFAULT_DPI = 96
 TASKBAR_MAXIMUM_DPI = 480
 
@@ -52,6 +53,7 @@ WS_EX_LAYERED = 0x00080000
 WS_EX_NOACTIVATE = 0x08000000
 WS_POPUP = 0x80000000
 HWND_TOPMOST = -1
+HWND_NOTOPMOST = -2
 MA_NOACTIVATE = 3
 SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
@@ -362,7 +364,11 @@ def render_taskbar_surface(
     height = max(1, int(height))
     dpi = normalize_taskbar_dpi(dpi)
     metrics = taskbar_draw_metrics(dpi)
-    image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    image = Image.new(
+        "RGBA",
+        (width, height),
+        (0, 0, 0, TASKBAR_HIT_TARGET_ALPHA),
+    )
     draw = ImageDraw.Draw(image)
 
     source_state = state.get("source_state", "waiting")
@@ -868,24 +874,81 @@ def invalidate_window(hwnd, *, os_name, ctypes_loader=_load_win32_types):
     return None
 
 
-def restore_taskbar_window_order(hwnd, *, ctypes_module, user32):
+def set_taskbar_window_order(
+    hwnd,
+    *,
+    topmost,
+    show,
+    ctypes_module,
+    user32,
+):
     if not hwnd:
         return False
     pointer_bits = ctypes_module.sizeof(ctypes_module.c_void_p) * 8
-    topmost = ctypes_module.c_void_p(HWND_TOPMOST & ((1 << pointer_bits) - 1))
+    insert_after = HWND_TOPMOST if topmost else HWND_NOTOPMOST
+    insert_after = ctypes_module.c_void_p(
+        insert_after & ((1 << pointer_bits) - 1)
+    )
+    flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOREDRAW | SWP_NOACTIVATE
+    if show:
+        flags |= SWP_SHOWWINDOW
     return bool(
         user32.SetWindowPos(
             hwnd,
-            topmost,
+            insert_after,
             0,
             0,
             0,
             0,
-            SWP_NOMOVE
-            | SWP_NOSIZE
-            | SWP_NOREDRAW
-            | SWP_NOACTIVATE
-            | SWP_SHOWWINDOW,
+            flags,
+        )
+    )
+
+
+def restore_taskbar_window_order(
+    hwnd,
+    *,
+    ctypes_module,
+    user32,
+    show=False,
+):
+    return set_taskbar_window_order(
+        hwnd,
+        topmost=True,
+        show=show,
+        ctypes_module=ctypes_module,
+        user32=user32,
+    )
+
+
+def restore_taskbar_window_after_interaction(hwnd, *, ctypes_module, user32):
+    return restore_taskbar_window_order(
+        hwnd,
+        ctypes_module=ctypes_module,
+        user32=user32,
+        show=not bool(user32.IsWindowVisible(hwnd)),
+    )
+
+
+def suspend_taskbar_window_for_menu(hwnd, *, ctypes_module, user32):
+    user32.KillTimer(hwnd, TASKBAR_LAYOUT_TIMER_ID)
+    user32.KillTimer(hwnd, TASKBAR_INTERACTION_RESTORE_TIMER_ID)
+    return set_taskbar_window_order(
+        hwnd,
+        topmost=False,
+        show=False,
+        ctypes_module=ctypes_module,
+        user32=user32,
+    )
+
+
+def resume_taskbar_layout_timer(hwnd, *, user32):
+    return bool(
+        user32.SetTimer(
+            hwnd,
+            TASKBAR_LAYOUT_TIMER_ID,
+            TASKBAR_LAYOUT_TIMER_MS,
+            None,
         )
     )
 
@@ -1047,6 +1110,11 @@ def show_taskbar_context_menu(
     menu = user32.CreatePopupMenu()
     if not menu:
         return None
+    suspend_taskbar_window_for_menu(
+        hwnd,
+        ctypes_module=ctypes_module,
+        user32=user32,
+    )
     try:
         mode = get_settings().get("floating_price_windows_mode", "floating")
         user32.AppendMenuW(menu, MF_STRING, TASKBAR_MENU_OPEN, "打开主界面")
@@ -1085,6 +1153,7 @@ def show_taskbar_context_menu(
         )
     finally:
         user32.DestroyMenu(menu)
+        resume_taskbar_layout_timer(hwnd, user32=user32)
         try:
             user32.PostMessageW(hwnd, WM_NULL, 0, 0)
         except (AttributeError, OSError):
@@ -1397,7 +1466,7 @@ def run_taskbar_price_window(
             )
 
         def restore_window_order(hwnd):
-            return restore_taskbar_window_order(
+            return restore_taskbar_window_after_interaction(
                 hwnd,
                 ctypes_module=ctypes,
                 user32=user32,

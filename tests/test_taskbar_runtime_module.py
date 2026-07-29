@@ -167,7 +167,7 @@ def test_taskbar_theme_detection_reads_windows_system_theme():
     assert taskbar_uses_light_theme(lambda: (_ for _ in ()).throw(OSError())) is False
 
 
-def test_taskbar_window_uses_per_pixel_alpha_transparency():
+def test_taskbar_window_keeps_transparent_surface_fully_interactive():
     Image = pytest.importorskip("PIL.Image")
 
     from goldmonitor.taskbar_runtime import (
@@ -191,8 +191,9 @@ def test_taskbar_window_uses_per_pixel_alpha_transparency():
 
     assert taskbar_window_ex_style() & WS_EX_LAYERED
     assert surface.mode == "RGBA"
-    assert surface.getpixel((0, 0))[3] == 0
-    assert surface.getchannel("A").getextrema() == (0, 255)
+    assert surface.getpixel((0, 0))[3] == 1
+    assert surface.getchannel("A").getextrema() == (1, 255)
+    assert all(alpha > 0 for alpha in surface.getchannel("A").tobytes())
     assert any(0 < alpha < 255 for alpha in surface.getchannel("A").tobytes())
 
     pixel = Image.new("RGBA", (1, 1), (100, 50, 25, 128))
@@ -479,7 +480,7 @@ def test_taskbar_window_messages_keep_interaction_non_activating():
     ]
 
 
-def test_taskbar_window_order_is_restored_after_interaction_and_kept_visible():
+def test_taskbar_window_order_is_maintained_without_periodic_showing():
     import ctypes
 
     from goldmonitor.taskbar_runtime import (
@@ -487,7 +488,6 @@ def test_taskbar_window_order_is_restored_after_interaction_and_kept_visible():
         SWP_NOMOVE,
         SWP_NOREDRAW,
         SWP_NOSIZE,
-        SWP_SHOWWINDOW,
         restore_taskbar_window_order,
     )
 
@@ -502,13 +502,50 @@ def test_taskbar_window_order_is_restored_after_interaction_and_kept_visible():
         user32=user32,
     ) is True
     assert calls[0][2:6] == (0, 0, 0, 0)
-    assert calls[0][-1] == (
-        SWP_NOMOVE
-        | SWP_NOSIZE
-        | SWP_NOREDRAW
-        | SWP_NOACTIVATE
-        | SWP_SHOWWINDOW
+    assert calls[0][-1] == SWP_NOMOVE | SWP_NOSIZE | SWP_NOREDRAW | SWP_NOACTIVATE
+
+
+def test_taskbar_window_order_restore_can_explicitly_show_after_interaction():
+    import ctypes
+
+    from goldmonitor.taskbar_runtime import SWP_SHOWWINDOW, restore_taskbar_window_order
+
+    calls = []
+    user32 = SimpleNamespace(SetWindowPos=lambda *args: calls.append(args) or True)
+
+    assert restore_taskbar_window_order(
+        42,
+        ctypes_module=ctypes,
+        user32=user32,
+        show=True,
+    ) is True
+    assert calls[0][-1] & SWP_SHOWWINDOW
+
+
+@pytest.mark.parametrize(("visible", "expected_show"), ((True, False), (False, True)))
+def test_taskbar_interaction_restore_only_shows_a_hidden_window(
+    visible,
+    expected_show,
+):
+    import ctypes
+
+    from goldmonitor.taskbar_runtime import (
+        SWP_SHOWWINDOW,
+        restore_taskbar_window_after_interaction,
     )
+
+    calls = []
+    user32 = SimpleNamespace(
+        IsWindowVisible=lambda hwnd: visible,
+        SetWindowPos=lambda *args: calls.append(args) or True,
+    )
+
+    assert restore_taskbar_window_after_interaction(
+        42,
+        ctypes_module=ctypes,
+        user32=user32,
+    ) is True
+    assert bool(calls[0][-1] & SWP_SHOWWINDOW) is expected_show
 
 
 def test_taskbar_window_restore_is_scheduled_after_shell_interaction():
@@ -578,7 +615,12 @@ def test_taskbar_context_menu_dispatches_supported_actions(command, expected):
     import ctypes
     from ctypes import wintypes
 
-    from goldmonitor.taskbar_runtime import show_taskbar_context_menu
+    from goldmonitor.taskbar_runtime import (
+        TASKBAR_INTERACTION_RESTORE_TIMER_ID,
+        TASKBAR_LAYOUT_TIMER_ID,
+        TASKBAR_LAYOUT_TIMER_MS,
+        show_taskbar_context_menu,
+    )
 
     calls = []
 
@@ -595,6 +637,9 @@ def test_taskbar_context_menu_dispatches_supported_actions(command, expected):
         TrackPopupMenu=lambda *args: command,
         DestroyMenu=lambda menu: None,
         PostMessageW=lambda *args: calls.append(("post", args)),
+        KillTimer=lambda hwnd, timer_id: calls.append(("kill", hwnd, timer_id)),
+        SetTimer=lambda *args: calls.append(("timer", args)) or args[1],
+        SetWindowPos=lambda *args: calls.append(("position", args)) or True,
     )
 
     result = show_taskbar_context_menu(
@@ -611,4 +656,16 @@ def test_taskbar_context_menu_dispatches_supported_actions(command, expected):
     )
 
     assert result == command
-    assert calls == [("post", (42, 0, 0, 0)), expected]
+    assert calls[0:2] == [
+        ("kill", 42, TASKBAR_LAYOUT_TIMER_ID),
+        ("kill", 42, TASKBAR_INTERACTION_RESTORE_TIMER_ID),
+    ]
+    assert calls[2][0] == "position"
+    assert calls[3:] == [
+        (
+            "timer",
+            (42, TASKBAR_LAYOUT_TIMER_ID, TASKBAR_LAYOUT_TIMER_MS, None),
+        ),
+        ("post", (42, 0, 0, 0)),
+        expected,
+    ]
