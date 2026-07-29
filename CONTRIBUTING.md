@@ -103,6 +103,8 @@ Pull Request 需要说明：
 - 对文档、配置、持久化和隐私的影响。
 - 关联 Issue；没有关联 Issue 时说明原因。
 
+PR 的 Windows 和 macOS 基础检查全部通过后，CI 会继续生成 Windows 测试安装包。在 PR 的检查详情中打开最新 `CI` 运行记录，从页面底部的 `Artifacts` 下载 `windows-pr-<PR 编号>`。压缩包内包含 `GoldMonitorSetup.exe`，产物保留 7 天，仅用于测试，未进行代码签名。
+
 ## 敏感信息
 
 禁止提交或粘贴以下内容：
