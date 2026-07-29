@@ -23,6 +23,89 @@ class FakeCtypes:
         return value
 
 
+class FakeDWORD:
+    def __init__(self, value=0):
+        self.value = value
+
+
+class FakeUnicodeBuffer:
+    def __init__(self):
+        self.value = ""
+
+    def __len__(self):
+        return 256
+
+
+class FakeFullscreenCtypes(FakeCtypes):
+    @staticmethod
+    def create_unicode_buffer(_size):
+        return FakeUnicodeBuffer()
+
+    @staticmethod
+    def sizeof(_value):
+        return 40
+
+
+class MonitorInfo:
+    def __init__(self):
+        self.cbSize = 0
+        self.rcMonitor = Rect()
+
+
+class FullscreenUser32:
+    def __init__(
+        self,
+        *,
+        foreground=77,
+        class_name="ApplicationFrameWindow",
+        process_id=200,
+        window_rect=None,
+        monitor_rect=None,
+        visible=True,
+        iconic=False,
+        process_lookup_ok=True,
+    ):
+        self.foreground = foreground
+        self.class_name = class_name
+        self.process_id = process_id
+        self.window_rect = window_rect or Rect(0, 0, 1920, 1080)
+        self.monitor_rect = monitor_rect or Rect(0, 0, 1920, 1080)
+        self.visible = visible
+        self.iconic = iconic
+        self.process_lookup_ok = process_lookup_ok
+
+    def GetForegroundWindow(self):
+        return self.foreground
+
+    def IsWindowVisible(self, _hwnd):
+        return self.visible
+
+    def IsIconic(self, _hwnd):
+        return self.iconic
+
+    def GetClassNameW(self, _hwnd, buffer, _length):
+        buffer.value = self.class_name
+        return len(self.class_name)
+
+    def GetWindowThreadProcessId(self, _hwnd, process_id):
+        process_id.value = self.process_id
+        return 1 if self.process_lookup_ok else 0
+
+    def GetWindowRect(self, _hwnd, rect):
+        rect.left = self.window_rect.left
+        rect.top = self.window_rect.top
+        rect.right = self.window_rect.right
+        rect.bottom = self.window_rect.bottom
+        return True
+
+    def MonitorFromWindow(self, _hwnd, _flags):
+        return 9
+
+    def GetMonitorInfoW(self, _monitor, monitor_info):
+        monitor_info.rcMonitor = self.monitor_rect
+        return True
+
+
 class FakeUser32:
     def __init__(self):
         self.rect = Rect(100, 110, 320, 162)
@@ -63,6 +146,7 @@ def make_message_dependencies():
         "position": [],
         "save": [],
         "show": [],
+        "sync": [],
     }
     user32 = FakeUser32()
     wintypes = SimpleNamespace(RECT=Rect, POINT=Point)
@@ -83,6 +167,8 @@ def make_message_dependencies():
         "show_main_window": lambda: calls["show"].append(True),
         "draw_window": lambda hwnd: calls["draw"].append(hwnd),
         "show_context_menu": lambda hwnd: calls["context"].append(hwnd),
+        "is_position_locked": lambda: False,
+        "sync_visibility": lambda: calls["sync"].append(True),
     }
     return state, calls, user32, dependencies
 
@@ -92,6 +178,57 @@ def test_lparam_point_decodes_signed_coordinates():
 
     assert get_lparam_point((20 << 16) | 10) == (10, 20)
     assert get_lparam_point((0xFFEC << 16) | 0xFFF6) == (-10, -20)
+
+
+def test_window_rect_fullscreen_check_allows_small_edge_tolerance():
+    from goldmonitor.floating_runtime import window_rect_covers_monitor
+
+    monitor = Rect(0, 0, 1920, 1080)
+
+    assert window_rect_covers_monitor(Rect(1, -1, 1919, 1079), monitor) is True
+    assert window_rect_covers_monitor(Rect(0, 0, 1917, 1080), monitor) is False
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"foreground": 42}, False),
+        ({"visible": False}, False),
+        ({"iconic": True}, False),
+        ({"class_name": "Progman"}, False),
+        ({"class_name": "WorkerW"}, False),
+        ({"process_lookup_ok": False}, False),
+        ({"process_id": 100}, False),
+        ({"window_rect": Rect(0, 0, 1920, 1040)}, False),
+        ({}, True),
+    ],
+)
+def test_foreground_fullscreen_detection_excludes_non_application_windows(
+    overrides,
+    expected,
+):
+    from goldmonitor.floating_runtime import is_foreground_window_fullscreen
+
+    user32 = FullscreenUser32(**overrides)
+    wintypes = SimpleNamespace(RECT=Rect, DWORD=FakeDWORD)
+
+    assert is_foreground_window_fullscreen(
+        42,
+        user32=user32,
+        current_process_id=100,
+        monitor_info_type=MonitorInfo,
+        ctypes_loader=lambda: (FakeFullscreenCtypes, wintypes),
+    ) is expected
+
+
+def test_fullscreen_hiding_can_be_disabled_in_settings():
+    from goldmonitor.floating_runtime import should_hide_for_fullscreen
+
+    assert should_hide_for_fullscreen(
+        42,
+        user32=SimpleNamespace(),
+        get_settings=lambda: {"floating_price_hide_on_fullscreen": False},
+    ) is False
 
 
 def test_window_message_drag_flow_moves_and_persists_position():
@@ -147,6 +284,26 @@ def test_window_message_drag_flow_moves_and_persists_position():
     assert calls["position"][-1] == (hwnd, 116, 135)
 
 
+def test_locked_window_does_not_start_dragging():
+    from goldmonitor.floating_runtime import (
+        WM_LBUTTONDOWN,
+        handle_floating_window_message,
+    )
+
+    state, _calls, user32, dependencies = make_message_dependencies()
+    dependencies["is_position_locked"] = lambda: True
+
+    assert handle_floating_window_message(
+        42,
+        WM_LBUTTONDOWN,
+        0,
+        (6 << 16) | 5,
+        **dependencies,
+    ) == 0
+    assert state["drag"] is None
+    assert user32.captured == []
+
+
 def test_window_messages_route_paint_actions_and_default_processing():
     from goldmonitor.floating_runtime import (
         WM_CAPTURECHANGED,
@@ -154,6 +311,7 @@ def test_window_messages_route_paint_actions_and_default_processing():
         WM_DISPLAYCHANGE,
         WM_LBUTTONDBLCLK,
         WM_PAINT,
+        WM_TIMER,
         handle_floating_window_message,
     )
 
@@ -168,6 +326,10 @@ def test_window_messages_route_paint_actions_and_default_processing():
 
     assert handle_floating_window_message(7, WM_DISPLAYCHANGE, 0, 0, **dependencies) == 0
     assert calls["position"] == [(7, None, None)]
+    assert calls["sync"] == [True]
+
+    assert handle_floating_window_message(7, WM_TIMER, 1, 0, **dependencies) == 0
+    assert calls["sync"] == [True, True]
 
     assert handle_floating_window_message(7, WM_LBUTTONDBLCLK, 0, 0, **dependencies) == 0
     assert state["drag"] is None
@@ -188,6 +350,10 @@ def test_window_messages_route_paint_actions_and_default_processing():
         (1002, "hide"),
         (1003, "refresh"),
         (1004, "risk"),
+        (1005, ("toggle", "floating_price_lock_position")),
+        (1006, ("toggle", "floating_price_hide_on_fullscreen")),
+        (1007, ("toggle", "floating_price_always_on_top")),
+        (1008, "reset"),
     ],
 )
 def test_context_menu_routes_selected_command(command, expected):
@@ -231,6 +397,13 @@ def test_context_menu_routes_selected_command(command, expected):
         set_enabled=lambda enabled: calls.append("hide" if not enabled else "show"),
         refresh_price=lambda: calls.append("refresh"),
         open_risk_analysis=lambda: calls.append("risk"),
+        get_settings=lambda: {
+            "floating_price_lock_position": True,
+            "floating_price_hide_on_fullscreen": True,
+            "floating_price_always_on_top": False,
+        },
+        toggle_setting=lambda key: calls.append(("toggle", key)),
+        reset_position=lambda: calls.append("reset"),
     )
 
     assert result == command
@@ -241,8 +414,16 @@ def test_context_menu_routes_selected_command(command, expected):
         "风险分析",
         "刷新行情",
         None,
+        "锁定位置",
+        "全屏时自动隐藏",
+        "始终置顶",
+        "重置位置",
+        None,
         "隐藏悬浮条",
     ]
+    assert user32.items[4][1] & 0x0008
+    assert user32.items[5][1] & 0x0008
+    assert not user32.items[6][1] & 0x0008
 
 
 def test_window_loop_failure_sets_ready_and_logs_once():
@@ -272,6 +453,11 @@ def test_window_loop_failure_sets_ready_and_logs_once():
         "get_drag_state": lambda: None,
         "set_drag_state": lambda value: None,
         "is_topmost": lambda: False,
+        "get_settings": lambda: {},
+        "toggle_setting": lambda key: None,
+        "reset_position": lambda: None,
+        "is_position_locked": lambda: False,
+        "sync_visibility": lambda: None,
     }
     logger = SimpleNamespace(
         warning=lambda message, exc_info=False: warnings.append((message, exc_info))
@@ -380,6 +566,64 @@ def test_opacity_is_converted_to_layered_window_alpha():
     )
 
     assert calls == [(42, 0, 127, 0x00000002)]
+
+
+def test_visibility_is_suppressed_without_repainting_during_fullscreen():
+    from goldmonitor.floating_runtime import set_window_visible
+
+    calls = []
+
+    class RecordedFunction:
+        def __init__(self, callback):
+            self.callback = callback
+            self.argtypes = None
+
+        def __call__(self, *args):
+            return self.callback(*args)
+
+    visibility = {"value": True}
+    user32 = SimpleNamespace(
+        ShowWindow=RecordedFunction(
+            lambda hwnd, command: calls.append(("show", hwnd, command))
+        ),
+        IsWindowVisible=lambda _hwnd: visibility["value"],
+    )
+    ctypes_module = SimpleNamespace(
+        windll=SimpleNamespace(user32=user32),
+        c_void_p=object,
+        c_int=object,
+    )
+
+    result = set_window_visible(
+        True,
+        hwnd=42,
+        os_name="nt",
+        get_positioned=lambda: True,
+        position_window=lambda *args: calls.append("position"),
+        apply_opacity=lambda *args: calls.append("opacity"),
+        invalidate_window=lambda: calls.append("invalidate"),
+        should_suppress=lambda hwnd, target: True,
+        ctypes_loader=lambda: (ctypes_module, SimpleNamespace()),
+    )
+
+    assert result is False
+    assert calls == [("show", 42, 0)]
+
+    visibility["value"] = False
+    result = set_window_visible(
+        True,
+        hwnd=42,
+        os_name="nt",
+        get_positioned=lambda: True,
+        position_window=lambda *args: calls.append("position"),
+        apply_opacity=lambda *args: calls.append("opacity"),
+        invalidate_window=lambda: calls.append("invalidate"),
+        should_suppress=lambda hwnd, target: True,
+        ctypes_loader=lambda: (ctypes_module, SimpleNamespace()),
+    )
+
+    assert result is False
+    assert calls == [("show", 42, 0)]
 
 
 def test_app_window_loop_wrapper_resolves_current_runtime_callbacks(monkeypatch):

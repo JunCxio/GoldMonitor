@@ -46,3 +46,59 @@ jobs:
 
       - name: Run checks
         run: python scripts/run_checks.py
+
+  build-windows-installer:
+    name: Build Windows test installer
+    if: github.event_name == 'pull_request'
+    needs: checks
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+            constraints/windows-py312.txt
+
+      - name: Install Python dependencies
+        shell: powershell
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-build.txt -c constraints/windows-py312.txt
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup -y
+
+      - name: Build Windows application
+        shell: powershell
+        run: pyinstaller --clean --noconfirm GoldMonitor.spec
+
+      - name: Build Windows installer
+        shell: powershell
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            throw "ISCC.exe was not found after installing Inno Setup."
+          }
+          & $iscc .\installer\GoldMonitor.iss
+
+      - name: Upload Windows test installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-pr-${{ github.event.pull_request.number }}
+          path: release/GoldMonitorSetup.exe
+          if-no-files-found: error
+          retention-days: 7

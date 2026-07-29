@@ -20,6 +20,8 @@ def test_settings_normalization_preserves_onboarding_state():
         "floating_price_preset": "compact",
         "floating_price_snap_edge": True,
         "floating_price_always_on_top": False,
+        "floating_price_hide_on_fullscreen": True,
+        "floating_price_lock_position": False,
         "close_behavior": "ask",
         "close_remembered": False,
         "alert_sound_enabled": True,

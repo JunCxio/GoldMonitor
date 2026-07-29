@@ -53,6 +53,14 @@ def normalize_settings(raw, defaults, options=None):
     data["startup_enabled"] = bool(data.get("startup_enabled"))
     data["startup_to_tray"] = bool(data.get("startup_to_tray"))
     data["floating_price_enabled"] = bool(data.get("floating_price_enabled", True))
+    if data.get("floating_price_windows_mode") not in options.get(
+        "valid_floating_windows_modes",
+        set(),
+    ):
+        data["floating_price_windows_mode"] = defaults.get(
+            "floating_price_windows_mode",
+            "floating",
+        )
     data["floating_price_position_saved"] = bool(data.get("floating_price_position_saved", False))
     data["floating_price_x"] = optional_int(data.get("floating_price_x"))
     data["floating_price_y"] = optional_int(data.get("floating_price_y"))
@@ -70,6 +78,12 @@ def normalize_settings(raw, defaults, options=None):
         data["floating_price_preset"] = defaults["floating_price_preset"]
     data["floating_price_snap_edge"] = bool(data.get("floating_price_snap_edge", True))
     data["floating_price_always_on_top"] = bool(data.get("floating_price_always_on_top", False))
+    data["floating_price_hide_on_fullscreen"] = bool(
+        data.get("floating_price_hide_on_fullscreen", True)
+    )
+    data["floating_price_lock_position"] = bool(
+        data.get("floating_price_lock_position", False)
+    )
     data["close_remembered"] = bool(data.get("close_remembered"))
     data["alert_sound_enabled"] = bool(data.get("alert_sound_enabled"))
     data["alert_dialog_enabled"] = bool(data.get("alert_dialog_enabled"))

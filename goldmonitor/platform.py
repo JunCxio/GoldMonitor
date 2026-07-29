@@ -29,6 +29,7 @@ def platform_capabilities(platform=None):
         "has_system_tray": platform == "windows",
         "has_menu_bar_status": platform == "macos",
         "floating_price_mode": "floating_window" if platform == "windows" else ("menu_bar" if platform == "macos" else "none"),
+        "has_taskbar_price": platform == "windows",
         "can_start_hidden": platform in {"windows", "macos"},
         "can_system_notify": platform in {"windows", "macos"},
         "can_system_alert_dialog": platform in {"windows", "macos"},

@@ -125,6 +125,7 @@ def build_diagnostics_clipboard_text(
     source_health = payload.get("source_health") if isinstance(payload.get("source_health"), dict) else {}
     quality = source_health.get("quality") if isinstance(source_health.get("quality"), dict) else {}
     settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
+    taskbar_price = payload.get("taskbar_price") if isinstance(payload.get("taskbar_price"), dict) else {}
     price_history = payload.get("price_history") if isinstance(payload.get("price_history"), dict) else {}
     paths = payload.get("paths") if isinstance(payload.get("paths"), dict) else {}
     sources = fetch_status.get("sources") if isinstance(fetch_status.get("sources"), dict) else {}
@@ -152,6 +153,12 @@ def build_diagnostics_clipboard_text(
     export_dir_state = "可写" if export_dir_ok is True else "不可写" if export_dir_ok is False else "未检查"
     last_export_ok = last_export.get("ok")
     last_export_state = "成功" if last_export_ok is True else "失败" if last_export_ok is False else "未记录"
+    windows_mode_labels = {
+        "floating": "仅悬浮条",
+        "taskbar": "仅任务栏价格",
+        "both": "悬浮条和任务栏价格",
+    }
+    windows_mode = settings.get("floating_price_windows_mode", "floating")
 
     value = diagnostics_value
     lines = [
@@ -188,11 +195,16 @@ def build_diagnostics_clipboard_text(
         f"- 检查时间: {value(update_status.get('checked_at'))}",
         f"- 状态说明: {update_message}",
         "",
-        "悬浮条",
+        "悬浮条与任务栏",
         f"- 状态: {'开启' if settings.get('floating_price_enabled') else '关闭'}",
+        f"- Windows 显示位置: {windows_mode_labels.get(windows_mode, value(windows_mode))}",
         f"- 置顶: {'开启' if settings.get('floating_price_always_on_top') else '关闭'}",
+        f"- 全屏自动隐藏: {'开启' if settings.get('floating_price_hide_on_fullscreen', True) else '关闭'}",
+        f"- 位置锁定: {'开启' if settings.get('floating_price_lock_position') else '关闭'}",
         f"- 显示模式: {value(settings.get('floating_price_display_mode'))}",
         f"- 透明度: {value(settings.get('floating_price_opacity'))}",
+        f"- 任务栏窗口状态: {value(taskbar_price.get('reason'))}",
+        f"- 任务栏窗口区域: {value(taskbar_price.get('bounds'))}",
         "",
         "存储与日志",
         f"- 导出目录: {value(paths.get('exports'))}",
@@ -287,6 +299,9 @@ class DiagnosticsRuntime:
         )
         payload = json.loads(report)
         payload["export_status"] = self.get_export_status()
+        payload["taskbar_price"] = dict(
+            getattr(self.runtime, "taskbar_layout_state", {}) or {}
+        )
         return json.dumps(payload, ensure_ascii=False, indent=2)
 
     def build_clipboard_text(self, report=None):

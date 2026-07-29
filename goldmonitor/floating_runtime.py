@@ -1,4 +1,5 @@
 import logging
+import os
 
 from goldmonitor import desktop_ui as desktop_ui_core
 
@@ -12,9 +13,11 @@ WM_RBUTTONUP = 0x0205
 WM_CONTEXTMENU = 0x007B
 WM_CAPTURECHANGED = 0x0215
 WM_DISPLAYCHANGE = 0x007E
+WM_TIMER = 0x0113
 WM_DESTROY = 0x0002
 
 MF_STRING = 0x0000
+MF_CHECKED = 0x0008
 MF_SEPARATOR = 0x0800
 TPM_RIGHTBUTTON = 0x0002
 TPM_RETURNCMD = 0x0100
@@ -22,6 +25,12 @@ FLOATING_MENU_OPEN = 1001
 FLOATING_MENU_HIDE = 1002
 FLOATING_MENU_REFRESH = 1003
 FLOATING_MENU_RISK = 1004
+FLOATING_MENU_LOCK_POSITION = 1005
+FLOATING_MENU_HIDE_FULLSCREEN = 1006
+FLOATING_MENU_ALWAYS_ON_TOP = 1007
+FLOATING_MENU_RESET_POSITION = 1008
+FLOATING_VISIBILITY_TIMER_ID = 1
+FLOATING_VISIBILITY_TIMER_MS = 500
 
 MK_LBUTTON = 0x0001
 DT_SINGLELINE = 0x0020
@@ -44,6 +53,9 @@ WS_EX_NOACTIVATE = 0x08000000
 WS_POPUP = 0x80000000
 HWND_TOPMOST = -1
 HWND_NOTOPMOST = -2
+MONITOR_DEFAULTTONEAREST = 2
+FULLSCREEN_EDGE_TOLERANCE = 2
+SHELL_WINDOW_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd"}
 
 
 def get_lparam_point(lparam):
@@ -59,6 +71,98 @@ def get_lparam_point(lparam):
 
 def rgb(red, green, blue):
     return red | (green << 8) | (blue << 16)
+
+
+def window_rect_covers_monitor(
+    window_rect,
+    monitor_rect,
+    tolerance=FULLSCREEN_EDGE_TOLERANCE,
+):
+    return (
+        window_rect.left <= monitor_rect.left + tolerance
+        and window_rect.top <= monitor_rect.top + tolerance
+        and window_rect.right >= monitor_rect.right - tolerance
+        and window_rect.bottom >= monitor_rect.bottom - tolerance
+    )
+
+
+def is_foreground_window_fullscreen(
+    floating_hwnd,
+    *,
+    user32,
+    current_process_id=None,
+    monitor_info_type=None,
+    ctypes_loader=None,
+):
+    try:
+        ctypes_loader = ctypes_loader or _load_win32_types
+        ctypes, wintypes = ctypes_loader()
+        foreground = user32.GetForegroundWindow()
+        if not foreground or foreground == floating_hwnd:
+            return False
+        if hasattr(user32, "IsWindowVisible") and not user32.IsWindowVisible(foreground):
+            return False
+        if hasattr(user32, "IsIconic") and user32.IsIconic(foreground):
+            return False
+
+        class_name = ctypes.create_unicode_buffer(256)
+        if user32.GetClassNameW(foreground, class_name, len(class_name)):
+            if class_name.value in SHELL_WINDOW_CLASSES:
+                return False
+
+        process_id = wintypes.DWORD()
+        if not user32.GetWindowThreadProcessId(
+            foreground,
+            ctypes.byref(process_id),
+        ):
+            return False
+        own_process_id = os.getpid() if current_process_id is None else current_process_id
+        if int(process_id.value) == int(own_process_id):
+            return False
+
+        window_rect = wintypes.RECT()
+        if not user32.GetWindowRect(foreground, ctypes.byref(window_rect)):
+            return False
+
+        monitor = user32.MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST)
+        if not monitor:
+            return False
+        if monitor_info_type is None:
+            class MonitorInfo(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", wintypes.DWORD),
+                    ("rcMonitor", wintypes.RECT),
+                    ("rcWork", wintypes.RECT),
+                    ("dwFlags", wintypes.DWORD),
+                ]
+
+            monitor_info_type = MonitorInfo
+        monitor_info = monitor_info_type()
+        monitor_info.cbSize = ctypes.sizeof(monitor_info)
+        if not user32.GetMonitorInfoW(monitor, ctypes.byref(monitor_info)):
+            return False
+        return window_rect_covers_monitor(window_rect, monitor_info.rcMonitor)
+    except Exception:
+        return False
+
+
+def should_hide_for_fullscreen(
+    floating_hwnd,
+    *,
+    user32,
+    get_settings,
+    current_process_id=None,
+    ctypes_loader=None,
+):
+    settings = get_settings()
+    if not settings.get("floating_price_hide_on_fullscreen", True):
+        return False
+    return is_foreground_window_fullscreen(
+        floating_hwnd,
+        user32=user32,
+        current_process_id=current_process_id,
+        ctypes_loader=ctypes_loader,
+    )
 
 
 def _load_win32_types():
@@ -262,6 +366,7 @@ def set_window_visible(
     position_window,
     apply_opacity,
     invalidate_window,
+    should_suppress=None,
     ctypes_loader=_load_win32_types,
 ):
     if not hwnd or os_name != "nt":
@@ -270,16 +375,30 @@ def set_window_visible(
         ctypes, _wintypes = ctypes_loader()
         user32 = ctypes.windll.user32
         user32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
-        if visible:
+        suppressed = bool(
+            visible
+            and should_suppress
+            and should_suppress(hwnd, user32)
+        )
+        should_show = bool(visible and not suppressed)
+        currently_visible = None
+        if hasattr(user32, "IsWindowVisible"):
+            currently_visible = bool(user32.IsWindowVisible(hwnd))
+        if should_show:
+            if currently_visible is True:
+                return True
             if not get_positioned():
                 position_window(hwnd, user32)
             apply_opacity(hwnd, user32)
             user32.ShowWindow(hwnd, 4)
             invalidate_window()
+            return True
         else:
-            user32.ShowWindow(hwnd, 0)
+            if currently_visible is not False:
+                user32.ShowWindow(hwnd, 0)
+            return False
     except Exception:
-        pass
+        return None
 
 
 def set_enabled(
@@ -449,6 +568,9 @@ def show_floating_context_menu(
     set_enabled,
     refresh_price,
     open_risk_analysis,
+    get_settings,
+    toggle_setting,
+    reset_position,
 ):
     point = wintypes.POINT()
     if not user32.GetCursorPos(ctypes_module.byref(point)):
@@ -457,9 +579,30 @@ def show_floating_context_menu(
     if not menu:
         return None
     try:
+        settings = get_settings()
         user32.AppendMenuW(menu, MF_STRING, FLOATING_MENU_OPEN, "打开主界面")
         user32.AppendMenuW(menu, MF_STRING, FLOATING_MENU_RISK, "风险分析")
         user32.AppendMenuW(menu, MF_STRING, FLOATING_MENU_REFRESH, "刷新行情")
+        user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
+        user32.AppendMenuW(
+            menu,
+            MF_STRING | (MF_CHECKED if settings.get("floating_price_lock_position", False) else 0),
+            FLOATING_MENU_LOCK_POSITION,
+            "锁定位置",
+        )
+        user32.AppendMenuW(
+            menu,
+            MF_STRING | (MF_CHECKED if settings.get("floating_price_hide_on_fullscreen", True) else 0),
+            FLOATING_MENU_HIDE_FULLSCREEN,
+            "全屏时自动隐藏",
+        )
+        user32.AppendMenuW(
+            menu,
+            MF_STRING | (MF_CHECKED if settings.get("floating_price_always_on_top", False) else 0),
+            FLOATING_MENU_ALWAYS_ON_TOP,
+            "始终置顶",
+        )
+        user32.AppendMenuW(menu, MF_STRING, FLOATING_MENU_RESET_POSITION, "重置位置")
         user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(menu, MF_STRING, FLOATING_MENU_HIDE, "隐藏悬浮条")
         user32.SetForegroundWindow(hwnd)
@@ -483,6 +626,14 @@ def show_floating_context_menu(
         refresh_price()
     elif command == FLOATING_MENU_RISK:
         open_risk_analysis()
+    elif command == FLOATING_MENU_LOCK_POSITION:
+        toggle_setting("floating_price_lock_position")
+    elif command == FLOATING_MENU_HIDE_FULLSCREEN:
+        toggle_setting("floating_price_hide_on_fullscreen")
+    elif command == FLOATING_MENU_ALWAYS_ON_TOP:
+        toggle_setting("floating_price_always_on_top")
+    elif command == FLOATING_MENU_RESET_POSITION:
+        reset_position()
     return command
 
 
@@ -503,11 +654,16 @@ def handle_floating_window_message(
     show_main_window,
     draw_window,
     show_context_menu,
+    is_position_locked,
+    sync_visibility,
 ):
     if msg == WM_PAINT:
         draw_window(hwnd)
         return 0
     if msg == WM_LBUTTONDOWN:
+        if is_position_locked():
+            set_drag_state(None)
+            return 0
         try:
             point_x, point_y = get_lparam_point(lparam)
             rect = wintypes.RECT()
@@ -573,8 +729,16 @@ def handle_floating_window_message(
         return 0
     if msg == WM_DISPLAYCHANGE:
         position_window(hwnd, user32)
+        sync_visibility()
+        return 0
+    if msg == WM_TIMER and int(wparam) == FLOATING_VISIBILITY_TIMER_ID:
+        sync_visibility()
         return 0
     if msg == WM_DESTROY:
+        try:
+            user32.KillTimer(hwnd, FLOATING_VISIBILITY_TIMER_ID)
+        except Exception:
+            pass
         return 0
     return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
@@ -602,6 +766,11 @@ def run_floating_price_window(
     get_drag_state,
     set_drag_state,
     is_topmost,
+    get_settings,
+    toggle_setting,
+    reset_position,
+    is_position_locked,
+    sync_visibility,
     ctypes_loader=_load_win32_types,
     logger=logging,
 ):
@@ -681,6 +850,35 @@ def run_floating_price_window(
             wintypes.UINT,
         ]
         user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsWindowVisible.restype = wintypes.BOOL
+        user32.IsIconic.argtypes = [wintypes.HWND]
+        user32.IsIconic.restype = wintypes.BOOL
+        user32.GetClassNameW.argtypes = [
+            wintypes.HWND,
+            wintypes.LPWSTR,
+            ctypes.c_int,
+        ]
+        user32.GetClassNameW.restype = ctypes.c_int
+        user32.GetWindowThreadProcessId.argtypes = [
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+        user32.MonitorFromWindow.restype = wintypes.HANDLE
+        user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+        user32.GetMonitorInfoW.restype = wintypes.BOOL
+        user32.SetTimer.argtypes = [
+            wintypes.HWND,
+            ctypes.c_size_t,
+            wintypes.UINT,
+            ctypes.c_void_p,
+        ]
+        user32.SetTimer.restype = ctypes.c_size_t
+        user32.KillTimer.argtypes = [wintypes.HWND, ctypes.c_size_t]
+        user32.KillTimer.restype = wintypes.BOOL
         user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
         user32.SetCapture.argtypes = [wintypes.HWND]
         user32.SetCapture.restype = wintypes.HWND
@@ -765,6 +963,9 @@ def run_floating_price_window(
                 set_enabled=set_enabled,
                 refresh_price=refresh_price,
                 open_risk_analysis=open_risk_analysis,
+                get_settings=get_settings,
+                toggle_setting=toggle_setting,
+                reset_position=reset_position,
             )
 
         @window_proc_type
@@ -785,6 +986,8 @@ def run_floating_price_window(
                 show_main_window=show_main_window,
                 draw_window=draw_window,
                 show_context_menu=show_context_menu,
+                is_position_locked=is_position_locked,
+                sync_visibility=sync_visibility,
             )
 
         instance = kernel32.GetModuleHandleW(None)
@@ -824,6 +1027,7 @@ def run_floating_price_window(
         set_window_handle(hwnd)
         apply_corner_preference(hwnd)
         apply_opacity(hwnd, user32)
+        user32.SetTimer(hwnd, FLOATING_VISIBILITY_TIMER_ID, FLOATING_VISIBILITY_TIMER_MS, None)
         if window_enabled():
             set_window_visible(True)
         set_ready()

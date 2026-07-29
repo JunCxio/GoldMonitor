@@ -11,11 +11,13 @@ def test_platform_capabilities_are_explicit():
     assert windows["platform"] == "windows"
     assert windows["has_system_tray"] is True
     assert windows["floating_price_mode"] == "floating_window"
+    assert windows["has_taskbar_price"] is True
 
     macos = platform_capabilities("macos")
     assert macos["platform"] == "macos"
     assert macos["has_menu_bar_status"] is True
     assert macos["floating_price_mode"] == "menu_bar"
+    assert macos["has_taskbar_price"] is False
 
     other = platform_capabilities("other")
     assert other["platform"] == "other"

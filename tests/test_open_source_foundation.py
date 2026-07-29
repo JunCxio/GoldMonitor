@@ -54,7 +54,12 @@ def test_pull_request_ci_runs_supported_platform_checks():
     assert 'python-version: "3.12"' in workflow
     assert "python scripts/run_checks.py" in workflow
     assert "cancel-in-progress: true" in workflow
-    assert "upload-artifact" not in workflow
+    assert "Build Windows test installer" in workflow
+    assert "needs: checks" in workflow
+    assert "pyinstaller --clean --noconfirm GoldMonitor.spec" in workflow
+    assert "actions/upload-artifact@v7" in workflow
+    assert "windows-pr-${{ github.event.pull_request.number }}" in workflow
+    assert "retention-days: 7" in workflow
     assert "softprops/action-gh-release" not in workflow
 
 

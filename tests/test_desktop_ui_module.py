@@ -44,7 +44,6 @@ def test_floating_price_text_formats_trend_time_and_source_state():
         "down",
         "live",
     )
-
     assert format_floating_price_text(
         {"floating_price_display_mode": "usd_only"},
         rmb=528.12,
@@ -82,6 +81,24 @@ def test_floating_price_text_formats_trend_time_and_source_state():
         "neutral",
         "error",
     )
+
+
+def test_taskbar_price_text_is_compact_and_respects_display_mode():
+    from goldmonitor.desktop_ui import format_taskbar_price_text
+
+    assert format_taskbar_price_text(
+        {"floating_price_display_mode": "rmb_usd"},
+        rmb=528.16,
+        usd=2345.6,
+        pct=0.42,
+    ) == ("¥528.16  $2,346  +0.42%", "up")
+    assert format_taskbar_price_text(
+        {"floating_price_display_mode": "usd_only"},
+        rmb=528.16,
+        usd=2345.6,
+        pct=-0.2,
+    ) == ("$2,346  -0.20%", "down")
+    assert format_taskbar_price_text({}, None, None, None) == ("金价 --", "neutral")
 
 
 def test_floating_window_metrics_and_geometry_are_deterministic():

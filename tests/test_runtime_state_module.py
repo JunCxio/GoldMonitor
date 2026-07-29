@@ -44,3 +44,6 @@ def test_runtime_state_exposes_service_slots_without_module_globals():
     assert state.news_runtime_instance is None
     assert state.diagnostics_runtime_instance is None
     assert state.floating_controller_instance is None
+    assert state.taskbar_controller_instance is None
+    assert state.taskbar_hwnd is None
+    assert state.taskbar_layout_state == {}
