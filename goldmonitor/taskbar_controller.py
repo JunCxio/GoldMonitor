@@ -91,6 +91,10 @@ class TaskbarPriceController:
         with self.runtime.taskbar_lock:
             self.runtime.taskbar_layout_state = dict(value or {})
 
+    def layout_state(self):
+        with self.runtime.taskbar_lock:
+            return dict(self.runtime.taskbar_layout_state)
+
     def layout(self):
         try:
             import ctypes
@@ -123,6 +127,7 @@ class TaskbarPriceController:
             layout_provider=self.layout,
             should_suppress=self.should_hide_for_fullscreen,
             set_layout_state=self.set_layout_state,
+            get_layout_state=self.layout_state,
             invalidate=self.invalidate_window,
         )
 

@@ -18,8 +18,60 @@ def test_taskbar_layout_uses_only_free_horizontal_space():
         "y": 1043,
         "width": 224,
         "height": 34,
+        "dpi": 96,
         "orientation": "horizontal",
         "taskbar_rect": (0, 1040, 1920, 1080),
+    }
+
+
+def test_taskbar_layout_and_draw_metrics_scale_with_window_dpi():
+    from goldmonitor.taskbar_runtime import (
+        choose_taskbar_layout,
+        get_window_dpi,
+        taskbar_draw_metrics,
+        taskbar_layout_metrics,
+    )
+
+    assert taskbar_layout_metrics(144) == {
+        "dpi": 144,
+        "desired_width": 336,
+        "minimum_width": 231,
+        "margin": 5,
+        "maximum_height": 51,
+        "minimum_height": 36,
+        "minimum_taskbar_height": 42,
+    }
+    assert taskbar_draw_metrics(192) == {
+        "dpi": 192,
+        "padding": 12,
+        "gap": 10,
+        "arrow_width": 18,
+        "arrow_gap": 6,
+        "minimum_price_width": 84,
+        "brand_font_height": 28,
+        "value_font_height": 26,
+        "arrow_stroke": 4,
+        "arrow_half_height": 10,
+        "arrow_head_size": 8,
+    }
+    assert get_window_dpi(SimpleNamespace(GetDpiForWindow=lambda hwnd: 144), 42) == 144
+    assert get_window_dpi(SimpleNamespace(), 42) == 96
+
+    layout = choose_taskbar_layout(
+        (0, 1560, 2880, 1620),
+        start_rect=(0, 1560, 90, 1620),
+        task_list_rect=(90, 1560, 2175, 1620),
+        tray_rect=(2610, 1560, 2880, 1620),
+        dpi=144,
+    )
+    assert layout == {
+        "x": 2269,
+        "y": 1565,
+        "width": 336,
+        "height": 50,
+        "dpi": 144,
+        "orientation": "horizontal",
+        "taskbar_rect": (0, 1560, 2880, 1620),
     }
 
 
@@ -91,73 +143,122 @@ def test_taskbar_theme_detection_reads_windows_system_theme():
     assert taskbar_uses_light_theme(lambda: (_ for _ in ()).throw(OSError())) is False
 
 
-def test_taskbar_window_uses_color_key_transparency():
+def test_taskbar_window_uses_per_pixel_alpha_transparency():
+    from PIL import Image
+
     from goldmonitor.taskbar_runtime import (
-        LWA_COLORKEY,
         WS_EX_LAYERED,
-        enable_taskbar_transparency,
+        premultiply_taskbar_surface,
+        render_taskbar_surface,
         taskbar_window_ex_style,
     )
 
-    calls = []
-    user32 = SimpleNamespace(
-        SetLayeredWindowAttributes=lambda *args: calls.append(args) or True,
+    surface = render_taskbar_surface(
+        224,
+        34,
+        {
+            "price": "¥879.83",
+            "change": "+0.42%",
+            "trend_state": "up",
+            "source_state": "live",
+        },
+        light_theme=True,
     )
 
     assert taskbar_window_ex_style() & WS_EX_LAYERED
-    assert enable_taskbar_transparency(42, user32=user32) is True
-    assert calls == [(42, 0, 0, LWA_COLORKEY)]
+    assert surface.mode == "RGBA"
+    assert surface.getpixel((0, 0))[3] == 0
+    assert surface.getchannel("A").getextrema() == (0, 255)
+    assert any(0 < alpha < 255 for alpha in surface.getchannel("A").getdata())
+
+    pixel = Image.new("RGBA", (1, 1), (100, 50, 25, 128))
+    assert premultiply_taskbar_surface(pixel) == bytes((13, 25, 50, 128))
 
 
-def test_taskbar_draws_au_price_and_vector_trend_on_transparent_surface():
+def test_taskbar_layered_window_uploads_premultiplied_pixels():
     import ctypes
     from ctypes import wintypes
 
-    from goldmonitor.taskbar_runtime import draw_taskbar_window
+    from PIL import Image
+
+    from goldmonitor.taskbar_runtime import update_layered_taskbar_window
+
+    buffer = (ctypes.c_ubyte * 4)()
+    calls = []
+
+    def create_dib_section(hdc, bitmap_info, usage, bits, section, offset):
+        bits._obj.value = ctypes.addressof(buffer)
+        return 3
+
+    user32 = SimpleNamespace(
+        GetDC=lambda hwnd: 1,
+        ReleaseDC=lambda hwnd, hdc: calls.append(("release", hwnd, hdc)) or 1,
+        UpdateLayeredWindow=lambda *args: calls.append(("update", args[-1])) or True,
+    )
+    gdi32 = SimpleNamespace(
+        CreateCompatibleDC=lambda hdc: 2,
+        CreateDIBSection=create_dib_section,
+        SelectObject=lambda hdc, value: 4,
+        DeleteObject=lambda value: calls.append(("delete_object", value)) or True,
+        DeleteDC=lambda hdc: calls.append(("delete_dc", hdc)) or True,
+    )
+
+    image = Image.new("RGBA", (1, 1), (100, 50, 25, 128))
+    assert update_layered_taskbar_window(
+        42,
+        image,
+        ctypes_module=ctypes,
+        wintypes=wintypes,
+        user32=user32,
+        gdi32=gdi32,
+    ) is True
+    assert bytes(buffer) == bytes((13, 25, 50, 128))
+    assert calls[-1] == ("release", None, 1)
+
+
+def test_taskbar_draw_updates_layered_surface_without_color_key(monkeypatch):
+    import ctypes
+    from ctypes import wintypes
+
+    from goldmonitor import taskbar_runtime
 
     class PaintStruct(ctypes.Structure):
         _fields_ = [("unused", ctypes.c_int)]
 
-    calls = {"fills": [], "texts": [], "lines": []}
+    calls = []
 
     def get_client_rect(hwnd, pointer):
         pointer._obj.left = 0
         pointer._obj.top = 0
-        pointer._obj.right = 224
-        pointer._obj.bottom = 34
-        return True
-
-    def measure_text(hdc, value, length, pointer):
-        pointer._obj.cx = length * 7
-        pointer._obj.cy = 13
+        pointer._obj.right = 336
+        pointer._obj.bottom = 51
         return True
 
     user32 = SimpleNamespace(
         BeginPaint=lambda hwnd, pointer: 7,
         EndPaint=lambda hwnd, pointer: True,
         GetClientRect=get_client_rect,
-        FillRect=lambda hdc, pointer, brush: calls["fills"].append(brush) or True,
-        DrawTextW=lambda hdc, value, length, pointer, flags: calls["texts"].append(value) or 1,
     )
-    gdi32 = SimpleNamespace(
-        CreateSolidBrush=lambda color: color,
-        CreateFontW=lambda *args: 100 + args[0],
-        CreatePen=lambda style, width, color: 200,
-        SelectObject=lambda hdc, value: 99,
-        DeleteObject=lambda value: True,
-        SetBkMode=lambda hdc, mode: mode,
-        SetTextColor=lambda hdc, color: color,
-        GetTextExtentPoint32W=measure_text,
-        MoveToEx=lambda hdc, x, y, point: calls["lines"].append(("move", x, y)) or True,
-        LineTo=lambda hdc, x, y: calls["lines"].append(("line", x, y)) or True,
+    surface = object()
+    monkeypatch.setattr(
+        taskbar_runtime,
+        "render_taskbar_surface",
+        lambda width, height, state, **kwargs: calls.append(
+            ("render", width, height, state, kwargs)
+        ) or surface,
+    )
+    monkeypatch.setattr(
+        taskbar_runtime,
+        "update_layered_taskbar_window",
+        lambda hwnd, image, **kwargs: calls.append(("update", hwnd, image)) or True,
     )
 
-    draw_taskbar_window(
+    assert taskbar_runtime.draw_taskbar_window(
         42,
         ctypes_module=ctypes,
         wintypes=wintypes,
         user32=user32,
-        gdi32=gdi32,
+        gdi32=SimpleNamespace(),
         paint_struct_type=PaintStruct,
         get_text_state=lambda: {
             "price": "¥879.83",
@@ -166,11 +267,12 @@ def test_taskbar_draws_au_price_and_vector_trend_on_transparent_surface():
             "source_state": "live",
         },
         light_theme_provider=lambda: True,
-    )
+        dpi_provider=lambda hwnd: 144,
+    ) is True
 
-    assert calls["fills"] == [0]
-    assert calls["texts"] == ["Au", "¥879.83", "+0.42%"]
-    assert len(calls["lines"]) == 6
+    assert calls[0][0:3] == ("render", 336, 51)
+    assert calls[0][4] == {"light_theme": True, "dpi": 144}
+    assert calls[1] == ("update", 42, surface)
 
 
 def test_taskbar_layout_rejects_vertical_or_fully_occupied_taskbars():
@@ -224,6 +326,7 @@ def test_taskbar_visibility_positions_without_activation_and_tracks_state():
         layout_provider=lambda: (layout, {"reason": "ready"}),
         should_suppress=lambda hwnd, target: False,
         set_layout_state=lambda state: states.append(state),
+        get_layout_state=lambda: states[-1] if states else {},
         invalidate=lambda: calls.append("invalidate"),
         ctypes_loader=lambda: (ctypes_module, SimpleNamespace()),
     )
@@ -231,9 +334,23 @@ def test_taskbar_visibility_positions_without_activation_and_tracks_state():
     assert result is True
     assert calls[0][0] == "position"
     assert calls[0][1][2:6] == (100, 200, 180, 32)
-    assert calls[-2:] == [("show", 42, 4), "invalidate"]
+    assert calls[-1] == "invalidate"
     assert states[-1]["visible"] is True
     assert states[-1]["reason"] == "visible"
+
+    call_count = len(calls)
+    assert set_taskbar_window_visible(
+        True,
+        hwnd=42,
+        os_name="nt",
+        layout_provider=lambda: (layout, {"reason": "ready"}),
+        should_suppress=lambda hwnd, target: False,
+        set_layout_state=lambda state: states.append(state),
+        get_layout_state=lambda: states[-1],
+        invalidate=lambda: calls.append("invalidate"),
+        ctypes_loader=lambda: (ctypes_module, SimpleNamespace()),
+    ) is True
+    assert len(calls) == call_count
 
 
 def test_taskbar_visibility_hides_for_fullscreen_or_missing_space():
@@ -283,6 +400,7 @@ def test_taskbar_visibility_hides_for_fullscreen_or_missing_space():
 def test_taskbar_window_messages_keep_interaction_non_activating():
     from goldmonitor.taskbar_runtime import (
         TASKBAR_LAYOUT_TIMER_ID,
+        WM_DPICHANGED,
         WM_ERASEBKGND,
         WM_LBUTTONUP,
         WM_PAINT,
@@ -305,8 +423,9 @@ def test_taskbar_window_messages_keep_interaction_non_activating():
     assert handle_taskbar_window_message(42, WM_ERASEBKGND, 0, 0, **kwargs) == 1
     assert handle_taskbar_window_message(42, WM_LBUTTONUP, 0, 0, **kwargs) == 0
     assert handle_taskbar_window_message(42, WM_RBUTTONUP, 0, 0, **kwargs) == 0
+    assert handle_taskbar_window_message(42, WM_DPICHANGED, 0, 0, **kwargs) == 0
     assert handle_taskbar_window_message(42, WM_TIMER, TASKBAR_LAYOUT_TIMER_ID, 0, **kwargs) == 0
-    assert calls == [("draw", 42), "show", ("menu", 42), "sync"]
+    assert calls == [("draw", 42), "show", ("menu", 42), "sync", "sync"]
 
 
 @pytest.mark.parametrize(
