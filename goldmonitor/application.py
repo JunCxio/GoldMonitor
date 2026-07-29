@@ -31,6 +31,7 @@ from goldmonitor import desktop_status as desktop_status_core
 from goldmonitor import diagnostics_runtime as diagnostics_runtime_core
 from goldmonitor import event_timeline as event_timeline_core
 from goldmonitor import floating_controller as floating_controller_core
+from goldmonitor import taskbar_controller as taskbar_controller_core
 from goldmonitor import instance_runtime as instance_runtime_core
 from goldmonitor import http_routes as http_routes_core
 from goldmonitor import market_adapters as market_adapters_core
@@ -283,6 +284,7 @@ DEFAULT_SETTINGS = {
     "startup_enabled": False,
     "startup_to_tray": True,
     "floating_price_enabled": True,
+    "floating_price_windows_mode": "floating",
     "floating_price_position_saved": False,
     "floating_price_x": None,
     "floating_price_y": None,
@@ -352,6 +354,7 @@ VALID_CLOSE_BEHAVIORS = {"ask", "minimize_to_tray", "exit"}
 VALID_RISK_ASSISTANT_PROVIDERS = {"deepseek", "openai_compatible"}
 VALID_RISK_ASSISTANT_DEPTHS = {"quick", "standard", "deep"}
 VALID_FLOATING_DISPLAY_MODES = {"rmb_usd", "rmb_only", "usd_only"}
+VALID_FLOATING_WINDOWS_MODES = {"floating", "taskbar", "both"}
 VALID_FLOATING_PRESETS = set(desktop_ui_core.FLOATING_PRICE_PRESETS)
 EXPORT_DIR_CHECK_ACTIONS = ["choose_export_dir", "use_default_export_dir", "open_export_dir"]
 FLOATING_PRICE_PRESETS = desktop_ui_core.FLOATING_PRICE_PRESETS
@@ -395,6 +398,7 @@ _RUNTIME_STATE_ALIASES.update({
     "_portfolio_runtime_instance": "portfolio_runtime_instance",
     "_alert_runtime_instance": "alert_runtime_instance",
     "_floating_controller_instance": "floating_controller_instance",
+    "_taskbar_controller_instance": "taskbar_controller_instance",
     "_window_instance": "window_instance",
     "_tray_icon": "tray_icon",
     "_macos_status_item": "macos_status_item",
@@ -415,6 +419,14 @@ _RUNTIME_STATE_ALIASES.update({
     "_floating_source_state": "floating_source_state",
     "_floating_drag_state": "floating_drag_state",
     "_floating_positioned": "floating_positioned",
+    "_taskbar_hwnd": "taskbar_hwnd",
+    "_taskbar_thread_started": "taskbar_thread_started",
+    "_taskbar_window_ready": "taskbar_window_ready",
+    "_taskbar_lock": "taskbar_lock",
+    "_taskbar_price_text": "taskbar_price_text",
+    "_taskbar_trend_state": "taskbar_trend_state",
+    "_taskbar_source_state": "taskbar_source_state",
+    "_taskbar_layout_state": "taskbar_layout_state",
     "_background_fetch_started": "background_fetch_started",
     "_news_fetch_started": "news_fetch_started",
 })
@@ -565,6 +577,7 @@ def _settings_options():
         "valid_risk_assistant_providers": VALID_RISK_ASSISTANT_PROVIDERS,
         "valid_risk_assistant_depths": VALID_RISK_ASSISTANT_DEPTHS,
         "valid_floating_display_modes": VALID_FLOATING_DISPLAY_MODES,
+        "valid_floating_windows_modes": VALID_FLOATING_WINDOWS_MODES,
         "valid_floating_presets": VALID_FLOATING_PRESETS,
         "default_email_subject_template": DEFAULT_EMAIL_SUBJECT_TEMPLATE,
         "default_email_body_template": DEFAULT_EMAIL_BODY_TEMPLATE,
@@ -643,6 +656,7 @@ def public_settings_snapshot(settings=None):
     public["export_dir_default"] = EXPORT_DIR
     public["export_dir_effective"] = resolve_export_dir(snapshot)
     public["export_dir_check"] = build_export_dir_check(snapshot)
+    public["taskbar_price_state"] = dict(runtime.taskbar_layout_state)
     return public
 
 
@@ -3880,10 +3894,40 @@ def _get_floating_controller():
                         daemon=True,
                     ).start()
                 ),
+                apply_display_settings=(
+                    lambda settings: apply_floating_price_settings(settings)
+                ),
                 logger=logging,
             )
         )
     return runtime.floating_controller_instance
+
+
+def _get_taskbar_controller():
+    if runtime.taskbar_controller_instance is None:
+        runtime.taskbar_controller_instance = taskbar_controller_core.TaskbarPriceController(
+            runtime=runtime,
+            os_name=lambda: os.name,
+            get_settings=lambda: get_settings_snapshot(),
+            save_settings=lambda snapshot: save_settings(snapshot),
+            public_settings_snapshot=(
+                lambda snapshot=None: public_settings_snapshot(snapshot)
+            ),
+            emit=lambda event, payload: socketio.emit(event, payload),
+            show_main_window=lambda: show_main_window(),
+            fetch_price_once=lambda: fetch_price_once(),
+            start_background_task=(
+                lambda target: threading.Thread(
+                    target=target,
+                    daemon=True,
+                ).start()
+            ),
+            apply_display_settings=(
+                lambda settings: apply_floating_price_settings(settings)
+            ),
+            logger=logging,
+        )
+    return runtime.taskbar_controller_instance
 
 
 def format_floating_price_text(rmb=None, usd=None, pct=None):
@@ -3991,6 +4035,10 @@ def _floating_price_window_loop():
     return _get_floating_controller().run_window()
 
 
+def _taskbar_price_window_loop():
+    return _get_taskbar_controller().run_window()
+
+
 def start_floating_price_window():
     return _get_floating_controller().start_window(
         worker=_floating_price_window_loop,
@@ -3998,20 +4046,38 @@ def start_floating_price_window():
     )
 
 
-def apply_floating_price_settings(settings=None):
-    return _get_floating_controller().apply_settings(
-        settings,
-        worker=_floating_price_window_loop,
+def start_taskbar_price_window():
+    return _get_taskbar_controller().start_window(
+        worker=_taskbar_price_window_loop,
     )
 
 
+def apply_floating_price_settings(settings=None):
+    _get_floating_controller().apply_settings(
+        settings,
+        worker=_floating_price_window_loop,
+    )
+    _get_taskbar_controller().apply_settings(
+        settings,
+        worker=_taskbar_price_window_loop,
+    )
+    return None
+
+
 def update_floating_price(rmb=None, usd=None, pct=None):
-    return _get_floating_controller().update_price(
+    _get_floating_controller().update_price(
         rmb,
         usd,
         pct,
         worker=_floating_price_window_loop,
     )
+    _get_taskbar_controller().update_price(
+        rmb,
+        usd,
+        pct,
+        worker=_taskbar_price_window_loop,
+    )
+    return None
 
 
 def _find_main_window_hwnd():

@@ -53,6 +53,14 @@ def normalize_settings(raw, defaults, options=None):
     data["startup_enabled"] = bool(data.get("startup_enabled"))
     data["startup_to_tray"] = bool(data.get("startup_to_tray"))
     data["floating_price_enabled"] = bool(data.get("floating_price_enabled", True))
+    if data.get("floating_price_windows_mode") not in options.get(
+        "valid_floating_windows_modes",
+        set(),
+    ):
+        data["floating_price_windows_mode"] = defaults.get(
+            "floating_price_windows_mode",
+            "floating",
+        )
     data["floating_price_position_saved"] = bool(data.get("floating_price_position_saved", False))
     data["floating_price_x"] = optional_int(data.get("floating_price_x"))
     data["floating_price_y"] = optional_int(data.get("floating_price_y"))

@@ -167,3 +167,48 @@ def test_floating_controller_refreshes_macos_status_instead_of_window():
     controller.apply_settings()
 
     assert calls == ["macos_status"]
+
+
+def test_floating_controller_hides_window_in_taskbar_only_mode(monkeypatch):
+    controller, _runtime, settings, _calls = make_controller(os_name="nt")
+    settings["floating_price_windows_mode"] = "taskbar"
+    visibility = []
+    monkeypatch.setattr(
+        controller,
+        "set_window_visible",
+        lambda visible: visibility.append(visible),
+    )
+
+    controller.apply_settings()
+
+    assert visibility == [False]
+
+
+def test_application_coordinates_floating_and_taskbar_price_windows(monkeypatch):
+    import app
+
+    calls = []
+
+    class Controller:
+        def __init__(self, name):
+            self.name = name
+
+        def apply_settings(self, settings, worker=None):
+            calls.append((self.name, "apply", settings, worker))
+
+        def update_price(self, rmb, usd, pct, worker=None):
+            calls.append((self.name, "update", rmb, usd, pct, worker))
+
+    floating = Controller("floating")
+    taskbar = Controller("taskbar")
+    monkeypatch.setattr(app, "_get_floating_controller", lambda: floating)
+    monkeypatch.setattr(app, "_get_taskbar_controller", lambda: taskbar)
+
+    settings = {"floating_price_windows_mode": "both"}
+    app.apply_floating_price_settings(settings)
+    app.update_floating_price(528.1, 2345.6, 0.2)
+
+    assert calls[0][:3] == ("floating", "apply", settings)
+    assert calls[1][:3] == ("taskbar", "apply", settings)
+    assert calls[2][0:5] == ("floating", "update", 528.1, 2345.6, 0.2)
+    assert calls[3][0:5] == ("taskbar", "update", 528.1, 2345.6, 0.2)

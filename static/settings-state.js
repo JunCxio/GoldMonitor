@@ -13,6 +13,7 @@ const SETTINGS_TAB_LABELS = {
 };
 const SETTINGS_FIELD_IDS = [
   'setStartup', 'setStartupTray', 'setFloatingPrice', 'setFloatingDisplayMode',
+  'setFloatingWindowsMode',
   'setFloatingPreset', 'setFloatingOpacity', 'setFloatingSnapEdge', 'setFloatingAlwaysOnTop',
   'setFloatingHideOnFullscreen', 'setFloatingLockPosition',
   'setCloseBehavior', 'setAlertSound', 'setAlertDialog', 'setAlertCooldownMinutes',

@@ -203,6 +203,10 @@ function handleSettingsFieldChange(event) {
     clearSettingsFieldError(document.getElementById('setAlertQuietStart'));
     clearSettingsFieldError(document.getElementById('setAlertQuietEnd'));
   }
+  if (target.id === 'setFloatingWindowsMode') {
+    syncFloatingWindowsModeRows();
+    renderTaskbarPriceStatus();
+  }
   const message = document.getElementById('settingsMessage');
   if (message && message.dataset.state === 'error') showSettingsMessage('', '');
   updateSettingsDirtyState();

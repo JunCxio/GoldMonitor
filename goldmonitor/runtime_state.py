@@ -19,6 +19,8 @@ class ApplicationRuntimeState:
     alert_dialog_lock: Any = field(default_factory=threading.Lock)
     floating_window_ready: Any = field(default_factory=threading.Event)
     floating_lock: Any = field(default_factory=threading.RLock)
+    taskbar_window_ready: Any = field(default_factory=threading.Event)
+    taskbar_lock: Any = field(default_factory=threading.RLock)
 
     price_usd: Optional[float] = None
     price_rmb: Optional[float] = None
@@ -95,6 +97,7 @@ class ApplicationRuntimeState:
     news_runtime_instance: Any = None
     diagnostics_runtime_instance: Any = None
     floating_controller_instance: Any = None
+    taskbar_controller_instance: Any = None
 
     window_instance: Any = None
     tray_icon: Any = None
@@ -114,6 +117,12 @@ class ApplicationRuntimeState:
     floating_source_state: str = "waiting"
     floating_drag_state: Any = None
     floating_positioned: bool = False
+    taskbar_hwnd: Any = None
+    taskbar_thread_started: bool = False
+    taskbar_price_text: str = "金价 --"
+    taskbar_trend_state: str = "neutral"
+    taskbar_source_state: str = "waiting"
+    taskbar_layout_state: Dict[str, Any] = field(default_factory=dict)
     background_fetch_started: bool = False
     news_fetch_started: bool = False
 

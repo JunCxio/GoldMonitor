@@ -7,6 +7,7 @@ template = (root / "templates" / "index.html").read_text(encoding="utf-8")
 app_py = (root / "goldmonitor" / "application.py").read_text(encoding="utf-8")
 http_routes_py = (root / "goldmonitor" / "http_routes.py").read_text(encoding="utf-8")
 floating_runtime_py = (root / "goldmonitor" / "floating_runtime.py").read_text(encoding="utf-8")
+taskbar_runtime_py = (root / "goldmonitor" / "taskbar_runtime.py").read_text(encoding="utf-8")
 css_path = root / "static" / "app.css"
 js_path = root / "static" / "app.js"
 app_state_js_path = root / "static" / "app-state.js"
@@ -614,7 +615,32 @@ for required in (
     if required not in template + js:
         raise SystemExit(f"frontend missing floating behavior setting: {required}")
 
+for required in (
+    'id="floatingWindowsModeRow"',
+    'id="setFloatingWindowsMode"',
+    'id="taskbarPriceStatus"',
+    'value="floating"',
+    'value="taskbar"',
+    'value="both"',
+    'floating_price_windows_mode',
+    'has_taskbar_price',
+    'taskbar_price_state',
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing Windows price display mode: {required}")
+
+for required in (
+    "Shell_TrayWnd",
+    "TrayNotifyWnd",
+    "MSTaskListWClass",
+    "WS_EX_NOACTIVATE",
+    "taskbar_is_auto_hidden",
+):
+    if required not in taskbar_runtime_py:
+        raise SystemExit(f"taskbar runtime missing safety contract: {required}")
+
 for tracked_id in (
+    "setFloatingWindowsMode",
     "setFloatingHideOnFullscreen",
     "setFloatingLockPosition",
 ):

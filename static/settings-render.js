@@ -45,27 +45,76 @@ function setRowHidden(id, hidden) {
   if (el) el.classList.toggle('platform-hidden', !!hidden);
 }
 
+function syncFloatingWindowsModeRows() {
+  const capabilities = appSettings.platform_capabilities || {};
+  const menuBarMode = capabilities.floating_price_mode === 'menu_bar';
+  const hasTaskbarPrice = !!capabilities.has_taskbar_price;
+  const modeSelect = document.getElementById('setFloatingWindowsMode');
+  const taskbarOnly = hasTaskbarPrice && modeSelect && modeSelect.value === 'taskbar';
+
+  setRowHidden('floatingWindowsModeRow', !hasTaskbarPrice);
+  setRowHidden('floatingPresetRow', menuBarMode || taskbarOnly);
+  setRowHidden('floatingOpacityRow', menuBarMode || taskbarOnly);
+  setRowHidden('floatingSnapRow', menuBarMode || taskbarOnly);
+  setRowHidden('floatingTopmostRow', menuBarMode || taskbarOnly);
+  setRowHidden('floatingFullscreenRow', menuBarMode || taskbarOnly);
+  setRowHidden('floatingLockRow', menuBarMode || taskbarOnly);
+}
+
+function renderTaskbarPriceStatus() {
+  const element = document.getElementById('taskbarPriceStatus');
+  if (!element) return;
+  const mode = document.getElementById('setFloatingWindowsMode')?.value || 'floating';
+  const savedMode = appSettings.floating_price_windows_mode || 'floating';
+  if (mode !== savedMode) {
+    element.textContent = '保存设置后将检测可用任务栏区域。';
+    delete element.dataset.state;
+    return;
+  }
+  if (mode === 'floating') {
+    element.textContent = '当前使用桌面悬浮条。';
+    delete element.dataset.state;
+    return;
+  }
+  const state = appSettings.taskbar_price_state || {};
+  const labels = {
+    visible: '任务栏价格当前已显示。',
+    ready: '已检测到可用任务栏区域。',
+    fullscreen: '其他应用正在全屏，任务栏价格已暂时隐藏。',
+    taskbar_auto_hidden: '任务栏已启用自动隐藏，任务栏价格已暂时隐藏。',
+    insufficient_taskbar_space: '任务栏没有足够的安全空白区域，任务栏价格未显示。',
+    taskbar_not_found: '未检测到 Windows 任务栏。',
+    taskbar_regions_unavailable: '无法确认任务按钮和通知区域，任务栏价格未显示。',
+    layout_error: '任务栏区域检测失败。',
+    visibility_error: '任务栏窗口显示失败。',
+    position_error: '任务栏窗口定位失败。',
+    disabled: '任务栏价格当前未显示。',
+  };
+  element.textContent = labels[state.reason] || '保存设置后将检测可用任务栏区域。';
+  if (state.visible) element.dataset.state = 'ok';
+  else delete element.dataset.state;
+}
+
 function applyPlatformLabels() {
   const platform = appSettings.platform || 'windows';
   const capabilities = appSettings.platform_capabilities || {};
   const isMac = platform === 'macos';
   const menuBarMode = capabilities.floating_price_mode === 'menu_bar';
+  const hasTaskbarPrice = !!capabilities.has_taskbar_price;
 
   setText('startupTrayLabel', isMac ? '自启动时进入菜单栏' : '自启动时进入托盘');
   setText('startupTrayDesc', isMac ? '开机启动后不弹出主窗口，可从菜单栏打开。' : '开机启动后不弹出主窗口，可从右下角托盘打开。');
-  setText('floatingPriceLabel', menuBarMode ? '菜单栏金价' : '桌面金价悬浮条');
-  setText('floatingPriceDesc', menuBarMode ? '在 macOS 菜单栏显示当前金价，并提供显示窗口、刷新和风险分析入口。' : '主窗口隐藏时，仍在桌面右下角显示当前金价。');
-  setText('floatingDisplayDesc', menuBarMode ? '控制菜单栏优先显示人民币、美元或组合价格。' : '控制桌面悬浮条显示人民币、美元或组合内容。');
+  setText('floatingSectionTitle', menuBarMode ? '菜单栏金价' : (hasTaskbarPrice ? '桌面价格显示' : '桌面悬浮条'));
+  setText('floatingSectionDesc', menuBarMode ? '调整菜单栏显示内容。' : (hasTaskbarPrice ? '选择悬浮条、任务栏价格或两处同时显示。' : '调整悬浮条内容、尺寸和贴边行为。'));
+  setText('floatingPriceLabel', menuBarMode ? '菜单栏金价' : (hasTaskbarPrice ? '显示桌面价格' : '桌面金价悬浮条'));
+  setText('floatingPriceDesc', menuBarMode ? '在 macOS 菜单栏显示当前金价，并提供显示窗口、刷新和风险分析入口。' : (hasTaskbarPrice ? '主窗口隐藏后，继续在所选 Windows 位置显示当前金价。' : '主窗口隐藏时，仍在桌面右下角显示当前金价。'));
+  setText('floatingDisplayDesc', menuBarMode ? '控制菜单栏优先显示人民币、美元或组合价格。' : (hasTaskbarPrice ? '控制悬浮条和任务栏价格显示人民币、美元或组合内容。' : '控制桌面悬浮条显示人民币、美元或组合内容。'));
   setText('closeChoiceCopy', isMac ? '隐藏到菜单栏后，程序会继续监控金价并在触发条件时提醒。也可以直接退出程序。' : '最小化到右下角托盘后，程序会继续监控金价并在触发条件时提醒。也可以直接退出程序。');
   setText('closeMinimizeOption', isMac ? '隐藏到菜单栏' : '最小化到托盘');
   setText('closeMinimizeButton', isMac ? '隐藏到菜单栏' : '最小化到托盘');
 
-  setRowHidden('floatingPresetRow', menuBarMode);
-  setRowHidden('floatingOpacityRow', menuBarMode);
-  setRowHidden('floatingSnapRow', menuBarMode);
-  setRowHidden('floatingTopmostRow', menuBarMode);
-  setRowHidden('floatingFullscreenRow', menuBarMode);
-  setRowHidden('floatingLockRow', menuBarMode);
+  syncFloatingWindowsModeRows();
+  renderTaskbarPriceStatus();
 }
 
 function dailyDigestSelectedChannels() {
@@ -146,6 +195,7 @@ function applySettings(data) {
   document.getElementById('setStartup').checked = !!appSettings.startup_enabled;
   document.getElementById('setStartupTray').checked = !!appSettings.startup_to_tray;
   document.getElementById('setFloatingPrice').checked = appSettings.floating_price_enabled !== false;
+  document.getElementById('setFloatingWindowsMode').value = appSettings.floating_price_windows_mode || 'floating';
   document.getElementById('setFloatingDisplayMode').value = appSettings.floating_price_display_mode || 'rmb_usd';
   document.getElementById('setFloatingPreset').value = appSettings.floating_price_preset || 'compact';
   document.getElementById('setFloatingOpacity').value = appSettings.floating_price_opacity || 94;
@@ -153,6 +203,8 @@ function applySettings(data) {
   document.getElementById('setFloatingAlwaysOnTop').checked = !!appSettings.floating_price_always_on_top;
   document.getElementById('setFloatingHideOnFullscreen').checked = appSettings.floating_price_hide_on_fullscreen !== false;
   document.getElementById('setFloatingLockPosition').checked = !!appSettings.floating_price_lock_position;
+  syncFloatingWindowsModeRows();
+  renderTaskbarPriceStatus();
   document.getElementById('setCloseBehavior').value = closeBehavior;
   document.getElementById('setAlertSound').checked = !!appSettings.alert_sound_enabled;
   document.getElementById('setAlertDialog').checked = !!appSettings.alert_dialog_enabled;

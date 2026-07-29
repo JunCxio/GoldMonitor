@@ -11,6 +11,7 @@ DEFAULTS = {
     "startup_enabled": False,
     "startup_to_tray": True,
     "floating_price_enabled": True,
+    "floating_price_windows_mode": "floating",
     "floating_price_position_saved": False,
     "floating_price_x": None,
     "floating_price_y": None,
@@ -71,6 +72,7 @@ OPTIONS = {
     "valid_risk_assistant_providers": {"deepseek", "openai_compatible"},
     "valid_risk_assistant_depths": {"quick", "standard", "deep"},
     "valid_floating_display_modes": {"rmb_usd", "rmb_only", "usd_only"},
+    "valid_floating_windows_modes": {"floating", "taskbar", "both"},
     "valid_floating_presets": {"minimal", "compact", "standard"},
     "default_email_subject_template": "subject",
     "default_email_body_template": "body",
@@ -86,6 +88,7 @@ def test_normalize_settings_clamps_invalid_values_and_removes_legacy_update_keys
 
     normalized = normalize_settings({
         "floating_price_position_saved": True,
+        "floating_price_windows_mode": "unsupported",
         "floating_price_x": "12.9",
         "floating_price_y": "bad",
         "floating_price_opacity": "10",
@@ -120,6 +123,7 @@ def test_normalize_settings_clamps_invalid_values_and_removes_legacy_update_keys
     }, DEFAULTS, OPTIONS)
 
     assert normalized["floating_price_position_saved"] is False
+    assert normalized["floating_price_windows_mode"] == "floating"
     assert normalized["floating_price_x"] is None
     assert normalized["floating_price_y"] is None
     assert normalized["floating_price_opacity"] == 50

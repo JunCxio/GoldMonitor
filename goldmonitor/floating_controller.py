@@ -27,6 +27,7 @@ class FloatingPriceController:
         fetch_price_once,
         refresh_macos_status_item,
         start_background_task,
+        apply_display_settings=None,
         logger=logging,
     ):
         self.runtime = runtime
@@ -42,6 +43,7 @@ class FloatingPriceController:
         self.fetch_price_once = fetch_price_once
         self.refresh_macos_status_item = refresh_macos_status_item
         self.start_background_task = start_background_task
+        self.apply_display_settings = apply_display_settings or self.apply_settings
         self.logger = logger
 
     def format_price_text(self, rmb=None, usd=None, pct=None):
@@ -225,6 +227,8 @@ class FloatingPriceController:
         settings = self.get_settings()
         return self.set_window_visible(
             bool(settings.get("floating_price_enabled", True))
+            and settings.get("floating_price_windows_mode", "floating")
+            in {"floating", "both"}
         )
 
     def set_enabled(self, enabled):
@@ -233,7 +237,7 @@ class FloatingPriceController:
             get_settings=self.get_settings,
             save_settings=self.save_settings,
             set_window_visible=self.set_window_visible,
-            apply_settings=self.apply_settings,
+            apply_settings=self.apply_display_settings,
             public_settings_snapshot=self.public_settings_snapshot,
             emit=self.emit,
             logger=self.logger,
@@ -347,7 +351,10 @@ class FloatingPriceController:
         if not self.is_available():
             return None
         settings = settings or self.get_settings()
-        enabled = bool(settings.get("floating_price_enabled", True))
+        enabled = bool(settings.get("floating_price_enabled", True)) and settings.get(
+            "floating_price_windows_mode",
+            "floating",
+        ) in {"floating", "both"}
         if enabled:
             self.start_window(worker=worker)
             if self.runtime.floating_hwnd:
@@ -376,7 +383,10 @@ class FloatingPriceController:
             return None
 
         settings = self.get_settings()
-        if settings.get("floating_price_enabled", True):
+        if settings.get("floating_price_enabled", True) and settings.get(
+            "floating_price_windows_mode",
+            "floating",
+        ) in {"floating", "both"}:
             self.start_window(worker=worker)
             if not self.runtime.floating_hwnd:
                 self.runtime.floating_window_ready.wait(0.5)
