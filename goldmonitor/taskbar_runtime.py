@@ -31,7 +31,7 @@ TASKBAR_MENU_HIDE = 2007
 TASKBAR_LAYOUT_TIMER_ID = 2
 TASKBAR_LAYOUT_TIMER_MS = 750
 TASKBAR_DESIRED_WIDTH = 224
-TASKBAR_MINIMUM_WIDTH = 154
+TASKBAR_MINIMUM_WIDTH = 104
 TASKBAR_MARGIN = 3
 TASKBAR_CONTENT_PADDING = 6
 TASKBAR_CONTENT_GAP = 5
@@ -48,6 +48,9 @@ WS_EX_LAYERED = 0x00080000
 WS_EX_NOACTIVATE = 0x08000000
 WS_POPUP = 0x80000000
 HWND_TOPMOST = -1
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOREDRAW = 0x0008
 SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
 ULW_ALPHA = 0x00000002
@@ -252,6 +255,47 @@ def layout_taskbar_content(
         "total_width": total_width,
         "price_clipped": drawn_price_width < price_width,
     }
+
+
+def preferred_taskbar_window_width(
+    state,
+    *,
+    dpi=TASKBAR_DEFAULT_DPI,
+    font_loader=None,
+    measure_text=None,
+):
+    font_loader = font_loader or load_taskbar_font
+    if measure_text is None:
+        from PIL import Image, ImageDraw
+
+        draw = ImageDraw.Draw(Image.new("L", (1, 1)))
+
+        def measure_text(text, font):
+            bounds = draw.textbbox((0, 0), text, font=font)
+            return max(0, int(bounds[2] - bounds[0]))
+
+    dpi = normalize_taskbar_dpi(dpi)
+    layout_metrics = taskbar_layout_metrics(dpi)
+    draw_metrics = taskbar_draw_metrics(dpi)
+    brand_font = font_loader(draw_metrics["brand_font_height"], bold=True)
+    value_font = font_loader(draw_metrics["value_font_height"], bold=False)
+    brand_width = measure_text("Au", brand_font)
+    price_width = measure_text(str(state.get("price") or "--"), value_font)
+    change_text = str(state.get("change") or "")
+    change_width = measure_text(change_text, value_font) if change_text else 0
+    content_width = brand_width + draw_metrics["gap"] + price_width
+    if change_width:
+        content_width += (
+            draw_metrics["gap"]
+            + draw_metrics["arrow_width"]
+            + draw_metrics["arrow_gap"]
+            + change_width
+        )
+    preferred_width = content_width + (2 * draw_metrics["padding"])
+    return max(
+        layout_metrics["minimum_width"],
+        min(layout_metrics["desired_width"], preferred_width),
+    )
 
 
 def load_taskbar_font(pixel_height, *, bold=False, font_module=None, windows_dir=None):
@@ -717,6 +761,7 @@ def resolve_taskbar_layout(
     *,
     user32,
     shell32,
+    text_state=None,
     ctypes_loader=_load_win32_types,
 ):
     try:
@@ -771,11 +816,17 @@ def resolve_taskbar_layout(
             ctypes_loader=ctypes_loader,
         )
         start_rect = get_window_rect(user32, start_hwnd, ctypes_loader=ctypes_loader)
+        desired_width = (
+            preferred_taskbar_window_width(text_state, dpi=dpi)
+            if text_state is not None
+            else None
+        )
         layout = choose_taskbar_layout(
             taskbar_rect,
             tray_rect=tray_rect,
             task_list_rect=task_list_rect,
             start_rect=start_rect,
+            desired_width=desired_width,
             dpi=dpi,
         )
         if not layout:
@@ -810,6 +861,24 @@ def invalidate_window(hwnd, *, os_name, ctypes_loader=_load_win32_types):
     except Exception:
         pass
     return None
+
+
+def restore_taskbar_window_order(hwnd, *, ctypes_module, user32):
+    if not hwnd:
+        return False
+    pointer_bits = ctypes_module.sizeof(ctypes_module.c_void_p) * 8
+    topmost = ctypes_module.c_void_p(HWND_TOPMOST & ((1 << pointer_bits) - 1))
+    return bool(
+        user32.SetWindowPos(
+            hwnd,
+            topmost,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOREDRAW | SWP_NOACTIVATE,
+        )
+    )
 
 
 def set_taskbar_window_visible(
@@ -1013,6 +1082,7 @@ def handle_taskbar_window_message(
     draw_window,
     show_context_menu,
     show_main_window,
+    restore_window_order,
     sync_visibility,
 ):
     if msg == WM_PAINT:
@@ -1022,9 +1092,11 @@ def handle_taskbar_window_message(
         return 1
     if msg in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
         show_main_window()
+        restore_window_order(hwnd)
         return 0
     if msg in (WM_RBUTTONUP, WM_CONTEXTMENU):
         show_context_menu(hwnd)
+        restore_window_order(hwnd)
         return 0
     if msg in (WM_DISPLAYCHANGE, WM_SETTINGCHANGE, WM_DPICHANGED, WM_THEMECHANGED):
         sync_visibility()
@@ -1273,6 +1345,13 @@ def run_taskbar_price_window(
                 set_windows_mode=set_windows_mode,
             )
 
+        def restore_window_order(hwnd):
+            return restore_taskbar_window_order(
+                hwnd,
+                ctypes_module=ctypes,
+                user32=user32,
+            )
+
         @window_proc_type
         def window_proc(hwnd, msg, wparam, lparam):
             return handle_taskbar_window_message(
@@ -1284,6 +1363,7 @@ def run_taskbar_price_window(
                 draw_window=draw_window,
                 show_context_menu=show_context_menu,
                 show_main_window=show_main_window,
+                restore_window_order=restore_window_order,
                 sync_visibility=sync_visibility,
             )
 

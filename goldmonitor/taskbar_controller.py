@@ -102,6 +102,7 @@ class TaskbarPriceController:
             return taskbar_runtime_core.resolve_taskbar_layout(
                 user32=ctypes.windll.user32,
                 shell32=ctypes.windll.shell32,
+                text_state=self.text_state(),
             )
         except Exception:
             return None, {"visible": False, "reason": "layout_error"}

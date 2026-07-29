@@ -93,6 +93,35 @@ def test_taskbar_controller_window_loop_binds_runtime_callbacks(monkeypatch):
     assert captured["sync_visibility"] == controller.sync_visibility
 
 
+def test_taskbar_controller_layout_passes_compact_text_state(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from goldmonitor import taskbar_controller as controller_module
+
+    controller, runtime, _settings, _calls = make_controller(os_name="nt")
+    runtime.taskbar_price_value_text = "¥528.16"
+    runtime.taskbar_price_change_text = "+0.42%"
+    captured = {}
+    monkeypatch.setattr(
+        controller_module.taskbar_runtime_core,
+        "resolve_taskbar_layout",
+        lambda **kwargs: captured.update(kwargs) or (None, {}),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "ctypes",
+        SimpleNamespace(
+            windll=SimpleNamespace(user32=object(), shell32=object()),
+        ),
+    )
+
+    controller.layout()
+
+    assert captured["text_state"]["price"] == "¥528.16"
+    assert captured["text_state"]["change"] == "+0.42%"
+
+
 def test_taskbar_controller_apply_settings_hides_when_floating_only(monkeypatch):
     controller, _runtime, _settings, _calls = make_controller(
         os_name="nt",

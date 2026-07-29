@@ -35,7 +35,7 @@ def test_taskbar_layout_and_draw_metrics_scale_with_window_dpi():
     assert taskbar_layout_metrics(144) == {
         "dpi": 144,
         "desired_width": 336,
-        "minimum_width": 231,
+        "minimum_width": 156,
         "margin": 5,
         "maximum_height": 51,
         "minimum_height": 36,
@@ -73,6 +73,30 @@ def test_taskbar_layout_and_draw_metrics_scale_with_window_dpi():
         "orientation": "horizontal",
         "taskbar_rect": (0, 1560, 2880, 1620),
     }
+
+
+def test_taskbar_window_width_tracks_visible_content():
+    from goldmonitor.taskbar_runtime import preferred_taskbar_window_width
+
+    widths = {
+        "Au": 18,
+        "--": 14,
+        "¥879.83": 52,
+        "+0.42%": 47,
+    }
+    font_loader = lambda height, bold=False: (height, bold)
+    measure_text = lambda text, font: widths[text]
+
+    assert preferred_taskbar_window_width(
+        {"price": "--", "change": ""},
+        font_loader=font_loader,
+        measure_text=measure_text,
+    ) == 104
+    assert preferred_taskbar_window_width(
+        {"price": "¥879.83", "change": "+0.42%"},
+        font_loader=font_loader,
+        measure_text=measure_text,
+    ) == 151
 
 
 def test_taskbar_content_layout_prioritizes_brand_trend_and_price_readability():
@@ -416,6 +440,7 @@ def test_taskbar_window_messages_keep_interaction_non_activating():
         "draw_window": lambda hwnd: calls.append(("draw", hwnd)),
         "show_context_menu": lambda hwnd: calls.append(("menu", hwnd)),
         "show_main_window": lambda: calls.append("show"),
+        "restore_window_order": lambda hwnd: calls.append(("restore", hwnd)),
         "sync_visibility": lambda: calls.append("sync"),
     }
 
@@ -425,7 +450,40 @@ def test_taskbar_window_messages_keep_interaction_non_activating():
     assert handle_taskbar_window_message(42, WM_RBUTTONUP, 0, 0, **kwargs) == 0
     assert handle_taskbar_window_message(42, WM_DPICHANGED, 0, 0, **kwargs) == 0
     assert handle_taskbar_window_message(42, WM_TIMER, TASKBAR_LAYOUT_TIMER_ID, 0, **kwargs) == 0
-    assert calls == [("draw", 42), "show", ("menu", 42), "sync", "sync"]
+    assert calls == [
+        ("draw", 42),
+        "show",
+        ("restore", 42),
+        ("menu", 42),
+        ("restore", 42),
+        "sync",
+        "sync",
+    ]
+
+
+def test_taskbar_window_order_is_restored_without_showing_or_redrawing():
+    import ctypes
+
+    from goldmonitor.taskbar_runtime import (
+        SWP_NOACTIVATE,
+        SWP_NOMOVE,
+        SWP_NOREDRAW,
+        SWP_NOSIZE,
+        restore_taskbar_window_order,
+    )
+
+    calls = []
+    user32 = SimpleNamespace(
+        SetWindowPos=lambda *args: calls.append(args) or True,
+    )
+
+    assert restore_taskbar_window_order(
+        42,
+        ctypes_module=ctypes,
+        user32=user32,
+    ) is True
+    assert calls[0][2:6] == (0, 0, 0, 0)
+    assert calls[0][-1] == SWP_NOMOVE | SWP_NOSIZE | SWP_NOREDRAW | SWP_NOACTIVATE
 
 
 @pytest.mark.parametrize(
