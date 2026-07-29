@@ -424,6 +424,8 @@ _RUNTIME_STATE_ALIASES.update({
     "_taskbar_window_ready": "taskbar_window_ready",
     "_taskbar_lock": "taskbar_lock",
     "_taskbar_price_text": "taskbar_price_text",
+    "_taskbar_price_value_text": "taskbar_price_value_text",
+    "_taskbar_price_change_text": "taskbar_price_change_text",
     "_taskbar_trend_state": "taskbar_trend_state",
     "_taskbar_source_state": "taskbar_source_state",
     "_taskbar_layout_state": "taskbar_layout_state",

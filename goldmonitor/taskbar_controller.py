@@ -49,6 +49,8 @@ class TaskbarPriceController:
         with self.runtime.taskbar_lock:
             return {
                 "text": self.runtime.taskbar_price_text,
+                "price": self.runtime.taskbar_price_value_text,
+                "change": self.runtime.taskbar_price_change_text,
                 "trend_state": self.runtime.taskbar_trend_state,
                 "source_state": self.runtime.taskbar_source_state,
             }
@@ -59,7 +61,7 @@ class TaskbarPriceController:
             with self.runtime.lock:
                 rmb = self.runtime.price_rmb
                 usd = self.runtime.price_usd
-        text, trend_state = desktop_ui_core.format_taskbar_price_text(
+        price_state = desktop_ui_core.format_taskbar_price_state(
             settings,
             rmb=rmb,
             usd=usd,
@@ -78,10 +80,12 @@ class TaskbarPriceController:
         else:
             source_state = "waiting"
         with self.runtime.taskbar_lock:
-            self.runtime.taskbar_price_text = text
-            self.runtime.taskbar_trend_state = trend_state
+            self.runtime.taskbar_price_text = price_state["text"]
+            self.runtime.taskbar_price_value_text = price_state["price"]
+            self.runtime.taskbar_price_change_text = price_state["change"]
+            self.runtime.taskbar_trend_state = price_state["trend_state"]
             self.runtime.taskbar_source_state = source_state
-        return text
+        return price_state["text"]
 
     def set_layout_state(self, value):
         with self.runtime.taskbar_lock:

@@ -4,6 +4,7 @@ from goldmonitor import floating_runtime as floating_runtime_core
 
 
 WM_PAINT = 0x000F
+WM_ERASEBKGND = 0x0014
 WM_LBUTTONUP = 0x0202
 WM_LBUTTONDBLCLK = 0x0203
 WM_RBUTTONUP = 0x0205
@@ -29,31 +30,43 @@ TASKBAR_MENU_HIDE = 2007
 
 TASKBAR_LAYOUT_TIMER_ID = 2
 TASKBAR_LAYOUT_TIMER_MS = 750
-TASKBAR_DESIRED_WIDTH = 210
-TASKBAR_MINIMUM_WIDTH = 132
+TASKBAR_DESIRED_WIDTH = 224
+TASKBAR_MINIMUM_WIDTH = 154
 TASKBAR_MARGIN = 3
+TASKBAR_CONTENT_PADDING = 6
+TASKBAR_CONTENT_GAP = 5
+TASKBAR_ARROW_WIDTH = 9
+TASKBAR_MINIMUM_PRICE_WIDTH = 42
 
 ABM_GETSTATE = 0x00000004
 ABS_AUTOHIDE = 0x00000001
 WS_EX_TOPMOST = 0x00000008
 WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_LAYERED = 0x00080000
 WS_EX_NOACTIVATE = 0x08000000
 WS_POPUP = 0x80000000
 HWND_TOPMOST = -1
 SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
-DT_CENTER = 0x0001
+LWA_COLORKEY = 0x00000001
+DT_LEFT = 0x0000
 DT_VCENTER = 0x0004
 DT_SINGLELINE = 0x0020
 DT_END_ELLIPSIS = 0x8000
 TRANSPARENT = 1
+PS_SOLID = 0
 DEFAULT_CHARSET = 1
 OUT_DEFAULT_PRECIS = 0
 CLIP_DEFAULT_PRECIS = 0
-CLEARTYPE_QUALITY = 5
+ANTIALIASED_QUALITY = 4
 DEFAULT_PITCH = 0
 FF_DONTCARE = 0
 CS_DBLCLKS = 0x0008
+
+TASKBAR_TRANSPARENT_COLOR = (0, 0, 0)
+TASKBAR_THEME_REGISTRY_PATH = (
+    r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+)
 
 TASK_LIST_CLASSES = {"MSTaskListWClass", "MSTaskSwWClass"}
 
@@ -63,6 +76,137 @@ def _load_win32_types():
     from ctypes import wintypes
 
     return ctypes, wintypes
+
+
+def _load_windows_registry():
+    import winreg
+
+    return winreg
+
+
+def taskbar_uses_light_theme(registry_loader=_load_windows_registry):
+    key = None
+    try:
+        registry = registry_loader()
+        key = registry.OpenKey(
+            registry.HKEY_CURRENT_USER,
+            TASKBAR_THEME_REGISTRY_PATH,
+        )
+        for value_name in ("SystemUsesLightTheme", "AppsUseLightTheme"):
+            try:
+                value, _value_type = registry.QueryValueEx(key, value_name)
+                return bool(int(value))
+            except OSError:
+                continue
+        return False
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+    finally:
+        if key is not None:
+            try:
+                registry.CloseKey(key)
+            except (AttributeError, OSError):
+                pass
+
+
+def taskbar_draw_palette(*, light_theme, source_state, trend_state):
+    if light_theme:
+        palette = {
+            "price": (32, 38, 45),
+            "brand_live": (154, 106, 10),
+            "brand_cached": (145, 111, 43),
+            "brand_waiting": (92, 102, 115),
+            "brand_error": (201, 52, 63),
+            "trend_up": (201, 52, 63),
+            "trend_down": (19, 122, 77),
+            "trend_neutral": (92, 102, 115),
+        }
+    else:
+        palette = {
+            "price": (241, 244, 247),
+            "brand_live": (224, 180, 76),
+            "brand_cached": (197, 165, 91),
+            "brand_waiting": (174, 181, 191),
+            "brand_error": (255, 107, 118),
+            "trend_up": (255, 107, 118),
+            "trend_down": (76, 197, 138),
+            "trend_neutral": (174, 181, 191),
+        }
+    brand_key = f"brand_{source_state}"
+    trend_key = f"trend_{trend_state}"
+    return {
+        "price": palette["price"],
+        "brand": palette.get(brand_key, palette["brand_waiting"]),
+        "trend": palette.get(trend_key, palette["trend_neutral"]),
+        "transparent": TASKBAR_TRANSPARENT_COLOR,
+    }
+
+
+def taskbar_window_ex_style():
+    return WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE
+
+
+def enable_taskbar_transparency(hwnd, *, user32):
+    if not hwnd:
+        return False
+    return bool(
+        user32.SetLayeredWindowAttributes(
+            hwnd,
+            floating_runtime_core.rgb(*TASKBAR_TRANSPARENT_COLOR),
+            0,
+            LWA_COLORKEY,
+        )
+    )
+
+
+def layout_taskbar_content(
+    client_width,
+    *,
+    brand_width,
+    price_width,
+    change_width=0,
+    padding=TASKBAR_CONTENT_PADDING,
+):
+    client_width = max(0, int(client_width))
+    brand_width = max(0, int(brand_width))
+    price_width = max(0, int(price_width))
+    change_width = max(0, int(change_width))
+    padding = max(0, int(padding))
+    has_change = change_width > 0
+    available = max(0, client_width - (2 * padding))
+    fixed_width = brand_width + TASKBAR_CONTENT_GAP
+    if has_change:
+        fixed_width += (
+            TASKBAR_CONTENT_GAP
+            + TASKBAR_ARROW_WIDTH
+            + 3
+            + change_width
+        )
+    maximum_price_width = max(
+        TASKBAR_MINIMUM_PRICE_WIDTH,
+        available - fixed_width,
+    )
+    drawn_price_width = min(price_width, maximum_price_width)
+    total_width = fixed_width + drawn_price_width
+    start_x = max(padding, (client_width - total_width) // 2)
+
+    brand = (start_x, brand_width)
+    price_x = start_x + brand_width + TASKBAR_CONTENT_GAP
+    price = (price_x, drawn_price_width)
+    arrow = None
+    change = None
+    if has_change:
+        arrow_x = price_x + drawn_price_width + TASKBAR_CONTENT_GAP
+        arrow = (arrow_x, TASKBAR_ARROW_WIDTH)
+        change = (arrow_x + TASKBAR_ARROW_WIDTH + 3, change_width)
+    return {
+        "brand": brand,
+        "price": price,
+        "arrow": arrow,
+        "change": change,
+        "total_width": total_width,
+        "price_clipped": drawn_price_width < price_width,
+    }
 
 
 def normalize_rect(rect):
@@ -329,7 +473,7 @@ def invalidate_window(hwnd, *, os_name, ctypes_loader=_load_win32_types):
         return None
     try:
         ctypes, _wintypes = ctypes_loader()
-        ctypes.windll.user32.InvalidateRect(hwnd, None, True)
+        ctypes.windll.user32.InvalidateRect(hwnd, None, False)
     except Exception:
         pass
     return None
@@ -390,6 +534,42 @@ def set_taskbar_window_visible(
         return None
 
 
+def _draw_taskbar_trend_arrow(hdc, bounds, trend_state, color, *, gdi32):
+    if not bounds:
+        return None
+    left, top, right, bottom = bounds
+    center_x = (left + right) // 2
+    center_y = (top + bottom) // 2
+    pen = gdi32.CreatePen(PS_SOLID, 2, color)
+    old_pen = gdi32.SelectObject(hdc, pen)
+    try:
+        if trend_state == "up":
+            arrow_tip_y = center_y - 5
+            arrow_end_y = center_y + 5
+            gdi32.MoveToEx(hdc, center_x, arrow_end_y, None)
+            gdi32.LineTo(hdc, center_x, arrow_tip_y)
+            gdi32.MoveToEx(hdc, center_x, arrow_tip_y, None)
+            gdi32.LineTo(hdc, center_x - 4, arrow_tip_y + 4)
+            gdi32.MoveToEx(hdc, center_x, arrow_tip_y, None)
+            gdi32.LineTo(hdc, center_x + 4, arrow_tip_y + 4)
+        elif trend_state == "down":
+            arrow_tip_y = center_y + 5
+            arrow_end_y = center_y - 5
+            gdi32.MoveToEx(hdc, center_x, arrow_end_y, None)
+            gdi32.LineTo(hdc, center_x, arrow_tip_y)
+            gdi32.MoveToEx(hdc, center_x, arrow_tip_y, None)
+            gdi32.LineTo(hdc, center_x - 4, arrow_tip_y - 4)
+            gdi32.MoveToEx(hdc, center_x, arrow_tip_y, None)
+            gdi32.LineTo(hdc, center_x + 4, arrow_tip_y - 4)
+        else:
+            gdi32.MoveToEx(hdc, center_x - 4, center_y, None)
+            gdi32.LineTo(hdc, center_x + 4, center_y)
+    finally:
+        gdi32.SelectObject(hdc, old_pen)
+        gdi32.DeleteObject(pen)
+    return None
+
+
 def draw_taskbar_window(
     hwnd,
     *,
@@ -399,36 +579,51 @@ def draw_taskbar_window(
     gdi32,
     paint_struct_type,
     get_text_state,
+    light_theme_provider=taskbar_uses_light_theme,
 ):
     paint = paint_struct_type()
     hdc = user32.BeginPaint(hwnd, ctypes_module.byref(paint))
     if not hdc:
         return None
+    brand_font = None
+    value_font = None
     try:
         client = wintypes.RECT()
         user32.GetClientRect(hwnd, ctypes_module.byref(client))
-        background = gdi32.CreateSolidBrush(floating_runtime_core.rgb(31, 31, 35))
+        transparent_color = floating_runtime_core.rgb(*TASKBAR_TRANSPARENT_COLOR)
+        background = gdi32.CreateSolidBrush(transparent_color)
         user32.FillRect(hdc, ctypes_module.byref(client), background)
         gdi32.DeleteObject(background)
 
         state = get_text_state()
         source_state = state.get("source_state", "waiting")
         trend_state = state.get("trend_state", "neutral")
-        accent = floating_runtime_core.rgb(232, 184, 48)
-        if trend_state == "up":
-            accent = floating_runtime_core.rgb(224, 85, 106)
-        elif trend_state == "down":
-            accent = floating_runtime_core.rgb(76, 175, 132)
-        if source_state == "error":
-            accent = floating_runtime_core.rgb(224, 85, 106)
+        palette = taskbar_draw_palette(
+            light_theme=bool(light_theme_provider()),
+            source_state=source_state,
+            trend_state=trend_state,
+        )
+        brand_text = "Au"
+        price_text = str(state.get("price") or "--")
+        change_text = str(state.get("change") or "")
 
-        accent_rect = wintypes.RECT(0, 5, 3, max(6, client.bottom - 5))
-        accent_brush = gdi32.CreateSolidBrush(accent)
-        user32.FillRect(hdc, ctypes_module.byref(accent_rect), accent_brush)
-        gdi32.DeleteObject(accent_brush)
-
-        text_rect = wintypes.RECT(8, 0, max(8, client.right - 5), client.bottom)
-        font = gdi32.CreateFontW(
+        brand_font = gdi32.CreateFontW(
+            -14,
+            0,
+            0,
+            0,
+            700,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS,
+            ANTIALIASED_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE,
+            "Microsoft YaHei UI",
+        )
+        value_font = gdi32.CreateFontW(
             -13,
             0,
             0,
@@ -440,23 +635,67 @@ def draw_taskbar_window(
             DEFAULT_CHARSET,
             OUT_DEFAULT_PRECIS,
             CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY,
+            ANTIALIASED_QUALITY,
             DEFAULT_PITCH | FF_DONTCARE,
             "Microsoft YaHei UI",
         )
-        old_font = gdi32.SelectObject(hdc, font)
         gdi32.SetBkMode(hdc, TRANSPARENT)
-        gdi32.SetTextColor(hdc, floating_runtime_core.rgb(238, 236, 242))
-        user32.DrawTextW(
-            hdc,
-            state.get("text", "金价 --"),
-            -1,
-            ctypes_module.byref(text_rect),
-            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+
+        def measure_text(text, font):
+            size = wintypes.SIZE()
+            old_font = gdi32.SelectObject(hdc, font)
+            try:
+                if gdi32.GetTextExtentPoint32W(hdc, text, len(text), ctypes_module.byref(size)):
+                    return int(size.cx)
+            finally:
+                gdi32.SelectObject(hdc, old_font)
+            return max(1, len(text) * 7)
+
+        brand_width = measure_text(brand_text, brand_font)
+        price_width = measure_text(price_text, value_font)
+        change_width = measure_text(change_text, value_font) if change_text else 0
+        layout = layout_taskbar_content(
+            client.right,
+            brand_width=brand_width,
+            price_width=price_width,
+            change_width=change_width,
         )
-        gdi32.SelectObject(hdc, old_font)
-        gdi32.DeleteObject(font)
+
+        def draw_text(text, segment, font, color):
+            if not segment or not text:
+                return
+            left, width = segment
+            text_rect = wintypes.RECT(left, 0, left + width, client.bottom)
+            old_font = gdi32.SelectObject(hdc, font)
+            try:
+                gdi32.SetTextColor(hdc, floating_runtime_core.rgb(*color))
+                user32.DrawTextW(
+                    hdc,
+                    text,
+                    -1,
+                    ctypes_module.byref(text_rect),
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+                )
+            finally:
+                gdi32.SelectObject(hdc, old_font)
+
+        draw_text(brand_text, layout["brand"], brand_font, palette["brand"])
+        draw_text(price_text, layout["price"], value_font, palette["price"])
+        if layout["arrow"]:
+            arrow_left, arrow_width = layout["arrow"]
+            _draw_taskbar_trend_arrow(
+                hdc,
+                (arrow_left, 0, arrow_left + arrow_width, client.bottom),
+                trend_state,
+                floating_runtime_core.rgb(*palette["trend"]),
+                gdi32=gdi32,
+            )
+        draw_text(change_text, layout["change"], value_font, palette["trend"])
     finally:
+        if brand_font:
+            gdi32.DeleteObject(brand_font)
+        if value_font:
+            gdi32.DeleteObject(value_font)
         user32.EndPaint(hwnd, ctypes_module.byref(paint))
     return None
 
@@ -551,6 +790,8 @@ def handle_taskbar_window_message(
     if msg == WM_PAINT:
         draw_window(hwnd)
         return 0
+    if msg == WM_ERASEBKGND:
+        return 1
     if msg in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
         show_main_window()
         return 0
@@ -675,6 +916,15 @@ def run_taskbar_price_window(
         user32.SetWindowPos.restype = wintypes.BOOL
         user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
         user32.ShowWindow.restype = wintypes.BOOL
+        user32.DestroyWindow.argtypes = [wintypes.HWND]
+        user32.DestroyWindow.restype = wintypes.BOOL
+        user32.SetLayeredWindowAttributes.argtypes = [
+            wintypes.HWND,
+            wintypes.COLORREF,
+            wintypes.BYTE,
+            wintypes.DWORD,
+        ]
+        user32.SetLayeredWindowAttributes.restype = wintypes.BOOL
         user32.SetTimer.argtypes = [
             wintypes.HWND,
             ctypes.c_size_t,
@@ -717,9 +967,27 @@ def run_taskbar_price_window(
         gdi32.SetBkMode.argtypes = [wintypes.HDC, ctypes.c_int]
         gdi32.CreateSolidBrush.restype = wintypes.HANDLE
         gdi32.CreateSolidBrush.argtypes = [wintypes.COLORREF]
+        gdi32.CreatePen.restype = wintypes.HANDLE
+        gdi32.CreatePen.argtypes = [ctypes.c_int, ctypes.c_int, wintypes.COLORREF]
         gdi32.SelectObject.restype = wintypes.HANDLE
         gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HANDLE]
         gdi32.DeleteObject.argtypes = [wintypes.HANDLE]
+        gdi32.MoveToEx.argtypes = [
+            wintypes.HDC,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_void_p,
+        ]
+        gdi32.MoveToEx.restype = wintypes.BOOL
+        gdi32.LineTo.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
+        gdi32.LineTo.restype = wintypes.BOOL
+        gdi32.GetTextExtentPoint32W.argtypes = [
+            wintypes.HDC,
+            wintypes.LPCWSTR,
+            ctypes.c_int,
+            ctypes.POINTER(wintypes.SIZE),
+        ]
+        gdi32.GetTextExtentPoint32W.restype = wintypes.BOOL
         gdi32.CreateFontW.restype = wintypes.HANDLE
         gdi32.CreateFontW.argtypes = [
             ctypes.c_int,
@@ -828,7 +1096,7 @@ def run_taskbar_price_window(
         user32.RegisterClassW(ctypes.byref(window_class))
 
         hwnd = user32.CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            taskbar_window_ex_style(),
             class_name,
             "任务栏金价",
             WS_POPUP,
@@ -845,6 +1113,11 @@ def run_taskbar_price_window(
             set_ready()
             return None
 
+        if not enable_taskbar_transparency(hwnd, user32=user32):
+            logger.warning("任务栏金价窗口透明效果初始化失败")
+            user32.DestroyWindow(hwnd)
+            set_ready()
+            return None
         set_window_handle(hwnd)
         user32.SetTimer(hwnd, TASKBAR_LAYOUT_TIMER_ID, TASKBAR_LAYOUT_TIMER_MS, None)
         set_ready()

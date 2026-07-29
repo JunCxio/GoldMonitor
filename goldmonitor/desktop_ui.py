@@ -66,7 +66,7 @@ def format_macos_status_title(settings, rmb=None, usd=None):
     return "金价 --"
 
 
-def format_taskbar_price_text(settings, rmb=None, usd=None, pct=None):
+def format_taskbar_price_state(settings, rmb=None, usd=None, pct=None):
     settings = settings if isinstance(settings, dict) else {}
     display_mode = settings.get("floating_price_display_mode", "rmb_usd")
     trend, trend_state = _format_trend(pct)
@@ -82,9 +82,24 @@ def format_taskbar_price_text(settings, rmb=None, usd=None, pct=None):
     elif usd is not None:
         price = f"${usd:,.0f}"
     else:
-        return "金价 --", "neutral"
+        return {
+            "text": "金价 --",
+            "price": "--",
+            "change": "",
+            "trend_state": "neutral",
+        }
 
-    return (f"{price}  {trend}" if trend else price), trend_state
+    return {
+        "text": f"{price}  {trend}" if trend else price,
+        "price": price,
+        "change": trend,
+        "trend_state": trend_state,
+    }
+
+
+def format_taskbar_price_text(settings, rmb=None, usd=None, pct=None):
+    state = format_taskbar_price_state(settings, rmb=rmb, usd=usd, pct=pct)
+    return state["text"], state["trend_state"]
 
 
 def _parse_iso_datetime(value):
