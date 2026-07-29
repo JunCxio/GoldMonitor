@@ -2,6 +2,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -200,6 +201,23 @@ def test_settings_file_store_migrates_and_hides_secrets():
         assert loaded["deepseek_api_key"] == "legacy-secret"
         assert credential_store["deepseek_api_key"] == "legacy-secret"
         assert "legacy-secret" not in Path(path).read_text(encoding="utf-8")
+
+
+def test_credential_fallback_warning_does_not_log_secret_key():
+    from goldmonitor.settings_store import persistable_settings_snapshot
+
+    logger = Mock()
+    snapshot = persistable_settings_snapshot(
+        {"deepseek_api_key": "secret"},
+        ("deepseek_api_key",),
+        write_secret=lambda key, value: False,
+        logger=logger,
+    )
+
+    assert snapshot["deepseek_api_key"] == "secret"
+    logger.warning.assert_called_once_with(
+        "系统凭据不可用，保留兼容配置字段"
+    )
 
 
 def test_public_snapshot_masks_secrets_and_update_payload_preserves_existing_empty_values():

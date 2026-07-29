@@ -62,7 +62,7 @@ def test_windows_contract_checks_socket_token_in_frontend_asset():
     contract_checks = read_text("tests/contract_checks.ps1")
 
     assert (
-        'Assert-Contains -Path "static\\app.js" -Pattern '
+        'Assert-Contains -Path "static\\app-state.js" -Pattern '
         "'auth:\\s*\\{\\s*token:\\s*SOCKET_ACCESS_TOKEN\\s*\\}'"
         in contract_checks
     )

@@ -4,9 +4,51 @@ import re
 
 root = Path(__file__).resolve().parents[1]
 template = (root / "templates" / "index.html").read_text(encoding="utf-8")
-app_py = (root / "app.py").read_text(encoding="utf-8")
+app_py = (root / "goldmonitor" / "application.py").read_text(encoding="utf-8")
+http_routes_py = (root / "goldmonitor" / "http_routes.py").read_text(encoding="utf-8")
+floating_runtime_py = (root / "goldmonitor" / "floating_runtime.py").read_text(encoding="utf-8")
 css_path = root / "static" / "app.css"
 js_path = root / "static" / "app.js"
+app_state_js_path = root / "static" / "app-state.js"
+app_utils_js_path = root / "static" / "app-utils.js"
+desktop_close_js_path = root / "static" / "desktop-close.js"
+market_dashboard_js_path = root / "static" / "market-dashboard.js"
+settings_js_path = root / "static" / "settings-center.js"
+settings_state_js_path = root / "static" / "settings-state.js"
+settings_socket_js_path = root / "static" / "settings-socket.js"
+settings_render_js_path = root / "static" / "settings-render.js"
+settings_form_js_path = root / "static" / "settings-form.js"
+settings_onboarding_js_path = root / "static" / "settings-onboarding.js"
+settings_dialog_js_path = root / "static" / "settings-dialog.js"
+settings_actions_js_path = root / "static" / "settings-actions.js"
+operations_js_path = root / "static" / "operations-center.js"
+operations_state_js_path = root / "static" / "operations-state.js"
+operations_socket_js_path = root / "static" / "operations-socket.js"
+operations_sources_js_path = root / "static" / "operations-sources.js"
+operations_records_js_path = root / "static" / "operations-records.js"
+operations_archive_js_path = root / "static" / "operations-archive.js"
+operations_config_js_path = root / "static" / "operations-config.js"
+operations_actions_js_path = root / "static" / "operations-actions.js"
+operations_update_js_path = root / "static" / "operations-update.js"
+history_review_js_path = root / "static" / "history-review-center.js"
+risk_analysis_js_path = root / "static" / "risk-analysis-center.js"
+alert_rule_js_path = root / "static" / "alert-rule-center.js"
+alert_rule_state_js_path = root / "static" / "alert-rule-state.js"
+alert_rule_socket_js_path = root / "static" / "alert-rule-socket.js"
+alert_rule_list_js_path = root / "static" / "alert-rule-list.js"
+alert_rule_detail_js_path = root / "static" / "alert-rule-detail.js"
+alert_rule_editor_js_path = root / "static" / "alert-rule-editor.js"
+alert_rule_render_js_path = root / "static" / "alert-rule-render.js"
+alert_rule_legacy_js_path = root / "static" / "alert-rule-legacy.js"
+alert_configuration_js_path = root / "static" / "alert-configuration-center.js"
+portfolio_js_path = root / "static" / "portfolio-center.js"
+portfolio_state_js_path = root / "static" / "portfolio-state.js"
+portfolio_render_js_path = root / "static" / "portfolio-render.js"
+portfolio_detail_js_path = root / "static" / "portfolio-detail.js"
+portfolio_list_js_path = root / "static" / "portfolio-list.js"
+portfolio_actions_js_path = root / "static" / "portfolio-actions.js"
+portfolio_import_js_path = root / "static" / "portfolio-import.js"
+alert_log_js_path = root / "static" / "alert-log-center.js"
 
 
 if not css_path.exists():
@@ -14,6 +56,139 @@ if not css_path.exists():
 
 if not js_path.exists():
     raise SystemExit("frontend main script must live in static/app.js")
+
+for shared_path in (app_state_js_path, app_utils_js_path, desktop_close_js_path):
+    if not shared_path.exists():
+        raise SystemExit(f"frontend shared script is missing: {shared_path.name}")
+
+if not market_dashboard_js_path.exists():
+    raise SystemExit("market dashboard script must live in static/market-dashboard.js")
+
+for settings_path in (
+    settings_state_js_path,
+    settings_socket_js_path,
+    settings_render_js_path,
+    settings_form_js_path,
+    settings_onboarding_js_path,
+    settings_dialog_js_path,
+    settings_actions_js_path,
+    settings_js_path,
+):
+    if not settings_path.exists():
+        raise SystemExit(f"settings script is missing: {settings_path.name}")
+
+for operations_path in (
+    operations_state_js_path,
+    operations_socket_js_path,
+    operations_sources_js_path,
+    operations_records_js_path,
+    operations_archive_js_path,
+    operations_config_js_path,
+    operations_actions_js_path,
+    operations_update_js_path,
+    operations_js_path,
+):
+    if not operations_path.exists():
+        raise SystemExit(f"operations script is missing: {operations_path.name}")
+
+if not history_review_js_path.exists():
+    raise SystemExit("history review center script must live in static/history-review-center.js")
+
+if not risk_analysis_js_path.exists():
+    raise SystemExit("risk analysis center script must live in static/risk-analysis-center.js")
+
+for alert_rule_path in (
+    alert_rule_state_js_path,
+    alert_rule_socket_js_path,
+    alert_rule_list_js_path,
+    alert_rule_detail_js_path,
+    alert_rule_editor_js_path,
+    alert_rule_render_js_path,
+    alert_rule_legacy_js_path,
+    alert_rule_js_path,
+):
+    if not alert_rule_path.exists():
+        raise SystemExit(f"alert rule script is missing: {alert_rule_path.name}")
+
+if not alert_configuration_js_path.exists():
+    raise SystemExit("alert configuration script must live in static/alert-configuration-center.js")
+
+for portfolio_path in (
+    portfolio_state_js_path,
+    portfolio_render_js_path,
+    portfolio_detail_js_path,
+    portfolio_list_js_path,
+    portfolio_actions_js_path,
+    portfolio_import_js_path,
+    portfolio_js_path,
+):
+    if not portfolio_path.exists():
+        raise SystemExit(f"portfolio script is missing: {portfolio_path.name}")
+
+if not alert_log_js_path.exists():
+    raise SystemExit("alert log center script must live in static/alert-log-center.js")
+
+app_js = js_path.read_text(encoding="utf-8")
+market_dashboard_js = market_dashboard_js_path.read_text(encoding="utf-8")
+alert_rule_js = "\n".join((
+    alert_rule_state_js_path.read_text(encoding="utf-8"),
+    alert_rule_socket_js_path.read_text(encoding="utf-8"),
+    alert_rule_list_js_path.read_text(encoding="utf-8"),
+    alert_rule_detail_js_path.read_text(encoding="utf-8"),
+    alert_rule_editor_js_path.read_text(encoding="utf-8"),
+    alert_rule_render_js_path.read_text(encoding="utf-8"),
+    alert_rule_legacy_js_path.read_text(encoding="utf-8"),
+    alert_rule_js_path.read_text(encoding="utf-8"),
+))
+alert_configuration_js = alert_configuration_js_path.read_text(encoding="utf-8")
+portfolio_js = portfolio_js_path.read_text(encoding="utf-8")
+portfolio_module_js = "\n".join((
+    portfolio_state_js_path.read_text(encoding="utf-8"),
+    portfolio_render_js_path.read_text(encoding="utf-8"),
+    portfolio_detail_js_path.read_text(encoding="utf-8"),
+    portfolio_list_js_path.read_text(encoding="utf-8"),
+    portfolio_actions_js_path.read_text(encoding="utf-8"),
+    portfolio_import_js_path.read_text(encoding="utf-8"),
+    portfolio_js,
+))
+settings_module_js = "\n".join((
+    settings_state_js_path.read_text(encoding="utf-8"),
+    settings_socket_js_path.read_text(encoding="utf-8"),
+    settings_render_js_path.read_text(encoding="utf-8"),
+    settings_form_js_path.read_text(encoding="utf-8"),
+    settings_onboarding_js_path.read_text(encoding="utf-8"),
+    settings_dialog_js_path.read_text(encoding="utf-8"),
+    settings_actions_js_path.read_text(encoding="utf-8"),
+    settings_js_path.read_text(encoding="utf-8"),
+))
+operations_module_js = "\n".join((
+    operations_state_js_path.read_text(encoding="utf-8"),
+    operations_socket_js_path.read_text(encoding="utf-8"),
+    operations_sources_js_path.read_text(encoding="utf-8"),
+    operations_records_js_path.read_text(encoding="utf-8"),
+    operations_archive_js_path.read_text(encoding="utf-8"),
+    operations_config_js_path.read_text(encoding="utf-8"),
+    operations_actions_js_path.read_text(encoding="utf-8"),
+    operations_update_js_path.read_text(encoding="utf-8"),
+    operations_js_path.read_text(encoding="utf-8"),
+))
+alert_log_js = alert_log_js_path.read_text(encoding="utf-8")
+
+js = "\n".join((
+    app_state_js_path.read_text(encoding="utf-8"),
+    app_utils_js_path.read_text(encoding="utf-8"),
+    market_dashboard_js,
+    settings_module_js,
+    operations_module_js,
+    history_review_js_path.read_text(encoding="utf-8"),
+    risk_analysis_js_path.read_text(encoding="utf-8"),
+    alert_rule_js,
+    alert_configuration_js,
+    portfolio_module_js,
+    alert_log_js,
+    desktop_close_js_path.read_text(encoding="utf-8"),
+    app_js,
+))
 
 if '<link rel="stylesheet" href="/static/app.css">' not in template:
     raise SystemExit("template must reference /static/app.css")
@@ -27,8 +202,311 @@ if '<script src="/static/app-shell.js?v={{ app_version }}"></script>' not in tem
 if '<script src="/static/app.js?v={{ app_version }}"></script>' not in template:
     raise SystemExit("template must reference versioned /static/app.js")
 
-if "render_template(\"index.html\", socket_access_token=SOCKET_ACCESS_TOKEN, app_version=APP_VERSION)" not in app_py:
-    raise SystemExit("app.py must inject app_version into index.html")
+for shared_name in ("app-state.js", "app-utils.js", "desktop-close.js"):
+    shared_script = f'<script src="/static/{shared_name}?v={{{{ app_version }}}}"></script>'
+    if shared_script not in template:
+        raise SystemExit(f"template must reference versioned /static/{shared_name}")
+
+market_dashboard_script = '<script src="/static/market-dashboard.js?v={{ app_version }}"></script>'
+if market_dashboard_script not in template:
+    raise SystemExit("template must reference versioned /static/market-dashboard.js")
+
+if template.find(market_dashboard_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("market dashboard script must load before static/app.js")
+
+settings_scripts = tuple(
+    f'<script src="/static/{name}?v={{{{ app_version }}}}"></script>'
+    for name in (
+        "settings-state.js",
+        "settings-socket.js",
+        "settings-render.js",
+        "settings-form.js",
+        "settings-onboarding.js",
+        "settings-dialog.js",
+        "settings-actions.js",
+        "settings-center.js",
+    )
+)
+for script in settings_scripts:
+    if script not in template:
+        raise SystemExit(f"template must reference settings script: {script}")
+settings_positions = [template.find(script) for script in settings_scripts]
+if settings_positions != sorted(settings_positions):
+    raise SystemExit("settings scripts must load in dependency order")
+if settings_positions[-1] > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("settings scripts must load before static/app.js")
+
+for required in (
+    "function registerSettingsSocketHandlers",
+    "function applySettings",
+    "function validateSettings",
+    "function openOnboarding",
+    "function setupSettingsInteractions",
+    "function saveSettings",
+):
+    if required not in settings_module_js:
+        raise SystemExit(f"settings modules missing contract: {required}")
+
+for moved in (
+    "function registerSettingsSocketHandlers",
+    "function applySettings",
+    "function validateSettings",
+    "function openOnboarding",
+    "function saveSettings",
+):
+    if moved in settings_js_path.read_text(encoding="utf-8"):
+        raise SystemExit(f"settings center keeps extracted implementation: {moved}")
+
+operations_scripts = tuple(
+    f'<script src="/static/{name}?v={{{{ app_version }}}}"></script>'
+    for name in (
+        "operations-state.js",
+        "operations-socket.js",
+        "operations-sources.js",
+        "operations-records.js",
+        "operations-archive.js",
+        "operations-config.js",
+        "operations-actions.js",
+        "operations-update.js",
+        "operations-center.js",
+    )
+)
+for script in operations_scripts:
+    if script not in template:
+        raise SystemExit(f"template must reference operations script: {script}")
+operations_positions = [template.find(script) for script in operations_scripts]
+if operations_positions != sorted(operations_positions):
+    raise SystemExit("operations scripts must load in dependency order")
+if operations_positions[-1] > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("operations scripts must load before static/app.js")
+
+for required in (
+    "function registerOperationsSocketHandlers",
+    "function renderSourceHealth",
+    "function renderRecentOpsRecords",
+    "function previewDataArchive",
+    "function renderConfigImportPreview",
+    "function applyUpdateStatus",
+):
+    if required not in operations_module_js:
+        raise SystemExit(f"operations modules missing contract: {required}")
+
+for moved in (
+    "function registerOperationsSocketHandlers",
+    "function renderSourceHealth",
+    "function previewDataArchive",
+    "function applyUpdateStatus",
+):
+    if moved in operations_js_path.read_text(encoding="utf-8"):
+        raise SystemExit(f"operations center keeps extracted implementation: {moved}")
+
+history_review_script = '<script src="/static/history-review-center.js?v={{ app_version }}"></script>'
+if history_review_script not in template:
+    raise SystemExit("template must reference versioned /static/history-review-center.js")
+
+if template.find(history_review_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("history review center script must load before static/app.js")
+
+risk_analysis_script = '<script src="/static/risk-analysis-center.js?v={{ app_version }}"></script>'
+if risk_analysis_script not in template:
+    raise SystemExit("template must reference versioned /static/risk-analysis-center.js")
+
+if template.find(risk_analysis_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("risk analysis center script must load before static/app.js")
+
+alert_rule_scripts = tuple(
+    f'<script src="/static/{name}?v={{{{ app_version }}}}"></script>'
+    for name in (
+        "alert-rule-state.js",
+        "alert-rule-socket.js",
+        "alert-rule-list.js",
+        "alert-rule-detail.js",
+        "alert-rule-editor.js",
+        "alert-rule-render.js",
+        "alert-rule-legacy.js",
+        "alert-rule-center.js",
+    )
+)
+for script in alert_rule_scripts:
+    if script not in template:
+        raise SystemExit(f"template must reference alert rule script: {script}")
+alert_rule_positions = [template.find(script) for script in alert_rule_scripts]
+if alert_rule_positions != sorted(alert_rule_positions):
+    raise SystemExit("alert rule scripts must load in dependency order")
+if alert_rule_positions[-1] > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("alert rule scripts must load before static/app.js")
+
+alert_configuration_script = '<script src="/static/alert-configuration-center.js?v={{ app_version }}"></script>'
+if alert_configuration_script not in template:
+    raise SystemExit("template must reference versioned /static/alert-configuration-center.js")
+
+if template.find(alert_configuration_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("alert configuration center script must load before static/app.js")
+
+portfolio_script = '<script src="/static/portfolio-center.js?v={{ app_version }}"></script>'
+portfolio_scripts = tuple(
+    f'<script src="/static/{name}?v={{{{ app_version }}}}"></script>'
+    for name in (
+        "portfolio-state.js",
+        "portfolio-render.js",
+        "portfolio-detail.js",
+        "portfolio-list.js",
+        "portfolio-actions.js",
+        "portfolio-import.js",
+        "portfolio-center.js",
+    )
+)
+for script in portfolio_scripts:
+    if script not in template:
+        raise SystemExit(f"template must reference portfolio script: {script}")
+
+portfolio_positions = [template.find(script) for script in portfolio_scripts]
+if portfolio_positions != sorted(portfolio_positions):
+    raise SystemExit("portfolio scripts must load in dependency order")
+if portfolio_positions[-1] > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("portfolio scripts must load before static/app.js")
+
+alert_log_script = '<script src="/static/alert-log-center.js?v={{ app_version }}"></script>'
+if alert_log_script not in template:
+    raise SystemExit("template must reference versioned /static/alert-log-center.js")
+
+if template.find(alert_log_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("alert log center script must load before static/app.js")
+
+for required in (
+    "function registerAlertLogSocketHandlers",
+    "function showAlertModal",
+    "function renderAlertLog",
+    "function flashTitle",
+):
+    if required not in alert_log_js:
+        raise SystemExit(f"static/alert-log-center.js missing alert log contract: {required}")
+
+if "registerAlertLogSocketHandlers(socket);" not in app_js:
+    raise SystemExit("static/app.js must register alert log socket handlers")
+
+if "registerAlertRuleSocketHandlers(socket);" not in app_js:
+    raise SystemExit("static/app.js must register alert rule socket handlers")
+
+if "registerAlertConfigurationSocketHandlers(socket);" not in app_js:
+    raise SystemExit("static/app.js must register alert configuration socket handlers")
+
+if "registerPortfolioSocketHandlers(socket);" not in app_js:
+    raise SystemExit("static/app.js must register portfolio socket handlers")
+
+if "registerMarketDashboardSocketHandlers(socket);" not in app_js:
+    raise SystemExit("static/app.js must register market dashboard socket handlers")
+
+for required in (
+    "function applyMarketInitialState",
+    "function registerMarketDashboardSocketHandlers",
+    "function switchMode",
+    "function switchChartPeriod",
+    "function applyFetchStatus",
+    "function updatePriceDisplay",
+):
+    if required not in market_dashboard_js:
+        raise SystemExit(f"static/market-dashboard.js missing market dashboard contract: {required}")
+
+for moved in (
+    "function switchMode",
+    "function switchChartPeriod",
+    "function applyFetchStatus",
+    "function updatePriceDisplay",
+    "socket.on('price_update'",
+):
+    if moved in app_js:
+        raise SystemExit(f"static/app.js keeps extracted market dashboard implementation: {moved}")
+
+for required in (
+    "function registerAlertRuleSocketHandlers",
+    "let alertRulesState",
+    "let alertRuleDraft",
+    "socket.on('alert_rule_duplicated'",
+):
+    if required not in alert_rule_js:
+        raise SystemExit(f"alert rule modules missing contract: {required}")
+
+for moved in (
+    "function registerAlertRuleSocketHandlers",
+    "let alertRulesState",
+    "function buildUnifiedAlertRuleEditor",
+    "function renderAlertRuleCenter",
+):
+    if moved in alert_rule_js_path.read_text(encoding="utf-8"):
+        raise SystemExit(f"alert rule center keeps extracted implementation: {moved}")
+
+for required in (
+    "function registerAlertConfigurationSocketHandlers",
+    "function applyAlertConfigurationState",
+    "let alertProfiles",
+    "let watchTargets",
+    "socket.on('thresholds_updated'",
+    "socket.on('watch_targets_updated'",
+):
+    if required not in alert_configuration_js:
+        raise SystemExit(f"static/alert-configuration-center.js missing extracted configuration contract: {required}")
+
+for moved in (
+    "let alertProfiles",
+    "let alertRulesState",
+    "let watchTargets",
+    "function normalizeAlertProfiles",
+    "function normalizeWatchTargetItems",
+    "socket.on('alert_rules_updated'",
+    "socket.on('alert_profiles_updated'",
+):
+    if moved in app_js:
+        raise SystemExit(f"static/app.js keeps extracted alert configuration implementation: {moved}")
+
+for moved in (
+    "let alertEntries = [];",
+    "function showAlertModal",
+    "function renderAlertLog",
+    "socket.on('alert'",
+):
+    if moved in app_js:
+        raise SystemExit(f"static/app.js keeps extracted alert log implementation: {moved}")
+
+for required in (
+    "function registerPortfolioSocketHandlers",
+    "socketClient.on('portfolio_updated'",
+    "socketClient.on('portfolio_import_previewed'",
+    "socketClient.on('portfolio_analytics_updated'",
+):
+    if required not in portfolio_js:
+        raise SystemExit(f"static/portfolio-center.js missing extracted portfolio contract: {required}")
+
+for required in (
+    "function normalizePortfolioState",
+    "function renderPortfolio",
+    "function renderPortfolioPositionDetail",
+    "function renderPortfolioPositions",
+    "function savePortfolioTransaction",
+    "function previewPortfolioImport",
+):
+    if required not in portfolio_module_js:
+        raise SystemExit(f"portfolio modules missing contract: {required}")
+
+for moved in (
+    "function normalizePortfolioState",
+    "function renderPortfolio",
+    "function savePortfolioTransaction",
+    "function previewPortfolioImport",
+):
+    if moved in portfolio_js:
+        raise SystemExit(f"static/portfolio-center.js keeps extracted implementation: {moved}")
+
+for moved in (
+    "socket.on('portfolio_updated'",
+    "socket.on('portfolio_import_previewed'",
+    "socket.on('portfolio_analytics_updated'",
+):
+    if moved in app_js:
+        raise SystemExit(f"static/app.js keeps extracted portfolio implementation: {moved}")
+
+if '"index.html"' not in http_routes_py or "app_version=app_version" not in http_routes_py:
+    raise SystemExit("HTTP routes must inject app_version into index.html")
 
 if 'id="chartEmptyState"' not in template:
     raise SystemExit("template must expose chart empty state overlay")
@@ -38,7 +516,7 @@ for required in ('data-period="30d"', 'data-period="90d"', 'value="43200"', 'val
         raise SystemExit(f"frontend missing long history range: {required}")
 
 for required in ("resolution_seconds", "chartResolutionDate", "43200", "129600"):
-    if required not in js_path.read_text(encoding="utf-8"):
+    if required not in js:
         raise SystemExit(f"frontend missing multi-resolution history contract: {required}")
 
 for required in ('id="riskEvidence"', 'id="riskDiagnostic"'):
@@ -84,7 +562,6 @@ if inline_scripts:
     raise SystemExit("template must not contain inline script blocks")
 
 css = css_path.read_text(encoding="utf-8")
-js = js_path.read_text(encoding="utf-8")
 
 for required in (
     'id="alertRuleSelectVisible"',
@@ -95,6 +572,8 @@ for required in (
     "function buildAlertRuleDetail",
     "function buildAlertRuleSimulationPanel",
     "function simulateUnifiedAlertRule",
+    "function alertRuleSimulationValueText",
+    "function alertRuleSimulationPortfolioMeta",
     "socket.emit('batch_update_alert_rules'",
     "socket.emit('get_alert_rule_insight'",
     "socket.emit('simulate_alert_rule'",
@@ -104,6 +583,9 @@ for required in (
 ):
     if required not in template + js:
         raise SystemExit(f"frontend missing alert rule operations contract: {required}")
+
+if "当前没有历史持仓估值快照，本版不模拟持仓规则" in js:
+    raise SystemExit("frontend must allow portfolio alert rule history simulation")
 
 for required in (
     ".alert-center-tools",
@@ -127,11 +609,13 @@ for required in (
 
 for required in (
     "HWND_NOTOPMOST",
-    "floating_window_z_order(get_settings_snapshot())",
-    "WS_EX_NOACTIVATE",
+    "floating_window_z_order(get_settings())",
 ):
-    if required not in app_py:
-        raise SystemExit(f"app.py missing floating z-order contract: {required}")
+    if required not in floating_runtime_py:
+        raise SystemExit(f"floating runtime missing z-order contract: {required}")
+
+if "WS_EX_NOACTIVATE" not in floating_runtime_py:
+    raise SystemExit("floating runtime missing non-activating window style")
 
 if "{{" in css or "{{" in js:
     raise SystemExit("static frontend assets must not contain template expressions")
@@ -839,11 +1323,11 @@ for required in (
     "apply_alert_profile",
     "rename_alert_profile",
     "delete_alert_profile",
-    "data.alert_profiles || {}",
+    "state.alert_profiles || {}",
     "ALERT_PROFILE_SETTING_KEYS",
 ):
-    if required not in js:
-        raise SystemExit(f"static/app.js missing alert profile UI contract: {required}")
+    if required not in alert_configuration_js and required not in app_js:
+        raise SystemExit(f"frontend scripts missing alert profile UI contract: {required}")
 
 for required in (
     ".alert-profiles",
@@ -861,9 +1345,10 @@ for handler in (
     "socket.on('volatility_updated', data => {",
     "socket.on('settings_updated', data => {",
 ):
-    handler_pos = js.find(handler)
-    next_handler_pos = js.find("socket.on(", handler_pos + len(handler))
-    handler_body = js[handler_pos:next_handler_pos if next_handler_pos >= 0 else len(js)] if handler_pos >= 0 else ""
+    handler_source = alert_configuration_js if handler != "socket.on('settings_updated', data => {" else js
+    handler_pos = handler_source.find(handler)
+    next_handler_pos = handler_source.find("socket.on(", handler_pos + len(handler))
+    handler_body = handler_source[handler_pos:next_handler_pos if next_handler_pos >= 0 else len(handler_source)] if handler_pos >= 0 else ""
     if "clearCurrentAlertProfileMatch();" not in handler_body:
         raise SystemExit(f"{handler} must clear stale alert profile current marker")
 
@@ -947,11 +1432,17 @@ for required in (
 
 for required in (
     'REVIEW_NOTES_PATH',
+):
+    if required not in app_py:
+        raise SystemExit(f"application module missing review note contract: {required}")
+
+history_review_socket_py = (root / "goldmonitor" / "socket_history_review.py").read_text(encoding="utf-8")
+for required in (
     '@socketio.on("save_review_note")',
     '@socketio.on("delete_review_note")',
 ):
-    if required not in app_py:
-        raise SystemExit(f"app.py missing review note contract: {required}")
+    if required not in history_review_socket_py:
+        raise SystemExit(f"history review socket module missing review note contract: {required}")
 
 for required in (
     'onclick="copyDiagnostics()"',

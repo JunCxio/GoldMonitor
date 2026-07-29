@@ -21,6 +21,89 @@ ROLLUP_RESOLUTIONS = (
 )
 
 
+def history_number(value):
+    if value in (None, ""):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def history_timestamp(value):
+    parsed = parse_iso_datetime(value)
+    return parsed.replace(tzinfo=None) if parsed and parsed.tzinfo else parsed
+
+
+def kline_bucket_start(timestamp, minutes=5):
+    return timestamp.replace(
+        minute=(timestamp.minute // minutes) * minutes,
+        second=0,
+        microsecond=0,
+    )
+
+
+def ohlc(values):
+    if not values:
+        return {"open": None, "high": None, "low": None, "close": None}
+    return {
+        "open": values[0],
+        "high": max(values),
+        "low": min(values),
+        "close": values[-1],
+    }
+
+
+def build_5min_klines(history_items, limit=96):
+    points = []
+    for item in history_items or []:
+        if not isinstance(item, dict):
+            continue
+        timestamp = history_timestamp(item.get("timestamp"))
+        if not timestamp:
+            continue
+        usd = history_number(item.get("usd"))
+        rmb = history_number(item.get("rmb"))
+        if usd is not None or rmb is not None:
+            points.append((timestamp, usd, rmb))
+    if len(points) < 2:
+        return []
+
+    buckets = []
+    bucket_by_timestamp = {}
+    for timestamp, usd, rmb in sorted(points, key=lambda point: point[0]):
+        bucket_start = kline_bucket_start(timestamp)
+        bucket_key = bucket_start.isoformat(timespec="seconds")
+        if bucket_key not in bucket_by_timestamp:
+            bucket_by_timestamp[bucket_key] = {
+                "time": bucket_start.strftime("%H:%M"),
+                "timestamp": bucket_key,
+                "usd": [],
+                "rmb": [],
+            }
+            buckets.append(bucket_by_timestamp[bucket_key])
+        if usd is not None:
+            bucket_by_timestamp[bucket_key]["usd"].append(usd)
+        if rmb is not None:
+            bucket_by_timestamp[bucket_key]["rmb"].append(rmb)
+
+    candles = []
+    for bucket in buckets:
+        usd = ohlc(bucket["usd"])
+        rmb = ohlc(bucket["rmb"])
+        candles.append({
+            **usd,
+            "open_rmb": rmb["open"],
+            "high_rmb": rmb["high"],
+            "low_rmb": rmb["low"],
+            "close_rmb": rmb["close"],
+            "time": bucket["time"],
+            "timestamp": bucket["timestamp"],
+        })
+    return candles[-int(limit or 96):]
+
+
 def parse_iso_datetime(value):
     try:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))

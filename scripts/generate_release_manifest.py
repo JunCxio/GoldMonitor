@@ -14,7 +14,7 @@ def parse_args():
 
 
 def read_version(repo_root: Path) -> str:
-    source = (repo_root / "app.py").read_text(encoding="utf-8")
+    source = (repo_root / "goldmonitor" / "application.py").read_text(encoding="utf-8")
     match = re.search(r'APP_VERSION\s*=\s*"([^"]+)"', source)
     if not match:
         raise RuntimeError("APP_VERSION was not found.")

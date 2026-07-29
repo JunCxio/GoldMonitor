@@ -1,0 +1,70 @@
+// ========== 持仓事件 ==========
+function registerPortfolioSocketHandlers(socketClient) {
+  socketClient.on('portfolio_updated', data => {
+    applyPortfolio(data || {});
+    if (pendingPortfolioImportMessage) {
+      setPortfolioStatus(pendingPortfolioImportMessage, 'ok');
+      pendingPortfolioImportMessage = '';
+    } else if (pendingPortfolioUndoMessage) {
+      setPortfolioStatus(pendingPortfolioUndoMessage, 'ok');
+      pendingPortfolioUndoMessage = '';
+    } else {
+      setPortfolioStatus('持仓已更新。', 'ok');
+    }
+  });
+
+  socketClient.on('portfolio_error', data => {
+    pendingPortfolioSave = null;
+    setPortfolioStatus((data && data.message) || '持仓更新失败。', 'fail');
+  });
+
+  socketClient.on('portfolio_exported', data => {
+    const count = data && Number.isFinite(Number(data.count)) ? Number(data.count) : portfolioState.total;
+    const kindText = data && data.kind === 'review' ? '复盘' : data && data.kind === 'transactions' ? '流水' : '持仓';
+    setPortfolioStatus(data && data.saved_path ? '已导出' + kindText + ' ' + count + ' 条，保存至 ' + data.saved_path : kindText + '已导出。', 'ok');
+  });
+
+  socketClient.on('portfolio_export_error', data => {
+    setPortfolioStatus((data && data.message) || '持仓导出失败。', 'fail');
+  });
+
+  socketClient.on('portfolio_analytics_updated', data => {
+    portfolioAnalyticsState = data && typeof data === 'object' ? data : null;
+    portfolioAnalyticsLoading = false;
+    if (portfolioView === 'review') renderPortfolio();
+  });
+
+  socketClient.on('portfolio_analytics_error', data => {
+    portfolioAnalyticsLoading = false;
+    setPortfolioStatus((data && data.message) || '持仓收益与预警分析生成失败。', 'fail');
+    if (portfolioView === 'review') renderPortfolio();
+  });
+
+  socketClient.on('portfolio_imported', data => {
+    const count = data && Number.isFinite(Number(data.count)) ? Number(data.count) : 0;
+    const summary = data && data.summary ? data.summary : {};
+    const create = Number(summary.create || 0);
+    const overwrite = Number(summary.overwrite || 0);
+    pendingPortfolioImportMessage = '已导入流水 ' + count + ' 条（新增 ' + create + '，覆盖 ' + overwrite + '）。';
+    setPortfolioStatus(pendingPortfolioImportMessage, 'ok');
+  });
+
+  socketClient.on('portfolio_import_previewed', data => {
+    applyPortfolioImportBackendPreview(data || {});
+  });
+
+  socketClient.on('portfolio_import_undone', data => {
+    if (data && data.ok) {
+      pendingPortfolioUndoMessage = '已撤销最近一次 CSV 导入。';
+      setPortfolioStatus(pendingPortfolioUndoMessage, 'ok');
+    }
+  });
+
+  socketClient.on('portfolio_import_undo_error', data => {
+    setPortfolioStatus((data && data.message) || '撤销导入失败。', 'fail');
+    if (data && data.import_backup) {
+      portfolioState.import_backup = normalizePortfolioImportBackup(data.import_backup);
+      renderPortfolioImportBackup();
+    }
+  });
+}

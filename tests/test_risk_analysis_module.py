@@ -314,3 +314,42 @@ if __name__ == "__main__":
             print(f"{name}: {type(exc).__name__}: {exc}")
         raise SystemExit(1)
     print("risk analysis module checks passed.")
+def test_context_runtime_uses_deep_history_and_builds_scorecard():
+    from datetime import datetime
+    from goldmonitor.risk_analysis import build_context
+
+    points = [
+        {"timestamp": f"2026-07-28T12:{minute:02d}:00", "usd": 2300 + minute, "rmb": 520 + minute, "rate": 7.2}
+        for minute in range(12)
+    ]
+    state = {
+        "price_archive": points, "price_history": points[-3:],
+        "klines_5min": [
+            {"time": "12:00", "open": 2300, "high": 2305, "low": 2298, "close": 2302},
+            {"time": "12:05", "open": 2302, "high": 2310, "low": 2301, "close": 2308},
+        ],
+        "news_items": [{"title": "Fed meeting", "source": "news", "time": "12:00", "topic": "fed", "summary": ""}],
+        "price_usd": 2311, "price_rmb": 531, "previous_usd": 2310, "previous_rmb": 530,
+        "usdcny_rate": 7.2, "gold_price_source": "source", "gold_price_time": "2026-07-28T12:11:00",
+        "gold_price_cached": False, "gold_price_error": "", "usdcny_rate_source": "fx",
+        "usdcny_rate_time": "2026-07-28T12:11:00", "usdcny_rate_cached": False,
+        "usdcny_rate_error": "", "last_fetch_ok": True, "last_fetch_error": "",
+        "last_fetch_time": "2026-07-28T12:11:00", "today_date": "2026-07-28",
+        "today_open_usd": 2300, "today_high_usd": 2311, "today_low_usd": 2298,
+        "today_open_rmb": 520, "today_high_rmb": 531, "today_low_rmb": 519,
+    }
+
+    context = build_context(
+        state,
+        {"risk_assistant_depth": "deep"},
+        valid_depths={"quick", "standard", "deep"},
+        trend_periods=(5, 15),
+        news_limit=5,
+        source_health={"quality": {"score": 95, "label": "数据可信"}},
+        now_factory=lambda: datetime(2026, 7, 28, 12, 12),
+    )
+
+    assert context["analysis_depth"] == "deep"
+    assert context["history_summary"]["usd"]["points"] == 12
+    assert context["risk_scorecard"]["event_risk"] == 25
+    assert context["sample_warning"] == ""

@@ -85,3 +85,44 @@ def test_build_socket_init_state_limits_live_lists_and_preserves_injected_sectio
     assert state["daily"] == {"open_rmb": 540.0}
     assert state["news"] == {"items": [{"title": "news"}]}
     assert state["risk_analysis_history"] == {"items": [{"id": "risk-1"}]}
+
+
+def test_build_runtime_socket_init_state_collects_runtime_and_external_sections():
+    from goldmonitor.app_state import build_runtime_socket_init_state
+    from goldmonitor.runtime_state import ApplicationRuntimeState
+
+    runtime = ApplicationRuntimeState(
+        price_usd=2350.0,
+        price_rmb=545.0,
+        thresholds={"upper_warning_rmb": 560.0},
+        volatility_config={"enabled": False},
+        alert_log=[{"id": "alert-1"}],
+        today_open_rmb=540.0,
+    )
+    state = build_runtime_socket_init_state(
+        runtime,
+        market_state=lambda: {
+            "price_usd": runtime.price_usd,
+            "price_rmb": runtime.price_rmb,
+            "price_history": [],
+            "klines_5min": [],
+        },
+        get_watch_targets=lambda: {"items": []},
+        get_portfolio=lambda: {"items": []},
+        get_settings=lambda: {"startup_enabled": False},
+        get_fetch_status=lambda: {"status": "ok"},
+        get_source_health=lambda: {"summary": {"ok": 1}},
+        get_source_comparison=lambda: {"status": "ok"},
+        get_price_history=lambda **kwargs: {"limit": kwargs["limit"]},
+        get_alert_rules=lambda: {"items": [{"id": "rule-1"}]},
+        get_alert_profiles=lambda: {"items": [{"id": "profile-1"}]},
+        get_daily_digest_status=lambda: {"enabled": False},
+        get_news=lambda: {"items": [{"title": "news"}]},
+        get_risk_history=lambda: {"items": [{"id": "risk-1"}]},
+    )
+
+    assert state["usd"] == 2350.0
+    assert state["daily"]["open_rmb"] == 540.0
+    assert state["price_history_state"] == {"limit": 240}
+    assert state["alert_rules"]["items"][0]["id"] == "rule-1"
+    assert state["news"]["items"][0]["title"] == "news"

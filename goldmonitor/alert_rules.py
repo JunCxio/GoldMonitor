@@ -10,7 +10,7 @@ ALERT_RULE_SCHEMA_VERSION = 1
 ALERT_RULE_KINDS = {"price_threshold", "volatility", "watch_target", "portfolio"}
 ALERT_RULE_CHANNELS = {"local", "email", "webhook"}
 ALERT_RULE_BATCH_ACTIONS = {"enable", "disable", "reset", "delete"}
-ALERT_RULE_SIMULATION_KINDS = {"price_threshold", "volatility", "watch_target"}
+ALERT_RULE_SIMULATION_KINDS = {"price_threshold", "volatility", "watch_target", "portfolio"}
 ALERT_RULE_SIMULATION_PERIODS = {7, 30, 90}
 ALERT_RULE_STATUSES = {
     "watching",
@@ -781,14 +781,54 @@ def _simulation_interval_label(seconds):
     return f"{max(1, round(seconds / 86400))} 天"
 
 
-def _simulation_event(timestamp, value, change_percent=None):
+def _simulation_event(timestamp, value, change_percent=None, details=None):
     event = {
         "timestamp": timestamp.isoformat(timespec="seconds"),
         "value": round(float(value), 6),
     }
     if change_percent is not None:
         event["change_percent"] = round(float(change_percent), 4)
+    if isinstance(details, dict):
+        for key in (
+            "current_price",
+            "average_cost",
+            "quantity",
+            "unrealized_pnl_percent",
+            "near_cost_percent",
+        ):
+            number = _finite_number(details.get(key))
+            if number is not None:
+                event[key] = round(number, 6)
+        mode = str(details.get("mode") or "").strip().lower()
+        if mode in {"rmb", "usd"}:
+            event["mode"] = mode
     return event
+
+
+def _portfolio_simulation_entries(portfolio_history, condition_key):
+    value_field = {
+        "take_profit": "current_price",
+        "stop_loss": "current_price",
+        "profit_percent": "unrealized_pnl_percent",
+        "loss_percent": "unrealized_pnl_percent",
+        "near_cost": "near_cost_percent",
+    }.get(condition_key)
+    entries_by_timestamp = {}
+    if not value_field:
+        return []
+    for item in list((portfolio_history or {}).get("points") or []):
+        if not isinstance(item, dict):
+            continue
+        timestamp = _parse_iso(item.get("timestamp"))
+        if timestamp is None:
+            continue
+        value = _finite_number(item.get(value_field)) if item.get("active") else None
+        entries_by_timestamp[timestamp] = {
+            "timestamp": timestamp,
+            "value": value,
+            "details": dict(item),
+        }
+    return sorted(entries_by_timestamp.values(), key=lambda item: item["timestamp"])
 
 
 def _apply_simulation_cooldown(events, cooldown_minutes):
@@ -827,7 +867,13 @@ def _simulation_time_distribution(events):
     ]
 
 
-def simulate_alert_rule(rule, price_history=None, cooldown_minutes=0, period_days=30):
+def simulate_alert_rule(
+    rule,
+    price_history=None,
+    cooldown_minutes=0,
+    period_days=30,
+    portfolio_history=None,
+):
     if not isinstance(rule, dict):
         raise AlertRuleError("预警规则格式无效")
     try:
@@ -853,13 +899,14 @@ def simulate_alert_rule(rule, price_history=None, cooldown_minutes=0, period_day
         "mode": mode,
         "period_days": period_days,
         "cooldown_minutes": cooldown_minutes,
-        "trigger_policy": "single" if kind == "watch_target" else "repeat",
+        "trigger_policy": "single" if kind in {"watch_target", "portfolio"} else "repeat",
         "evaluated_count": 0,
         "match_count": 0,
         "effective_trigger_count": 0,
         "suppressed_count": 0,
         "recent_triggers": [],
         "time_distribution": _simulation_time_distribution([]),
+        "portfolio": {},
         "coverage": {
             "point_count": 0,
             "from": "",
@@ -873,12 +920,48 @@ def simulate_alert_rule(rule, price_history=None, cooldown_minutes=0, period_day
     }
     if not response["supported"]:
         response.update({
-            "reason": "portfolio_history_unavailable",
-            "message": "当前没有可用于还原历史持仓估值的快照，本版不模拟持仓规则。",
+            "reason": "rule_kind_unsupported",
+            "message": "当前规则类型不支持历史模拟。",
         })
         return response
 
-    points = _simulation_points(price_history, mode)
+    portfolio_entries = []
+    if kind == "portfolio":
+        portfolio_history = portfolio_history if isinstance(portfolio_history, dict) else {}
+        response["portfolio"] = {
+            "position_id": str(portfolio_history.get("position_id") or ""),
+            "position_name": str(portfolio_history.get("position_name") or ""),
+            "transaction_count": int(portfolio_history.get("transaction_count") or 0),
+            "dated_transaction_count": int(portfolio_history.get("dated_transaction_count") or 0),
+            "unknown_date_count": int(portfolio_history.get("unknown_date_count") or 0),
+        }
+        actual_mode = str(portfolio_history.get("mode") or "").strip().lower()
+        if actual_mode in {"rmb", "usd"}:
+            mode = actual_mode
+            response["mode"] = actual_mode
+        if not portfolio_history.get("position_found"):
+            response.update({
+                "reason": "portfolio_position_history_missing",
+                "message": "关联持仓没有可用于历史回放的流水。",
+            })
+            return response
+        if response["portfolio"]["unknown_date_count"]:
+            response.update({
+                "reason": "portfolio_transaction_time_missing",
+                "message": "关联持仓存在缺少交易日期的流水，无法可靠还原历史持仓。",
+            })
+            return response
+        portfolio_entries = _portfolio_simulation_entries(
+            portfolio_history,
+            (rule.get("condition") or {}).get("condition_key"),
+        )
+        points = [
+            (entry["timestamp"], entry["value"])
+            for entry in portfolio_entries
+            if entry["value"] is not None
+        ]
+    else:
+        points = _simulation_points(price_history, mode)
     interval_seconds = _simulation_interval_seconds(points)
     if points:
         actual_seconds = max(0, (points[-1][0] - points[0][0]).total_seconds())
@@ -899,8 +982,12 @@ def simulate_alert_rule(rule, price_history=None, cooldown_minutes=0, period_day
         }
     if len(points) < 2:
         response.update({
-            "reason": "history_insufficient",
-            "message": "可用历史行情不足，至少需要两个有效价格点。",
+            "reason": "portfolio_history_insufficient" if kind == "portfolio" else "history_insufficient",
+            "message": (
+                "可用历史持仓估值不足，至少需要两个有效估值点。"
+                if kind == "portfolio"
+                else "可用历史行情不足，至少需要两个有效价格点。"
+            ),
         })
         return response
 
@@ -910,7 +997,24 @@ def simulate_alert_rule(rule, price_history=None, cooldown_minutes=0, period_day
         raise AlertRuleError("条件值必须大于 0")
     matched_events = []
 
-    if kind == "volatility":
+    if kind == "portfolio":
+        previous_met = False
+        condition_key = condition.get("condition_key")
+        for entry in portfolio_entries:
+            current_value = entry.get("value")
+            if current_value is None:
+                previous_met = False
+                continue
+            response["evaluated_count"] += 1
+            condition_met = _portfolio_condition_met(condition_key, current_value, target_value)
+            if condition_met and not previous_met:
+                matched_events.append(_simulation_event(
+                    entry["timestamp"],
+                    current_value,
+                    details=entry.get("details"),
+                ))
+            previous_met = condition_met
+    elif kind == "volatility":
         window_minutes = max(1, int(condition.get("window_minutes") or 10))
         window_seconds = window_minutes * 60
         if interval_seconds > window_seconds:
@@ -966,18 +1070,25 @@ def simulate_alert_rule(rule, price_history=None, cooldown_minutes=0, period_day
                 matched_events.append(_simulation_event(timestamp, current_value))
             previous_met = condition_met
 
-    if kind == "watch_target":
+    if response["trigger_policy"] == "single":
         effective_events = matched_events[:1]
     else:
         effective_events = _apply_simulation_cooldown(matched_events, cooldown_minutes)
+    if response["coverage"]["partial"]:
+        message = (
+            "持仓或行情历史覆盖不足，结果仅代表现有样本。"
+            if kind == "portfolio"
+            else "历史覆盖不足，结果仅代表现有样本。"
+        )
+    elif kind == "portfolio":
+        message = "模拟完成。结果按持仓流水、历史行情和当前触发策略计算。"
+    else:
+        message = "模拟完成。结果按历史行情与当前冷却策略计算。"
+
     response.update({
         "usable": True,
         "reason": "ok",
-        "message": (
-            "历史覆盖不足，结果仅代表现有样本。"
-            if response["coverage"]["partial"]
-            else "模拟完成。结果按历史行情与当前冷却策略计算。"
-        ),
+        "message": message,
         "match_count": len(matched_events),
         "effective_trigger_count": len(effective_events),
         "suppressed_count": max(0, len(matched_events) - len(effective_events)),

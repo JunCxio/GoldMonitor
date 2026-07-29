@@ -191,3 +191,56 @@ class NewsCacheStore:
             json.dump(payload, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, self.json_path)
         return normalized
+
+
+class NewsRuntime:
+    def __init__(
+        self,
+        runtime,
+        *,
+        fetch_news,
+        save_cache,
+        emit,
+        limit=20,
+        now_factory=None,
+    ):
+        self.runtime = runtime
+        self.fetch_news = fetch_news
+        self.save_cache = save_cache
+        self.emit = emit
+        self.limit = int(limit)
+        self.now_factory = now_factory or datetime.now
+
+    def state(self):
+        with self.runtime.lock:
+            return {
+                "items": list(self.runtime.news_items[:self.limit]),
+                "updated_at": self.runtime.news_last_updated,
+                "error": self.runtime.news_last_error,
+            }
+
+    def refresh(self, emit_update=True):
+        try:
+            fetched = self.fetch_news()
+            with self.runtime.lock:
+                if fetched:
+                    self.runtime.news_items = fetched
+                    self.runtime.news_last_updated = self.now_factory().isoformat()
+                    self.runtime.news_last_error = ""
+                    self.save_cache(self.runtime.news_items)
+                elif not self.runtime.news_items:
+                    self.runtime.news_last_error = "暂未获取到相关资讯"
+            if emit_update:
+                self.emit("news_updated", self.state())
+            return True
+        except Exception:
+            with self.runtime.lock:
+                self.runtime.news_last_error = "资讯获取失败，请稍后重试。"
+            if emit_update:
+                self.emit("news_updated", self.state())
+            return False
+
+    def run_loop(self, *, interval, sleep):
+        while True:
+            self.refresh(emit_update=True)
+            sleep(interval)

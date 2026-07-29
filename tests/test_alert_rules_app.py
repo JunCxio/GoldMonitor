@@ -234,6 +234,36 @@ def test_alert_rule_history_simulation_supports_drafts_and_socket_errors(monkeyp
     assert result["effective_trigger_count"] == 2
     assert result["cooldown_minutes"] == 10
 
+    monkeypatch.setattr(app, "portfolio_transactions", [{
+        "id": "buy-gold",
+        "position_id": "position-gold",
+        "name": "金条",
+        "type": "buy",
+        "mode": "rmb",
+        "price": 700,
+        "quantity": 10,
+        "fee": 0,
+        "trade_date": "2026-07-20",
+        "created_at": "2026-07-20T08:00:00",
+    }])
+    monkeypatch.setattr(app, "portfolio_positions", [])
+    portfolio_result = app.build_alert_rule_simulation(
+        {
+            "kind": "portfolio",
+            "name": "持仓浮盈模拟",
+            "scope": {"position_id": "position-gold"},
+            "condition": {"condition_key": "profit_percent", "value": 2},
+            "delivery": {"channels": [], "cooldown_minutes": 10},
+        },
+        days=7,
+        now=datetime(2026, 7, 27, 15, 0, 0),
+    )
+    assert portfolio_result["supported"] is True
+    assert portfolio_result["usable"] is True
+    assert portfolio_result["mode"] == "rmb"
+    assert portfolio_result["portfolio"]["position_id"] == "position-gold"
+    assert portfolio_result["portfolio"]["transaction_count"] == 1
+
     client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
     client.get_received()
     client.emit("simulate_alert_rule", {

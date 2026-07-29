@@ -134,7 +134,7 @@ def test_rule_inspection_explains_current_value_distance_and_blockers():
     assert waiting["required_samples"] == 6
 
 
-def test_rule_history_simulation_covers_crossings_cooldown_and_unsupported_rules():
+def test_rule_history_simulation_covers_crossings_cooldown_and_portfolio_rules():
     from goldmonitor.alert_rules import normalize_alert_rule, simulate_alert_rule
 
     price_rule = normalize_alert_rule({
@@ -183,11 +183,121 @@ def test_rule_history_simulation_covers_crossings_cooldown_and_unsupported_rules
         "id": "rule-portfolio-simulation",
         "kind": "portfolio",
         "scope": {"position_id": "position-gold"},
-        "condition": {"condition_key": "take_profit", "value": 760},
+        "condition": {"condition_key": "profit_percent", "value": 5},
     }, now_factory=fixed_now)
-    unsupported = simulate_alert_rule(portfolio_rule, price_history, period_days=7)
-    assert unsupported["supported"] is False
-    assert unsupported["reason"] == "portfolio_history_unavailable"
+    portfolio_history = {
+        "position_found": True,
+        "position_id": "position-gold",
+        "position_name": "金条",
+        "mode": "rmb",
+        "transaction_count": 2,
+        "dated_transaction_count": 2,
+        "unknown_date_count": 0,
+        "points": [
+            {
+                "timestamp": timestamp,
+                "active": True,
+                "current_price": price,
+                "average_cost": 100,
+                "quantity": 1,
+                "unrealized_pnl_percent": percent,
+                "near_cost_percent": abs(percent),
+            }
+            for timestamp, price, percent in (
+                ("2026-07-27T09:00:00", 100, 0),
+                ("2026-07-27T09:01:00", 106, 6),
+                ("2026-07-27T09:02:00", 108, 8),
+                ("2026-07-27T09:03:00", 100, 0),
+                ("2026-07-27T09:04:00", 107, 7),
+            )
+        ],
+    }
+    simulated_portfolio = simulate_alert_rule(
+        portfolio_rule,
+        price_history,
+        period_days=7,
+        portfolio_history=portfolio_history,
+    )
+    assert simulated_portfolio["supported"] is True
+    assert simulated_portfolio["usable"] is True
+    assert simulated_portfolio["trigger_policy"] == "single"
+    assert simulated_portfolio["match_count"] == 2
+    assert simulated_portfolio["effective_trigger_count"] == 1
+    assert simulated_portfolio["suppressed_count"] == 1
+    assert simulated_portfolio["portfolio"]["position_name"] == "金条"
+    assert simulated_portfolio["recent_triggers"][0]["current_price"] == 106
+
+    missing_dates = dict(portfolio_history)
+    missing_dates["unknown_date_count"] = 1
+    unavailable = simulate_alert_rule(
+        portfolio_rule,
+        price_history,
+        period_days=7,
+        portfolio_history=missing_dates,
+    )
+    assert unavailable["usable"] is False
+    assert unavailable["reason"] == "portfolio_transaction_time_missing"
+
+
+def test_portfolio_rule_simulation_handles_loss_near_cost_and_reentry():
+    from goldmonitor.alert_rules import normalize_alert_rule, simulate_alert_rule
+
+    portfolio_history = {
+        "position_found": True,
+        "position_id": "position-gold",
+        "position_name": "金条",
+        "mode": "rmb",
+        "transaction_count": 3,
+        "dated_transaction_count": 3,
+        "unknown_date_count": 0,
+        "points": [
+            {
+                "timestamp": timestamp,
+                "active": active,
+                "mode": "rmb",
+                "current_price": price,
+                "average_cost": average_cost,
+                "quantity": 1 if active else 0,
+                "unrealized_pnl_percent": pnl_percent,
+                "near_cost_percent": near_cost_percent,
+            }
+            for timestamp, active, price, average_cost, pnl_percent, near_cost_percent in (
+                ("2026-07-27T09:00:00", True, 100, 100, 0, 0),
+                ("2026-07-27T09:01:00", True, 94, 100, -6, 6),
+                ("2026-07-27T09:02:00", False, None, None, None, None),
+                ("2026-07-27T09:03:00", True, 99.5, 100, -0.5, 0.5),
+                ("2026-07-27T09:04:00", True, 94, 100, -6, 6),
+            )
+        ],
+    }
+
+    loss_rule = normalize_alert_rule({
+        "kind": "portfolio",
+        "scope": {"position_id": "position-gold"},
+        "condition": {"condition_key": "loss_percent", "value": 5},
+    }, now_factory=fixed_now)
+    loss_result = simulate_alert_rule(
+        loss_rule,
+        period_days=7,
+        portfolio_history=portfolio_history,
+    )
+    assert loss_result["match_count"] == 2
+    assert loss_result["effective_trigger_count"] == 1
+    assert loss_result["suppressed_count"] == 1
+    assert loss_result["recent_triggers"][0]["value"] == -6
+
+    near_cost_rule = normalize_alert_rule({
+        "kind": "portfolio",
+        "scope": {"position_id": "position-gold"},
+        "condition": {"condition_key": "near_cost", "value": 1},
+    }, now_factory=fixed_now)
+    near_cost_result = simulate_alert_rule(
+        near_cost_rule,
+        period_days=7,
+        portfolio_history=portfolio_history,
+    )
+    assert near_cost_result["match_count"] == 2
+    assert near_cost_result["recent_triggers"][0]["value"] == 0
 
 
 def test_volatility_history_simulation_requires_usable_window_resolution():
