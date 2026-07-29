@@ -4,6 +4,8 @@ import os
 
 WM_PAINT = 0x000F
 WM_ERASEBKGND = 0x0014
+WM_MOUSEACTIVATE = 0x0021
+WM_NULL = 0x0000
 WM_LBUTTONUP = 0x0202
 WM_LBUTTONDBLCLK = 0x0203
 WM_RBUTTONUP = 0x0205
@@ -30,6 +32,8 @@ TASKBAR_MENU_HIDE = 2007
 
 TASKBAR_LAYOUT_TIMER_ID = 2
 TASKBAR_LAYOUT_TIMER_MS = 750
+TASKBAR_INTERACTION_RESTORE_TIMER_ID = 3
+TASKBAR_INTERACTION_RESTORE_TIMER_MS = 160
 TASKBAR_DESIRED_WIDTH = 224
 TASKBAR_MINIMUM_WIDTH = 104
 TASKBAR_MARGIN = 3
@@ -48,6 +52,7 @@ WS_EX_LAYERED = 0x00080000
 WS_EX_NOACTIVATE = 0x08000000
 WS_POPUP = 0x80000000
 HWND_TOPMOST = -1
+MA_NOACTIVATE = 3
 SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOREDRAW = 0x0008
@@ -876,7 +881,24 @@ def restore_taskbar_window_order(hwnd, *, ctypes_module, user32):
             0,
             0,
             0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOREDRAW | SWP_NOACTIVATE,
+            SWP_NOMOVE
+            | SWP_NOSIZE
+            | SWP_NOREDRAW
+            | SWP_NOACTIVATE
+            | SWP_SHOWWINDOW,
+        )
+    )
+
+
+def schedule_taskbar_window_restore(hwnd, *, user32):
+    if not hwnd:
+        return False
+    return bool(
+        user32.SetTimer(
+            hwnd,
+            TASKBAR_INTERACTION_RESTORE_TIMER_ID,
+            TASKBAR_INTERACTION_RESTORE_TIMER_MS,
+            None,
         )
     )
 
@@ -940,6 +962,15 @@ def set_taskbar_window_visible(
                 return False
         elif not was_visible:
             user32.ShowWindow(hwnd, 4)
+        elif not restore_taskbar_window_order(
+            hwnd,
+            ctypes_module=ctypes,
+            user32=user32,
+        ):
+            set_layout_state(
+                {**state, "visible": False, "reason": "z_order_error"}
+            )
+            return False
 
         next_state = {
             **state,
@@ -1054,6 +1085,10 @@ def show_taskbar_context_menu(
         )
     finally:
         user32.DestroyMenu(menu)
+        try:
+            user32.PostMessageW(hwnd, WM_NULL, 0, 0)
+        except (AttributeError, OSError):
+            pass
 
     if command == TASKBAR_MENU_OPEN:
         show_main_window()
@@ -1082,6 +1117,7 @@ def handle_taskbar_window_message(
     draw_window,
     show_context_menu,
     show_main_window,
+    schedule_window_restore,
     restore_window_order,
     sync_visibility,
 ):
@@ -1090,13 +1126,16 @@ def handle_taskbar_window_message(
         return 0
     if msg == WM_ERASEBKGND:
         return 1
+    if msg == WM_MOUSEACTIVATE:
+        return MA_NOACTIVATE
     if msg in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
         show_main_window()
-        restore_window_order(hwnd)
+        schedule_window_restore(hwnd)
         return 0
     if msg in (WM_RBUTTONUP, WM_CONTEXTMENU):
-        show_context_menu(hwnd)
-        restore_window_order(hwnd)
+        command = show_context_menu(hwnd)
+        if command not in (TASKBAR_MENU_MODE_FLOATING, TASKBAR_MENU_HIDE):
+            schedule_window_restore(hwnd)
         return 0
     if msg in (WM_DISPLAYCHANGE, WM_SETTINGCHANGE, WM_DPICHANGED, WM_THEMECHANGED):
         sync_visibility()
@@ -1104,9 +1143,14 @@ def handle_taskbar_window_message(
     if msg == WM_TIMER and int(wparam) == TASKBAR_LAYOUT_TIMER_ID:
         sync_visibility()
         return 0
+    if msg == WM_TIMER and int(wparam) == TASKBAR_INTERACTION_RESTORE_TIMER_ID:
+        user32.KillTimer(hwnd, TASKBAR_INTERACTION_RESTORE_TIMER_ID)
+        restore_window_order(hwnd)
+        return 0
     if msg == WM_DESTROY:
         try:
             user32.KillTimer(hwnd, TASKBAR_LAYOUT_TIMER_ID)
+            user32.KillTimer(hwnd, TASKBAR_INTERACTION_RESTORE_TIMER_ID)
         except Exception:
             pass
         return 0
@@ -1266,6 +1310,13 @@ def run_taskbar_price_window(
         ]
         user32.DestroyMenu.argtypes = [wintypes.HMENU]
         user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+        user32.PostMessageW.argtypes = [
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+        ]
+        user32.PostMessageW.restype = wintypes.BOOL
         user32.LoadCursorW.restype = wintypes.HANDLE
         user32.LoadCursorW.argtypes = [wintypes.HINSTANCE, ctypes.c_void_p]
         kernel32.GetModuleHandleW.restype = wintypes.HMODULE
@@ -1352,6 +1403,12 @@ def run_taskbar_price_window(
                 user32=user32,
             )
 
+        def schedule_window_restore(hwnd):
+            return schedule_taskbar_window_restore(
+                hwnd,
+                user32=user32,
+            )
+
         @window_proc_type
         def window_proc(hwnd, msg, wparam, lparam):
             return handle_taskbar_window_message(
@@ -1363,6 +1420,7 @@ def run_taskbar_price_window(
                 draw_window=draw_window,
                 show_context_menu=show_context_menu,
                 show_main_window=show_main_window,
+                schedule_window_restore=schedule_window_restore,
                 restore_window_order=restore_window_order,
                 sync_visibility=sync_visibility,
             )
