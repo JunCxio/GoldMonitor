@@ -448,7 +448,7 @@ def test_taskbar_window_width_tracks_visible_content():
         {"price": "¥879.83", "change": "+0.42%"},
         font_loader=font_loader,
         measure_text=measure_text,
-    ) == 151
+    ) == 155
 
 
 def test_taskbar_content_layout_prioritizes_brand_trend_and_price_readability():
@@ -479,6 +479,38 @@ def test_taskbar_content_layout_prioritizes_brand_trend_and_price_readability():
     assert compact["price"] == (29, 52)
     assert compact["change"] == (98, 50)
     assert compact["price_clipped"] is True
+
+
+def test_taskbar_price_falls_back_without_ellipsis_when_space_is_limited():
+    from goldmonitor.taskbar_runtime import fit_taskbar_price_text
+
+    widths = {
+        "¥886.12  $3,312": 84,
+        "¥886.12": 51,
+        "¥886": 32,
+    }
+    measure_text = widths.__getitem__
+
+    assert fit_taskbar_price_text(
+        "¥886.12  $3,312",
+        84,
+        measure_text,
+    ) == "¥886.12  $3,312"
+    assert fit_taskbar_price_text(
+        "¥886.12  $3,312",
+        60,
+        measure_text,
+    ) == "¥886.12"
+    assert fit_taskbar_price_text(
+        "¥886.12  $3,312",
+        40,
+        measure_text,
+    ) == "¥886"
+    assert fit_taskbar_price_text(
+        "¥886.12  $3,312",
+        20,
+        measure_text,
+    ) == ""
 
 
 def test_taskbar_palette_adapts_to_system_theme_and_source_state():

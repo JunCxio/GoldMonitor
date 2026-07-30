@@ -50,6 +50,7 @@ TASKBAR_CONTENT_PADDING = 6
 TASKBAR_CONTENT_GAP = 5
 TASKBAR_ARROW_WIDTH = 9
 TASKBAR_MINIMUM_PRICE_WIDTH = 42
+TASKBAR_TEXT_WIDTH_GUARD = 4
 TASKBAR_HIT_TARGET_ALPHA = 1
 TASKBAR_DEFAULT_DPI = 96
 TASKBAR_MAXIMUM_DPI = 480
@@ -504,10 +505,7 @@ def layout_taskbar_content(
             + metrics["arrow_gap"]
             + change_width
         )
-    maximum_price_width = max(
-        metrics["minimum_price_width"],
-        available - fixed_width,
-    )
+    maximum_price_width = max(0, available - fixed_width)
     drawn_price_width = min(price_width, maximum_price_width)
     total_width = fixed_width + drawn_price_width
     start_x = max(padding, (client_width - total_width) // 2)
@@ -568,7 +566,11 @@ def preferred_taskbar_window_width(
             + draw_metrics["arrow_gap"]
             + change_width
         )
-    preferred_width = content_width + (2 * draw_metrics["padding"])
+    preferred_width = (
+        content_width
+        + (2 * draw_metrics["padding"])
+        + scale_taskbar_metric(TASKBAR_TEXT_WIDTH_GUARD, dpi)
+    )
     return max(
         layout_metrics["minimum_width"],
         min(layout_metrics["desired_width"], preferred_width),
@@ -598,25 +600,32 @@ def load_taskbar_font(pixel_height, *, bold=False, font_module=None, windows_dir
         return font_module.load_default()
 
 
-def ellipsize_taskbar_text(text, maximum_width, measure_text):
+def taskbar_price_text_candidates(text):
     text = str(text or "")
+    if not text:
+        return ()
+
+    candidates = [text]
+    primary = text.split("  ", 1)[0].strip()
+    if primary and primary not in candidates:
+        candidates.append(primary)
+
+    decimal_index = primary.rfind(".")
+    if decimal_index > 0 and primary[decimal_index + 1 :].isdigit():
+        compact = primary[:decimal_index]
+        if compact and compact not in candidates:
+            candidates.append(compact)
+    return tuple(candidates)
+
+
+def fit_taskbar_price_text(text, maximum_width, measure_text):
     maximum_width = max(0, int(maximum_width))
-    if not text or maximum_width <= 0:
+    if maximum_width <= 0:
         return ""
-    if measure_text(text) <= maximum_width:
-        return text
-    ellipsis = "…"
-    if measure_text(ellipsis) > maximum_width:
-        return ""
-    low = 0
-    high = len(text)
-    while low < high:
-        middle = (low + high + 1) // 2
-        if measure_text(text[:middle] + ellipsis) <= maximum_width:
-            low = middle
-        else:
-            high = middle - 1
-    return text[:low] + ellipsis
+    for candidate in taskbar_price_text_candidates(text):
+        if measure_text(candidate) <= maximum_width:
+            return candidate
+    return ""
 
 
 def render_taskbar_surface(
@@ -659,19 +668,28 @@ def render_taskbar_surface(
         return max(0, int(bounds[2] - bounds[0]))
 
     brand_width = text_width(brand_text, brand_font)
-    price_width = text_width(price_text, value_font)
     change_width = text_width(change_text, value_font) if change_text else 0
+    available = max(0, width - (2 * metrics["padding"]))
+    fixed_width = brand_width + metrics["gap"]
+    if change_width:
+        fixed_width += (
+            metrics["gap"]
+            + metrics["arrow_width"]
+            + metrics["arrow_gap"]
+            + change_width
+        )
+    visible_price = fit_taskbar_price_text(
+        price_text,
+        available - fixed_width,
+        lambda value: text_width(value, value_font),
+    )
+    price_width = text_width(visible_price, value_font) if visible_price else 0
     layout = layout_taskbar_content(
         width,
         brand_width=brand_width,
         price_width=price_width,
         change_width=change_width,
         dpi=dpi,
-    )
-    visible_price = ellipsize_taskbar_text(
-        price_text,
-        layout["price"][1],
-        lambda value: text_width(value, value_font),
     )
 
     def draw_centered_text(text, segment, font, color):
