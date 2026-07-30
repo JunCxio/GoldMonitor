@@ -24,6 +24,145 @@ def test_taskbar_layout_uses_only_free_horizontal_space():
     }
 
 
+def test_taskbar_discovery_returns_primary_and_bounded_secondary_targets():
+    from goldmonitor.taskbar_runtime import (
+        discover_taskbars,
+        find_secondary_taskbars,
+    )
+
+    secondary_handles = {None: 201, 201: 202, 202: None}
+    user32 = SimpleNamespace(
+        FindWindowW=lambda class_name, title: 101,
+        FindWindowExW=lambda parent, previous, class_name, title: secondary_handles[
+            previous
+        ],
+    )
+
+    assert discover_taskbars(user32) == [
+        {
+            "hwnd": 101,
+            "kind": "primary",
+            "index": 0,
+            "class_name": "Shell_TrayWnd",
+            "count": 3,
+        },
+        {
+            "hwnd": 201,
+            "kind": "secondary",
+            "index": 1,
+            "class_name": "Shell_SecondaryTrayWnd",
+            "count": 3,
+        },
+        {
+            "hwnd": 202,
+            "kind": "secondary",
+            "index": 2,
+            "class_name": "Shell_SecondaryTrayWnd",
+            "count": 3,
+        },
+    ]
+
+    repeated = SimpleNamespace(FindWindowExW=lambda *args: 201)
+    assert find_secondary_taskbars(repeated, limit=16) == [201]
+
+
+def test_taskbar_selection_prefers_primary_and_falls_back_to_secondary(monkeypatch):
+    from goldmonitor import taskbar_runtime
+
+    targets = [
+        {"hwnd": 101, "kind": "primary", "index": 0, "count": 2},
+        {"hwnd": 201, "kind": "secondary", "index": 1, "count": 2},
+    ]
+    calls = []
+    monkeypatch.setattr(taskbar_runtime, "discover_taskbars", lambda user32: targets)
+
+    def resolve(**kwargs):
+        target = kwargs["taskbar_target"]
+        calls.append(target["hwnd"])
+        if target["kind"] == "primary":
+            return None, {"reason": "insufficient_taskbar_space"}
+        return {"x": 10}, {"reason": "ready", "taskbar_kind": "secondary"}
+
+    monkeypatch.setattr(taskbar_runtime, "resolve_taskbar_layout", resolve)
+
+    target, layout, state = taskbar_runtime.select_taskbar_layout(
+        user32=object(),
+        shell32=object(),
+    )
+
+    assert calls == [101, 201]
+    assert target == targets[1]
+    assert layout == {"x": 10}
+    assert state["taskbar_kind"] == "secondary"
+    assert state["candidate_failures"] == [
+        {
+            "taskbar_kind": "primary",
+            "taskbar_index": 0,
+            "reason": "insufficient_taskbar_space",
+        }
+    ]
+
+    calls.clear()
+    monkeypatch.setattr(
+        taskbar_runtime,
+        "resolve_taskbar_layout",
+        lambda **kwargs: calls.append(kwargs["taskbar_target"]["hwnd"])
+        or ({"x": 20}, {"reason": "ready"}),
+    )
+    selected, _layout, state = taskbar_runtime.select_taskbar_layout(
+        user32=object(),
+        shell32=object(),
+    )
+    assert selected == targets[0]
+    assert calls == [101]
+    assert state["candidate_failures"] == []
+
+
+def test_taskbar_layout_follows_actual_automation_button_bounds():
+    from goldmonitor.taskbar_runtime import choose_taskbar_layout
+
+    taskbar_rect = (0, 1040, 1920, 1080)
+    initial = choose_taskbar_layout(
+        taskbar_rect,
+        tray_rect=None,
+        task_list_rect=None,
+        occupied_rects=(
+            (700, 1042, 900, 1078),
+            (1700, 1042, 1740, 1078),
+            (1760, 1042, 1800, 1078),
+            (1840, 1042, 1880, 1078),
+        ),
+    )
+    expanded_tray = choose_taskbar_layout(
+        taskbar_rect,
+        tray_rect=None,
+        task_list_rect=None,
+        occupied_rects=(
+            (700, 1042, 900, 1078),
+            (1650, 1042, 1690, 1078),
+            (1700, 1042, 1740, 1078),
+            (1760, 1042, 1800, 1078),
+            (1840, 1042, 1880, 1078),
+        ),
+    )
+
+    assert initial["x"] == 1469
+    assert expanded_tray["x"] == 1419
+    assert expanded_tray["x"] < initial["x"]
+
+
+def test_taskbar_layout_hides_instead_of_compressing_into_crowded_gap():
+    from goldmonitor.taskbar_runtime import choose_taskbar_layout
+
+    assert choose_taskbar_layout(
+        (0, 1040, 1920, 1080),
+        start_rect=(0, 1040, 60, 1080),
+        task_list_rect=(60, 1040, 1580, 1080),
+        tray_rect=(1740, 1040, 1920, 1080),
+        desired_width=151,
+    ) is None
+
+
 def test_taskbar_layout_and_draw_metrics_scale_with_window_dpi():
     from goldmonitor.taskbar_runtime import (
         choose_taskbar_layout,
@@ -208,21 +347,19 @@ def test_taskbar_window_is_created_as_shell_owned_popup():
     from goldmonitor.taskbar_runtime import create_taskbar_price_window
 
     calls = []
-    user32 = SimpleNamespace(
-        FindWindowW=lambda class_name, title: 84,
-        CreateWindowExW=lambda *args: calls.append(args) or 42,
-    )
+    user32 = SimpleNamespace(CreateWindowExW=lambda *args: calls.append(args) or 42)
 
     assert create_taskbar_price_window(
         user32,
+        taskbar_owner=84,
         class_name="GoldMonitorTaskbarPriceWindow",
         instance=7,
     ) == 42
     assert calls[0][8] == 84
 
-    user32.FindWindowW = lambda class_name, title: None
     assert create_taskbar_price_window(
         user32,
+        taskbar_owner=None,
         class_name="GoldMonitorTaskbarPriceWindow",
         instance=7,
     ) is None
@@ -344,6 +481,96 @@ def test_taskbar_layout_rejects_vertical_or_fully_occupied_taskbars():
     ) is None
 
 
+def test_secondary_taskbar_layout_does_not_require_notification_area(monkeypatch):
+    from goldmonitor import taskbar_runtime
+
+    rects = {
+        201: (1920, 1040, 3840, 1080),
+        301: (1980, 1040, 3500, 1080),
+        302: (1920, 1040, 1980, 1080),
+    }
+
+    def find_region(user32, parent, class_names, **kwargs):
+        if "TrayNotifyWnd" in class_names:
+            return None
+        if "MSTaskListWClass" in class_names:
+            return 301
+        if "Start" in class_names:
+            return 302
+        return None
+
+    monkeypatch.setattr(taskbar_runtime, "find_descendant_window", find_region)
+    monkeypatch.setattr(
+        taskbar_runtime,
+        "get_window_rect",
+        lambda user32, hwnd, **kwargs: rects.get(hwnd),
+    )
+    monkeypatch.setattr(taskbar_runtime, "get_window_dpi", lambda user32, hwnd: 96)
+    monkeypatch.setattr(
+        taskbar_runtime,
+        "taskbar_is_auto_hidden",
+        lambda *args, **kwargs: False,
+    )
+
+    layout, state = taskbar_runtime.resolve_taskbar_layout(
+        user32=object(),
+        shell32=object(),
+        taskbar_target={
+            "hwnd": 201,
+            "kind": "secondary",
+            "index": 1,
+            "count": 2,
+        },
+    )
+
+    assert layout["x"] == 3613
+    assert layout["taskbar_rect"] == rects[201]
+    assert state["reason"] == "ready"
+    assert state["taskbar_kind"] == "secondary"
+    assert state["taskbar_index"] == 1
+
+
+def test_taskbar_layout_uses_automation_bounds_without_legacy_regions(monkeypatch):
+    from goldmonitor import taskbar_runtime
+
+    monkeypatch.setattr(
+        taskbar_runtime,
+        "find_descendant_window",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        taskbar_runtime,
+        "get_window_rect",
+        lambda user32, hwnd, **kwargs: (0, 1040, 1920, 1080) if hwnd == 101 else None,
+    )
+    monkeypatch.setattr(taskbar_runtime, "get_window_dpi", lambda user32, hwnd: 96)
+    monkeypatch.setattr(
+        taskbar_runtime,
+        "taskbar_is_auto_hidden",
+        lambda *args, **kwargs: False,
+    )
+
+    layout, state = taskbar_runtime.resolve_taskbar_layout(
+        user32=object(),
+        shell32=object(),
+        taskbar_target={
+            "hwnd": 101,
+            "kind": "primary",
+            "index": 0,
+            "count": 1,
+        },
+        occupied_rects_provider=lambda hwnd, rect: [
+            (700, 1042, 900, 1078),
+            (1700, 1042, 1740, 1078),
+            (1760, 1042, 1800, 1078),
+        ],
+    )
+
+    assert layout["x"] == 1469
+    assert state["reason"] == "ready"
+    assert state["layout_source"] == "uia"
+
+
 def test_taskbar_auto_hide_state_uses_shell_appbar_contract():
     from goldmonitor.taskbar_runtime import taskbar_is_auto_hidden
 
@@ -406,6 +633,46 @@ def test_taskbar_visibility_positions_without_activation_and_tracks_state():
     assert len(calls) == call_count
 
 
+def test_taskbar_visibility_restores_window_hidden_by_shell():
+    import ctypes as real_ctypes
+
+    from goldmonitor.taskbar_runtime import set_taskbar_window_visible
+
+    calls = []
+    states = []
+    user32 = SimpleNamespace(
+        IsWindowVisible=lambda hwnd: False,
+        ShowWindow=lambda hwnd, command: calls.append(("show", hwnd, command)),
+        SetWindowPos=lambda *args: calls.append(("position", args)) or True,
+    )
+    ctypes_module = SimpleNamespace(
+        windll=SimpleNamespace(user32=user32),
+        c_void_p=real_ctypes.c_void_p,
+        sizeof=real_ctypes.sizeof,
+    )
+    layout = {"x": 100, "y": 200, "width": 180, "height": 32}
+    previous = {
+        "visible": True,
+        "reason": "visible",
+        "bounds": (100, 200, 180, 32),
+    }
+
+    assert set_taskbar_window_visible(
+        True,
+        hwnd=42,
+        os_name="nt",
+        layout_provider=lambda: (layout, {"reason": "ready"}),
+        should_suppress=lambda hwnd, target: False,
+        set_layout_state=lambda state: states.append(state),
+        get_layout_state=lambda: previous,
+        invalidate=lambda: calls.append("invalidate"),
+        ctypes_loader=lambda: (ctypes_module, SimpleNamespace()),
+    ) is True
+
+    assert calls == [("show", 42, 4), "invalidate"]
+    assert states[-1]["visible"] is True
+
+
 def test_taskbar_visibility_hides_for_fullscreen_or_missing_space():
     import ctypes as real_ctypes
 
@@ -454,6 +721,7 @@ def test_taskbar_window_messages_keep_interaction_non_activating():
     from goldmonitor.taskbar_runtime import (
         MA_NOACTIVATE,
         TASKBAR_LAYOUT_TIMER_ID,
+        WM_DESTROY,
         WM_DPICHANGED,
         WM_ERASEBKGND,
         WM_LBUTTONUP,
@@ -468,6 +736,7 @@ def test_taskbar_window_messages_keep_interaction_non_activating():
     user32 = SimpleNamespace(
         DefWindowProcW=lambda *args: 99,
         KillTimer=lambda hwnd, timer_id: calls.append(("kill_timer", hwnd, timer_id)),
+        PostQuitMessage=lambda exit_code: calls.append(("quit", exit_code)),
     )
     kwargs = {
         "user32": user32,
@@ -484,13 +753,94 @@ def test_taskbar_window_messages_keep_interaction_non_activating():
     assert handle_taskbar_window_message(42, WM_RBUTTONUP, 0, 0, **kwargs) == 0
     assert handle_taskbar_window_message(42, WM_DPICHANGED, 0, 0, **kwargs) == 0
     assert handle_taskbar_window_message(42, WM_TIMER, TASKBAR_LAYOUT_TIMER_ID, 0, **kwargs) == 0
+    assert handle_taskbar_window_message(42, WM_DESTROY, 0, 0, **kwargs) == 0
     assert calls == [
         ("draw", 42),
         "show",
         ("menu", 42),
         "sync",
         "sync",
+        ("kill_timer", 42, TASKBAR_LAYOUT_TIMER_ID),
+        ("quit", 0),
     ]
+
+
+def test_taskbar_window_recreates_for_shell_broadcast_or_stale_owner():
+    from goldmonitor.taskbar_runtime import (
+        TASKBAR_LAYOUT_TIMER_ID,
+        WM_TIMER,
+        handle_taskbar_window_message,
+    )
+
+    calls = []
+    user32 = SimpleNamespace(
+        DefWindowProcW=lambda *args: 99,
+        DestroyWindow=lambda hwnd: calls.append(("destroy", hwnd)) or True,
+    )
+    kwargs = {
+        "user32": user32,
+        "draw_window": lambda hwnd: None,
+        "show_context_menu": lambda hwnd: None,
+        "show_main_window": lambda: None,
+        "sync_visibility": lambda: calls.append("sync"),
+        "taskbar_created_message": 0xC123,
+        "should_recreate": lambda: True,
+    }
+
+    assert handle_taskbar_window_message(42, 0xC123, 0, 0, **kwargs) == 0
+    assert handle_taskbar_window_message(
+        43,
+        WM_TIMER,
+        TASKBAR_LAYOUT_TIMER_ID,
+        0,
+        **kwargs,
+    ) == 0
+    assert calls == [("destroy", 42), ("destroy", 43)]
+
+
+def test_taskbar_owner_validation_tracks_current_shell_windows():
+    from goldmonitor.taskbar_runtime import taskbar_owner_is_current
+
+    user32 = SimpleNamespace(
+        FindWindowW=lambda class_name, title: 101,
+        FindWindowExW=lambda *args: None,
+    )
+
+    assert taskbar_owner_is_current(user32, 101) is True
+    assert taskbar_owner_is_current(user32, 999) is False
+
+
+def test_taskbar_supervisor_rebuilds_after_session_loss_while_enabled():
+    from goldmonitor.taskbar_runtime import run_taskbar_window_supervisor
+
+    enabled = iter((True, True, True, False))
+    sessions = iter((42, 43))
+    calls = []
+
+    result = run_taskbar_window_supervisor(
+        window_enabled=lambda: next(enabled),
+        run_session=lambda: calls.append("session") or next(sessions),
+        on_session_lost=lambda: calls.append("restart"),
+        restart_wait=lambda delay: calls.append(("wait", delay)),
+    )
+
+    assert result == 43
+    assert calls == ["session", "restart", ("wait", 1.0), "session"]
+
+
+def test_taskbar_supervisor_stops_without_rebuild_when_feature_is_disabled():
+    from goldmonitor.taskbar_runtime import run_taskbar_window_supervisor
+
+    enabled = iter((True, False))
+    calls = []
+
+    assert run_taskbar_window_supervisor(
+        window_enabled=lambda: next(enabled),
+        run_session=lambda: calls.append("session") or 42,
+        on_session_lost=lambda: calls.append("restart"),
+        restart_wait=lambda delay: calls.append(("wait", delay)),
+    ) == 42
+    assert calls == ["session"]
 
 
 @pytest.mark.parametrize(

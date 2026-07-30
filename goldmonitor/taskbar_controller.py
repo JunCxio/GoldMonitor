@@ -89,7 +89,18 @@ class TaskbarPriceController:
 
     def set_layout_state(self, value):
         with self.runtime.taskbar_lock:
-            self.runtime.taskbar_layout_state = dict(value or {})
+            target = dict(self.runtime.taskbar_target_state or {})
+            target_state = {
+                "taskbar_kind": target.get("kind"),
+                "taskbar_index": target.get("index"),
+                "taskbar_count": target.get("count", 0),
+                "taskbar_class_name": target.get("class_name"),
+            }
+            self.runtime.taskbar_layout_state = {
+                **{key: item for key, item in target_state.items() if item is not None},
+                **dict(value or {}),
+                "restart_count": self.runtime.taskbar_restart_count,
+            }
 
     def layout_state(self):
         with self.runtime.taskbar_lock:
@@ -99,11 +110,12 @@ class TaskbarPriceController:
         try:
             import ctypes
 
-            return taskbar_runtime_core.resolve_taskbar_layout(
+            _target, layout, state = taskbar_runtime_core.select_taskbar_layout(
                 user32=ctypes.windll.user32,
                 shell32=ctypes.windll.shell32,
                 text_state=self.text_state(),
             )
+            return layout, state
         except Exception:
             return None, {"visible": False, "reason": "layout_error"}
 
@@ -115,8 +127,10 @@ class TaskbarPriceController:
         )
 
     def invalidate_window(self):
+        with self.runtime.taskbar_lock:
+            hwnd = self.runtime.taskbar_hwnd
         return taskbar_runtime_core.invalidate_window(
-            self.runtime.taskbar_hwnd,
+            hwnd,
             os_name=self.os_name(),
         )
 
@@ -172,23 +186,34 @@ class TaskbarPriceController:
         self.emit("open_risk_analysis", {"run": True, "source": source})
 
     def run_window(self):
-        return taskbar_runtime_core.run_taskbar_price_window(
-            set_window_handle=self.set_window_handle,
-            set_ready=self.runtime.taskbar_window_ready.set,
-            get_text_state=self.text_state,
-            window_enabled=lambda: bool(
-                self.get_settings().get("floating_price_enabled", True)
+        try:
+            return taskbar_runtime_core.run_taskbar_price_window(
+                set_window_handle=self.set_window_handle,
+                set_taskbar_target=self.set_taskbar_target,
+                set_lifecycle_state=self.set_lifecycle_state,
+                set_ready=self.runtime.taskbar_window_ready.set,
+                clear_ready=self.runtime.taskbar_window_ready.clear,
+                get_text_state=self.text_state,
+                window_enabled=lambda: bool(
+                    self.get_settings().get("floating_price_enabled", True)
+                )
+                and self.mode_enabled(self.get_settings()),
+                sync_visibility=self.sync_visibility,
+                show_main_window=self.show_main_window,
+                set_enabled=self.set_enabled,
+                refresh_price=self.refresh_price,
+                open_risk_analysis=self.open_risk_analysis,
+                get_settings=self.get_settings,
+                set_windows_mode=self.set_windows_mode,
+                logger=self.logger,
             )
-            and self.mode_enabled(self.get_settings()),
-            sync_visibility=self.sync_visibility,
-            show_main_window=self.show_main_window,
-            set_enabled=self.set_enabled,
-            refresh_price=self.refresh_price,
-            open_risk_analysis=self.open_risk_analysis,
-            get_settings=self.get_settings,
-            set_windows_mode=self.set_windows_mode,
-            logger=self.logger,
-        )
+        finally:
+            with self.runtime.taskbar_lock:
+                self.runtime.taskbar_hwnd = None
+                self.runtime.taskbar_owner_hwnd = None
+                self.runtime.taskbar_target_state = {}
+                self.runtime.taskbar_thread_started = False
+                self.runtime.taskbar_window_ready.clear()
 
     def start_window(self, worker=None):
         if not self.is_available():
@@ -196,6 +221,7 @@ class TaskbarPriceController:
         with self.runtime.taskbar_lock:
             if self.runtime.taskbar_thread_started:
                 return None
+            self.runtime.taskbar_window_ready.clear()
             self.runtime.taskbar_thread_started = True
             self.start_background_task(worker or self.run_window)
         return None
@@ -233,4 +259,49 @@ class TaskbarPriceController:
         return None
 
     def set_window_handle(self, value):
-        self.runtime.taskbar_hwnd = value
+        with self.runtime.taskbar_lock:
+            self.runtime.taskbar_hwnd = value
+
+    def set_taskbar_target(self, target):
+        target = dict(target or {})
+        with self.runtime.taskbar_lock:
+            self.runtime.taskbar_owner_hwnd = target.get("hwnd")
+            self.runtime.taskbar_target_state = {
+                key: target[key]
+                for key in ("kind", "index", "count", "class_name")
+                if key in target
+            }
+
+    def taskbar_target(self):
+        with self.runtime.taskbar_lock:
+            if not self.runtime.taskbar_owner_hwnd:
+                return None
+            return {
+                "hwnd": self.runtime.taskbar_owner_hwnd,
+                **dict(self.runtime.taskbar_target_state or {}),
+            }
+
+    def set_lifecycle_state(self, reason, **details):
+        with self.runtime.taskbar_lock:
+            increment_restart = bool(details.pop("increment_restart", False))
+            if increment_restart:
+                self.runtime.taskbar_restart_count += 1
+            if "restart_count" in details:
+                self.runtime.taskbar_restart_count = max(
+                    0,
+                    int(details["restart_count"]),
+                )
+            target = dict(self.runtime.taskbar_target_state or {})
+            target_state = {
+                "taskbar_kind": target.get("kind"),
+                "taskbar_index": target.get("index"),
+                "taskbar_count": target.get("count", 0),
+                "taskbar_class_name": target.get("class_name"),
+            }
+            self.runtime.taskbar_layout_state = {
+                **{key: item for key, item in target_state.items() if item is not None},
+                **details,
+                "visible": False,
+                "reason": reason,
+                "restart_count": self.runtime.taskbar_restart_count,
+            }

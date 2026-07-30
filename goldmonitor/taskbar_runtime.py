@@ -1,5 +1,8 @@
 import logging
 import os
+import time
+
+from goldmonitor import taskbar_automation as taskbar_automation_core
 
 
 WM_PAINT = 0x000F
@@ -32,9 +35,13 @@ TASKBAR_MENU_HIDE = 2007
 
 TASKBAR_LAYOUT_TIMER_ID = 2
 TASKBAR_LAYOUT_TIMER_MS = 750
+TASKBAR_RESTART_DELAY_SECONDS = 1.0
+TASKBAR_DISCOVERY_LIMIT = 16
 TASKBAR_DESIRED_WIDTH = 224
 TASKBAR_MINIMUM_WIDTH = 104
 TASKBAR_MARGIN = 3
+TASKBAR_BUTTON_GROWTH_GUARD = 48
+TASKBAR_AUTOMATION_PADDING = 4
 TASKBAR_CONTENT_PADDING = 6
 TASKBAR_CONTENT_GAP = 5
 TASKBAR_ARROW_WIDTH = 9
@@ -65,6 +72,8 @@ TASKBAR_THEME_REGISTRY_PATH = (
 )
 
 TASK_LIST_CLASSES = {"MSTaskListWClass", "MSTaskSwWClass"}
+PRIMARY_TASKBAR_CLASS = "Shell_TrayWnd"
+SECONDARY_TASKBAR_CLASS = "Shell_SecondaryTrayWnd"
 
 
 def _load_win32_types():
@@ -203,11 +212,60 @@ def taskbar_window_ex_style():
 
 
 def find_primary_taskbar(user32):
-    return user32.FindWindowW("Shell_TrayWnd", None)
+    return user32.FindWindowW(PRIMARY_TASKBAR_CLASS, None)
 
 
-def create_taskbar_price_window(user32, *, class_name, instance):
-    taskbar_owner = find_primary_taskbar(user32)
+def find_secondary_taskbars(user32, *, limit=TASKBAR_DISCOVERY_LIMIT):
+    handles = []
+    previous = None
+    while len(handles) < limit:
+        hwnd = user32.FindWindowExW(
+            None,
+            previous,
+            SECONDARY_TASKBAR_CLASS,
+            None,
+        )
+        if not hwnd or hwnd in handles:
+            break
+        handles.append(hwnd)
+        previous = hwnd
+    return handles
+
+
+def discover_taskbars(user32):
+    targets = []
+    primary = find_primary_taskbar(user32)
+    if primary:
+        targets.append(
+            {
+                "hwnd": primary,
+                "kind": "primary",
+                "index": 0,
+                "class_name": PRIMARY_TASKBAR_CLASS,
+            }
+        )
+    for index, hwnd in enumerate(find_secondary_taskbars(user32), start=1):
+        targets.append(
+            {
+                "hwnd": hwnd,
+                "kind": "secondary",
+                "index": index,
+                "class_name": SECONDARY_TASKBAR_CLASS,
+            }
+        )
+    count = len(targets)
+    for target in targets:
+        target["count"] = count
+    return targets
+
+
+def create_taskbar_price_window(
+    user32,
+    *,
+    taskbar_owner,
+    class_name,
+    instance,
+):
     if not taskbar_owner:
         return None
     return user32.CreateWindowExW(
@@ -640,6 +698,8 @@ def choose_taskbar_layout(
     desired_width=None,
     minimum_width=None,
     margin=None,
+    growth_guard=None,
+    occupied_rects=None,
     dpi=TASKBAR_DEFAULT_DPI,
 ):
     metrics = taskbar_layout_metrics(dpi)
@@ -650,10 +710,20 @@ def choose_taskbar_layout(
         metrics["minimum_width"] if minimum_width is None else int(minimum_width)
     )
     margin = metrics["margin"] if margin is None else int(margin)
+    growth_guard = (
+        scale_taskbar_metric(TASKBAR_BUTTON_GROWTH_GUARD, dpi)
+        if growth_guard is None
+        else max(0, int(growth_guard))
+    )
     taskbar_rect = normalize_rect(taskbar_rect)
     tray_rect = normalize_rect(tray_rect)
     task_list_rect = normalize_rect(task_list_rect)
-    if not taskbar_rect or not tray_rect or not task_list_rect:
+    automation_rects = [
+        normalized
+        for normalized in (normalize_rect(rect) for rect in (occupied_rects or ()))
+        if normalized
+    ]
+    if not taskbar_rect or (not automation_rects and not task_list_rect):
         return None
 
     left, top, right, bottom = taskbar_rect
@@ -666,25 +736,48 @@ def choose_taskbar_layout(
         return None
 
     occupied = []
-    for rect in (tray_rect, task_list_rect, start_rect):
-        interval = _clip_interval(rect, taskbar_rect)
-        if interval:
-            occupied.append(interval)
+    if automation_rects:
+        automation_padding = scale_taskbar_metric(
+            TASKBAR_AUTOMATION_PADDING,
+            dpi,
+        )
+        for rect in automation_rects:
+            interval = _clip_interval(rect, taskbar_rect)
+            if interval:
+                occupied.append(
+                    (
+                        max(left, interval[0] - automation_padding),
+                        min(right, interval[1] + automation_padding),
+                    )
+                )
+    else:
+        for rect in (tray_rect, start_rect):
+            interval = _clip_interval(rect, taskbar_rect)
+            if interval:
+                occupied.append(interval)
+        task_list_interval = _clip_interval(task_list_rect, taskbar_rect)
+        if task_list_interval:
+            occupied.append(
+                (
+                    max(left, task_list_interval[0] - growth_guard),
+                    min(right, task_list_interval[1] + growth_guard),
+                )
+            )
     if not occupied:
         return None
 
     cursor = left
     free_intervals = []
     for occupied_left, occupied_right in _merge_intervals(occupied):
-        if occupied_left - cursor >= minimum_width + (2 * margin):
+        if occupied_left - cursor >= desired_width + (2 * margin):
             free_intervals.append((cursor, occupied_left))
         cursor = max(cursor, occupied_right)
-    if right - cursor >= minimum_width + (2 * margin):
+    if right - cursor >= desired_width + (2 * margin):
         free_intervals.append((cursor, right))
     if not free_intervals:
         return None
 
-    tray_left = tray_rect[0]
+    tray_left = right if automation_rects else (tray_rect[0] if tray_rect else right)
     free_left, free_right = min(
         free_intervals,
         key=lambda interval: (
@@ -694,8 +787,8 @@ def choose_taskbar_layout(
         ),
     )
     usable_width = free_right - free_left - (2 * margin)
-    width = min(desired_width, usable_width)
-    if width < minimum_width:
+    width = desired_width
+    if width < minimum_width or usable_width < width:
         return None
     height = min(metrics["maximum_height"], taskbar_height - (2 * margin))
     if height < metrics["minimum_height"]:
@@ -790,19 +883,43 @@ def resolve_taskbar_layout(
     user32,
     shell32,
     text_state=None,
+    taskbar_target=None,
     ctypes_loader=_load_win32_types,
+    occupied_rects_provider=taskbar_automation_core.get_taskbar_occupied_rects,
 ):
     try:
-        taskbar_hwnd = find_primary_taskbar(user32)
+        target = dict(taskbar_target or {})
+        taskbar_hwnd = target.get("hwnd") or find_primary_taskbar(user32)
         if not taskbar_hwnd:
             return None, {"visible": False, "reason": "taskbar_not_found"}
+        target.setdefault("hwnd", taskbar_hwnd)
+        target.setdefault("kind", "primary")
+        target.setdefault("index", 0)
+        target.setdefault("count", 1)
+        target_state = {
+            "taskbar_kind": target["kind"],
+            "taskbar_index": target["index"],
+            "taskbar_count": target["count"],
+        }
         dpi = get_window_dpi(user32, taskbar_hwnd)
         if taskbar_is_auto_hidden(
             taskbar_hwnd,
             shell32=shell32,
             ctypes_loader=ctypes_loader,
         ):
-            return None, {"visible": False, "reason": "taskbar_auto_hidden"}
+            return None, {
+                **target_state,
+                "visible": False,
+                "reason": "taskbar_auto_hidden",
+            }
+
+        taskbar_rect = get_window_rect(
+            user32,
+            taskbar_hwnd,
+            ctypes_loader=ctypes_loader,
+        )
+        automation_rects = occupied_rects_provider(taskbar_hwnd, taskbar_rect)
+        layout_source = "uia" if automation_rects else "win32"
 
         tray_hwnd = find_descendant_window(
             user32,
@@ -813,30 +930,28 @@ def resolve_taskbar_layout(
         task_list_hwnd = find_descendant_window(
             user32,
             taskbar_hwnd,
-            {"MSTaskListWClass"},
+            TASK_LIST_CLASSES,
             ctypes_loader=ctypes_loader,
         )
-        if not task_list_hwnd:
-            task_list_hwnd = find_descendant_window(
-                user32,
-                taskbar_hwnd,
-                {"MSTaskSwWClass"},
-                ctypes_loader=ctypes_loader,
-            )
         start_hwnd = find_descendant_window(
             user32,
             taskbar_hwnd,
             {"Start"},
             ctypes_loader=ctypes_loader,
         )
-        if not tray_hwnd or not task_list_hwnd:
-            return None, {"visible": False, "reason": "taskbar_regions_unavailable"}
+        if not taskbar_rect or (
+            not automation_rects
+            and (
+                not task_list_hwnd
+                or (target["kind"] == "primary" and not tray_hwnd)
+            )
+        ):
+            return None, {
+                **target_state,
+                "visible": False,
+                "reason": "taskbar_regions_unavailable",
+            }
 
-        taskbar_rect = get_window_rect(
-            user32,
-            taskbar_hwnd,
-            ctypes_loader=ctypes_loader,
-        )
         tray_rect = get_window_rect(user32, tray_hwnd, ctypes_loader=ctypes_loader)
         task_list_rect = get_window_rect(
             user32,
@@ -855,20 +970,25 @@ def resolve_taskbar_layout(
             task_list_rect=task_list_rect,
             start_rect=start_rect,
             desired_width=desired_width,
+            occupied_rects=automation_rects,
             dpi=dpi,
         )
         if not layout:
             return None, {
+                **target_state,
                 "visible": False,
                 "reason": "insufficient_taskbar_space",
                 "taskbar_rect": taskbar_rect,
                 "dpi": dpi,
+                "layout_source": layout_source,
             }
         return layout, {
+            **target_state,
             "visible": False,
             "reason": "ready",
             "taskbar_rect": taskbar_rect,
             "dpi": dpi,
+            "layout_source": layout_source,
             "bounds": (
                 layout["x"],
                 layout["y"],
@@ -878,6 +998,44 @@ def resolve_taskbar_layout(
         }
     except Exception:
         return None, {"visible": False, "reason": "layout_error"}
+
+
+def select_taskbar_layout(
+    *,
+    user32,
+    shell32,
+    text_state=None,
+    ctypes_loader=_load_win32_types,
+):
+    targets = discover_taskbars(user32)
+    if not targets:
+        return None, None, {"visible": False, "reason": "taskbar_not_found"}
+
+    failures = []
+    for target in targets:
+        layout, state = resolve_taskbar_layout(
+            user32=user32,
+            shell32=shell32,
+            text_state=text_state,
+            taskbar_target=target,
+            ctypes_loader=ctypes_loader,
+        )
+        if layout:
+            return target, layout, {**state, "candidate_failures": failures}
+        failures.append(
+            {
+                "taskbar_kind": target["kind"],
+                "taskbar_index": target["index"],
+                "reason": state.get("reason", "layout_error"),
+            }
+        )
+
+    return None, None, {
+        "visible": False,
+        "reason": "no_usable_taskbar",
+        "taskbar_count": len(targets),
+        "candidate_failures": failures,
+    }
 
 
 def invalidate_window(hwnd, *, os_name, ctypes_loader=_load_win32_types):
@@ -931,6 +1089,10 @@ def set_taskbar_window_visible(
         )
         previous = dict(get_layout_state() or {}) if get_layout_state else {}
         was_visible = bool(previous.get("visible"))
+        try:
+            was_visible = was_visible and bool(user32.IsWindowVisible(hwnd))
+        except (AttributeError, OSError):
+            pass
         position_changed = previous.get("bounds") != bounds
 
         if position_changed:
@@ -1084,6 +1246,18 @@ def show_taskbar_context_menu(
     return command
 
 
+def taskbar_owner_is_current(user32, taskbar_owner):
+    if not taskbar_owner:
+        return False
+    try:
+        return any(
+            target["hwnd"] == taskbar_owner
+            for target in discover_taskbars(user32)
+        )
+    except Exception:
+        return False
+
+
 def handle_taskbar_window_message(
     hwnd,
     msg,
@@ -1095,7 +1269,12 @@ def handle_taskbar_window_message(
     show_context_menu,
     show_main_window,
     sync_visibility,
+    taskbar_created_message=None,
+    should_recreate=None,
 ):
+    if taskbar_created_message and msg == taskbar_created_message:
+        user32.DestroyWindow(hwnd)
+        return 0
     if msg == WM_PAINT:
         draw_window(hwnd)
         return 0
@@ -1110,9 +1289,15 @@ def handle_taskbar_window_message(
         show_context_menu(hwnd)
         return 0
     if msg in (WM_DISPLAYCHANGE, WM_SETTINGCHANGE, WM_DPICHANGED, WM_THEMECHANGED):
+        if should_recreate and should_recreate():
+            user32.DestroyWindow(hwnd)
+            return 0
         sync_visibility()
         return 0
     if msg == WM_TIMER and int(wparam) == TASKBAR_LAYOUT_TIMER_ID:
+        if should_recreate and should_recreate():
+            user32.DestroyWindow(hwnd)
+            return 0
         sync_visibility()
         return 0
     if msg == WM_DESTROY:
@@ -1120,14 +1305,42 @@ def handle_taskbar_window_message(
             user32.KillTimer(hwnd, TASKBAR_LAYOUT_TIMER_ID)
         except Exception:
             pass
+        try:
+            user32.PostQuitMessage(0)
+        except Exception:
+            pass
         return 0
     return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+
+def run_taskbar_window_supervisor(
+    *,
+    window_enabled,
+    run_session,
+    on_session_lost,
+    restart_wait=time.sleep,
+    restart_delay=TASKBAR_RESTART_DELAY_SECONDS,
+):
+    last_hwnd = None
+    while window_enabled():
+        session_hwnd = run_session()
+        if session_hwnd:
+            last_hwnd = session_hwnd
+        if not window_enabled():
+            break
+        if session_hwnd:
+            on_session_lost()
+        restart_wait(restart_delay)
+    return last_hwnd
 
 
 def run_taskbar_price_window(
     *,
     set_window_handle,
+    set_taskbar_target,
+    set_lifecycle_state,
     set_ready,
+    clear_ready,
     get_text_state,
     window_enabled,
     sync_visibility,
@@ -1138,8 +1351,12 @@ def run_taskbar_price_window(
     get_settings,
     set_windows_mode,
     ctypes_loader=_load_win32_types,
+    restart_wait=time.sleep,
     logger=logging,
 ):
+    registered = False
+    instance = None
+    class_name = "GoldMonitorTaskbarPriceWindow"
     try:
         ctypes, wintypes = ctypes_loader()
         user32 = ctypes.windll.user32
@@ -1284,8 +1501,15 @@ def run_taskbar_price_window(
             wintypes.LPARAM,
         ]
         user32.PostMessageW.restype = wintypes.BOOL
+        user32.PostQuitMessage.argtypes = [ctypes.c_int]
+        user32.DestroyWindow.argtypes = [wintypes.HWND]
+        user32.DestroyWindow.restype = wintypes.BOOL
+        user32.RegisterWindowMessageW.argtypes = [wintypes.LPCWSTR]
+        user32.RegisterWindowMessageW.restype = wintypes.UINT
         user32.LoadCursorW.restype = wintypes.HANDLE
         user32.LoadCursorW.argtypes = [wintypes.HINSTANCE, ctypes.c_void_p]
+        user32.UnregisterClassW.argtypes = [wintypes.LPCWSTR, wintypes.HINSTANCE]
+        user32.UnregisterClassW.restype = wintypes.BOOL
         kernel32.GetModuleHandleW.restype = wintypes.HMODULE
         kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
         ctypes.windll.shell32.SHAppBarMessage.restype = ctypes.c_size_t
@@ -1338,6 +1562,9 @@ def run_taskbar_price_window(
         user32.BeginPaint.argtypes = [wintypes.HWND, ctypes.POINTER(PaintStruct)]
         user32.EndPaint.argtypes = [wintypes.HWND, ctypes.POINTER(PaintStruct)]
 
+        taskbar_created_message = user32.RegisterWindowMessageW("TaskbarCreated")
+        session_state = {"taskbar_owner": None}
+
         def draw_window(hwnd):
             return draw_taskbar_window(
                 hwnd,
@@ -1375,39 +1602,109 @@ def run_taskbar_price_window(
                 show_context_menu=show_context_menu,
                 show_main_window=show_main_window,
                 sync_visibility=sync_visibility,
+                taskbar_created_message=taskbar_created_message,
+                should_recreate=lambda: not taskbar_owner_is_current(
+                    user32,
+                    session_state["taskbar_owner"],
+                ),
             )
 
         instance = kernel32.GetModuleHandleW(None)
-        class_name = "GoldMonitorTaskbarPriceWindow"
         window_class = WindowClass()
         window_class.style = CS_DBLCLKS
         window_class.lpfnWndProc = window_proc
         window_class.hInstance = instance
         window_class.hCursor = user32.LoadCursorW(None, ctypes.c_void_p(32649))
         window_class.lpszClassName = class_name
-        user32.RegisterClassW(ctypes.byref(window_class))
+        registered = bool(user32.RegisterClassW(ctypes.byref(window_class)))
+        if not registered:
+            raise OSError("无法注册任务栏金价窗口类")
 
-        hwnd = create_taskbar_price_window(
-            user32,
-            class_name=class_name,
-            instance=instance,
+        def set_selection_state(state):
+            state = dict(state or {})
+            reason = state.pop("reason", "taskbar_not_found")
+            state.pop("visible", None)
+            set_lifecycle_state(reason, **state)
+
+        def run_session():
+            clear_ready()
+            set_window_handle(None)
+            target, _layout, selection_state = select_taskbar_layout(
+                user32=user32,
+                shell32=ctypes.windll.shell32,
+                text_state=get_text_state(),
+                ctypes_loader=ctypes_loader,
+            )
+            if not target:
+                set_taskbar_target(None)
+                set_selection_state(selection_state)
+                set_ready()
+                return None
+
+            set_taskbar_target(target)
+            hwnd = create_taskbar_price_window(
+                user32,
+                taskbar_owner=target["hwnd"],
+                class_name=class_name,
+                instance=instance,
+            )
+            if not hwnd:
+                set_taskbar_target(None)
+                set_lifecycle_state("window_create_error")
+                set_ready()
+                return None
+
+            session_state["taskbar_owner"] = target["hwnd"]
+            try:
+                set_window_handle(hwnd)
+                user32.SetTimer(
+                    hwnd,
+                    TASKBAR_LAYOUT_TIMER_ID,
+                    TASKBAR_LAYOUT_TIMER_MS,
+                    None,
+                )
+                set_ready()
+                if window_enabled():
+                    sync_visibility()
+
+                message = wintypes.MSG()
+                while True:
+                    message_result = user32.GetMessageW(
+                        ctypes.byref(message),
+                        None,
+                        0,
+                        0,
+                    )
+                    if message_result <= 0:
+                        break
+                    user32.TranslateMessage(ctypes.byref(message))
+                    user32.DispatchMessageW(ctypes.byref(message))
+                return hwnd
+            finally:
+                session_state["taskbar_owner"] = None
+                set_window_handle(None)
+                set_taskbar_target(None)
+
+        set_lifecycle_state("starting")
+        return run_taskbar_window_supervisor(
+            window_enabled=window_enabled,
+            run_session=run_session,
+            on_session_lost=lambda: set_lifecycle_state(
+                "explorer_restarting",
+                increment_restart=True,
+            ),
+            restart_wait=restart_wait,
         )
-        if not hwnd:
-            set_ready()
-            return None
-
-        set_window_handle(hwnd)
-        user32.SetTimer(hwnd, TASKBAR_LAYOUT_TIMER_ID, TASKBAR_LAYOUT_TIMER_MS, None)
-        set_ready()
-        if window_enabled():
-            sync_visibility()
-
-        message = wintypes.MSG()
-        while user32.GetMessageW(ctypes.byref(message), None, 0, 0) != 0:
-            user32.TranslateMessage(ctypes.byref(message))
-            user32.DispatchMessageW(ctypes.byref(message))
-        return hwnd
     except Exception:
         logger.warning("任务栏金价窗口启动失败", exc_info=True)
+        set_lifecycle_state("startup_error")
         set_ready()
         return None
+    finally:
+        set_window_handle(None)
+        set_taskbar_target(None)
+        if registered and instance:
+            try:
+                user32.UnregisterClassW(class_name, instance)
+            except Exception:
+                pass
