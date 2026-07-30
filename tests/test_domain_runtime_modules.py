@@ -72,6 +72,71 @@ def test_alert_runtime_syncs_unified_rules_into_legacy_views():
     assert state.portfolio_alerts == []
 
 
+def test_alert_runtime_force_emits_view_when_first_market_data_becomes_available():
+    from goldmonitor import alert_rules as alert_rules_core
+    from goldmonitor.alert_runtime import AlertRuntime
+
+    state = _state()
+    rules, _rule = alert_rules_core.upsert_alert_rule(
+        [],
+        {
+            "kind": "price_threshold",
+            "name": "人民币下跌关注",
+            "scope": {"mode": "rmb"},
+            "condition": {"operator": "lte", "value": 680},
+            "alert_level": "warning",
+        },
+        now_factory=lambda: datetime(2026, 7, 30, 12, 0),
+        id_factory=lambda: "rule-startup",
+    )
+    state.alert_rules = rules
+    emitted = []
+    runtime = AlertRuntime(
+        state,
+        rule_store_factory=lambda: None,
+        load_thresholds=dict,
+        load_watch_targets=list,
+        load_portfolio_alerts=list,
+        build_portfolio_state=lambda: {"items": []},
+        normalize_volatility=lambda value: value,
+        save_watch_targets=lambda items: items,
+        emit_event=lambda event, payload: emitted.append((event, payload)),
+        emit_alert=lambda *args: None,
+        get_settings=dict,
+        alert_log_reader=lambda **kwargs: [],
+        history_reader=lambda *args, **kwargs: [],
+        history_timestamp=lambda value: None,
+        alert_log_export_limit=1000,
+        simulation_point_limit=30000,
+        threshold_modes=("usd", "rmb"),
+        threshold_types=(
+            "upper_warning",
+            "upper_critical",
+            "lower_warning",
+            "lower_critical",
+        ),
+        watch_target_note_limit=200,
+        now_factory=lambda: datetime(2026, 7, 30, 12, 0),
+    )
+
+    initial_state = runtime.get_state()
+    assert initial_state["items"][0]["state"]["status"] == "waiting_data"
+
+    state.price_rmb = 700.0
+    assert runtime.check_rules(
+        "12:00:10",
+        now=datetime(2026, 7, 30, 12, 0, 10),
+        force_emit=True,
+    ) == []
+
+    rules_state = next(
+        payload for event, payload in emitted if event == "alert_rules_updated"
+    )
+    assert rules_state["items"][0]["state"]["status"] == "watching"
+    assert rules_state["items"][0]["inspection"]["current_value"] == 700.0
+    assert {event for event, _payload in emitted} == {"alert_rules_updated"}
+
+
 def test_portfolio_runtime_builds_state_and_attaches_alert_status():
     from goldmonitor import portfolio as portfolio_core
     from goldmonitor.portfolio_runtime import PortfolioRuntime
