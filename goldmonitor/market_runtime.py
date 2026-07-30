@@ -597,6 +597,8 @@ class MarketRuntime:
                     state["usdcny_rate_time"] = rate_time
                     state["usdcny_rate_cached"] = rate_cached
                     state["usdcny_rate_error"] = forex_error or ""
+                had_price_usd = state["price_usd"] is not None
+                had_price_rmb = state["price_rmb"] is not None
                 state["previous_usd"] = state["price_usd"]
                 state["previous_rmb"] = state["price_rmb"]
                 state["price_usd"] = data["close"]
@@ -737,7 +739,15 @@ class MarketRuntime:
                 desktop_title = self.format_price_title(state["price_rmb"], state["price_usd"])
                 self.update_desktop_price_title(desktop_title)
                 self.update_floating_price(state["price_rmb"], state["price_usd"], pct_rmb)
-                self.check_alert_rules(now_str, now=now)
+                first_price_ready = (
+                    (not had_price_usd and state["price_usd"] is not None)
+                    or (not had_price_rmb and state["price_rmb"] is not None)
+                )
+                self.check_alert_rules(
+                    now_str,
+                    now=now,
+                    force_emit=first_price_ready,
+                )
 
                 if cny_rate:
                     rate_message = (

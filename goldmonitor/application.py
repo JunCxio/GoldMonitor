@@ -1190,9 +1190,13 @@ def check_portfolio_alerts(now_str):
         return _get_portfolio_runtime().check_alerts(now_str)
 
 
-def check_alert_rules(now_str=None, now=None):
+def check_alert_rules(now_str=None, now=None, force_emit=False):
 
-        return _get_alert_runtime().check_rules(now_str=now_str, now=now)
+        return _get_alert_runtime().check_rules(
+            now_str=now_str,
+            now=now,
+            force_emit=force_emit,
+        )
 
 
 def upsert_portfolio_position(data):

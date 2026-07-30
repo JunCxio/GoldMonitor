@@ -176,7 +176,9 @@ def test_market_runtime_updates_state_and_emits_price_status_and_history():
         format_price_title=lambda rmb, usd: f"{rmb}/{usd}",
         update_desktop_price_title=lambda title: None,
         update_floating_price=lambda rmb, usd, pct: None,
-        check_alert_rules=lambda now_str, now=None: alerts.append((now_str, now)),
+        check_alert_rules=lambda now_str, now=None, force_emit=False: alerts.append(
+            (now_str, now, force_emit)
+        ),
         now_factory=lambda: datetime(2026, 7, 28, 12, 0, 0),
         ounce_to_gram=31.1035,
     )
@@ -189,6 +191,7 @@ def test_market_runtime_updates_state_and_emits_price_status_and_history():
     assert len(state["price_history"]) == 1
     assert archived == state["price_history"]
     assert alerts[0][0] == "12:00:00"
+    assert alerts[0][2] is True
     assert [event for event, _payload in emitted] == [
         "price_update",
         "fetch_status",
@@ -196,6 +199,9 @@ def test_market_runtime_updates_state_and_emits_price_status_and_history():
     ]
     assert emitted[0][1]["source_comparison"] == {"status": "ok"}
     assert emitted[-1][1]["scope"] == "live"
+
+    assert runtime.fetch_once() is True
+    assert alerts[1][2] is False
 
 
 def test_market_runtime_state_helpers_roundtrip_explicit_fields():

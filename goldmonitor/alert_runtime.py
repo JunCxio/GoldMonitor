@@ -740,7 +740,7 @@ class AlertRuntime:
             **simulation,
         }
 
-    def check_rules(self, now_str=None, now=None):
+    def check_rules(self, now_str=None, now=None, force_emit=False):
         now = now or self.now_factory()
         with self.state.lock:
             portfolio_state = self.build_portfolio_state()
@@ -767,8 +767,9 @@ class AlertRuntime:
             watch_state = self.watch_targets_state()
             portfolio_state = self.build_portfolio_state()
 
-        if changed:
+        if changed or force_emit:
             self.emit_event("alert_rules_updated", rules_state)
+        if changed:
             self.emit_event("watch_targets_updated", watch_state)
             self.emit_event("portfolio_updated", portfolio_state)
         for trigger in triggers:
