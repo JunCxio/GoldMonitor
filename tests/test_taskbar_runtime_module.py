@@ -66,6 +66,31 @@ def test_taskbar_discovery_returns_primary_and_bounded_secondary_targets():
     assert find_secondary_taskbars(repeated, limit=16) == [201]
 
 
+def test_taskbar_discovery_state_exposes_settings_options():
+    from goldmonitor.taskbar_runtime import taskbar_discovery_state
+
+    secondary_handles = {None: 201, 201: None}
+    user32 = SimpleNamespace(
+        FindWindowW=lambda class_name, title: 101,
+        FindWindowExW=lambda parent, previous, class_name, title: secondary_handles[
+            previous
+        ],
+    )
+    ctypes_module = SimpleNamespace(windll=SimpleNamespace(user32=user32))
+
+    assert taskbar_discovery_state(
+        os_name="nt",
+        ctypes_loader=lambda: (ctypes_module, SimpleNamespace()),
+    ) == {
+        "taskbar_count": 2,
+        "taskbar_targets": [
+            {"kind": "primary", "index": 0},
+            {"kind": "secondary", "index": 1},
+        ],
+    }
+    assert taskbar_discovery_state(os_name="posix") == {}
+
+
 def test_taskbar_selection_prefers_primary_and_falls_back_to_secondary(monkeypatch):
     from goldmonitor import taskbar_runtime
 
@@ -116,6 +141,48 @@ def test_taskbar_selection_prefers_primary_and_falls_back_to_secondary(monkeypat
     assert selected == targets[0]
     assert calls == [101]
     assert state["candidate_failures"] == []
+
+
+def test_taskbar_selection_respects_explicit_target_preference(monkeypatch):
+    from goldmonitor import taskbar_runtime
+
+    targets = [
+        {"hwnd": 101, "kind": "primary", "index": 0, "count": 2},
+        {"hwnd": 201, "kind": "secondary", "index": 1, "count": 2},
+    ]
+    calls = []
+    monkeypatch.setattr(taskbar_runtime, "discover_taskbars", lambda user32: targets)
+    monkeypatch.setattr(
+        taskbar_runtime,
+        "resolve_taskbar_layout",
+        lambda **kwargs: calls.append(kwargs["taskbar_target"]["hwnd"])
+        or ({"x": 20}, {"reason": "ready"}),
+    )
+
+    target, _layout, state = taskbar_runtime.select_taskbar_layout(
+        user32=object(),
+        shell32=object(),
+        target_preference="secondary:1",
+    )
+
+    assert target == targets[1]
+    assert calls == [201]
+    assert state["taskbar_target_preference"] == "secondary:1"
+
+    target, layout, state = taskbar_runtime.select_taskbar_layout(
+        user32=object(),
+        shell32=object(),
+        target_preference="secondary:2",
+    )
+
+    assert target is None
+    assert layout is None
+    assert state == {
+        "visible": False,
+        "reason": "preferred_taskbar_unavailable",
+        "taskbar_count": 2,
+        "taskbar_target_preference": "secondary:2",
+    }
 
 
 def test_taskbar_layout_follows_actual_automation_button_bounds():
@@ -799,7 +866,10 @@ def test_taskbar_window_recreates_for_shell_broadcast_or_stale_owner():
 
 
 def test_taskbar_owner_validation_tracks_current_shell_windows():
-    from goldmonitor.taskbar_runtime import taskbar_owner_is_current
+    from goldmonitor.taskbar_runtime import (
+        taskbar_owner_is_current,
+        taskbar_owner_matches_preference,
+    )
 
     user32 = SimpleNamespace(
         FindWindowW=lambda class_name, title: 101,
@@ -808,6 +878,9 @@ def test_taskbar_owner_validation_tracks_current_shell_windows():
 
     assert taskbar_owner_is_current(user32, 101) is True
     assert taskbar_owner_is_current(user32, 999) is False
+    assert taskbar_owner_matches_preference(user32, 101, "auto") is True
+    assert taskbar_owner_matches_preference(user32, 101, "primary") is True
+    assert taskbar_owner_matches_preference(user32, 101, "secondary:1") is False
 
 
 def test_taskbar_supervisor_rebuilds_after_session_loss_while_enabled():

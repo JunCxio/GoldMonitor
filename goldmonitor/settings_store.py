@@ -40,6 +40,21 @@ def normalize_hhmm(value):
     return ""
 
 
+def normalize_taskbar_target_preference(value):
+    text = str(value or "auto").strip().lower()
+    if text in {"auto", "primary"}:
+        return text
+    if not text.startswith("secondary:"):
+        return "auto"
+    try:
+        index = int(text.split(":", 1)[1])
+    except (TypeError, ValueError):
+        return "auto"
+    if not 1 <= index < 16:
+        return "auto"
+    return f"secondary:{index}"
+
+
 def normalize_settings(raw, defaults, options=None):
     options = options or {}
     data = dict(defaults)
@@ -61,6 +76,9 @@ def normalize_settings(raw, defaults, options=None):
             "floating_price_windows_mode",
             "floating",
         )
+    data["floating_price_taskbar_target"] = normalize_taskbar_target_preference(
+        data.get("floating_price_taskbar_target")
+    )
     data["floating_price_position_saved"] = bool(data.get("floating_price_position_saved", False))
     data["floating_price_x"] = optional_int(data.get("floating_price_x"))
     data["floating_price_y"] = optional_int(data.get("floating_price_y"))

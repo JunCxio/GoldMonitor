@@ -3,6 +3,7 @@ import os
 import time
 
 from goldmonitor import taskbar_automation as taskbar_automation_core
+from goldmonitor.settings_store import normalize_taskbar_target_preference
 
 
 WM_PAINT = 0x000F
@@ -257,6 +258,40 @@ def discover_taskbars(user32):
     for target in targets:
         target["count"] = count
     return targets
+
+
+def taskbar_discovery_state(*, os_name=os.name, ctypes_loader=_load_win32_types):
+    if os_name != "nt":
+        return {}
+    try:
+        ctypes, _wintypes = ctypes_loader()
+        targets = discover_taskbars(ctypes.windll.user32)
+    except Exception:
+        return {"taskbar_count": 0, "taskbar_targets": []}
+    return {
+        "taskbar_count": len(targets),
+        "taskbar_targets": [
+            {
+                "kind": target["kind"],
+                "index": target["index"],
+            }
+            for target in targets
+        ],
+    }
+
+
+def filter_taskbars_by_preference(targets, preference):
+    preference = normalize_taskbar_target_preference(preference)
+    if preference == "auto":
+        return list(targets)
+    if preference == "primary":
+        return [target for target in targets if target.get("kind") == "primary"]
+    index = int(preference.split(":", 1)[1])
+    return [
+        target
+        for target in targets
+        if target.get("kind") == "secondary" and target.get("index") == index
+    ]
 
 
 def create_taskbar_price_window(
@@ -1005,14 +1040,25 @@ def select_taskbar_layout(
     user32,
     shell32,
     text_state=None,
+    target_preference="auto",
     ctypes_loader=_load_win32_types,
 ):
     targets = discover_taskbars(user32)
     if not targets:
         return None, None, {"visible": False, "reason": "taskbar_not_found"}
 
+    target_preference = normalize_taskbar_target_preference(target_preference)
+    candidates = filter_taskbars_by_preference(targets, target_preference)
+    if not candidates:
+        return None, None, {
+            "visible": False,
+            "reason": "preferred_taskbar_unavailable",
+            "taskbar_count": len(targets),
+            "taskbar_target_preference": target_preference,
+        }
+
     failures = []
-    for target in targets:
+    for target in candidates:
         layout, state = resolve_taskbar_layout(
             user32=user32,
             shell32=shell32,
@@ -1021,7 +1067,11 @@ def select_taskbar_layout(
             ctypes_loader=ctypes_loader,
         )
         if layout:
-            return target, layout, {**state, "candidate_failures": failures}
+            return target, layout, {
+                **state,
+                "taskbar_target_preference": target_preference,
+                "candidate_failures": failures,
+            }
         failures.append(
             {
                 "taskbar_kind": target["kind"],
@@ -1034,6 +1084,7 @@ def select_taskbar_layout(
         "visible": False,
         "reason": "no_usable_taskbar",
         "taskbar_count": len(targets),
+        "taskbar_target_preference": target_preference,
         "candidate_failures": failures,
     }
 
@@ -1254,6 +1305,17 @@ def taskbar_owner_is_current(user32, taskbar_owner):
             target["hwnd"] == taskbar_owner
             for target in discover_taskbars(user32)
         )
+    except Exception:
+        return False
+
+
+def taskbar_owner_matches_preference(user32, taskbar_owner, preference):
+    if not taskbar_owner:
+        return False
+    try:
+        targets = discover_taskbars(user32)
+        candidates = filter_taskbars_by_preference(targets, preference)
+        return any(target["hwnd"] == taskbar_owner for target in candidates)
     except Exception:
         return False
 
@@ -1603,9 +1665,10 @@ def run_taskbar_price_window(
                 show_main_window=show_main_window,
                 sync_visibility=sync_visibility,
                 taskbar_created_message=taskbar_created_message,
-                should_recreate=lambda: not taskbar_owner_is_current(
+                should_recreate=lambda: not taskbar_owner_matches_preference(
                     user32,
                     session_state["taskbar_owner"],
+                    get_settings().get("floating_price_taskbar_target", "auto"),
                 ),
             )
 
@@ -1633,6 +1696,10 @@ def run_taskbar_price_window(
                 user32=user32,
                 shell32=ctypes.windll.shell32,
                 text_state=get_text_state(),
+                target_preference=get_settings().get(
+                    "floating_price_taskbar_target",
+                    "auto",
+                ),
                 ctypes_loader=ctypes_loader,
             )
             if not target:

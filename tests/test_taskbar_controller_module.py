@@ -96,15 +96,16 @@ def test_taskbar_controller_window_loop_binds_runtime_callbacks(monkeypatch):
     assert captured["sync_visibility"] == controller.sync_visibility
 
 
-def test_taskbar_controller_layout_passes_compact_text_state(monkeypatch):
+def test_taskbar_controller_layout_passes_compact_text_state_and_target(monkeypatch):
     import sys
     from types import SimpleNamespace
 
     from goldmonitor import taskbar_controller as controller_module
 
-    controller, runtime, _settings, _calls = make_controller(os_name="nt")
+    controller, runtime, settings, _calls = make_controller(os_name="nt")
     runtime.taskbar_price_value_text = "¥528.16"
     runtime.taskbar_price_change_text = "+0.42%"
+    settings["floating_price_taskbar_target"] = "secondary:1"
     captured = {}
     monkeypatch.setattr(
         controller_module.taskbar_runtime_core,
@@ -123,6 +124,7 @@ def test_taskbar_controller_layout_passes_compact_text_state(monkeypatch):
 
     assert captured["text_state"]["price"] == "¥528.16"
     assert captured["text_state"]["change"] == "+0.42%"
+    assert captured["target_preference"] == "secondary:1"
 
 
 def test_taskbar_controller_tracks_target_lifecycle_and_restart_count():
