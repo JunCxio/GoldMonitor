@@ -32,6 +32,7 @@ from goldmonitor import diagnostics_runtime as diagnostics_runtime_core
 from goldmonitor import event_timeline as event_timeline_core
 from goldmonitor import floating_controller as floating_controller_core
 from goldmonitor import taskbar_controller as taskbar_controller_core
+from goldmonitor import taskbar_runtime as taskbar_runtime_core
 from goldmonitor import instance_runtime as instance_runtime_core
 from goldmonitor import http_routes as http_routes_core
 from goldmonitor import market_adapters as market_adapters_core
@@ -285,6 +286,7 @@ DEFAULT_SETTINGS = {
     "startup_to_tray": True,
     "floating_price_enabled": True,
     "floating_price_windows_mode": "floating",
+    "floating_price_taskbar_target": "auto",
     "floating_price_position_saved": False,
     "floating_price_x": None,
     "floating_price_y": None,
@@ -661,7 +663,9 @@ def public_settings_snapshot(settings=None):
     public["export_dir_default"] = EXPORT_DIR
     public["export_dir_effective"] = resolve_export_dir(snapshot)
     public["export_dir_check"] = build_export_dir_check(snapshot)
-    public["taskbar_price_state"] = dict(runtime.taskbar_layout_state)
+    taskbar_state = taskbar_runtime_core.taskbar_discovery_state(os_name=os.name)
+    taskbar_state.update(dict(runtime.taskbar_layout_state))
+    public["taskbar_price_state"] = taskbar_state
     return public
 
 

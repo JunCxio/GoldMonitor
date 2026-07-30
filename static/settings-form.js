@@ -207,6 +207,7 @@ function handleSettingsFieldChange(event) {
     syncFloatingWindowsModeRows();
     renderTaskbarPriceStatus();
   }
+  if (target.id === 'setFloatingTaskbarTarget') renderTaskbarPriceStatus();
   const message = document.getElementById('settingsMessage');
   if (message && message.dataset.state === 'error') showSettingsMessage('', '');
   updateSettingsDirtyState();

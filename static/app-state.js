@@ -42,6 +42,7 @@ let appSettings = {
   startup_to_tray: true,
   floating_price_enabled: true,
   floating_price_windows_mode: 'floating',
+  floating_price_taskbar_target: 'auto',
   floating_price_opacity: 94,
   floating_price_display_mode: 'rmb_usd',
   floating_price_preset: 'compact',

@@ -110,10 +110,15 @@ class TaskbarPriceController:
         try:
             import ctypes
 
+            settings = self.get_settings()
             _target, layout, state = taskbar_runtime_core.select_taskbar_layout(
                 user32=ctypes.windll.user32,
                 shell32=ctypes.windll.shell32,
                 text_state=self.text_state(),
+                target_preference=settings.get(
+                    "floating_price_taskbar_target",
+                    "auto",
+                ),
             )
             return layout, state
         except Exception:

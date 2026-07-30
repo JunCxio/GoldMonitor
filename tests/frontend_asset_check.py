@@ -618,11 +618,14 @@ for required in (
 for required in (
     'id="floatingWindowsModeRow"',
     'id="setFloatingWindowsMode"',
+    'id="floatingTaskbarTargetRow"',
+    'id="setFloatingTaskbarTarget"',
     'id="taskbarPriceStatus"',
     'value="floating"',
     'value="taskbar"',
     'value="both"',
     'floating_price_windows_mode',
+    'floating_price_taskbar_target',
     'has_taskbar_price',
     'taskbar_price_state',
 ):
@@ -641,6 +644,7 @@ for required in (
 
 for tracked_id in (
     "setFloatingWindowsMode",
+    "setFloatingTaskbarTarget",
     "setFloatingHideOnFullscreen",
     "setFloatingLockPosition",
 ):

@@ -51,8 +51,10 @@ function syncFloatingWindowsModeRows() {
   const hasTaskbarPrice = !!capabilities.has_taskbar_price;
   const modeSelect = document.getElementById('setFloatingWindowsMode');
   const taskbarOnly = hasTaskbarPrice && modeSelect && modeSelect.value === 'taskbar';
+  const usesTaskbar = hasTaskbarPrice && modeSelect && modeSelect.value !== 'floating';
 
   setRowHidden('floatingWindowsModeRow', !hasTaskbarPrice);
+  setRowHidden('floatingTaskbarTargetRow', !usesTaskbar);
   setRowHidden('floatingPresetRow', menuBarMode || taskbarOnly);
   setRowHidden('floatingOpacityRow', menuBarMode || taskbarOnly);
   setRowHidden('floatingSnapRow', menuBarMode || taskbarOnly);
@@ -61,12 +63,49 @@ function syncFloatingWindowsModeRows() {
   setRowHidden('floatingLockRow', menuBarMode || taskbarOnly);
 }
 
+function taskbarTargetLabel(value) {
+  if (value === 'primary') return '主任务栏';
+  if (String(value || '').startsWith('secondary:')) {
+    return '副任务栏 ' + String(value).split(':')[1];
+  }
+  return '自动选择';
+}
+
+function renderTaskbarTargetOptions() {
+  const select = document.getElementById('setFloatingTaskbarTarget');
+  if (!select) return;
+  const saved = appSettings.floating_price_taskbar_target || 'auto';
+  const current = select.value || saved;
+  const state = appSettings.taskbar_price_state || {};
+  const count = Math.max(1, Number(state.taskbar_count) || 1);
+  const options = [
+    ['auto', '自动选择（优先主任务栏）'],
+    ['primary', '主任务栏'],
+  ];
+  for (let index = 1; index < count; index += 1) {
+    options.push(['secondary:' + index, '副任务栏 ' + index]);
+  }
+  if (saved.startsWith('secondary:') && !options.some(option => option[0] === saved)) {
+    options.push([saved, taskbarTargetLabel(saved) + '（当前不可用）']);
+  }
+  select.replaceChildren(...options.map(([value, label]) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    return option;
+  }));
+  const values = options.map(option => option[0]);
+  select.value = values.includes(current) ? current : (values.includes(saved) ? saved : 'auto');
+}
+
 function renderTaskbarPriceStatus() {
   const element = document.getElementById('taskbarPriceStatus');
   if (!element) return;
   const mode = document.getElementById('setFloatingWindowsMode')?.value || 'floating';
+  const target = document.getElementById('setFloatingTaskbarTarget')?.value || 'auto';
   const savedMode = appSettings.floating_price_windows_mode || 'floating';
-  if (mode !== savedMode) {
+  const savedTarget = appSettings.floating_price_taskbar_target || 'auto';
+  if (mode !== savedMode || target !== savedTarget) {
     element.textContent = '保存设置后将检测可用任务栏区域。';
     delete element.dataset.state;
     return;
@@ -85,6 +124,7 @@ function renderTaskbarPriceStatus() {
     insufficient_taskbar_space: '任务栏没有足够的安全空白区域，任务栏价格未显示。',
     no_usable_taskbar: '所有任务栏都没有足够的安全空白区域，任务栏价格已隐藏。',
     taskbar_not_found: '未检测到 Windows 任务栏。',
+    preferred_taskbar_unavailable: '指定任务栏当前不可用，任务栏价格已隐藏。',
     taskbar_regions_unavailable: '无法确认任务按钮和通知区域，任务栏价格未显示。',
     starting: '正在检测可用任务栏区域。',
     explorer_restarting: 'Windows 任务栏正在恢复，价格窗口将自动重新显示。',
@@ -95,7 +135,16 @@ function renderTaskbarPriceStatus() {
     position_error: '任务栏窗口定位失败。',
     disabled: '任务栏价格当前未显示。',
   };
-  element.textContent = labels[state.reason] || '保存设置后将检测可用任务栏区域。';
+  if (state.visible) {
+    const actual = state.taskbar_kind === 'primary'
+      ? '主任务栏'
+      : state.taskbar_index != null
+        ? '副任务栏 ' + state.taskbar_index
+        : taskbarTargetLabel(target);
+    element.textContent = '任务栏价格当前已显示在' + actual + '。';
+  } else {
+    element.textContent = labels[state.reason] || '保存设置后将检测可用任务栏区域。';
+  }
   if (state.visible) element.dataset.state = 'ok';
   else delete element.dataset.state;
 }
@@ -118,6 +167,7 @@ function applyPlatformLabels() {
   setText('closeMinimizeOption', isMac ? '隐藏到菜单栏' : '最小化到托盘');
   setText('closeMinimizeButton', isMac ? '隐藏到菜单栏' : '最小化到托盘');
 
+  renderTaskbarTargetOptions();
   syncFloatingWindowsModeRows();
   renderTaskbarPriceStatus();
 }
@@ -201,6 +251,8 @@ function applySettings(data) {
   document.getElementById('setStartupTray').checked = !!appSettings.startup_to_tray;
   document.getElementById('setFloatingPrice').checked = appSettings.floating_price_enabled !== false;
   document.getElementById('setFloatingWindowsMode').value = appSettings.floating_price_windows_mode || 'floating';
+  renderTaskbarTargetOptions();
+  document.getElementById('setFloatingTaskbarTarget').value = appSettings.floating_price_taskbar_target || 'auto';
   document.getElementById('setFloatingDisplayMode').value = appSettings.floating_price_display_mode || 'rmb_usd';
   document.getElementById('setFloatingPreset').value = appSettings.floating_price_preset || 'compact';
   document.getElementById('setFloatingOpacity').value = appSettings.floating_price_opacity || 94;

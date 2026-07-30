@@ -159,6 +159,17 @@ def build_diagnostics_clipboard_text(
         "both": "悬浮条和任务栏价格",
     }
     windows_mode = settings.get("floating_price_windows_mode", "floating")
+    taskbar_target = str(
+        settings.get("floating_price_taskbar_target") or "auto"
+    )
+    if taskbar_target == "auto":
+        taskbar_target_label = "自动选择（优先主任务栏）"
+    elif taskbar_target == "primary":
+        taskbar_target_label = "主任务栏"
+    elif taskbar_target.startswith("secondary:"):
+        taskbar_target_label = f"副任务栏 {taskbar_target.split(':', 1)[1]}"
+    else:
+        taskbar_target_label = value(taskbar_target)
 
     value = diagnostics_value
     lines = [
@@ -198,12 +209,14 @@ def build_diagnostics_clipboard_text(
         "悬浮条与任务栏",
         f"- 状态: {'开启' if settings.get('floating_price_enabled') else '关闭'}",
         f"- Windows 显示位置: {windows_mode_labels.get(windows_mode, value(windows_mode))}",
+        f"- 任务栏选择: {taskbar_target_label}",
         f"- 置顶: {'开启' if settings.get('floating_price_always_on_top') else '关闭'}",
         f"- 全屏自动隐藏: {'开启' if settings.get('floating_price_hide_on_fullscreen', True) else '关闭'}",
         f"- 位置锁定: {'开启' if settings.get('floating_price_lock_position') else '关闭'}",
         f"- 显示模式: {value(settings.get('floating_price_display_mode'))}",
         f"- 透明度: {value(settings.get('floating_price_opacity'))}",
         f"- 任务栏窗口状态: {value(taskbar_price.get('reason'))}",
+        f"- 实际任务栏索引: {value(taskbar_price.get('taskbar_index'))}",
         f"- 任务栏窗口区域: {value(taskbar_price.get('bounds'))}",
         "",
         "存储与日志",
