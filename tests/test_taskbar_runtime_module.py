@@ -66,6 +66,71 @@ def test_taskbar_discovery_returns_primary_and_bounded_secondary_targets():
     assert find_secondary_taskbars(repeated, limit=16) == [201]
 
 
+def test_taskbar_monitor_details_reads_stable_device_and_bounds():
+    from goldmonitor.taskbar_runtime import taskbar_monitor_details
+
+    class MonitorInfo:
+        def __init__(self):
+            self.cbSize = 0
+            self.rcMonitor = SimpleNamespace(left=0, top=0, right=0, bottom=0)
+            self.dwFlags = 0
+            self.szDevice = ""
+
+    def get_monitor_info(_monitor, info):
+        info.rcMonitor = SimpleNamespace(left=1920, top=0, right=4480, bottom=1440)
+        info.dwFlags = 1
+        info.szDevice = r"\\.\DISPLAY2"
+        return True
+
+    user32 = SimpleNamespace(
+        MonitorFromWindow=lambda hwnd, mode: 902 if hwnd == 201 and mode == 2 else None,
+        GetMonitorInfoW=get_monitor_info,
+    )
+    ctypes_module = SimpleNamespace(
+        sizeof=lambda _value: 72,
+        byref=lambda value: value,
+    )
+
+    assert taskbar_monitor_details(
+        user32,
+        201,
+        ctypes_loader=lambda: (ctypes_module, None),
+        monitor_info_type=MonitorInfo,
+    ) == {
+        "monitor_rect": (1920, 0, 4480, 1440),
+        "monitor_width": 2560,
+        "monitor_height": 1440,
+        "monitor_primary": True,
+        "monitor_device": r"\\.\display2",
+        "monitor_name": "DISPLAY2",
+    }
+
+
+def test_taskbar_discovery_sorts_secondary_targets_by_monitor_identity():
+    from goldmonitor.taskbar_runtime import discover_taskbars
+
+    secondary_handles = {None: 201, 201: 202, 202: None}
+    user32 = SimpleNamespace(
+        FindWindowW=lambda class_name, title: 101,
+        FindWindowExW=lambda parent, previous, class_name, title: secondary_handles[
+            previous
+        ],
+    )
+    monitor_details = {
+        101: {"monitor_device": r"\\.\display1", "monitor_name": "DISPLAY1"},
+        201: {"monitor_device": r"\\.\display3", "monitor_name": "DISPLAY3"},
+        202: {"monitor_device": r"\\.\display2", "monitor_name": "DISPLAY2"},
+    }
+
+    targets = discover_taskbars(
+        user32,
+        monitor_details_provider=lambda _user32, hwnd: monitor_details[hwnd],
+    )
+
+    assert [target["hwnd"] for target in targets] == [101, 202, 201]
+    assert [target["index"] for target in targets] == [0, 1, 2]
+
+
 def test_taskbar_discovery_state_exposes_settings_options():
     from goldmonitor.taskbar_runtime import taskbar_discovery_state
 
@@ -84,11 +149,71 @@ def test_taskbar_discovery_state_exposes_settings_options():
     ) == {
         "taskbar_count": 2,
         "taskbar_targets": [
-            {"kind": "primary", "index": 0},
-            {"kind": "secondary", "index": 1},
+            {
+                "kind": "primary",
+                "index": 0,
+                "preference": "primary",
+                "legacy_preference": "primary",
+            },
+            {
+                "kind": "secondary",
+                "index": 1,
+                "preference": "secondary:1",
+                "legacy_preference": "secondary:1",
+            },
         ],
     }
     assert taskbar_discovery_state(os_name="posix") == {}
+
+
+def test_taskbar_discovery_state_exposes_monitor_preferences():
+    from goldmonitor.taskbar_runtime import taskbar_discovery_state
+
+    secondary_handles = {None: 201, 201: None}
+    user32 = SimpleNamespace(
+        FindWindowW=lambda class_name, title: 101,
+        FindWindowExW=lambda parent, previous, class_name, title: secondary_handles[
+            previous
+        ],
+    )
+    ctypes_module = SimpleNamespace(windll=SimpleNamespace(user32=user32))
+    details = {
+        101: {
+            "monitor_device": r"\\.\display1",
+            "monitor_name": "DISPLAY1",
+            "monitor_width": 1920,
+            "monitor_height": 1080,
+            "monitor_primary": True,
+        },
+        201: {
+            "monitor_device": r"\\.\display2",
+            "monitor_name": "DISPLAY2",
+            "monitor_width": 2560,
+            "monitor_height": 1440,
+            "monitor_primary": False,
+        },
+    }
+
+    state = taskbar_discovery_state(
+        os_name="nt",
+        ctypes_loader=lambda: (ctypes_module, SimpleNamespace()),
+        monitor_details_provider=lambda _user32, hwnd: details[hwnd],
+    )
+
+    assert state["taskbar_targets"][0] == {
+        "kind": "primary",
+        "index": 0,
+        "preference": r"monitor:\\.\display1",
+        "legacy_preference": "primary",
+        **details[101],
+    }
+    assert state["taskbar_targets"][1] == {
+        "kind": "secondary",
+        "index": 1,
+        "preference": r"monitor:\\.\display2",
+        "legacy_preference": "secondary:1",
+        **details[201],
+    }
 
 
 def test_taskbar_selection_prefers_primary_and_falls_back_to_secondary(monkeypatch):
@@ -147,8 +272,20 @@ def test_taskbar_selection_respects_explicit_target_preference(monkeypatch):
     from goldmonitor import taskbar_runtime
 
     targets = [
-        {"hwnd": 101, "kind": "primary", "index": 0, "count": 2},
-        {"hwnd": 201, "kind": "secondary", "index": 1, "count": 2},
+        {
+            "hwnd": 101,
+            "kind": "primary",
+            "index": 0,
+            "count": 2,
+            "monitor_device": r"\\.\display1",
+        },
+        {
+            "hwnd": 201,
+            "kind": "secondary",
+            "index": 1,
+            "count": 2,
+            "monitor_device": r"\\.\display2",
+        },
     ]
     calls = []
     monkeypatch.setattr(taskbar_runtime, "discover_taskbars", lambda user32: targets)
@@ -168,6 +305,15 @@ def test_taskbar_selection_respects_explicit_target_preference(monkeypatch):
     assert target == targets[1]
     assert calls == [201]
     assert state["taskbar_target_preference"] == "secondary:1"
+
+    target, _layout, state = taskbar_runtime.select_taskbar_layout(
+        user32=object(),
+        shell32=object(),
+        target_preference=r"monitor:\\.\DISPLAY2",
+    )
+
+    assert target == targets[1]
+    assert state["taskbar_target_preference"] == r"monitor:\\.\display2"
 
     target, layout, state = taskbar_runtime.select_taskbar_layout(
         user32=object(),
@@ -865,22 +1011,50 @@ def test_taskbar_window_recreates_for_shell_broadcast_or_stale_owner():
     assert calls == [("destroy", 42), ("destroy", 43)]
 
 
-def test_taskbar_owner_validation_tracks_current_shell_windows():
-    from goldmonitor.taskbar_runtime import (
-        taskbar_owner_is_current,
-        taskbar_owner_matches_preference,
-    )
+def test_taskbar_owner_validation_tracks_current_shell_windows(monkeypatch):
+    from goldmonitor import taskbar_runtime
 
     user32 = SimpleNamespace(
         FindWindowW=lambda class_name, title: 101,
         FindWindowExW=lambda *args: None,
     )
 
-    assert taskbar_owner_is_current(user32, 101) is True
-    assert taskbar_owner_is_current(user32, 999) is False
-    assert taskbar_owner_matches_preference(user32, 101, "auto") is True
-    assert taskbar_owner_matches_preference(user32, 101, "primary") is True
-    assert taskbar_owner_matches_preference(user32, 101, "secondary:1") is False
+    assert taskbar_runtime.taskbar_owner_is_current(user32, 101) is True
+    assert taskbar_runtime.taskbar_owner_is_current(user32, 999) is False
+    assert taskbar_runtime.taskbar_owner_matches_preference(user32, 101, "auto") is True
+    assert taskbar_runtime.taskbar_owner_matches_preference(user32, 101, "primary") is True
+    assert taskbar_runtime.taskbar_owner_matches_preference(
+        user32,
+        101,
+        "secondary:1",
+    ) is False
+
+    targets = [
+        {
+            "hwnd": 101,
+            "kind": "primary",
+            "index": 0,
+            "monitor_device": r"\\.\display2",
+        },
+        {
+            "hwnd": 201,
+            "kind": "secondary",
+            "index": 1,
+            "monitor_device": r"\\.\display1",
+        },
+    ]
+    monkeypatch.setattr(taskbar_runtime, "discover_taskbars", lambda _user32: targets)
+
+    assert taskbar_runtime.taskbar_owner_matches_preference(
+        user32,
+        101,
+        r"monitor:\\.\display2",
+    ) is True
+    assert taskbar_runtime.taskbar_owner_matches_preference(
+        user32,
+        201,
+        r"monitor:\\.\display2",
+    ) is False
 
 
 def test_taskbar_supervisor_rebuilds_after_session_loss_while_enabled():

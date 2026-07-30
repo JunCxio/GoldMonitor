@@ -90,14 +90,9 @@ class TaskbarPriceController:
     def set_layout_state(self, value):
         with self.runtime.taskbar_lock:
             target = dict(self.runtime.taskbar_target_state or {})
-            target_state = {
-                "taskbar_kind": target.get("kind"),
-                "taskbar_index": target.get("index"),
-                "taskbar_count": target.get("count", 0),
-                "taskbar_class_name": target.get("class_name"),
-            }
+            target_state = taskbar_runtime_core.taskbar_target_state(target)
             self.runtime.taskbar_layout_state = {
-                **{key: item for key, item in target_state.items() if item is not None},
+                **target_state,
                 **dict(value or {}),
                 "restart_count": self.runtime.taskbar_restart_count,
             }
@@ -273,7 +268,7 @@ class TaskbarPriceController:
             self.runtime.taskbar_owner_hwnd = target.get("hwnd")
             self.runtime.taskbar_target_state = {
                 key: target[key]
-                for key in ("kind", "index", "count", "class_name")
+                for key in taskbar_runtime_core.TASKBAR_TARGET_FIELDS
                 if key in target
             }
 
@@ -297,14 +292,9 @@ class TaskbarPriceController:
                     int(details["restart_count"]),
                 )
             target = dict(self.runtime.taskbar_target_state or {})
-            target_state = {
-                "taskbar_kind": target.get("kind"),
-                "taskbar_index": target.get("index"),
-                "taskbar_count": target.get("count", 0),
-                "taskbar_class_name": target.get("class_name"),
-            }
+            target_state = taskbar_runtime_core.taskbar_target_state(target)
             self.runtime.taskbar_layout_state = {
-                **{key: item for key, item in target_state.items() if item is not None},
+                **target_state,
                 **details,
                 "visible": False,
                 "reason": reason,

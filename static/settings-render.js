@@ -63,10 +63,49 @@ function syncFloatingWindowsModeRows() {
   setRowHidden('floatingLockRow', menuBarMode || taskbarOnly);
 }
 
-function taskbarTargetLabel(value) {
-  if (value === 'primary') return '主任务栏';
-  if (String(value || '').startsWith('secondary:')) {
-    return '副任务栏 ' + String(value).split(':')[1];
+function taskbarTargets(state) {
+  return Array.isArray(state?.taskbar_targets) ? state.taskbar_targets : [];
+}
+
+function taskbarMonitorLabel(target) {
+  const raw = String(target?.monitor_name || target?.monitor_device || '').trim();
+  const match = raw.match(/DISPLAY(\d+)/i);
+  return match ? '显示器 ' + match[1] : raw;
+}
+
+function taskbarTargetOptionLabel(target) {
+  const role = target?.kind === 'primary'
+    ? '主任务栏'
+    : target?.index != null
+      ? '副任务栏 ' + target.index
+      : '任务栏';
+  const monitor = taskbarMonitorLabel(target);
+  const width = Number(target?.monitor_width) || 0;
+  const height = Number(target?.monitor_height) || 0;
+  const resolution = width > 0 && height > 0 ? width + '×' + height : '';
+  if (!monitor) return resolution ? role + ' · ' + resolution : role;
+  return [monitor, resolution].filter(Boolean).join(' · ') + '（' + role + '）';
+}
+
+function resolvedTaskbarTargetValue(value, state) {
+  const current = String(value || 'auto');
+  if (!current.startsWith('secondary:')) return current;
+  const target = taskbarTargets(state).find(item => item.legacy_preference === current);
+  return target?.preference || current;
+}
+
+function taskbarTargetLabel(value, state) {
+  const current = String(value || 'auto');
+  if (current === 'primary') return '主任务栏';
+  if (current === 'auto') return '自动选择';
+  const target = taskbarTargets(state).find(item => (
+    item.preference === current || item.legacy_preference === current
+  ));
+  if (target) return taskbarTargetOptionLabel(target);
+  if (current.startsWith('secondary:')) return '副任务栏 ' + current.split(':')[1];
+  if (current.startsWith('monitor:')) {
+    const monitor = taskbarMonitorLabel({ monitor_device: current.split(':')[1] });
+    return monitor ? '固定到' + monitor : '固定显示器';
   }
   return '自动选择';
 }
@@ -74,19 +113,23 @@ function taskbarTargetLabel(value) {
 function renderTaskbarTargetOptions() {
   const select = document.getElementById('setFloatingTaskbarTarget');
   if (!select) return;
-  const saved = appSettings.floating_price_taskbar_target || 'auto';
-  const current = select.value || saved;
   const state = appSettings.taskbar_price_state || {};
-  const count = Math.max(1, Number(state.taskbar_count) || 1);
+  const saved = resolvedTaskbarTargetValue(
+    appSettings.floating_price_taskbar_target || 'auto',
+    state,
+  );
+  const current = resolvedTaskbarTargetValue(select.value || saved, state);
   const options = [
     ['auto', '自动选择（优先主任务栏）'],
-    ['primary', '主任务栏'],
+    ['primary', '主任务栏（跟随系统主显示器）'],
   ];
-  for (let index = 1; index < count; index += 1) {
-    options.push(['secondary:' + index, '副任务栏 ' + index]);
+  for (const target of taskbarTargets(state)) {
+    const value = target.preference || target.legacy_preference;
+    if (!value || options.some(option => option[0] === value)) continue;
+    options.push([value, taskbarTargetOptionLabel(target)]);
   }
-  if (saved.startsWith('secondary:') && !options.some(option => option[0] === saved)) {
-    options.push([saved, taskbarTargetLabel(saved) + '（当前不可用）']);
+  if (!['auto', 'primary'].includes(saved) && !options.some(option => option[0] === saved)) {
+    options.push([saved, taskbarTargetLabel(saved, state) + '（当前不可用）']);
   }
   select.replaceChildren(...options.map(([value, label]) => {
     const option = document.createElement('option');
@@ -104,7 +147,11 @@ function renderTaskbarPriceStatus() {
   const mode = document.getElementById('setFloatingWindowsMode')?.value || 'floating';
   const target = document.getElementById('setFloatingTaskbarTarget')?.value || 'auto';
   const savedMode = appSettings.floating_price_windows_mode || 'floating';
-  const savedTarget = appSettings.floating_price_taskbar_target || 'auto';
+  const state = appSettings.taskbar_price_state || {};
+  const savedTarget = resolvedTaskbarTargetValue(
+    appSettings.floating_price_taskbar_target || 'auto',
+    state,
+  );
   if (mode !== savedMode || target !== savedTarget) {
     element.textContent = '保存设置后将检测可用任务栏区域。';
     delete element.dataset.state;
@@ -115,7 +162,6 @@ function renderTaskbarPriceStatus() {
     delete element.dataset.state;
     return;
   }
-  const state = appSettings.taskbar_price_state || {};
   const labels = {
     visible: '任务栏价格当前已显示。',
     ready: '已检测到可用任务栏区域。',
@@ -136,11 +182,14 @@ function renderTaskbarPriceStatus() {
     disabled: '任务栏价格当前未显示。',
   };
   if (state.visible) {
-    const actual = state.taskbar_kind === 'primary'
-      ? '主任务栏'
-      : state.taskbar_index != null
-        ? '副任务栏 ' + state.taskbar_index
-        : taskbarTargetLabel(target);
+    const actual = taskbarTargetOptionLabel({
+      kind: state.taskbar_kind,
+      index: state.taskbar_index,
+      monitor_name: state.monitor_name,
+      monitor_device: state.monitor_device,
+      monitor_width: state.monitor_width,
+      monitor_height: state.monitor_height,
+    }) || taskbarTargetLabel(target, state);
     element.textContent = '任务栏价格当前已显示在' + actual + '。';
   } else {
     element.textContent = labels[state.reason] || '保存设置后将检测可用任务栏区域。';
@@ -252,7 +301,10 @@ function applySettings(data) {
   document.getElementById('setFloatingPrice').checked = appSettings.floating_price_enabled !== false;
   document.getElementById('setFloatingWindowsMode').value = appSettings.floating_price_windows_mode || 'floating';
   renderTaskbarTargetOptions();
-  document.getElementById('setFloatingTaskbarTarget').value = appSettings.floating_price_taskbar_target || 'auto';
+  document.getElementById('setFloatingTaskbarTarget').value = resolvedTaskbarTargetValue(
+    appSettings.floating_price_taskbar_target || 'auto',
+    appSettings.taskbar_price_state || {},
+  );
   document.getElementById('setFloatingDisplayMode').value = appSettings.floating_price_display_mode || 'rmb_usd';
   document.getElementById('setFloatingPreset').value = appSettings.floating_price_preset || 'compact';
   document.getElementById('setFloatingOpacity').value = appSettings.floating_price_opacity || 94;

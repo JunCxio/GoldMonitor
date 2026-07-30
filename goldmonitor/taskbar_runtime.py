@@ -3,7 +3,10 @@ import os
 import time
 
 from goldmonitor import taskbar_automation as taskbar_automation_core
-from goldmonitor.settings_store import normalize_taskbar_target_preference
+from goldmonitor.settings_store import (
+    normalize_taskbar_monitor_device,
+    normalize_taskbar_target_preference,
+)
 
 
 WM_PAINT = 0x000F
@@ -50,6 +53,8 @@ TASKBAR_MINIMUM_PRICE_WIDTH = 42
 TASKBAR_HIT_TARGET_ALPHA = 1
 TASKBAR_DEFAULT_DPI = 96
 TASKBAR_MAXIMUM_DPI = 480
+MONITOR_DEFAULTTONEAREST = 2
+MONITORINFOF_PRIMARY = 0x00000001
 
 ABM_GETSTATE = 0x00000004
 ABS_AUTOHIDE = 0x00000001
@@ -75,6 +80,19 @@ TASKBAR_THEME_REGISTRY_PATH = (
 TASK_LIST_CLASSES = {"MSTaskListWClass", "MSTaskSwWClass"}
 PRIMARY_TASKBAR_CLASS = "Shell_TrayWnd"
 SECONDARY_TASKBAR_CLASS = "Shell_SecondaryTrayWnd"
+TASKBAR_TARGET_STATE_FIELDS = {
+    "kind": "taskbar_kind",
+    "index": "taskbar_index",
+    "count": "taskbar_count",
+    "class_name": "taskbar_class_name",
+    "monitor_device": "monitor_device",
+    "monitor_name": "monitor_name",
+    "monitor_rect": "monitor_rect",
+    "monitor_width": "monitor_width",
+    "monitor_height": "monitor_height",
+    "monitor_primary": "monitor_primary",
+}
+TASKBAR_TARGET_FIELDS = tuple(TASKBAR_TARGET_STATE_FIELDS)
 
 
 def _load_win32_types():
@@ -149,6 +167,56 @@ def get_window_dpi(user32, hwnd):
         return normalize_taskbar_dpi(getter(hwnd))
     except (OSError, TypeError, ValueError):
         return TASKBAR_DEFAULT_DPI
+
+
+def taskbar_monitor_details(
+    user32,
+    hwnd,
+    *,
+    ctypes_loader=_load_win32_types,
+    monitor_info_type=None,
+):
+    if not hwnd:
+        return {}
+    try:
+        ctypes, wintypes = ctypes_loader()
+        monitor = user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+        if not monitor:
+            return {}
+        if monitor_info_type is None:
+            class MonitorInfoEx(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", wintypes.DWORD),
+                    ("rcMonitor", wintypes.RECT),
+                    ("rcWork", wintypes.RECT),
+                    ("dwFlags", wintypes.DWORD),
+                    ("szDevice", wintypes.WCHAR * 32),
+                ]
+
+            monitor_info_type = MonitorInfoEx
+        info = monitor_info_type()
+        info.cbSize = ctypes.sizeof(info)
+        if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            return {}
+        rect = (
+            int(info.rcMonitor.left),
+            int(info.rcMonitor.top),
+            int(info.rcMonitor.right),
+            int(info.rcMonitor.bottom),
+        )
+        device = normalize_taskbar_monitor_device(info.szDevice)
+        details = {
+            "monitor_rect": rect,
+            "monitor_width": max(0, rect[2] - rect[0]),
+            "monitor_height": max(0, rect[3] - rect[1]),
+            "monitor_primary": bool(int(info.dwFlags) & MONITORINFOF_PRIMARY),
+        }
+        if device:
+            details["monitor_device"] = device
+            details["monitor_name"] = device.rsplit("\\", 1)[-1].upper()
+        return details
+    except Exception:
+        return {}
 
 
 def taskbar_uses_light_theme(registry_loader=_load_windows_registry):
@@ -233,51 +301,136 @@ def find_secondary_taskbars(user32, *, limit=TASKBAR_DISCOVERY_LIMIT):
     return handles
 
 
-def discover_taskbars(user32):
+def taskbar_target_state(target):
+    target = dict(target or {})
+    return {
+        state_key: target[source_key]
+        for source_key, state_key in TASKBAR_TARGET_STATE_FIELDS.items()
+        if source_key in target
+    }
+
+
+def _taskbar_monitor_sort_key(target):
+    device = normalize_taskbar_monitor_device(target.get("monitor_device"))
+    if device:
+        suffix = device.rsplit("display", 1)[-1]
+        return 0, int(suffix), device
+    rect = target.get("monitor_rect")
+    if isinstance(rect, (tuple, list)) and len(rect) == 4:
+        return 1, int(rect[0]), int(rect[1])
+    return 2, int(target.get("index", 0)), ""
+
+
+def _taskbar_target(
+    user32,
+    hwnd,
+    *,
+    kind,
+    index,
+    class_name,
+    monitor_details_provider,
+):
+    target = {
+        "hwnd": hwnd,
+        "kind": kind,
+        "index": index,
+        "class_name": class_name,
+    }
+    if monitor_details_provider:
+        try:
+            details = monitor_details_provider(user32, hwnd)
+        except Exception:
+            details = {}
+        if isinstance(details, dict):
+            target.update(details)
+    return target
+
+
+def discover_taskbars(
+    user32,
+    *,
+    monitor_details_provider=taskbar_monitor_details,
+):
     targets = []
     primary = find_primary_taskbar(user32)
     if primary:
         targets.append(
-            {
-                "hwnd": primary,
-                "kind": "primary",
-                "index": 0,
-                "class_name": PRIMARY_TASKBAR_CLASS,
-            }
+            _taskbar_target(
+                user32,
+                primary,
+                kind="primary",
+                index=0,
+                class_name=PRIMARY_TASKBAR_CLASS,
+                monitor_details_provider=monitor_details_provider,
+            )
         )
-    for index, hwnd in enumerate(find_secondary_taskbars(user32), start=1):
-        targets.append(
-            {
-                "hwnd": hwnd,
-                "kind": "secondary",
-                "index": index,
-                "class_name": SECONDARY_TASKBAR_CLASS,
-            }
+    secondary_targets = [
+        _taskbar_target(
+            user32,
+            hwnd,
+            kind="secondary",
+            index=index,
+            class_name=SECONDARY_TASKBAR_CLASS,
+            monitor_details_provider=monitor_details_provider,
         )
+        for index, hwnd in enumerate(find_secondary_taskbars(user32), start=1)
+    ]
+    secondary_targets.sort(key=_taskbar_monitor_sort_key)
+    for index, target in enumerate(secondary_targets, start=1):
+        target["index"] = index
+    targets.extend(secondary_targets)
     count = len(targets)
     for target in targets:
         target["count"] = count
     return targets
 
 
-def taskbar_discovery_state(*, os_name=os.name, ctypes_loader=_load_win32_types):
+def taskbar_discovery_state(
+    *,
+    os_name=os.name,
+    ctypes_loader=_load_win32_types,
+    monitor_details_provider=taskbar_monitor_details,
+):
     if os_name != "nt":
         return {}
     try:
         ctypes, _wintypes = ctypes_loader()
-        targets = discover_taskbars(ctypes.windll.user32)
+        targets = discover_taskbars(
+            ctypes.windll.user32,
+            monitor_details_provider=monitor_details_provider,
+        )
     except Exception:
         return {"taskbar_count": 0, "taskbar_targets": []}
     return {
         "taskbar_count": len(targets),
-        "taskbar_targets": [
-            {
-                "kind": target["kind"],
-                "index": target["index"],
-            }
-            for target in targets
-        ],
+        "taskbar_targets": [taskbar_settings_target(target) for target in targets],
     }
+
+
+def taskbar_settings_target(target):
+    target = dict(target or {})
+    kind = target.get("kind")
+    index = int(target.get("index", 0))
+    legacy_preference = "primary" if kind == "primary" else f"secondary:{index}"
+    device = normalize_taskbar_monitor_device(target.get("monitor_device"))
+    preference = f"monitor:{device}" if device else legacy_preference
+    result = {
+        "kind": kind,
+        "index": index,
+        "preference": preference,
+        "legacy_preference": legacy_preference,
+    }
+    for key in (
+        "monitor_device",
+        "monitor_name",
+        "monitor_rect",
+        "monitor_width",
+        "monitor_height",
+        "monitor_primary",
+    ):
+        if key in target:
+            result[key] = target[key]
+    return result
 
 
 def filter_taskbars_by_preference(targets, preference):
@@ -286,6 +439,13 @@ def filter_taskbars_by_preference(targets, preference):
         return list(targets)
     if preference == "primary":
         return [target for target in targets if target.get("kind") == "primary"]
+    if preference.startswith("monitor:"):
+        device = preference.split(":", 1)[1]
+        return [
+            target
+            for target in targets
+            if normalize_taskbar_monitor_device(target.get("monitor_device")) == device
+        ]
     index = int(preference.split(":", 1)[1])
     return [
         target
@@ -931,11 +1091,7 @@ def resolve_taskbar_layout(
         target.setdefault("kind", "primary")
         target.setdefault("index", 0)
         target.setdefault("count", 1)
-        target_state = {
-            "taskbar_kind": target["kind"],
-            "taskbar_index": target["index"],
-            "taskbar_count": target["count"],
-        }
+        target_state = taskbar_target_state(target)
         dpi = get_window_dpi(user32, taskbar_hwnd)
         if taskbar_is_auto_hidden(
             taskbar_hwnd,
@@ -1072,10 +1228,12 @@ def select_taskbar_layout(
                 "taskbar_target_preference": target_preference,
                 "candidate_failures": failures,
             }
+        failure_state = taskbar_target_state(target)
+        failure_state.pop("taskbar_count", None)
+        failure_state.pop("taskbar_class_name", None)
         failures.append(
             {
-                "taskbar_kind": target["kind"],
-                "taskbar_index": target["index"],
+                **failure_state,
                 "reason": state.get("reason", "layout_error"),
             }
         )

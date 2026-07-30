@@ -628,6 +628,9 @@ for required in (
     'floating_price_taskbar_target',
     'has_taskbar_price',
     'taskbar_price_state',
+    'taskbar_targets',
+    'monitor_device',
+    'legacy_preference',
 ):
     if required not in template + js:
         raise SystemExit(f"frontend missing Windows price display mode: {required}")
