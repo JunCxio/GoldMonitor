@@ -137,6 +137,11 @@ def test_taskbar_controller_tracks_target_lifecycle_and_restart_count():
             "index": 1,
             "count": 2,
             "class_name": "Shell_SecondaryTrayWnd",
+            "monitor_device": r"\\.\display2",
+            "monitor_name": "DISPLAY2",
+            "monitor_width": 2560,
+            "monitor_height": 1440,
+            "monitor_primary": False,
         }
     )
     controller.set_lifecycle_state(
@@ -153,6 +158,11 @@ def test_taskbar_controller_tracks_target_lifecycle_and_restart_count():
         "taskbar_index": 1,
         "taskbar_count": 2,
         "taskbar_class_name": "Shell_SecondaryTrayWnd",
+        "monitor_device": r"\\.\display2",
+        "monitor_name": "DISPLAY2",
+        "monitor_width": 2560,
+        "monitor_height": 1440,
+        "monitor_primary": False,
         "visible": True,
         "reason": "visible",
         "restart_count": 1,

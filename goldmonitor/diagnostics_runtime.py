@@ -168,8 +168,20 @@ def build_diagnostics_clipboard_text(
         taskbar_target_label = "主任务栏"
     elif taskbar_target.startswith("secondary:"):
         taskbar_target_label = f"副任务栏 {taskbar_target.split(':', 1)[1]}"
+    elif taskbar_target.startswith("monitor:"):
+        monitor_device = taskbar_target.split(":", 1)[1]
+        monitor_name = monitor_device.rsplit("\\", 1)[-1].upper()
+        taskbar_target_label = f"固定到 {monitor_name}"
     else:
         taskbar_target_label = value(taskbar_target)
+    actual_monitor = taskbar_price.get("monitor_name") or taskbar_price.get(
+        "monitor_device"
+    )
+    monitor_width = taskbar_price.get("monitor_width")
+    monitor_height = taskbar_price.get("monitor_height")
+    actual_monitor_label = diagnostics_value(actual_monitor)
+    if actual_monitor and monitor_width and monitor_height:
+        actual_monitor_label = f"{actual_monitor} / {monitor_width}×{monitor_height}"
 
     value = diagnostics_value
     lines = [
@@ -217,6 +229,7 @@ def build_diagnostics_clipboard_text(
         f"- 透明度: {value(settings.get('floating_price_opacity'))}",
         f"- 任务栏窗口状态: {value(taskbar_price.get('reason'))}",
         f"- 实际任务栏索引: {value(taskbar_price.get('taskbar_index'))}",
+        f"- 实际显示器: {actual_monitor_label}",
         f"- 任务栏窗口区域: {value(taskbar_price.get('bounds'))}",
         "",
         "存储与日志",

@@ -174,8 +174,12 @@ def test_normalize_settings_validates_taskbar_target_preference():
         ("primary", "primary"),
         ("secondary:1", "secondary:1"),
         (" SECONDARY:2 ", "secondary:2"),
+        (r"monitor:\\.\DISPLAY2", r"monitor:\\.\display2"),
         ("secondary:0", "auto"),
         ("secondary:16", "auto"),
+        ("monitor:DISPLAY2", "auto"),
+        (r"monitor:\\.\DISPLAY", "auto"),
+        (r"monitor:\\.\DISPLAY0", "auto"),
         ("display:2", "auto"),
     )
 

@@ -40,10 +40,26 @@ def normalize_hhmm(value):
     return ""
 
 
+def normalize_taskbar_monitor_device(value):
+    text = str(value or "").strip().lower()
+    prefix = r"\\.\display"
+    if not text.startswith(prefix):
+        return ""
+    suffix = text[len(prefix):]
+    if not suffix.isdigit() or not 1 <= len(suffix) <= 3:
+        return ""
+    if not 1 <= int(suffix) <= 999:
+        return ""
+    return text
+
+
 def normalize_taskbar_target_preference(value):
     text = str(value or "auto").strip().lower()
     if text in {"auto", "primary"}:
         return text
+    if text.startswith("monitor:"):
+        device = normalize_taskbar_monitor_device(text.split(":", 1)[1])
+        return f"monitor:{device}" if device else "auto"
     if not text.startswith("secondary:"):
         return "auto"
     try:
