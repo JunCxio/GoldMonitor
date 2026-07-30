@@ -4,6 +4,8 @@ import os
 
 WM_PAINT = 0x000F
 WM_ERASEBKGND = 0x0014
+WM_MOUSEACTIVATE = 0x0021
+WM_NULL = 0x0000
 WM_LBUTTONUP = 0x0202
 WM_LBUTTONDBLCLK = 0x0203
 WM_RBUTTONUP = 0x0205
@@ -31,23 +33,24 @@ TASKBAR_MENU_HIDE = 2007
 TASKBAR_LAYOUT_TIMER_ID = 2
 TASKBAR_LAYOUT_TIMER_MS = 750
 TASKBAR_DESIRED_WIDTH = 224
-TASKBAR_MINIMUM_WIDTH = 154
+TASKBAR_MINIMUM_WIDTH = 104
 TASKBAR_MARGIN = 3
 TASKBAR_CONTENT_PADDING = 6
 TASKBAR_CONTENT_GAP = 5
 TASKBAR_ARROW_WIDTH = 9
 TASKBAR_MINIMUM_PRICE_WIDTH = 42
+TASKBAR_HIT_TARGET_ALPHA = 1
 TASKBAR_DEFAULT_DPI = 96
 TASKBAR_MAXIMUM_DPI = 480
 
 ABM_GETSTATE = 0x00000004
 ABS_AUTOHIDE = 0x00000001
-WS_EX_TOPMOST = 0x00000008
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_LAYERED = 0x00080000
 WS_EX_NOACTIVATE = 0x08000000
 WS_POPUP = 0x80000000
-HWND_TOPMOST = -1
+HWND_TOP = 0
+MA_NOACTIVATE = 3
 SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
 ULW_ALPHA = 0x00000002
@@ -196,7 +199,31 @@ def taskbar_draw_palette(*, light_theme, source_state, trend_state):
 
 
 def taskbar_window_ex_style():
-    return WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE
+    return WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE
+
+
+def find_primary_taskbar(user32):
+    return user32.FindWindowW("Shell_TrayWnd", None)
+
+
+def create_taskbar_price_window(user32, *, class_name, instance):
+    taskbar_owner = find_primary_taskbar(user32)
+    if not taskbar_owner:
+        return None
+    return user32.CreateWindowExW(
+        taskbar_window_ex_style(),
+        class_name,
+        "任务栏金价",
+        WS_POPUP,
+        0,
+        0,
+        TASKBAR_MINIMUM_WIDTH,
+        32,
+        taskbar_owner,
+        None,
+        instance,
+        None,
+    )
 
 
 def layout_taskbar_content(
@@ -252,6 +279,47 @@ def layout_taskbar_content(
         "total_width": total_width,
         "price_clipped": drawn_price_width < price_width,
     }
+
+
+def preferred_taskbar_window_width(
+    state,
+    *,
+    dpi=TASKBAR_DEFAULT_DPI,
+    font_loader=None,
+    measure_text=None,
+):
+    font_loader = font_loader or load_taskbar_font
+    if measure_text is None:
+        from PIL import Image, ImageDraw
+
+        draw = ImageDraw.Draw(Image.new("L", (1, 1)))
+
+        def measure_text(text, font):
+            bounds = draw.textbbox((0, 0), text, font=font)
+            return max(0, int(bounds[2] - bounds[0]))
+
+    dpi = normalize_taskbar_dpi(dpi)
+    layout_metrics = taskbar_layout_metrics(dpi)
+    draw_metrics = taskbar_draw_metrics(dpi)
+    brand_font = font_loader(draw_metrics["brand_font_height"], bold=True)
+    value_font = font_loader(draw_metrics["value_font_height"], bold=False)
+    brand_width = measure_text("Au", brand_font)
+    price_width = measure_text(str(state.get("price") or "--"), value_font)
+    change_text = str(state.get("change") or "")
+    change_width = measure_text(change_text, value_font) if change_text else 0
+    content_width = brand_width + draw_metrics["gap"] + price_width
+    if change_width:
+        content_width += (
+            draw_metrics["gap"]
+            + draw_metrics["arrow_width"]
+            + draw_metrics["arrow_gap"]
+            + change_width
+        )
+    preferred_width = content_width + (2 * draw_metrics["padding"])
+    return max(
+        layout_metrics["minimum_width"],
+        min(layout_metrics["desired_width"], preferred_width),
+    )
 
 
 def load_taskbar_font(pixel_height, *, bold=False, font_module=None, windows_dir=None):
@@ -313,7 +381,11 @@ def render_taskbar_surface(
     height = max(1, int(height))
     dpi = normalize_taskbar_dpi(dpi)
     metrics = taskbar_draw_metrics(dpi)
-    image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    image = Image.new(
+        "RGBA",
+        (width, height),
+        (0, 0, 0, TASKBAR_HIT_TARGET_ALPHA),
+    )
     draw = ImageDraw.Draw(image)
 
     source_state = state.get("source_state", "waiting")
@@ -717,10 +789,11 @@ def resolve_taskbar_layout(
     *,
     user32,
     shell32,
+    text_state=None,
     ctypes_loader=_load_win32_types,
 ):
     try:
-        taskbar_hwnd = user32.FindWindowW("Shell_TrayWnd", None)
+        taskbar_hwnd = find_primary_taskbar(user32)
         if not taskbar_hwnd:
             return None, {"visible": False, "reason": "taskbar_not_found"}
         dpi = get_window_dpi(user32, taskbar_hwnd)
@@ -771,11 +844,17 @@ def resolve_taskbar_layout(
             ctypes_loader=ctypes_loader,
         )
         start_rect = get_window_rect(user32, start_hwnd, ctypes_loader=ctypes_loader)
+        desired_width = (
+            preferred_taskbar_window_width(text_state, dpi=dpi)
+            if text_state is not None
+            else None
+        )
         layout = choose_taskbar_layout(
             taskbar_rect,
             tray_rect=tray_rect,
             task_list_rect=task_list_rect,
             start_rect=start_rect,
+            desired_width=desired_width,
             dpi=dpi,
         )
         if not layout:
@@ -855,11 +934,9 @@ def set_taskbar_window_visible(
         position_changed = previous.get("bounds") != bounds
 
         if position_changed:
-            pointer_bits = ctypes.sizeof(ctypes.c_void_p) * 8
-            topmost = ctypes.c_void_p(HWND_TOPMOST & ((1 << pointer_bits) - 1))
             positioned = user32.SetWindowPos(
                 hwnd,
-                topmost,
+                ctypes.c_void_p(HWND_TOP),
                 *bounds,
                 SWP_NOACTIVATE | SWP_SHOWWINDOW,
             )
@@ -985,6 +1062,10 @@ def show_taskbar_context_menu(
         )
     finally:
         user32.DestroyMenu(menu)
+        try:
+            user32.PostMessageW(hwnd, WM_NULL, 0, 0)
+        except (AttributeError, OSError):
+            pass
 
     if command == TASKBAR_MENU_OPEN:
         show_main_window()
@@ -1020,6 +1101,8 @@ def handle_taskbar_window_message(
         return 0
     if msg == WM_ERASEBKGND:
         return 1
+    if msg == WM_MOUSEACTIVATE:
+        return MA_NOACTIVATE
     if msg in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
         show_main_window()
         return 0
@@ -1194,6 +1277,13 @@ def run_taskbar_price_window(
         ]
         user32.DestroyMenu.argtypes = [wintypes.HMENU]
         user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+        user32.PostMessageW.argtypes = [
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+        ]
+        user32.PostMessageW.restype = wintypes.BOOL
         user32.LoadCursorW.restype = wintypes.HANDLE
         user32.LoadCursorW.argtypes = [wintypes.HINSTANCE, ctypes.c_void_p]
         kernel32.GetModuleHandleW.restype = wintypes.HMODULE
@@ -1297,19 +1387,10 @@ def run_taskbar_price_window(
         window_class.lpszClassName = class_name
         user32.RegisterClassW(ctypes.byref(window_class))
 
-        hwnd = user32.CreateWindowExW(
-            taskbar_window_ex_style(),
-            class_name,
-            "任务栏金价",
-            WS_POPUP,
-            0,
-            0,
-            TASKBAR_MINIMUM_WIDTH,
-            32,
-            None,
-            None,
-            instance,
-            None,
+        hwnd = create_taskbar_price_window(
+            user32,
+            class_name=class_name,
+            instance=instance,
         )
         if not hwnd:
             set_ready()

@@ -35,7 +35,7 @@ def test_taskbar_layout_and_draw_metrics_scale_with_window_dpi():
     assert taskbar_layout_metrics(144) == {
         "dpi": 144,
         "desired_width": 336,
-        "minimum_width": 231,
+        "minimum_width": 156,
         "margin": 5,
         "maximum_height": 51,
         "minimum_height": 36,
@@ -73,6 +73,30 @@ def test_taskbar_layout_and_draw_metrics_scale_with_window_dpi():
         "orientation": "horizontal",
         "taskbar_rect": (0, 1560, 2880, 1620),
     }
+
+
+def test_taskbar_window_width_tracks_visible_content():
+    from goldmonitor.taskbar_runtime import preferred_taskbar_window_width
+
+    widths = {
+        "Au": 18,
+        "--": 14,
+        "¥879.83": 52,
+        "+0.42%": 47,
+    }
+    font_loader = lambda height, bold=False: (height, bold)
+    measure_text = lambda text, font: widths[text]
+
+    assert preferred_taskbar_window_width(
+        {"price": "--", "change": ""},
+        font_loader=font_loader,
+        measure_text=measure_text,
+    ) == 104
+    assert preferred_taskbar_window_width(
+        {"price": "¥879.83", "change": "+0.42%"},
+        font_loader=font_loader,
+        measure_text=measure_text,
+    ) == 151
 
 
 def test_taskbar_content_layout_prioritizes_brand_trend_and_price_readability():
@@ -143,11 +167,13 @@ def test_taskbar_theme_detection_reads_windows_system_theme():
     assert taskbar_uses_light_theme(lambda: (_ for _ in ()).throw(OSError())) is False
 
 
-def test_taskbar_window_uses_per_pixel_alpha_transparency():
+def test_taskbar_window_keeps_transparent_surface_fully_interactive():
     Image = pytest.importorskip("PIL.Image")
 
     from goldmonitor.taskbar_runtime import (
         WS_EX_LAYERED,
+        WS_EX_NOACTIVATE,
+        WS_EX_TOOLWINDOW,
         premultiply_taskbar_surface,
         render_taskbar_surface,
         taskbar_window_ex_style,
@@ -165,14 +191,41 @@ def test_taskbar_window_uses_per_pixel_alpha_transparency():
         light_theme=True,
     )
 
-    assert taskbar_window_ex_style() & WS_EX_LAYERED
+    assert taskbar_window_ex_style() == (
+        WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE
+    )
     assert surface.mode == "RGBA"
-    assert surface.getpixel((0, 0))[3] == 0
-    assert surface.getchannel("A").getextrema() == (0, 255)
+    assert surface.getpixel((0, 0))[3] == 1
+    assert surface.getchannel("A").getextrema() == (1, 255)
+    assert all(alpha > 0 for alpha in surface.getchannel("A").tobytes())
     assert any(0 < alpha < 255 for alpha in surface.getchannel("A").tobytes())
 
     pixel = Image.new("RGBA", (1, 1), (100, 50, 25, 128))
     assert premultiply_taskbar_surface(pixel) == bytes((13, 25, 50, 128))
+
+
+def test_taskbar_window_is_created_as_shell_owned_popup():
+    from goldmonitor.taskbar_runtime import create_taskbar_price_window
+
+    calls = []
+    user32 = SimpleNamespace(
+        FindWindowW=lambda class_name, title: 84,
+        CreateWindowExW=lambda *args: calls.append(args) or 42,
+    )
+
+    assert create_taskbar_price_window(
+        user32,
+        class_name="GoldMonitorTaskbarPriceWindow",
+        instance=7,
+    ) == 42
+    assert calls[0][8] == 84
+
+    user32.FindWindowW = lambda class_name, title: None
+    assert create_taskbar_price_window(
+        user32,
+        class_name="GoldMonitorTaskbarPriceWindow",
+        instance=7,
+    ) is None
 
 
 def test_taskbar_layered_window_uploads_premultiplied_pixels():
@@ -399,10 +452,12 @@ def test_taskbar_visibility_hides_for_fullscreen_or_missing_space():
 
 def test_taskbar_window_messages_keep_interaction_non_activating():
     from goldmonitor.taskbar_runtime import (
+        MA_NOACTIVATE,
         TASKBAR_LAYOUT_TIMER_ID,
         WM_DPICHANGED,
         WM_ERASEBKGND,
         WM_LBUTTONUP,
+        WM_MOUSEACTIVATE,
         WM_PAINT,
         WM_RBUTTONUP,
         WM_TIMER,
@@ -410,22 +465,32 @@ def test_taskbar_window_messages_keep_interaction_non_activating():
     )
 
     calls = []
-    user32 = SimpleNamespace(DefWindowProcW=lambda *args: 99)
+    user32 = SimpleNamespace(
+        DefWindowProcW=lambda *args: 99,
+        KillTimer=lambda hwnd, timer_id: calls.append(("kill_timer", hwnd, timer_id)),
+    )
     kwargs = {
         "user32": user32,
         "draw_window": lambda hwnd: calls.append(("draw", hwnd)),
-        "show_context_menu": lambda hwnd: calls.append(("menu", hwnd)),
+        "show_context_menu": lambda hwnd: calls.append(("menu", hwnd)) or 0,
         "show_main_window": lambda: calls.append("show"),
         "sync_visibility": lambda: calls.append("sync"),
     }
 
     assert handle_taskbar_window_message(42, WM_PAINT, 0, 0, **kwargs) == 0
     assert handle_taskbar_window_message(42, WM_ERASEBKGND, 0, 0, **kwargs) == 1
+    assert handle_taskbar_window_message(42, WM_MOUSEACTIVATE, 0, 0, **kwargs) == MA_NOACTIVATE
     assert handle_taskbar_window_message(42, WM_LBUTTONUP, 0, 0, **kwargs) == 0
     assert handle_taskbar_window_message(42, WM_RBUTTONUP, 0, 0, **kwargs) == 0
     assert handle_taskbar_window_message(42, WM_DPICHANGED, 0, 0, **kwargs) == 0
     assert handle_taskbar_window_message(42, WM_TIMER, TASKBAR_LAYOUT_TIMER_ID, 0, **kwargs) == 0
-    assert calls == [("draw", 42), "show", ("menu", 42), "sync", "sync"]
+    assert calls == [
+        ("draw", 42),
+        "show",
+        ("menu", 42),
+        "sync",
+        "sync",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -460,6 +525,7 @@ def test_taskbar_context_menu_dispatches_supported_actions(command, expected):
         SetForegroundWindow=lambda hwnd: None,
         TrackPopupMenu=lambda *args: command,
         DestroyMenu=lambda menu: None,
+        PostMessageW=lambda *args: calls.append(("post", args)),
     )
 
     result = show_taskbar_context_menu(
@@ -476,4 +542,4 @@ def test_taskbar_context_menu_dispatches_supported_actions(command, expected):
     )
 
     assert result == command
-    assert calls == [expected]
+    assert calls == [("post", (42, 0, 0, 0)), expected]
