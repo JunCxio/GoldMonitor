@@ -89,6 +89,9 @@ def test_taskbar_controller_window_loop_binds_runtime_callbacks(monkeypatch):
     assert captured["get_text_state"]()["text"] == "¥528.16"
     captured["set_window_handle"](42)
     assert runtime.taskbar_hwnd == 42
+    assert captured["set_taskbar_target"] == controller.set_taskbar_target
+    assert captured["set_lifecycle_state"] == controller.set_lifecycle_state
+    assert captured["clear_ready"] == runtime.taskbar_window_ready.clear
     assert captured["set_windows_mode"] == controller.set_windows_mode
     assert captured["sync_visibility"] == controller.sync_visibility
 
@@ -105,8 +108,8 @@ def test_taskbar_controller_layout_passes_compact_text_state(monkeypatch):
     captured = {}
     monkeypatch.setattr(
         controller_module.taskbar_runtime_core,
-        "resolve_taskbar_layout",
-        lambda **kwargs: captured.update(kwargs) or (None, {}),
+        "select_taskbar_layout",
+        lambda **kwargs: captured.update(kwargs) or (None, None, {}),
     )
     monkeypatch.setitem(
         sys.modules,
@@ -120,6 +123,66 @@ def test_taskbar_controller_layout_passes_compact_text_state(monkeypatch):
 
     assert captured["text_state"]["price"] == "¥528.16"
     assert captured["text_state"]["change"] == "+0.42%"
+
+
+def test_taskbar_controller_tracks_target_lifecycle_and_restart_count():
+    controller, runtime, _settings, _calls = make_controller(os_name="nt")
+
+    controller.set_taskbar_target(
+        {
+            "hwnd": 201,
+            "kind": "secondary",
+            "index": 1,
+            "count": 2,
+            "class_name": "Shell_SecondaryTrayWnd",
+        }
+    )
+    controller.set_lifecycle_state(
+        "explorer_restarting",
+        increment_restart=True,
+    )
+    controller.set_layout_state({"visible": True, "reason": "visible"})
+
+    assert runtime.taskbar_owner_hwnd == 201
+    assert controller.taskbar_target()["kind"] == "secondary"
+    assert runtime.taskbar_restart_count == 1
+    assert runtime.taskbar_layout_state == {
+        "taskbar_kind": "secondary",
+        "taskbar_index": 1,
+        "taskbar_count": 2,
+        "taskbar_class_name": "Shell_SecondaryTrayWnd",
+        "visible": True,
+        "reason": "visible",
+        "restart_count": 1,
+    }
+
+
+def test_taskbar_controller_resets_thread_state_after_window_loop_exits(monkeypatch):
+    from goldmonitor import taskbar_controller as controller_module
+
+    controller, runtime, _settings, _calls = make_controller(os_name="nt")
+    runtime.taskbar_thread_started = True
+    runtime.taskbar_window_ready.set()
+
+    def run_window(**kwargs):
+        kwargs["set_window_handle"](42)
+        kwargs["set_taskbar_target"](
+            {"hwnd": 101, "kind": "primary", "index": 0, "count": 1}
+        )
+        return 42
+
+    monkeypatch.setattr(
+        controller_module.taskbar_runtime_core,
+        "run_taskbar_price_window",
+        run_window,
+    )
+
+    assert controller.run_window() == 42
+    assert runtime.taskbar_hwnd is None
+    assert runtime.taskbar_owner_hwnd is None
+    assert runtime.taskbar_target_state == {}
+    assert runtime.taskbar_thread_started is False
+    assert runtime.taskbar_window_ready.is_set() is False
 
 
 def test_taskbar_controller_apply_settings_hides_when_floating_only(monkeypatch):

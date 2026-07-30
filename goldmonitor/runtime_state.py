@@ -118,12 +118,15 @@ class ApplicationRuntimeState:
     floating_drag_state: Any = None
     floating_positioned: bool = False
     taskbar_hwnd: Any = None
+    taskbar_owner_hwnd: Any = None
     taskbar_thread_started: bool = False
     taskbar_price_text: str = "金价 --"
     taskbar_price_value_text: str = "--"
     taskbar_price_change_text: str = ""
     taskbar_trend_state: str = "neutral"
     taskbar_source_state: str = "waiting"
+    taskbar_target_state: Dict[str, Any] = field(default_factory=dict)
+    taskbar_restart_count: int = 0
     taskbar_layout_state: Dict[str, Any] = field(default_factory=dict)
     background_fetch_started: bool = False
     news_fetch_started: bool = False
