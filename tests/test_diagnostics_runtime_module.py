@@ -44,14 +44,7 @@ def test_clipboard_summary_uses_fallback_status_and_masks_raw_structure():
                 "risk_assistant_enabled": True,
                 "risk_assistant_provider": "deepseek",
                 "deepseek_model": "deepseek-v4-pro",
-                "floating_price_taskbar_target": r"monitor:\\.\display2",
-            },
-            "taskbar_price": {
-                "reason": "visible",
-                "taskbar_index": 1,
-                "monitor_name": "DISPLAY2",
-                "monitor_width": 2560,
-                "monitor_height": 1440,
+                "floating_price_windows_mode": "tray",
             },
             "fetch_status": {"message": "行情正常", "status": "ready", "sources": {}},
             "source_health": {"summary": {}, "quality": {"label": "数据可信", "score": 100}},
@@ -72,5 +65,5 @@ def test_clipboard_summary_uses_fallback_status_and_masks_raw_structure():
     assert "5 分钟 K 线样本数: 6" in text
     assert "行情质量: 数据可信 / 100分" in text
     assert "目录状态: 可写" in text
-    assert "任务栏选择: 固定到 DISPLAY2" in text
-    assert "实际显示器: DISPLAY2 / 2560×1440" in text
+    assert "原生入口: macOS 菜单栏（NSStatusItem）" in text
+    assert "Windows 显示位置: 仅系统托盘行情" in text

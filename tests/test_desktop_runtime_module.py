@@ -192,6 +192,7 @@ def test_tray_icon_builds_menu_and_starts_tooltip_worker():
     actions = []
     drawn = []
     icon_image = object()
+    price_image = object()
 
     class ImageModule:
         @staticmethod
@@ -212,9 +213,9 @@ def test_tray_icon_builds_menu_and_starts_tooltip_worker():
             self.default = default
 
     class Icon:
-        def __init__(self, name, image, title, menu):
+        def __init__(self, name, icon, title, menu):
             self.name = name
-            self.image = image
+            self.icon = icon
             self.title = title
             self.menu = menu
             self.ran = False
@@ -242,18 +243,21 @@ def test_tray_icon_builds_menu_and_starts_tooltip_worker():
         toggle_floating_price=lambda: actions.append("floating"),
         exit_application=lambda: actions.append("exit"),
         format_title=lambda: "金价监控",
+        format_icon_state=lambda: {"enabled": True, "text": "886"},
+        render_icon=lambda base, state: price_image,
         thread_factory=CapturedThread,
         sleep=lambda seconds: None,
     )
 
     assert icon is stored[0]
     assert icon.ran is True
+    assert icon.icon is price_image
     assert drawn == [([4, 4, 60, 60], "#e8b830")]
     assert [item.label for item in icon.menu if isinstance(item, MenuItem)] == [
         "显示窗口",
         "刷新行情",
         "风险分析",
-        "切换悬浮条",
+        "切换价格显示",
         "退出",
     ]
     assert icon.menu[0].default is True
@@ -264,6 +268,67 @@ def test_tray_icon_builds_menu_and_starts_tooltip_worker():
     assert len(CapturedThread.created) == 1
     assert CapturedThread.created[0].daemon is True
     assert CapturedThread.created[0].started is True
+
+
+def test_windows_tray_refresh_updates_native_icon_only_when_state_changes():
+    from goldmonitor.desktop_runtime import refresh_windows_tray_icon
+
+    icon = SimpleNamespace(title="", icon=None)
+    base_icon = object()
+    state = {
+        "enabled": True,
+        "text": "886",
+        "currency_symbol": "¥",
+        "trend_state": "up",
+    }
+    rendered = []
+
+    def render_icon(base, current):
+        rendered.append((base, dict(current)))
+        return "price-icon"
+
+    assert refresh_windows_tray_icon(
+        icon,
+        base_icon=base_icon,
+        format_title=lambda: "金价监控 ¥886.16/克",
+        format_icon_state=lambda: state,
+        render_icon=render_icon,
+    ) is True
+    assert refresh_windows_tray_icon(
+        icon,
+        base_icon=base_icon,
+        format_title=lambda: "金价监控 ¥886.16/克",
+        format_icon_state=lambda: state,
+        render_icon=render_icon,
+    ) is True
+
+    assert icon.title == "金价监控 ¥886.16/克"
+    assert icon.icon == "price-icon"
+    assert rendered == [(base_icon, state)]
+
+
+def test_windows_tray_price_icon_uses_transparent_surface():
+    Image = pytest.importorskip("PIL.Image")
+    ImageFont = pytest.importorskip("PIL.ImageFont")
+
+    from goldmonitor.desktop_runtime import render_windows_tray_price_icon
+
+    base_icon = Image.new("RGBA", (64, 64), (1, 2, 3, 255))
+    surface = render_windows_tray_price_icon(
+        base_icon,
+        {
+            "enabled": True,
+            "text": "886",
+            "currency_symbol": "¥",
+            "trend_state": "up",
+        },
+        font_provider=lambda size, bold=False: ImageFont.load_default(),
+    )
+
+    assert surface.mode == "RGBA"
+    assert surface.size == (64, 64)
+    assert surface.getpixel((0, 63))[3] == 0
+    assert surface.getchannel("A").getextrema()[1] == 255
 
 
 def test_window_close_decision_routes_exit_hide_and_dialog():

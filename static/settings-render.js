@@ -48,154 +48,17 @@ function setRowHidden(id, hidden) {
 function syncFloatingWindowsModeRows() {
   const capabilities = appSettings.platform_capabilities || {};
   const menuBarMode = capabilities.floating_price_mode === 'menu_bar';
-  const hasTaskbarPrice = !!capabilities.has_taskbar_price;
+  const hasTrayPrice = !!capabilities.has_tray_price;
   const modeSelect = document.getElementById('setFloatingWindowsMode');
-  const taskbarOnly = hasTaskbarPrice && modeSelect && modeSelect.value === 'taskbar';
-  const usesTaskbar = hasTaskbarPrice && modeSelect && modeSelect.value !== 'floating';
+  const trayOnly = hasTrayPrice && modeSelect && modeSelect.value === 'tray';
 
-  setRowHidden('floatingWindowsModeRow', !hasTaskbarPrice);
-  setRowHidden('floatingTaskbarTargetRow', !usesTaskbar);
-  setRowHidden('floatingPresetRow', menuBarMode || taskbarOnly);
-  setRowHidden('floatingOpacityRow', menuBarMode || taskbarOnly);
-  setRowHidden('floatingSnapRow', menuBarMode || taskbarOnly);
-  setRowHidden('floatingTopmostRow', menuBarMode || taskbarOnly);
-  setRowHidden('floatingFullscreenRow', menuBarMode || taskbarOnly);
-  setRowHidden('floatingLockRow', menuBarMode || taskbarOnly);
-}
-
-function taskbarTargets(state) {
-  return Array.isArray(state?.taskbar_targets) ? state.taskbar_targets : [];
-}
-
-function taskbarMonitorLabel(target) {
-  const raw = String(target?.monitor_name || target?.monitor_device || '').trim();
-  const match = raw.match(/DISPLAY(\d+)/i);
-  return match ? '显示器 ' + match[1] : raw;
-}
-
-function taskbarTargetOptionLabel(target) {
-  const role = target?.kind === 'primary'
-    ? '主任务栏'
-    : target?.index != null
-      ? '副任务栏 ' + target.index
-      : '任务栏';
-  const monitor = taskbarMonitorLabel(target);
-  const width = Number(target?.monitor_width) || 0;
-  const height = Number(target?.monitor_height) || 0;
-  const resolution = width > 0 && height > 0 ? width + '×' + height : '';
-  if (!monitor) return resolution ? role + ' · ' + resolution : role;
-  return [monitor, resolution].filter(Boolean).join(' · ') + '（' + role + '）';
-}
-
-function resolvedTaskbarTargetValue(value, state) {
-  const current = String(value || 'auto');
-  if (!current.startsWith('secondary:')) return current;
-  const target = taskbarTargets(state).find(item => item.legacy_preference === current);
-  return target?.preference || current;
-}
-
-function taskbarTargetLabel(value, state) {
-  const current = String(value || 'auto');
-  if (current === 'primary') return '主任务栏';
-  if (current === 'auto') return '自动选择';
-  const target = taskbarTargets(state).find(item => (
-    item.preference === current || item.legacy_preference === current
-  ));
-  if (target) return taskbarTargetOptionLabel(target);
-  if (current.startsWith('secondary:')) return '副任务栏 ' + current.split(':')[1];
-  if (current.startsWith('monitor:')) {
-    const monitor = taskbarMonitorLabel({ monitor_device: current.split(':')[1] });
-    return monitor ? '固定到' + monitor : '固定显示器';
-  }
-  return '自动选择';
-}
-
-function renderTaskbarTargetOptions() {
-  const select = document.getElementById('setFloatingTaskbarTarget');
-  if (!select) return;
-  const state = appSettings.taskbar_price_state || {};
-  const saved = resolvedTaskbarTargetValue(
-    appSettings.floating_price_taskbar_target || 'auto',
-    state,
-  );
-  const current = resolvedTaskbarTargetValue(select.value || saved, state);
-  const options = [
-    ['auto', '自动选择（优先主任务栏）'],
-    ['primary', '主任务栏（跟随系统主显示器）'],
-  ];
-  for (const target of taskbarTargets(state)) {
-    const value = target.preference || target.legacy_preference;
-    if (!value || options.some(option => option[0] === value)) continue;
-    options.push([value, taskbarTargetOptionLabel(target)]);
-  }
-  if (!['auto', 'primary'].includes(saved) && !options.some(option => option[0] === saved)) {
-    options.push([saved, taskbarTargetLabel(saved, state) + '（当前不可用）']);
-  }
-  select.replaceChildren(...options.map(([value, label]) => {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    return option;
-  }));
-  const values = options.map(option => option[0]);
-  select.value = values.includes(current) ? current : (values.includes(saved) ? saved : 'auto');
-}
-
-function renderTaskbarPriceStatus() {
-  const element = document.getElementById('taskbarPriceStatus');
-  if (!element) return;
-  const mode = document.getElementById('setFloatingWindowsMode')?.value || 'floating';
-  const target = document.getElementById('setFloatingTaskbarTarget')?.value || 'auto';
-  const savedMode = appSettings.floating_price_windows_mode || 'floating';
-  const state = appSettings.taskbar_price_state || {};
-  const savedTarget = resolvedTaskbarTargetValue(
-    appSettings.floating_price_taskbar_target || 'auto',
-    state,
-  );
-  if (mode !== savedMode || target !== savedTarget) {
-    element.textContent = '保存设置后将检测可用任务栏区域。';
-    delete element.dataset.state;
-    return;
-  }
-  if (mode === 'floating') {
-    element.textContent = '当前使用桌面悬浮条。';
-    delete element.dataset.state;
-    return;
-  }
-  const labels = {
-    visible: '任务栏价格当前已显示。',
-    ready: '已检测到可用任务栏区域。',
-    fullscreen: '其他应用正在全屏，任务栏价格已暂时隐藏。',
-    taskbar_auto_hidden: '任务栏已启用自动隐藏，任务栏价格已暂时隐藏。',
-    insufficient_taskbar_space: '任务栏没有足够的安全空白区域，任务栏价格未显示。',
-    no_usable_taskbar: '所有任务栏都没有足够的安全空白区域，任务栏价格已隐藏。',
-    taskbar_not_found: '未检测到 Windows 任务栏。',
-    preferred_taskbar_unavailable: '指定任务栏当前不可用，任务栏价格已隐藏。',
-    taskbar_regions_unavailable: '无法确认任务按钮和通知区域，任务栏价格未显示。',
-    starting: '正在检测可用任务栏区域。',
-    explorer_restarting: 'Windows 任务栏正在恢复，价格窗口将自动重新显示。',
-    window_create_error: '任务栏价格窗口创建失败，正在重试。',
-    startup_error: '任务栏价格功能启动失败。',
-    layout_error: '任务栏区域检测失败。',
-    visibility_error: '任务栏窗口显示失败。',
-    position_error: '任务栏窗口定位失败。',
-    disabled: '任务栏价格当前未显示。',
-  };
-  if (state.visible) {
-    const actual = taskbarTargetOptionLabel({
-      kind: state.taskbar_kind,
-      index: state.taskbar_index,
-      monitor_name: state.monitor_name,
-      monitor_device: state.monitor_device,
-      monitor_width: state.monitor_width,
-      monitor_height: state.monitor_height,
-    }) || taskbarTargetLabel(target, state);
-    element.textContent = '任务栏价格当前已显示在' + actual + '。';
-  } else {
-    element.textContent = labels[state.reason] || '保存设置后将检测可用任务栏区域。';
-  }
-  if (state.visible) element.dataset.state = 'ok';
-  else delete element.dataset.state;
+  setRowHidden('floatingWindowsModeRow', !hasTrayPrice);
+  setRowHidden('floatingPresetRow', menuBarMode || trayOnly);
+  setRowHidden('floatingOpacityRow', menuBarMode || trayOnly);
+  setRowHidden('floatingSnapRow', menuBarMode || trayOnly);
+  setRowHidden('floatingTopmostRow', menuBarMode || trayOnly);
+  setRowHidden('floatingFullscreenRow', menuBarMode || trayOnly);
+  setRowHidden('floatingLockRow', menuBarMode || trayOnly);
 }
 
 function applyPlatformLabels() {
@@ -203,22 +66,20 @@ function applyPlatformLabels() {
   const capabilities = appSettings.platform_capabilities || {};
   const isMac = platform === 'macos';
   const menuBarMode = capabilities.floating_price_mode === 'menu_bar';
-  const hasTaskbarPrice = !!capabilities.has_taskbar_price;
+  const hasTrayPrice = !!capabilities.has_tray_price;
 
   setText('startupTrayLabel', isMac ? '自启动时进入菜单栏' : '自启动时进入托盘');
   setText('startupTrayDesc', isMac ? '开机启动后不弹出主窗口，可从菜单栏打开。' : '开机启动后不弹出主窗口，可从右下角托盘打开。');
-  setText('floatingSectionTitle', menuBarMode ? '菜单栏金价' : (hasTaskbarPrice ? '桌面价格显示' : '桌面悬浮条'));
-  setText('floatingSectionDesc', menuBarMode ? '调整菜单栏显示内容。' : (hasTaskbarPrice ? '选择悬浮条、任务栏价格或两处同时显示。' : '调整悬浮条内容、尺寸和贴边行为。'));
-  setText('floatingPriceLabel', menuBarMode ? '菜单栏金价' : (hasTaskbarPrice ? '显示桌面价格' : '桌面金价悬浮条'));
-  setText('floatingPriceDesc', menuBarMode ? '在 macOS 菜单栏显示当前金价，并提供显示窗口、刷新和风险分析入口。' : (hasTaskbarPrice ? '主窗口隐藏后，继续在所选 Windows 位置显示当前金价。' : '主窗口隐藏时，仍在桌面右下角显示当前金价。'));
-  setText('floatingDisplayDesc', menuBarMode ? '控制菜单栏优先显示人民币、美元或组合价格。' : (hasTaskbarPrice ? '控制悬浮条和任务栏价格显示人民币、美元或组合内容。' : '控制桌面悬浮条显示人民币、美元或组合内容。'));
+  setText('floatingSectionTitle', menuBarMode ? '菜单栏金价' : (hasTrayPrice ? '桌面与系统托盘行情' : '桌面悬浮条'));
+  setText('floatingSectionDesc', menuBarMode ? '调整菜单栏显示内容。' : (hasTrayPrice ? '选择桌面悬浮条、Windows 原生系统托盘或两处同时显示。' : '调整悬浮条内容、尺寸和贴边行为。'));
+  setText('floatingPriceLabel', menuBarMode ? '菜单栏金价' : (hasTrayPrice ? '显示常驻行情' : '桌面金价悬浮条'));
+  setText('floatingPriceDesc', menuBarMode ? '在 macOS 菜单栏显示当前金价，并提供显示窗口、刷新和风险分析入口。' : (hasTrayPrice ? '系统托盘由 Explorer 原生管理，桌面悬浮条保持为独立可选显示。' : '主窗口隐藏时，仍在桌面右下角显示当前金价。'));
+  setText('floatingDisplayDesc', menuBarMode ? '控制菜单栏优先显示人民币、美元或组合价格。' : (hasTrayPrice ? '组合模式下托盘图标显示人民币整数，悬停提示展示人民币和美元完整价格；仅美元模式则显示美元整数。' : '控制桌面悬浮条显示人民币、美元或组合内容。'));
   setText('closeChoiceCopy', isMac ? '隐藏到菜单栏后，程序会继续监控金价并在触发条件时提醒。也可以直接退出程序。' : '最小化到右下角托盘后，程序会继续监控金价并在触发条件时提醒。也可以直接退出程序。');
   setText('closeMinimizeOption', isMac ? '隐藏到菜单栏' : '最小化到托盘');
   setText('closeMinimizeButton', isMac ? '隐藏到菜单栏' : '最小化到托盘');
 
-  renderTaskbarTargetOptions();
   syncFloatingWindowsModeRows();
-  renderTaskbarPriceStatus();
 }
 
 function dailyDigestSelectedChannels() {
@@ -300,11 +161,6 @@ function applySettings(data) {
   document.getElementById('setStartupTray').checked = !!appSettings.startup_to_tray;
   document.getElementById('setFloatingPrice').checked = appSettings.floating_price_enabled !== false;
   document.getElementById('setFloatingWindowsMode').value = appSettings.floating_price_windows_mode || 'floating';
-  renderTaskbarTargetOptions();
-  document.getElementById('setFloatingTaskbarTarget').value = resolvedTaskbarTargetValue(
-    appSettings.floating_price_taskbar_target || 'auto',
-    appSettings.taskbar_price_state || {},
-  );
   document.getElementById('setFloatingDisplayMode').value = appSettings.floating_price_display_mode || 'rmb_usd';
   document.getElementById('setFloatingPreset').value = appSettings.floating_price_preset || 'compact';
   document.getElementById('setFloatingOpacity').value = appSettings.floating_price_opacity || 94;
@@ -313,7 +169,6 @@ function applySettings(data) {
   document.getElementById('setFloatingHideOnFullscreen').checked = appSettings.floating_price_hide_on_fullscreen !== false;
   document.getElementById('setFloatingLockPosition').checked = !!appSettings.floating_price_lock_position;
   syncFloatingWindowsModeRows();
-  renderTaskbarPriceStatus();
   document.getElementById('setCloseBehavior').value = closeBehavior;
   document.getElementById('setAlertSound').checked = !!appSettings.alert_sound_enabled;
   document.getElementById('setAlertDialog').checked = !!appSettings.alert_dialog_enabled;

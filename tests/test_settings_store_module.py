@@ -12,7 +12,6 @@ DEFAULTS = {
     "startup_to_tray": True,
     "floating_price_enabled": True,
     "floating_price_windows_mode": "floating",
-    "floating_price_taskbar_target": "auto",
     "floating_price_position_saved": False,
     "floating_price_x": None,
     "floating_price_y": None,
@@ -73,7 +72,7 @@ OPTIONS = {
     "valid_risk_assistant_providers": {"deepseek", "openai_compatible"},
     "valid_risk_assistant_depths": {"quick", "standard", "deep"},
     "valid_floating_display_modes": {"rmb_usd", "rmb_only", "usd_only"},
-    "valid_floating_windows_modes": {"floating", "taskbar", "both"},
+    "valid_floating_windows_modes": {"floating", "tray", "both"},
     "valid_floating_presets": {"minimal", "compact", "standard"},
     "default_email_subject_template": "subject",
     "default_email_body_template": "body",
@@ -90,7 +89,6 @@ def test_normalize_settings_clamps_invalid_values_and_removes_legacy_update_keys
     normalized = normalize_settings({
         "floating_price_position_saved": True,
         "floating_price_windows_mode": "unsupported",
-        "floating_price_taskbar_target": "secondary:99",
         "floating_price_x": "12.9",
         "floating_price_y": "bad",
         "floating_price_opacity": "10",
@@ -126,7 +124,6 @@ def test_normalize_settings_clamps_invalid_values_and_removes_legacy_update_keys
 
     assert normalized["floating_price_position_saved"] is False
     assert normalized["floating_price_windows_mode"] == "floating"
-    assert normalized["floating_price_taskbar_target"] == "auto"
     assert normalized["floating_price_x"] is None
     assert normalized["floating_price_y"] is None
     assert normalized["floating_price_opacity"] == 50
@@ -166,30 +163,20 @@ def test_normalize_settings_clamps_invalid_values_and_removes_legacy_update_keys
     assert "update_auto_check_interval_hours" not in normalized
 
 
-def test_normalize_settings_validates_taskbar_target_preference():
+def test_normalize_settings_migrates_legacy_taskbar_mode_to_native_tray():
     from goldmonitor.settings_store import normalize_settings
 
-    cases = (
-        ("auto", "auto"),
-        ("primary", "primary"),
-        ("secondary:1", "secondary:1"),
-        (" SECONDARY:2 ", "secondary:2"),
-        (r"monitor:\\.\DISPLAY2", r"monitor:\\.\display2"),
-        ("secondary:0", "auto"),
-        ("secondary:16", "auto"),
-        ("monitor:DISPLAY2", "auto"),
-        (r"monitor:\\.\DISPLAY", "auto"),
-        (r"monitor:\\.\DISPLAY0", "auto"),
-        ("display:2", "auto"),
+    normalized = normalize_settings(
+        {
+            "floating_price_windows_mode": "taskbar",
+            "floating_price_taskbar_target": r"monitor:\\.\DISPLAY2",
+        },
+        DEFAULTS,
+        OPTIONS,
     )
 
-    for value, expected in cases:
-        normalized = normalize_settings(
-            {"floating_price_taskbar_target": value},
-            DEFAULTS,
-            OPTIONS,
-        )
-        assert normalized["floating_price_taskbar_target"] == expected
+    assert normalized["floating_price_windows_mode"] == "tray"
+    assert "floating_price_taskbar_target" not in normalized
 
 
 def test_settings_file_store_migrates_and_hides_secrets():

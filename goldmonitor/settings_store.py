@@ -40,37 +40,6 @@ def normalize_hhmm(value):
     return ""
 
 
-def normalize_taskbar_monitor_device(value):
-    text = str(value or "").strip().lower()
-    prefix = r"\\.\display"
-    if not text.startswith(prefix):
-        return ""
-    suffix = text[len(prefix):]
-    if not suffix.isdigit() or not 1 <= len(suffix) <= 3:
-        return ""
-    if not 1 <= int(suffix) <= 999:
-        return ""
-    return text
-
-
-def normalize_taskbar_target_preference(value):
-    text = str(value or "auto").strip().lower()
-    if text in {"auto", "primary"}:
-        return text
-    if text.startswith("monitor:"):
-        device = normalize_taskbar_monitor_device(text.split(":", 1)[1])
-        return f"monitor:{device}" if device else "auto"
-    if not text.startswith("secondary:"):
-        return "auto"
-    try:
-        index = int(text.split(":", 1)[1])
-    except (TypeError, ValueError):
-        return "auto"
-    if not 1 <= index < 16:
-        return "auto"
-    return f"secondary:{index}"
-
-
 def normalize_settings(raw, defaults, options=None):
     options = options or {}
     data = dict(defaults)
@@ -84,17 +53,19 @@ def normalize_settings(raw, defaults, options=None):
     data["startup_enabled"] = bool(data.get("startup_enabled"))
     data["startup_to_tray"] = bool(data.get("startup_to_tray"))
     data["floating_price_enabled"] = bool(data.get("floating_price_enabled", True))
-    if data.get("floating_price_windows_mode") not in options.get(
+    windows_mode = str(data.get("floating_price_windows_mode") or "").strip()
+    if windows_mode == "taskbar":
+        windows_mode = "tray"
+    if windows_mode not in options.get(
         "valid_floating_windows_modes",
         set(),
     ):
-        data["floating_price_windows_mode"] = defaults.get(
+        windows_mode = defaults.get(
             "floating_price_windows_mode",
             "floating",
         )
-    data["floating_price_taskbar_target"] = normalize_taskbar_target_preference(
-        data.get("floating_price_taskbar_target")
-    )
+    data["floating_price_windows_mode"] = windows_mode
+    data.pop("floating_price_taskbar_target", None)
     data["floating_price_position_saved"] = bool(data.get("floating_price_position_saved", False))
     data["floating_price_x"] = optional_int(data.get("floating_price_x"))
     data["floating_price_y"] = optional_int(data.get("floating_price_y"))

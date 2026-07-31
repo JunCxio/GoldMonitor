@@ -66,40 +66,48 @@ def format_macos_status_title(settings, rmb=None, usd=None):
     return "金价 --"
 
 
-def format_taskbar_price_state(settings, rmb=None, usd=None, pct=None):
+def format_windows_tray_price_state(settings, rmb=None, usd=None, pct=None):
     settings = settings if isinstance(settings, dict) else {}
-    display_mode = settings.get("floating_price_display_mode", "rmb_usd")
-    trend, trend_state = _format_trend(pct)
-
-    if display_mode == "usd_only" and usd is not None:
-        price = f"${usd:,.0f}"
-    elif display_mode == "rmb_only" and rmb is not None:
-        price = f"¥{rmb:,.2f}"
-    elif rmb is not None and usd is not None:
-        price = f"¥{rmb:,.2f}  ${usd:,.0f}"
-    elif rmb is not None:
-        price = f"¥{rmb:,.2f}"
-    elif usd is not None:
-        price = f"${usd:,.0f}"
-    else:
+    enabled = bool(settings.get("floating_price_enabled", True)) and settings.get(
+        "floating_price_windows_mode",
+        "floating",
+    ) in {"tray", "both"}
+    _trend, trend_state = _format_trend(pct)
+    if not enabled:
         return {
-            "text": "金价 --",
-            "price": "--",
-            "change": "",
+            "enabled": False,
+            "text": "",
+            "currency_symbol": "",
             "trend_state": "neutral",
         }
 
+    display_mode = settings.get("floating_price_display_mode", "rmb_usd")
+    if display_mode == "usd_only":
+        value = usd
+        currency_symbol = "$"
+    elif rmb is not None:
+        value = rmb
+        currency_symbol = "¥"
+    else:
+        value = usd
+        currency_symbol = "$" if usd is not None else ""
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = None
+    if number is None or not math.isfinite(number):
+        text = "--"
+        currency_symbol = ""
+        trend_state = "neutral"
+    else:
+        text = str(int(round(number)))
     return {
-        "text": f"{price}  {trend}" if trend else price,
-        "price": price,
-        "change": trend,
+        "enabled": True,
+        "text": text,
+        "currency_symbol": currency_symbol,
         "trend_state": trend_state,
     }
-
-
-def format_taskbar_price_text(settings, rmb=None, usd=None, pct=None):
-    state = format_taskbar_price_state(settings, rmb=rmb, usd=usd, pct=pct)
-    return state["text"], state["trend_state"]
 
 
 def _parse_iso_datetime(value):

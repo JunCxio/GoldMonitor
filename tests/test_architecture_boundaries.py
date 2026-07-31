@@ -23,7 +23,8 @@ def test_application_composes_routes_sockets_state_and_desktop_services():
 
     assert "application_state_bootstrap_core.ApplicationStateBootstrap(" in source
     assert "floating_controller_core.FloatingPriceController(" in source
-    assert "taskbar_controller_core.TaskbarPriceController(" in source
+    assert "format_windows_tray_price_state" in source
+    assert "desktop_runtime_core.create_tray_icon(" in source
     assert "http_routes_core.register_http_routes(" in source
     assert "socket_bootstrap_core.register_socket_handlers(" in source
     assert "application_bootstrap_core.run_application(" in source

@@ -125,7 +125,6 @@ def build_diagnostics_clipboard_text(
     source_health = payload.get("source_health") if isinstance(payload.get("source_health"), dict) else {}
     quality = source_health.get("quality") if isinstance(source_health.get("quality"), dict) else {}
     settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
-    taskbar_price = payload.get("taskbar_price") if isinstance(payload.get("taskbar_price"), dict) else {}
     price_history = payload.get("price_history") if isinstance(payload.get("price_history"), dict) else {}
     paths = payload.get("paths") if isinstance(payload.get("paths"), dict) else {}
     sources = fetch_status.get("sources") if isinstance(fetch_status.get("sources"), dict) else {}
@@ -155,33 +154,18 @@ def build_diagnostics_clipboard_text(
     last_export_state = "成功" if last_export_ok is True else "失败" if last_export_ok is False else "未记录"
     windows_mode_labels = {
         "floating": "仅悬浮条",
-        "taskbar": "仅任务栏价格",
-        "both": "悬浮条和任务栏价格",
+        "tray": "仅系统托盘行情",
+        "both": "悬浮条和系统托盘行情",
     }
     windows_mode = settings.get("floating_price_windows_mode", "floating")
-    taskbar_target = str(
-        settings.get("floating_price_taskbar_target") or "auto"
+    runtime_platform = settings.get("platform") or platform_name
+    native_entry = (
+        "Windows 系统托盘（Shell_NotifyIcon）"
+        if runtime_platform == "windows"
+        else "macOS 菜单栏（NSStatusItem）"
+        if runtime_platform == "macos"
+        else "不支持"
     )
-    if taskbar_target == "auto":
-        taskbar_target_label = "自动选择（优先主任务栏）"
-    elif taskbar_target == "primary":
-        taskbar_target_label = "主任务栏"
-    elif taskbar_target.startswith("secondary:"):
-        taskbar_target_label = f"副任务栏 {taskbar_target.split(':', 1)[1]}"
-    elif taskbar_target.startswith("monitor:"):
-        monitor_device = taskbar_target.split(":", 1)[1]
-        monitor_name = monitor_device.rsplit("\\", 1)[-1].upper()
-        taskbar_target_label = f"固定到 {monitor_name}"
-    else:
-        taskbar_target_label = value(taskbar_target)
-    actual_monitor = taskbar_price.get("monitor_name") or taskbar_price.get(
-        "monitor_device"
-    )
-    monitor_width = taskbar_price.get("monitor_width")
-    monitor_height = taskbar_price.get("monitor_height")
-    actual_monitor_label = diagnostics_value(actual_monitor)
-    if actual_monitor and monitor_width and monitor_height:
-        actual_monitor_label = f"{actual_monitor} / {monitor_width}×{monitor_height}"
 
     value = diagnostics_value
     lines = [
@@ -218,19 +202,15 @@ def build_diagnostics_clipboard_text(
         f"- 检查时间: {value(update_status.get('checked_at'))}",
         f"- 状态说明: {update_message}",
         "",
-        "悬浮条与任务栏",
+        "桌面与原生状态入口",
         f"- 状态: {'开启' if settings.get('floating_price_enabled') else '关闭'}",
+        f"- 原生入口: {native_entry}",
         f"- Windows 显示位置: {windows_mode_labels.get(windows_mode, value(windows_mode))}",
-        f"- 任务栏选择: {taskbar_target_label}",
         f"- 置顶: {'开启' if settings.get('floating_price_always_on_top') else '关闭'}",
         f"- 全屏自动隐藏: {'开启' if settings.get('floating_price_hide_on_fullscreen', True) else '关闭'}",
         f"- 位置锁定: {'开启' if settings.get('floating_price_lock_position') else '关闭'}",
         f"- 显示模式: {value(settings.get('floating_price_display_mode'))}",
         f"- 透明度: {value(settings.get('floating_price_opacity'))}",
-        f"- 任务栏窗口状态: {value(taskbar_price.get('reason'))}",
-        f"- 实际任务栏索引: {value(taskbar_price.get('taskbar_index'))}",
-        f"- 实际显示器: {actual_monitor_label}",
-        f"- 任务栏窗口区域: {value(taskbar_price.get('bounds'))}",
         "",
         "存储与日志",
         f"- 导出目录: {value(paths.get('exports'))}",
@@ -325,9 +305,6 @@ class DiagnosticsRuntime:
         )
         payload = json.loads(report)
         payload["export_status"] = self.get_export_status()
-        payload["taskbar_price"] = dict(
-            getattr(self.runtime, "taskbar_layout_state", {}) or {}
-        )
         return json.dumps(payload, ensure_ascii=False, indent=2)
 
     def build_clipboard_text(self, report=None):

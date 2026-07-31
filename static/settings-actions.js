@@ -11,7 +11,6 @@ function saveSettings() {
     startup_to_tray: document.getElementById('setStartupTray').checked,
     floating_price_enabled: document.getElementById('setFloatingPrice').checked,
     floating_price_windows_mode: document.getElementById('setFloatingWindowsMode').value,
-    floating_price_taskbar_target: document.getElementById('setFloatingTaskbarTarget').value,
     floating_price_display_mode: document.getElementById('setFloatingDisplayMode').value,
     floating_price_preset: document.getElementById('setFloatingPreset').value,
     floating_price_opacity: document.getElementById('setFloatingOpacity').value.trim(),

@@ -7,7 +7,7 @@ template = (root / "templates" / "index.html").read_text(encoding="utf-8")
 app_py = (root / "goldmonitor" / "application.py").read_text(encoding="utf-8")
 http_routes_py = (root / "goldmonitor" / "http_routes.py").read_text(encoding="utf-8")
 floating_runtime_py = (root / "goldmonitor" / "floating_runtime.py").read_text(encoding="utf-8")
-taskbar_runtime_py = (root / "goldmonitor" / "taskbar_runtime.py").read_text(encoding="utf-8")
+desktop_runtime_py = (root / "goldmonitor" / "desktop_runtime.py").read_text(encoding="utf-8")
 css_path = root / "static" / "app.css"
 js_path = root / "static" / "app.js"
 app_state_js_path = root / "static" / "app-state.js"
@@ -618,36 +618,26 @@ for required in (
 for required in (
     'id="floatingWindowsModeRow"',
     'id="setFloatingWindowsMode"',
-    'id="floatingTaskbarTargetRow"',
-    'id="setFloatingTaskbarTarget"',
-    'id="taskbarPriceStatus"',
     'value="floating"',
-    'value="taskbar"',
+    'value="tray"',
     'value="both"',
     'floating_price_windows_mode',
-    'floating_price_taskbar_target',
-    'has_taskbar_price',
-    'taskbar_price_state',
-    'taskbar_targets',
-    'monitor_device',
-    'legacy_preference',
+    'has_tray_price',
+    '系统托盘',
 ):
     if required not in template + js:
         raise SystemExit(f"frontend missing Windows price display mode: {required}")
 
 for required in (
-    "Shell_TrayWnd",
-    "TrayNotifyWnd",
-    "MSTaskListWClass",
-    "WS_EX_NOACTIVATE",
-    "taskbar_is_auto_hidden",
+    "pystray.Icon",
+    "render_windows_tray_price_icon",
+    "refresh_windows_tray_icon",
 ):
-    if required not in taskbar_runtime_py:
-        raise SystemExit(f"taskbar runtime missing safety contract: {required}")
+    if required not in desktop_runtime_py:
+        raise SystemExit(f"Windows tray runtime missing native status contract: {required}")
 
 for tracked_id in (
     "setFloatingWindowsMode",
-    "setFloatingTaskbarTarget",
     "setFloatingHideOnFullscreen",
     "setFloatingLockPosition",
 ):

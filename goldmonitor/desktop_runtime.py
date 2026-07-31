@@ -128,16 +128,147 @@ def _load_pillow():
     return Image, ImageDraw
 
 
+def _load_pillow_font():
+    from PIL import ImageFont
+
+    return ImageFont
+
+
 def _load_pystray():
     import pystray
 
     return pystray
 
 
-def update_tray_tooltip(icon, *, format_title, sleep=time.sleep, interval=5):
+def load_windows_tray_font(
+    pixel_height,
+    *,
+    bold=False,
+    font_loader=_load_pillow_font,
+    windows_dir=None,
+):
+    font_module = font_loader()
+    pixel_height = max(8, int(pixel_height))
+    windows_dir = windows_dir or os.environ.get("WINDIR", r"C:\Windows")
+    font_names = (
+        ("segoeuib.ttf", "seguisb.ttf", "segoeui.ttf")
+        if bold
+        else ("segoeui.ttf", "arial.ttf")
+    )
+    for font_name in font_names:
+        try:
+            return font_module.truetype(
+                os.path.join(windows_dir, "Fonts", font_name),
+                pixel_height,
+            )
+        except (OSError, TypeError):
+            continue
+    try:
+        return font_module.load_default(size=pixel_height)
+    except TypeError:
+        return font_module.load_default()
+
+
+def render_windows_tray_price_icon(
+    base_icon,
+    state,
+    *,
+    size=64,
+    image_loader=_load_pillow,
+    font_provider=load_windows_tray_font,
+):
+    state = dict(state or {})
+    if not state.get("enabled"):
+        return base_icon.copy() if hasattr(base_icon, "copy") else base_icon
+
+    image_module, image_draw_module = image_loader()
+    image = image_module.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = image_draw_module.Draw(image)
+    text = str(state.get("text") or "--")
+    currency_symbol = str(state.get("currency_symbol") or "")
+    trend_state = str(state.get("trend_state") or "neutral")
+    colors = {
+        "up": (220, 52, 68, 255),
+        "down": (25, 154, 97, 255),
+        "neutral": (214, 163, 48, 255),
+    }
+    color = colors.get(trend_state, colors["neutral"])
+    outline = (24, 28, 34, 230)
+    font_size = 34 if len(text) <= 3 else 28 if len(text) == 4 else 23
+    value_font = font_provider(font_size, bold=True)
+    symbol_font = font_provider(15, bold=True)
+
+    bounds = draw.textbbox((0, 0), text, font=value_font, stroke_width=1)
+    text_width = bounds[2] - bounds[0]
+    text_height = bounds[3] - bounds[1]
+    x = (size - text_width) // 2 - bounds[0]
+    y = ((size - text_height) // 2) - bounds[1] + 2
+    draw.text(
+        (x, y),
+        text,
+        font=value_font,
+        fill=color,
+        stroke_width=1,
+        stroke_fill=outline,
+    )
+    if currency_symbol:
+        draw.text(
+            (2, 0),
+            currency_symbol,
+            font=symbol_font,
+            fill=color,
+            stroke_width=1,
+            stroke_fill=outline,
+        )
+    line_y = size - 5
+    draw.line((8, line_y, size - 8, line_y), fill=color, width=3)
+    return image
+
+
+def refresh_windows_tray_icon(
+    icon,
+    *,
+    base_icon,
+    format_title,
+    format_icon_state,
+    render_icon=render_windows_tray_price_icon,
+):
+    if not icon:
+        return False
+    title = format_title()
+    state = dict(format_icon_state() or {})
+    icon.title = title
+    state_key = (
+        bool(state.get("enabled")),
+        str(state.get("text") or ""),
+        str(state.get("currency_symbol") or ""),
+        str(state.get("trend_state") or "neutral"),
+    )
+    if getattr(icon, "_goldmonitor_price_state", None) != state_key:
+        icon.icon = render_icon(base_icon, state)
+        icon._goldmonitor_price_state = state_key
+    return True
+
+
+def update_tray_tooltip(
+    icon,
+    *,
+    base_icon,
+    format_title,
+    format_icon_state,
+    render_icon=render_windows_tray_price_icon,
+    sleep=time.sleep,
+    interval=5,
+):
     while True:
         try:
-            icon.title = format_title()
+            refresh_windows_tray_icon(
+                icon,
+                base_icon=base_icon,
+                format_title=format_title,
+                format_icon_state=format_icon_state,
+                render_icon=render_icon,
+            )
         except Exception:
             pass
         sleep(interval)
@@ -156,6 +287,8 @@ def create_tray_icon(
     toggle_floating_price,
     exit_application,
     format_title,
+    format_icon_state,
+    render_icon=render_windows_tray_price_icon,
     thread_factory=threading.Thread,
     sleep=time.sleep,
 ):
@@ -170,21 +303,25 @@ def create_tray_icon(
             icon_image = image_module.new("RGBA", (64, 64), (0, 0, 0, 0))
             image_draw_module.Draw(icon_image).ellipse([4, 4, 60, 60], fill="#e8b830")
 
+        initial_icon = render_icon(icon_image, format_icon_state())
         menu = (
             pystray.MenuItem("显示窗口", lambda icon, item: show_window(), default=True),
             pystray.MenuItem("刷新行情", lambda icon, item: refresh_price()),
             pystray.MenuItem("风险分析", lambda icon, item: open_risk_analysis()),
-            pystray.MenuItem("切换悬浮条", lambda icon, item: toggle_floating_price()),
+            pystray.MenuItem("切换价格显示", lambda icon, item: toggle_floating_price()),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("退出", lambda icon, item: exit_application()),
         )
 
-        icon = pystray.Icon("gold_monitor", icon_image, "金价监控", menu)
+        icon = pystray.Icon("gold_monitor", initial_icon, format_title(), menu)
         set_tray_icon(icon)
         thread_factory(
             target=lambda: update_tray_tooltip(
                 icon,
+                base_icon=icon_image,
                 format_title=format_title,
+                format_icon_state=format_icon_state,
+                render_icon=render_icon,
                 sleep=sleep,
             ),
             daemon=True,
