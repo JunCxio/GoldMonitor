@@ -12,7 +12,7 @@ bottle==0.13.4
     # via pywebview
 certifi==2026.7.22
     # via requests
-cffi==2.1.0
+cffi==2.1.1
     # via clr-loader
 charset-normalizer==3.4.9
     # via requests
@@ -49,7 +49,7 @@ markupsafe==3.0.3
     #   flask
     #   jinja2
     #   werkzeug
-packaging==26.2
+packaging==26.3
     # via
     #   pyinstaller
     #   pyinstaller-hooks-contrib
@@ -76,7 +76,7 @@ pystray==0.19.5
     # via -r requirements.txt
 pytest==9.1.1
     # via -r requirements.txt
-python-engineio==4.13.3
+python-engineio==4.13.4
     # via python-socketio
 python-socketio==5.16.3
     # via flask-socketio
