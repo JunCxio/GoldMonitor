@@ -48,7 +48,7 @@ from goldmonitor import notification_policy as notification_policy_core
 from goldmonitor import notification_transport as notification_transport_core
 from goldmonitor import operations_runtime as operations_runtime_core
 from goldmonitor import platform as platform_core
-from goldmonitor import platform_runtime as platform_runtime_core
+from goldmonitor import platform_integration_runtime as platform_integration_runtime_core
 from goldmonitor import portfolio as portfolio_core
 from goldmonitor import portfolio_alerts as portfolio_alerts_core
 from goldmonitor import portfolio_runtime as portfolio_runtime_core
@@ -471,114 +471,85 @@ def _set_alert_dialog_active(value):
 
 
 # ---------- 设置与系统集成 ----------
+def _get_platform_integration_runtime():
+    if runtime.platform_integration_runtime_instance is None:
+        runtime.platform_integration_runtime_instance = (
+            platform_integration_runtime_core.PlatformIntegrationRuntime(
+                runtime,
+                credential_target_prefix=CREDENTIAL_TARGET_PREFIX,
+                credential_service_name=CREDENTIAL_SERVICE_NAME,
+                macos_launch_agent_id=MACOS_LAUNCH_AGENT_ID,
+                run_key_path=RUN_KEY_PATH,
+                run_key_name=RUN_KEY_NAME,
+                is_frozen=lambda: getattr(sys, "frozen", False),
+                executable=lambda: sys.executable,
+                argv0=lambda: sys.argv[0],
+                os_name=lambda: os.name,
+                sys_platform=lambda: sys.platform,
+                home_dir=lambda: os.path.expanduser("~"),
+                runner=lambda: subprocess.run,
+                logger=logging,
+            )
+        )
+    return runtime.platform_integration_runtime_instance
+
+
 def _current_executable():
-    return platform_core.current_executable(
-        getattr(sys, "frozen", False),
-        sys.executable,
-        sys.argv[0],
-    )
+    return _get_platform_integration_runtime().current_executable()
 
 
 def _credential_target_name(key):
-    return platform_runtime_core.credential_target_name(
-        key,
-        CREDENTIAL_TARGET_PREFIX,
-    )
+    return _get_platform_integration_runtime().credential_target_name(key)
 
 
 def _credential_store_override():
-    return runtime.credential_test_store if isinstance(runtime.credential_test_store, dict) else None
+    return _get_platform_integration_runtime().credential_store_override()
 
 
 def _read_windows_credential(key):
-    return platform_runtime_core.read_windows_credential(
-        key,
-        os_name=os.name,
-        target_name=lambda name: _credential_target_name(name),
-        logger=logging,
-    )
+    return _get_platform_integration_runtime().read_windows_credential(key)
 
 
 def _write_windows_credential(key, value):
-    return platform_runtime_core.write_windows_credential(
-        key,
-        value,
-        os_name=os.name,
-        target_name=lambda name: _credential_target_name(name),
-        logger=logging,
-    )
+    return _get_platform_integration_runtime().write_windows_credential(key, value)
 
 
 def _delete_windows_credential(key):
-    return platform_runtime_core.delete_windows_credential(
-        key,
-        os_name=os.name,
-        target_name=lambda name: _credential_target_name(name),
-    )
+    return _get_platform_integration_runtime().delete_windows_credential(key)
 
 
 def _run_macos_security(args):
-    return platform_runtime_core.run_macos_security(
-        args,
-        runner=subprocess.run,
-    )
+    return _get_platform_integration_runtime().run_macos_security(args)
 
 
 def _read_macos_credential(key):
-    return platform_runtime_core.read_macos_credential(
-        key,
-        sys_platform=sys.platform,
-        service_name=CREDENTIAL_SERVICE_NAME,
-        run_security=lambda args: _run_macos_security(args),
-    )
+    return _get_platform_integration_runtime().read_macos_credential(key)
 
 
 def _write_macos_credential(key, value):
-    return platform_runtime_core.write_macos_credential(
-        key,
-        value,
-        sys_platform=sys.platform,
-        service_name=CREDENTIAL_SERVICE_NAME,
-        run_security=lambda args: _run_macos_security(args),
-        logger=logging,
-    )
+    return _get_platform_integration_runtime().write_macos_credential(key, value)
 
 
 def _delete_macos_credential(key):
-    return platform_runtime_core.delete_macos_credential(
-        key,
-        sys_platform=sys.platform,
-        service_name=CREDENTIAL_SERVICE_NAME,
-        run_security=lambda args: _run_macos_security(args),
-    )
+    return _get_platform_integration_runtime().delete_macos_credential(key)
 
 
 def read_credential_secret(key):
-    return platform_runtime_core.read_credential_secret(
+    return _get_platform_integration_runtime().read_credential_secret(
         key,
-        store_override=lambda: _credential_store_override(),
-        os_name=os.name,
-        sys_platform=sys.platform,
-        read_windows=lambda name: _read_windows_credential(name),
-        read_macos=lambda name: _read_macos_credential(name),
+        read_windows=_read_windows_credential,
+        read_macos=_read_macos_credential,
     )
 
 
 def write_credential_secret(key, value):
-    return platform_runtime_core.write_credential_secret(
+    return _get_platform_integration_runtime().write_credential_secret(
         key,
         value,
-        store_override=lambda: _credential_store_override(),
-        os_name=os.name,
-        sys_platform=sys.platform,
-        write_windows=(
-            lambda name, secret: _write_windows_credential(name, secret)
-        ),
-        delete_windows=lambda name: _delete_windows_credential(name),
-        write_macos=(
-            lambda name, secret: _write_macos_credential(name, secret)
-        ),
-        delete_macos=lambda name: _delete_macos_credential(name),
+        write_windows=_write_windows_credential,
+        delete_windows=_delete_windows_credential,
+        write_macos=_write_macos_credential,
+        delete_macos=_delete_macos_credential,
     )
 
 
@@ -611,7 +582,9 @@ def _get_settings_runtime():
         secret_keys=SECRET_SETTING_KEYS,
         read_secret=read_credential_secret,
         write_secret=write_credential_secret,
-        credentials_required=os.name == "nt" or sys.platform == "darwin",
+        credentials_required=(
+            _get_platform_integration_runtime().credentials_required()
+        ),
         platform_name=_runtime_platform,
         platform_capabilities=platform_capabilities,
         default_export_dir=EXPORT_DIR,
@@ -1228,52 +1201,26 @@ def build_portfolio_csv(kind="positions"):
 
 
 def _startup_command():
-    return platform_core.build_startup_command(_current_executable())
+    return _get_platform_integration_runtime().startup_command()
 
 
 def _macos_launch_agent_path():
-    return platform_core.macos_launch_agent_path(
-        os.path.expanduser("~"),
-        MACOS_LAUNCH_AGENT_ID,
-    )
+    return _get_platform_integration_runtime().macos_launch_agent_path()
 
 
 def _macos_startup_arguments():
-    return platform_core.build_macos_startup_arguments(
-        getattr(sys, "frozen", False),
-        sys.executable,
-        sys.argv[0],
-    )
+    return _get_platform_integration_runtime().macos_startup_arguments()
 
 
 def _set_macos_startup_enabled(enabled):
-    return platform_runtime_core.set_macos_startup_enabled(
-        enabled,
-        path=_macos_launch_agent_path(),
-        launch_agent_id=MACOS_LAUNCH_AGENT_ID,
-        startup_arguments=_macos_startup_arguments(),
-        current_executable=_current_executable(),
-        home_dir=os.path.expanduser("~"),
-        build_payload=platform_core.build_macos_launch_agent_payload,
-        runner=subprocess.run,
-    )
+    return _get_platform_integration_runtime().set_macos_startup_enabled(enabled)
 
 
 def set_startup_enabled(enabled):
-    if sys.platform == "darwin":
-        return _set_macos_startup_enabled(enabled)
-    supported, error = platform_core.startup_support_result(
+    return _get_platform_integration_runtime().set_startup_enabled(
         enabled,
-        sys.platform,
-        os.name,
-    )
-    if supported is not None:
-        return supported, error
-    return platform_runtime_core.set_windows_startup_enabled(
-        enabled,
-        run_key_path=RUN_KEY_PATH,
-        run_key_name=RUN_KEY_NAME,
-        startup_command=_startup_command(),
+        set_macos_startup=_set_macos_startup_enabled,
+        startup_command=_startup_command,
     )
 
 

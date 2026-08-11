@@ -26,6 +26,7 @@ def test_application_composes_routes_sockets_state_and_desktop_services():
     assert "alert_notification_runtime_core.AlertNotificationRuntime(" in source
     assert "daily_digest_runtime_core.DailyDigestRuntime(" in source
     assert "notification_adapters_core.NotificationAdapters(" in source
+    assert "platform_integration_runtime_core.PlatformIntegrationRuntime(" in source
     assert "settings_runtime_core.SettingsRuntime(" in source
     assert "history_runtime_core.HistoryReviewRuntime(" in source
     assert "floating_controller_core.FloatingPriceController(" in source
