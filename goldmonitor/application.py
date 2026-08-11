@@ -18,13 +18,14 @@ from flask_socketio import SocketIO, emit
 from goldmonitor import alert_rules as alert_rules_core
 from goldmonitor import alert_runtime as alert_runtime_core
 from goldmonitor import alert_log_runtime as alert_log_runtime_core
+from goldmonitor import alert_notification_runtime as alert_notification_runtime_core
 from goldmonitor import alert_profiles as alert_profiles_core
 from goldmonitor import app_state as app_state_core
 from goldmonitor import application_bootstrap as application_bootstrap_core
 from goldmonitor import application_state_bootstrap as application_state_bootstrap_core
 from goldmonitor import config_runtime as config_runtime_core
 from goldmonitor import desktop_ui as desktop_ui_core
-from goldmonitor import daily_digest as daily_digest_core
+from goldmonitor import daily_digest_runtime as daily_digest_runtime_core
 from goldmonitor import data_archive as data_archive_core
 from goldmonitor import data_archive_runtime as data_archive_runtime_core
 from goldmonitor import desktop_runtime as desktop_runtime_core
@@ -2079,20 +2080,19 @@ def _alert_cooldown_key(entry):
 
 
 def evaluate_alert_delivery(entry, settings=None, now=None):
-    settings = settings or get_settings_snapshot()
-    return notifications_core.evaluate_alert_delivery(entry, settings, runtime.alert_cooldown_state, now=now)
+    return _get_alert_notification_runtime().evaluate_delivery(
+        entry,
+        settings=settings,
+        now=now,
+    )
 
 
 def build_alert_template_values(alert_type, title, message):
-    with runtime.lock:
-        market = {
-            "price_usd": runtime.price_usd,
-            "price_rmb": runtime.price_rmb,
-            "usdcny_rate": runtime.usdcny_rate,
-            "gold_price_source": runtime.gold_price_source,
-            "usdcny_rate_source": runtime.usdcny_rate_source,
-        }
-    return notifications_core.build_alert_template_values(alert_type, title, message, market, _alert_level_map)
+    return _get_alert_notification_runtime().build_template_values(
+        alert_type,
+        title,
+        message,
+    )
 
 
 class EmailNotifier:
@@ -2167,6 +2167,71 @@ class DailyDigestWebhookNotifier:
         )
 
 
+def _get_alert_notification_runtime():
+    if runtime.alert_notification_runtime_instance is None:
+        runtime.alert_notification_runtime_instance = (
+            alert_notification_runtime_core.AlertNotificationRuntime(
+                runtime,
+                get_settings=lambda: get_settings_snapshot(),
+                generate_id=lambda: _generate_alert_log_id(),
+                select_news=lambda title: select_related_news(title),
+                save_entry=lambda entry: save_alert_log_entry(entry),
+                update_entry=lambda alert_id, updater: (
+                    _update_alert_log_entry_payload(alert_id, updater)
+                ),
+                emit=lambda event, payload: socketio.emit(event, payload),
+                build_history_state=lambda **kwargs: (
+                    build_price_history_state(**kwargs)
+                ),
+                send_desktop_notification=lambda title, body: (
+                    send_desktop_notification(title, body)
+                ),
+                play_system_alert_sound=lambda level: (
+                    play_system_alert_sound(level)
+                ),
+                show_alert_dialog=lambda title, message: (
+                    show_alert_dialog(title, message)
+                ),
+                email_sender=lambda *args, **kwargs: (
+                    EmailNotifier.send(*args, **kwargs)
+                ),
+                webhook_sender=lambda *args, **kwargs: (
+                    WebhookNotifier.send(*args, **kwargs)
+                ),
+                alert_level_map=_alert_level_map,
+                alert_log_limit=ALERT_LOG_MEMORY_LIMIT,
+                now_factory=datetime.now,
+                thread_factory=lambda **kwargs: threading.Thread(**kwargs),
+                logger=logging,
+            )
+        )
+    return runtime.alert_notification_runtime_instance
+
+
+def _get_daily_digest_runtime():
+    if runtime.daily_digest_runtime_instance is None:
+        runtime.daily_digest_runtime_instance = daily_digest_runtime_core.DailyDigestRuntime(
+            runtime,
+            state_path=lambda: DAILY_DIGEST_STATE_PATH,
+            get_settings=lambda: get_settings_snapshot(),
+            build_timeline=lambda **kwargs: build_event_timeline_state(**kwargs),
+            build_portfolio=lambda: build_portfolio_state(),
+            get_source_health=lambda: get_source_health_state(),
+            email_sender=lambda *args, **kwargs: (
+                DailyDigestEmailNotifier.send(*args, **kwargs)
+            ),
+            webhook_sender=lambda *args, **kwargs: (
+                DailyDigestWebhookNotifier.send(*args, **kwargs)
+            ),
+            emit=lambda event, payload: socketio.emit(event, payload),
+            timeline_max_limit=EVENT_TIMELINE_MAX_LIMIT,
+            timeline_types=EVENT_TIMELINE_TYPES,
+            now_factory=datetime.now,
+            logger=logging,
+        )
+    return runtime.daily_digest_runtime_instance
+
+
 def _notification_status(channel, label, status, message, **details):
     return notifications_core.notification_status(channel, label, status, message, **details)
 
@@ -2177,147 +2242,96 @@ def _notification_summary(notifications):
 
 def dispatch_alert(entry, title, blocking=True, on_update=None):
     """通知渠道分发: 根据设置决定哪些渠道发送"""
-    settings = get_settings_snapshot()
-    return notifications_core.dispatch_alert(
+    return _get_alert_notification_runtime().dispatch(
         entry,
         title,
-        settings,
-        email_sender=EmailNotifier.send,
-        webhook_sender=WebhookNotifier.send,
-        logger=logging,
         blocking=blocking,
-        thread_factory=threading.Thread if not blocking else None,
         on_update=on_update,
     )
 
 
 def _plan_alert_notifications(entry, settings=None):
-    return notifications_core.plan_alert_notifications(entry, settings or get_settings_snapshot())
+    return _get_alert_notification_runtime().plan_notifications(
+        entry,
+        settings=settings,
+    )
 
 
 def _persist_alert_notification_update(alert_id, notifications):
-    return notification_runtime_core.persist_alert_notification_update(
+    return _get_alert_notification_runtime().persist_notification_update(
         alert_id,
         notifications,
-        update_entry=_update_alert_log_entry_payload,
-        emit=socketio.emit,
     )
 
 
 def _deliver_alert_notifications(alert_id, entry, title, settings, notifications):
-    return notifications_core.deliver_alert_notifications(
+    return _get_alert_notification_runtime().deliver_notifications(
+        alert_id,
         entry,
         title,
         settings,
-        email_sender=EmailNotifier.send,
-        webhook_sender=WebhookNotifier.send,
-        notifications=notifications,
-        on_update=lambda items, item: _persist_alert_notification_update(alert_id, items),
-        logger=logging,
+        notifications,
+        persist_update=_persist_alert_notification_update,
     )
 
 
 def _start_alert_notification_delivery(entry, title, settings=None):
-    return notification_runtime_core.start_alert_notification_delivery(
+    return _get_alert_notification_runtime().start_delivery(
         entry,
         title,
-        get_settings=lambda: settings or get_settings_snapshot(),
+        settings=settings,
         deliver=_deliver_alert_notifications,
-        thread_factory=threading.Thread,
     )
 
 
 def _daily_digest_state_store(now_factory=None):
-    return daily_digest_core.DailyDigestStateStore(
-        DAILY_DIGEST_STATE_PATH,
-        now_factory=now_factory or datetime.now,
-    )
+    return _get_daily_digest_runtime().state_store(now_factory=now_factory)
 
 
 def get_daily_digest_state():
-    return _daily_digest_state_store().load()
+    return _get_daily_digest_runtime().get_state()
 
 
 def selected_daily_digest_channels(settings=None):
-    return notification_runtime_core.selected_daily_digest_channels(
-        settings or get_settings_snapshot()
+    return _get_daily_digest_runtime().selected_channels(
+        settings=settings,
     )
 
 
 def build_daily_digest_snapshot(now=None):
-    now = now or datetime.now()
-    return notification_runtime_core.build_daily_digest_snapshot(
-        now=now,
-        build_timeline=build_event_timeline_state,
-        build_portfolio=build_portfolio_state,
-        get_source_health=get_source_health_state,
-        timeline_max_limit=EVENT_TIMELINE_MAX_LIMIT,
-        timeline_types=EVENT_TIMELINE_TYPES,
-    )
+    return _get_daily_digest_runtime().build_snapshot(now=now)
 
 
 def daily_digest_status_payload(now=None):
-    now = now or datetime.now()
-    return notification_runtime_core.daily_digest_status_payload(
-        now=now,
-        settings=get_settings_snapshot(),
-        state=get_daily_digest_state(),
-    )
+    return _get_daily_digest_runtime().status_payload(now=now)
 
 
 def _dispatch_daily_digest(digest, settings, blocking=False):
-    return notification_runtime_core.dispatch_daily_digest(
+    return _get_daily_digest_runtime().dispatch(
         digest,
-        settings,
-        email_sender=DailyDigestEmailNotifier.send,
-        webhook_sender=DailyDigestWebhookNotifier.send,
-        logger=logging,
+        settings=settings,
+        blocking=blocking,
     )
 
 
 def run_daily_digest_once(now=None, force=False, manual=False, blocking=False):
-    now = now or datetime.now()
-    settings = get_settings_snapshot()
-    return notification_runtime_core.run_daily_digest_once(
+    return _get_daily_digest_runtime().run_once(
         now=now,
         force=force,
         manual=manual,
-        settings=settings,
-        lock=runtime.daily_digest_lock,
-        state_store=_daily_digest_state_store(now_factory=lambda: now),
         build_digest=lambda value: build_daily_digest_snapshot(now=value),
-        email_sender=DailyDigestEmailNotifier.send,
-        webhook_sender=DailyDigestWebhookNotifier.send,
-        emit_status=socketio.emit,
         status_payload=lambda value: daily_digest_status_payload(now=value),
-        logger=logging,
+        blocking=blocking,
     )
 
 
 def emit_alert(entry, title):
-    settings = get_settings_snapshot()
-    return notification_runtime_core.emit_alert(
+    return _get_alert_notification_runtime().emit_alert(
         entry,
         title,
-        settings=settings,
-        market_lock=runtime.lock,
-        market_price=lambda mode: runtime.price_usd if mode == "usd" else runtime.price_rmb if mode == "rmb" else None,
-        generate_id=_generate_alert_log_id,
         evaluate_delivery=evaluate_alert_delivery,
         plan_notifications=_plan_alert_notifications,
-        select_news=select_related_news,
-        alert_log=runtime.alert_log,
-        alert_log_limit=ALERT_LOG_MEMORY_LIMIT,
-        save_entry=save_alert_log_entry,
-        emit=socketio.emit,
         start_delivery=_start_alert_notification_delivery,
-        build_history_state=build_price_history_state,
-        local_delivery_enabled=notifications_core.alert_local_delivery_enabled,
-        send_desktop_notification=send_desktop_notification,
-        play_system_alert_sound=play_system_alert_sound,
-        show_alert_dialog=show_alert_dialog,
-        now_factory=datetime.now,
-        logger=logging,
     )
 
 
