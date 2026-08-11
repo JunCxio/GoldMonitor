@@ -2287,29 +2287,38 @@ def initialize_market_cache():
         runtime.usdcny_rate_error = "启动时使用缓存汇率"
 
 
+def _get_instance_runtime():
+    if runtime.instance_runtime_instance is None:
+        runtime.instance_runtime_instance = instance_runtime_core.InstanceRuntime(
+            runtime,
+            default_host=DEFAULT_HOST,
+            default_port=DEFAULT_PORT,
+            app_name=APP_NAME,
+            proxies=REQ_PROXY,
+            socket_factory=lambda: socket.socket,
+            request_get=lambda: requests.get,
+            request_post=lambda: requests.post,
+            browser_open=lambda: __import__("webbrowser").open,
+            clock=time.time,
+            sleep=time.sleep,
+        )
+    return runtime.instance_runtime_instance
+
+
 def find_available_port(preferred=DEFAULT_PORT):
-    return instance_runtime_core.find_available_port(
-        preferred,
-        host=DEFAULT_HOST,
-        socket_factory=socket.socket,
-    )
+    return _get_instance_runtime().find_available_port(preferred)
 
 
 def local_app_url(host=DEFAULT_HOST, port=DEFAULT_PORT, path="/"):
-    return instance_runtime_core.local_app_url(host, port, path)
+    return _get_instance_runtime().local_app_url(host, port, path)
 
 
 def is_tcp_port_open(host, port, timeout=0.05):
-    return instance_runtime_core.is_tcp_port_open(
-        host,
-        port,
-        timeout=timeout,
-        socket_factory=socket.socket,
-    )
+    return _get_instance_runtime().is_tcp_port_open(host, port, timeout)
 
 
 def is_goldmonitor_health_payload(payload):
-    return instance_runtime_core.is_application_health_payload(payload, APP_NAME)
+    return _get_instance_runtime().is_application_health_payload(payload)
 
 
 def find_existing_goldmonitor_instance(
@@ -2320,12 +2329,10 @@ def find_existing_goldmonitor_instance(
     port_probe=None,
     timeout=0.2,
 ):
-    return instance_runtime_core.find_existing_instance(
+    return _get_instance_runtime().find_existing_instance(
         host,
         preferred,
-        app_name=APP_NAME,
-        proxies=REQ_PROXY,
-        request_get=request_get or requests.get,
+        request_get_override=request_get,
         port_probe=port_probe or (lambda *args: is_tcp_port_open(*args)),
         port_count=port_count,
         timeout=timeout,
@@ -2340,16 +2347,12 @@ def open_existing_goldmonitor_instance(
     browser_open=None,
     timeout=0.5,
 ):
-    if browser_open is None:
-        import webbrowser
-        browser_open = webbrowser.open
-    return instance_runtime_core.open_existing_instance(
+    return _get_instance_runtime().open_existing_instance(
         host,
         port,
         desktop_mode=desktop_mode,
-        proxies=REQ_PROXY,
-        request_post=request_post or requests.post,
-        browser_open=browser_open,
+        request_post_override=request_post,
+        browser_open_override=browser_open,
         timeout=timeout,
     )
 
@@ -4147,14 +4150,7 @@ def start_daily_digest_scheduler():
 
 
 def wait_for_server_ready(timeout=3.0):
-    return instance_runtime_core.wait_for_server_ready(
-        DEFAULT_HOST,
-        runtime.server_port,
-        timeout=timeout,
-        socket_factory=socket.socket,
-        clock=time.time,
-        sleep=time.sleep,
-    )
+    return _get_instance_runtime().wait_for_server_ready(timeout)
 
 
 # ---------- 系统托盘 ----------

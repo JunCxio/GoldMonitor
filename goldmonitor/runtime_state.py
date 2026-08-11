@@ -103,6 +103,7 @@ class ApplicationRuntimeState:
     update_runtime_instance: Any = None
     export_runtime_instance: Any = None
     risk_analysis_runtime_instance: Any = None
+    instance_runtime_instance: Any = None
     floating_controller_instance: Any = None
     taskbar_controller_instance: Any = None
 
