@@ -42,8 +42,8 @@ from goldmonitor import market_clients as market_clients_core
 from goldmonitor import market_data as market_data_core
 from goldmonitor import market_runtime as market_runtime_core
 from goldmonitor import news as news_core
+from goldmonitor import notification_adapters as notification_adapters_core
 from goldmonitor import notifications as notifications_core
-from goldmonitor import notification_runtime as notification_runtime_core
 from goldmonitor import operations_runtime as operations_runtime_core
 from goldmonitor import platform as platform_core
 from goldmonitor import platform_runtime as platform_runtime_core
@@ -2020,31 +2020,11 @@ def build_diagnostics_clipboard_text(report=None):
 
 
 def show_alert_dialog(title, message):
-    return notification_runtime_core.show_alert_dialog(
-        title,
-        message,
-        enabled=get_settings_snapshot().get("alert_dialog_enabled", True),
-        active_lock=runtime.alert_dialog_lock,
-        get_active=lambda: runtime.alert_dialog_active,
-        set_active=_set_alert_dialog_active,
-        sys_platform=sys.platform,
-        os_name=os.name,
-        applescript_string=_applescript_string,
-        run_applescript=_run_macos_osascript,
-        thread_factory=threading.Thread,
-        logger=logging,
-    )
+    return _get_notification_adapters().desktop.show_dialog(title, message)
 
 
 def play_system_alert_sound(level):
-    return notification_runtime_core.play_system_alert_sound(
-        level,
-        enabled=get_settings_snapshot().get("alert_sound_enabled", True),
-        sys_platform=sys.platform,
-        path_exists=os.path.exists,
-        popen=subprocess.Popen,
-        run_applescript=_run_macos_osascript,
-    )
+    return _get_notification_adapters().desktop.play_sound(level)
 
 
 def select_related_news(title, items=None, limit=3):
@@ -2100,17 +2080,12 @@ class EmailNotifier:
 
     @staticmethod
     def send(alert_type, title, message, timeout=10, blocking=False):
-        return notification_runtime_core.send_email_alert(
-            alert_type, title, message,
-            get_settings=get_settings_snapshot,
-            build_values=build_alert_template_values,
-            smtp_module=smtplib,
-            default_subject_template=DEFAULT_EMAIL_SUBJECT_TEMPLATE,
-            default_body_template=DEFAULT_EMAIL_BODY_TEMPLATE,
+        return _get_notification_adapters().email.send_alert(
+            alert_type,
+            title,
+            message,
             timeout=timeout,
             blocking=blocking,
-            thread_factory=threading.Thread,
-            logger=logging,
         )
 
 
@@ -2119,52 +2094,88 @@ class WebhookNotifier:
 
     @staticmethod
     def send(alert_type, title, message, timeout=8, blocking=False):
-        return notification_runtime_core.send_webhook_alert(
-            alert_type, title, message,
-            get_settings=get_settings_snapshot,
-            build_values=build_alert_template_values,
-            post=requests.post,
-            require_https_url=_require_https_url,
-            app_name="GoldMonitor",
-            app_version=APP_VERSION,
-            user_agent=HTTP_USER_AGENT,
-            proxies=REQ_PROXY,
+        return _get_notification_adapters().webhook.send_alert(
+            alert_type,
+            title,
+            message,
             timeout=timeout,
             blocking=blocking,
-            thread_factory=threading.Thread,
-            logger=logging,
         )
 
 
 class DailyDigestEmailNotifier:
     @staticmethod
     def send(digest, timeout=10, blocking=False):
-        return notification_runtime_core.send_daily_digest_email(
+        return _get_notification_adapters().email.send_digest(
             digest,
-            get_settings=get_settings_snapshot,
-            smtp_module=smtplib,
             timeout=timeout,
             blocking=blocking,
-            thread_factory=threading.Thread,
-            logger=logging,
         )
 
 
 class DailyDigestWebhookNotifier:
     @staticmethod
     def send(digest, timeout=8, blocking=False):
-        return notification_runtime_core.send_daily_digest_webhook(
+        return _get_notification_adapters().webhook.send_digest(
             digest,
-            get_settings=get_settings_snapshot,
-            post=requests.post,
-            require_https_url=_require_https_url,
-            user_agent=HTTP_USER_AGENT,
-            proxies=REQ_PROXY,
             timeout=timeout,
             blocking=blocking,
-            thread_factory=threading.Thread,
-            logger=logging,
         )
+
+
+def _get_notification_adapters():
+    if runtime.notification_adapters_instance is None:
+        runtime.notification_adapters_instance = (
+            notification_adapters_core.NotificationAdapters(
+                desktop=notification_adapters_core.DesktopNotificationAdapter(
+                    get_settings=lambda: get_settings_snapshot(),
+                    active_lock=lambda: runtime.alert_dialog_lock,
+                    get_active=lambda: runtime.alert_dialog_active,
+                    set_active=lambda value: _set_alert_dialog_active(value),
+                    base_dir=lambda: _basedir,
+                    app_id=APP_USER_MODEL_ID,
+                    applescript_string=_applescript_string,
+                    run_applescript=lambda *args, **kwargs: (
+                        _run_macos_osascript(*args, **kwargs)
+                    ),
+                    sys_platform=lambda: sys.platform,
+                    os_name=lambda: os.name,
+                    path_exists=lambda path: os.path.exists(path),
+                    popen=lambda *args, **kwargs: subprocess.Popen(
+                        *args,
+                        **kwargs,
+                    ),
+                    thread_factory=lambda **kwargs: threading.Thread(**kwargs),
+                    logger=logging,
+                ),
+                email=notification_adapters_core.EmailNotificationAdapter(
+                    get_settings=lambda: get_settings_snapshot(),
+                    build_alert_values=lambda *args: (
+                        build_alert_template_values(*args)
+                    ),
+                    smtp_module=lambda: smtplib,
+                    default_subject_template=DEFAULT_EMAIL_SUBJECT_TEMPLATE,
+                    default_body_template=DEFAULT_EMAIL_BODY_TEMPLATE,
+                    thread_factory=lambda **kwargs: threading.Thread(**kwargs),
+                    logger=logging,
+                ),
+                webhook=notification_adapters_core.WebhookNotificationAdapter(
+                    get_settings=lambda: get_settings_snapshot(),
+                    build_alert_values=lambda *args: (
+                        build_alert_template_values(*args)
+                    ),
+                    post=lambda *args, **kwargs: requests.post(*args, **kwargs),
+                    require_https_url=_require_https_url,
+                    app_name="GoldMonitor",
+                    app_version=APP_VERSION,
+                    user_agent=HTTP_USER_AGENT,
+                    proxies=REQ_PROXY,
+                    thread_factory=lambda **kwargs: threading.Thread(**kwargs),
+                    logger=logging,
+                ),
+            )
+        )
+    return runtime.notification_adapters_instance
 
 
 def _get_alert_notification_runtime():
@@ -2877,16 +2888,7 @@ def fetch_market_data_result():
 
 # ---------- 桌面通知 ----------
 def send_desktop_notification(title, body):
-    return notification_runtime_core.send_desktop_notification(
-        title,
-        body,
-        sys_platform=sys.platform,
-        base_dir=_basedir,
-        app_id=APP_USER_MODEL_ID,
-        applescript_string=_applescript_string,
-        run_applescript=_run_macos_osascript,
-        path_exists=os.path.exists,
-    )
+    return _get_notification_adapters().desktop.send(title, body)
 
 
 # ---------- 资讯 ----------

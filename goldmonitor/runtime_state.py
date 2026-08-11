@@ -98,6 +98,7 @@ class ApplicationRuntimeState:
     diagnostics_runtime_instance: Any = None
     alert_notification_runtime_instance: Any = None
     daily_digest_runtime_instance: Any = None
+    notification_adapters_instance: Any = None
     floating_controller_instance: Any = None
     taskbar_controller_instance: Any = None
 
