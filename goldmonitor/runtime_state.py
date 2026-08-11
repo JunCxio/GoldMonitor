@@ -101,6 +101,7 @@ class ApplicationRuntimeState:
     notification_adapters_instance: Any = None
     platform_integration_runtime_instance: Any = None
     update_runtime_instance: Any = None
+    export_runtime_instance: Any = None
     floating_controller_instance: Any = None
     taskbar_controller_instance: Any = None
 

@@ -31,6 +31,7 @@ from goldmonitor import data_archive_runtime as data_archive_runtime_core
 from goldmonitor import desktop_runtime as desktop_runtime_core
 from goldmonitor import desktop_status as desktop_status_core
 from goldmonitor import diagnostics_runtime as diagnostics_runtime_core
+from goldmonitor import export_runtime as export_runtime_core
 from goldmonitor import history_runtime as history_runtime_core
 from goldmonitor import floating_controller as floating_controller_core
 from goldmonitor import taskbar_controller as taskbar_controller_core
@@ -1452,98 +1453,89 @@ def preview_config_backup(payload):
     )
 
 
+def _get_export_runtime():
+    if runtime.export_runtime_instance is None:
+        runtime.export_runtime_instance = export_runtime_core.ExportRuntime(
+            runtime,
+            get_settings=lambda: get_settings_snapshot(),
+            default_export_dir=lambda: EXPORT_DIR,
+            check_actions=lambda: EXPORT_DIR_CHECK_ACTIONS,
+            home_dir=lambda: os.path.expanduser("~"),
+            writer=lambda export_dir, filename, content: (
+                support_files_core.save_export_file(
+                    export_dir,
+                    filename,
+                    content,
+                )
+            ),
+            now_factory=datetime.now,
+        )
+    return runtime.export_runtime_instance
+
+
 def resolve_export_dir(settings=None):
-    return operations_runtime_core.resolve_export_dir(
-        get_settings_snapshot() if settings is None else settings,
-        EXPORT_DIR,
-    )
+    return _get_export_runtime().resolve_export_dir(settings)
 
 
 def _probe_export_dir_writable(export_dir):
-    return operations_runtime_core.probe_export_dir_writable(export_dir)
+    return _get_export_runtime().probe_export_dir_writable(export_dir)
 
 
 def build_export_dir_check(settings=None, probe_writer=None):
-    return operations_runtime_core.build_export_dir_check(
-        resolve_export_dir(settings),
-        actions=EXPORT_DIR_CHECK_ACTIONS,
+    return _get_export_runtime().build_export_dir_check(
+        settings,
         probe_writer=probe_writer or _probe_export_dir_writable,
     )
 
 
 def _export_dir_dialog_initial_dir(settings=None):
-    return operations_runtime_core.export_dir_dialog_initial_dir(
-        resolve_export_dir(settings),
-        home_dir=os.path.expanduser("~"),
-    )
+    return _get_export_runtime().export_dir_dialog_initial_dir(settings)
 
 
 def _normalize_export_dir_selection(selection):
-    return operations_runtime_core.normalize_export_dir_selection(selection)
+    return _get_export_runtime().normalize_export_dir_selection(selection)
 
 
 def build_export_dir_picker_payload(dialog, settings=None):
-    return operations_runtime_core.build_export_dir_picker_payload(
-        dialog,
-        _export_dir_dialog_initial_dir(settings),
-    )
+    return _get_export_runtime().build_export_dir_picker_payload(dialog, settings)
 
 
 def reset_last_export_status():
-
-    with runtime.last_export_status_lock:
-        runtime.last_export_status = {}
+    return _get_export_runtime().reset_last_export_status()
 
 
 def get_last_export_status():
-    with runtime.last_export_status_lock:
-        return dict(runtime.last_export_status) if isinstance(runtime.last_export_status, dict) else {}
+    return _get_export_runtime().get_last_export_status()
 
 
 def _set_last_export_status(status):
-
-    with runtime.last_export_status_lock:
-        runtime.last_export_status = dict(status)
+    return _get_export_runtime().set_last_export_status(status)
 
 
 def _export_failure_category(exc):
-    return operations_runtime_core.export_failure_category(exc)
+    return _get_export_runtime().export_failure_category(exc)
 
 
 def _export_failure_message(category, export_dir):
-    return operations_runtime_core.export_failure_message(category, export_dir)
+    return _get_export_runtime().export_failure_message(category, export_dir)
 
 
 def _build_export_failure_status(filename, export_dir, exc):
-    return operations_runtime_core.build_export_failure_status(
-        filename,
-        export_dir,
-        exc,
-        now_factory=datetime.now,
-    )
+    return _get_export_runtime().build_export_failure_status(filename, export_dir, exc)
 
 
 def build_export_status_snapshot(settings=None):
-    return operations_runtime_core.build_export_status_snapshot(
-        build_export_dir_check(settings),
-        get_last_export_status(),
-    )
+    return _get_export_runtime().build_export_status_snapshot(settings)
 
 
 def build_export_error_payload(default_message):
-    return operations_runtime_core.build_export_error_payload(
-        default_message,
-        get_last_export_status(),
-        build_export_dir_check(),
-    )
+    return _get_export_runtime().build_export_error_payload(default_message)
 
 
 def build_open_exports_folder_error_payload(export_dir, exc):
-    return operations_runtime_core.build_open_exports_folder_error_payload(
+    return _get_export_runtime().build_open_exports_folder_error_payload(
         export_dir,
         exc,
-        directory_status=build_export_dir_check(),
-        now_factory=datetime.now,
     )
 
 
@@ -1570,14 +1562,7 @@ def choose_export_dir_for_desktop():
 
 
 def save_export_file(filename, content):
-    return operations_runtime_core.save_export_file(
-        filename,
-        content,
-        export_dir=resolve_export_dir(),
-        writer=support_files_core.save_export_file,
-        set_status=_set_last_export_status,
-        now_factory=datetime.now,
-    )
+    return _get_export_runtime().save_export_file(filename, content)
 
 
 def _data_archive_paths():
