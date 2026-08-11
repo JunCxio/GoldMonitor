@@ -22,6 +22,7 @@ def test_application_composes_routes_sockets_state_and_desktop_services():
     source = read_text("goldmonitor/application.py")
 
     assert "application_state_bootstrap_core.ApplicationStateBootstrap(" in source
+    assert "alert_log_runtime_core.AlertLogRuntime(" in source
     assert "settings_runtime_core.SettingsRuntime(" in source
     assert "history_runtime_core.HistoryReviewRuntime(" in source
     assert "floating_controller_core.FloatingPriceController(" in source

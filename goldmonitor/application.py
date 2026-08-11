@@ -17,6 +17,7 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 from flask_socketio import SocketIO, emit
 from goldmonitor import alert_rules as alert_rules_core
 from goldmonitor import alert_runtime as alert_runtime_core
+from goldmonitor import alert_log_runtime as alert_log_runtime_core
 from goldmonitor import alert_profiles as alert_profiles_core
 from goldmonitor import app_state as app_state_core
 from goldmonitor import application_bootstrap as application_bootstrap_core
@@ -3196,74 +3197,96 @@ def _alert_log_store():
     )
 
 
+def _get_alert_log_runtime():
+    return alert_log_runtime_core.AlertLogRuntime(
+        runtime,
+        store_factory=_alert_log_store,
+        alert_level_label=alert_level_label,
+        now_factory=datetime.now,
+    )
+
+
 def _alert_log_db_path():
-    return _alert_log_store().db_path()
+    return _get_alert_log_runtime().db_path()
 
 
 def _generate_alert_log_id():
-    return AlertLogStore.generate_id()
+    return _get_alert_log_runtime().generate_id()
 
 
 def _coerce_alert_log_bool(value, default=False):
-    return AlertLogStore.coerce_bool(value, default)
+    return _get_alert_log_runtime().coerce_bool(value, default)
 
 
 def normalize_alert_log_entry(entry, default_read=False):
-    return _alert_log_store().normalize_entry(entry, default_read=default_read)
+    return _get_alert_log_runtime().normalize_entry(
+        entry,
+        default_read=default_read,
+    )
 
 
 def _connect_alert_log_db():
-    return _alert_log_store().connect_db()
+    return _get_alert_log_runtime().connect_db()
 
 
 def save_alert_log_entry(entry):
-    return _alert_log_store().save_entry(entry)
+    return _get_alert_log_runtime().save_entry(entry)
 
 
 def load_alert_log_archive(limit=ALERT_LOG_MEMORY_LIMIT):
-    return _alert_log_store().load_archive(limit=limit)
+    return _get_alert_log_runtime().load_archive(limit=limit)
 
 
 def clear_alert_log_archive():
-    return _alert_log_store().clear_archive()
+    return _get_alert_log_runtime().clear_archive()
 
 
 def _apply_alert_log_status(entry, read=None, acknowledged=None):
-    return _alert_log_store().apply_status(entry, read=read, acknowledged=acknowledged)
+    return _get_alert_log_runtime().apply_status(
+        entry,
+        read=read,
+        acknowledged=acknowledged,
+    )
 
 
 def _apply_alert_log_handling(entry, handled=None, note=None):
-    return _alert_log_store().apply_handling(entry, handled=handled, note=note)
+    return _get_alert_log_runtime().apply_handling(
+        entry,
+        handled=handled,
+        note=note,
+    )
 
 
 def _replace_alert_log_entry(updated):
-    return AlertLogStore.replace_memory_entry(runtime.alert_log, updated)
+    return _get_alert_log_runtime().replace_memory_entry(updated)
 
 
 def _update_alert_log_entry_payload(alert_id, updater):
-    return _alert_log_store().update_entry_payload(alert_id, updater, memory_entries=runtime.alert_log)
+    return _get_alert_log_runtime().update_entry_payload(alert_id, updater)
 
 
 def update_alert_log_status(alert_id, read=None, acknowledged=None):
-    return _update_alert_log_entry_payload(
+    return _get_alert_log_runtime().update_status(
         alert_id,
-        lambda entry: _apply_alert_log_status(entry, read=read, acknowledged=acknowledged),
+        read=read,
+        acknowledged=acknowledged,
     )
 
 
 def update_alert_log_handling(alert_id, handled=None, note=None):
-    return _update_alert_log_entry_payload(
+    return _get_alert_log_runtime().update_handling(
         alert_id,
-        lambda entry: _apply_alert_log_handling(entry, handled=handled, note=note),
+        handled=handled,
+        note=note,
     )
 
 
 def _alert_resend_title(entry):
-    return str(entry.get("title") or f"金价预警 - {alert_level_label(entry.get('type'))}")
+    return _get_alert_log_runtime().resend_title(entry)
 
 
 def resend_alert_notification(alert_id, blocking=False, start_delivery=True):
-    return notification_runtime_core.resend_alert_notification(
+    return _get_alert_log_runtime().resend_notification(
         alert_id,
         settings=get_settings_snapshot(),
         blocking=blocking,
@@ -3275,20 +3298,19 @@ def resend_alert_notification(alert_id, blocking=False, start_delivery=True):
         persist_update=_persist_alert_notification_update,
         start_notification_delivery=_start_alert_notification_delivery,
         title_builder=_alert_resend_title,
-        now_factory=datetime.now,
     )
 
 
 def alert_log_export_entries(limit=ALERT_LOG_EXPORT_LIMIT):
-    return _alert_log_store().export_entries(runtime.alert_log, limit=limit)
+    return _get_alert_log_runtime().export_entries(limit=limit)
 
 
 def _format_alert_notifications(entry):
-    return AlertLogStore.format_notifications(entry)
+    return _get_alert_log_runtime().format_notifications(entry)
 
 
 def build_alert_log_csv():
-    return _alert_log_store().build_csv(runtime.alert_log)
+    return _get_alert_log_runtime().build_csv()
 
 
 def _history_number(value):
