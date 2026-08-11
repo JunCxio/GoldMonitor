@@ -2,7 +2,9 @@ import logging
 from datetime import datetime
 
 from goldmonitor import daily_digest as daily_digest_core
-from goldmonitor import notification_runtime as notification_runtime_core
+from goldmonitor import (
+    daily_digest_delivery_runtime as daily_digest_delivery_runtime_core,
+)
 
 
 class DailyDigestRuntime:
@@ -50,13 +52,13 @@ class DailyDigestRuntime:
         return self.state_store().load()
 
     def selected_channels(self, settings=None):
-        return notification_runtime_core.selected_daily_digest_channels(
+        return daily_digest_delivery_runtime_core.selected_daily_digest_channels(
             self.settings_snapshot(settings or self.get_settings())
         )
 
     def build_snapshot(self, now=None):
         now = now or self.now_factory()
-        return notification_runtime_core.build_daily_digest_snapshot(
+        return daily_digest_delivery_runtime_core.build_daily_digest_snapshot(
             now=now,
             build_timeline=self.build_timeline,
             build_portfolio=self.build_portfolio,
@@ -67,14 +69,14 @@ class DailyDigestRuntime:
 
     def status_payload(self, now=None):
         now = now or self.now_factory()
-        return notification_runtime_core.daily_digest_status_payload(
+        return daily_digest_delivery_runtime_core.daily_digest_status_payload(
             now=now,
             settings=self.settings_snapshot(),
             state=self.get_state(),
         )
 
     def dispatch(self, digest, settings=None, blocking=False):
-        return notification_runtime_core.dispatch_daily_digest(
+        return daily_digest_delivery_runtime_core.dispatch_daily_digest(
             digest,
             self.settings_snapshot(settings),
             email_sender=self.email_sender,
@@ -95,7 +97,7 @@ class DailyDigestRuntime:
         now = now or self.now_factory()
         build_digest = build_digest or self.build_snapshot
         status_payload = status_payload or self.status_payload
-        return notification_runtime_core.run_daily_digest_once(
+        return daily_digest_delivery_runtime_core.run_daily_digest_once(
             now=now,
             force=force,
             manual=manual,

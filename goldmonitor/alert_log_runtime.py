@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from goldmonitor import notification_runtime as notification_runtime_core
+from goldmonitor import alert_delivery_runtime as alert_delivery_runtime_core
 
 
 class AlertLogRuntime:
@@ -18,7 +18,7 @@ class AlertLogRuntime:
         self.alert_level_label = alert_level_label
         self.notification_resender = (
             notification_resender
-            or notification_runtime_core.resend_alert_notification
+            or alert_delivery_runtime_core.resend_alert_notification
         )
         self.now_factory = now_factory
 

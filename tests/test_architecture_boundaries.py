@@ -37,6 +37,17 @@ def test_application_composes_routes_sockets_state_and_desktop_services():
     assert "@app.route(" not in source
 
 
+def test_notification_runtime_only_reexports_split_responsibilities():
+    source = read_text("goldmonitor/notification_runtime.py")
+
+    assert "from goldmonitor.alert_delivery_runtime import" in source
+    assert "from goldmonitor.daily_digest_delivery_runtime import" in source
+    assert "from goldmonitor.desktop_notification_runtime import" in source
+    assert "from goldmonitor.notification_channel_runtime import" in source
+    assert "def " not in source
+    assert len(source.splitlines()) < 60
+
+
 def test_runtime_data_initialization_has_one_explicit_entrypoint():
     source = read_text("goldmonitor/application.py")
     stripped_lines = [line.strip() for line in source.splitlines()]

@@ -2,7 +2,7 @@ import logging
 import threading
 from datetime import datetime
 
-from goldmonitor import notification_runtime as notification_runtime_core
+from goldmonitor import alert_delivery_runtime as alert_delivery_runtime_core
 from goldmonitor import notifications as notifications_core
 
 
@@ -96,7 +96,7 @@ class AlertNotificationRuntime:
         )
 
     def persist_notification_update(self, alert_id, notifications):
-        return notification_runtime_core.persist_alert_notification_update(
+        return alert_delivery_runtime_core.persist_alert_notification_update(
             alert_id,
             notifications,
             update_entry=self.update_entry,
@@ -127,7 +127,7 @@ class AlertNotificationRuntime:
 
     def start_delivery(self, entry, title, settings=None, *, deliver=None):
         deliver = deliver or self.deliver_notifications
-        return notification_runtime_core.start_alert_notification_delivery(
+        return alert_delivery_runtime_core.start_alert_notification_delivery(
             entry,
             title,
             get_settings=lambda: self.settings_snapshot(
@@ -149,7 +149,7 @@ class AlertNotificationRuntime:
         evaluate_delivery = evaluate_delivery or self.evaluate_delivery
         plan_notifications = plan_notifications or self.plan_notifications
         start_delivery = start_delivery or self.start_delivery
-        return notification_runtime_core.emit_alert(
+        return alert_delivery_runtime_core.emit_alert(
             entry,
             title,
             settings=self.settings_snapshot(),

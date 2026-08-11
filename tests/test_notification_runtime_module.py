@@ -3,7 +3,7 @@ import threading
 
 
 def test_alert_delivery_start_snapshots_mutable_inputs():
-    from goldmonitor.notification_runtime import start_alert_notification_delivery
+    from goldmonitor.alert_delivery_runtime import start_alert_notification_delivery
 
     calls = []
 
@@ -32,7 +32,7 @@ def test_alert_delivery_start_snapshots_mutable_inputs():
 
 
 def test_daily_digest_runtime_records_scheduled_result_and_emits_status():
-    from goldmonitor.notification_runtime import run_daily_digest_once
+    from goldmonitor.daily_digest_delivery_runtime import run_daily_digest_once
 
     state = {"last_completed_at": ""}
     emitted = []
@@ -70,7 +70,7 @@ def test_daily_digest_runtime_records_scheduled_result_and_emits_status():
 
 
 def test_emit_alert_builds_muted_record_without_local_delivery():
-    from goldmonitor.notification_runtime import emit_alert
+    from goldmonitor.alert_delivery_runtime import emit_alert
 
     alerts = []
     emitted = []
@@ -108,7 +108,7 @@ def test_emit_alert_builds_muted_record_without_local_delivery():
 
 
 def test_desktop_notification_uses_macos_applescript_contract():
-    from goldmonitor.notification_runtime import send_desktop_notification
+    from goldmonitor.desktop_notification_runtime import send_desktop_notification
 
     scripts = []
     send_desktop_notification(
@@ -122,3 +122,54 @@ def test_desktop_notification_uses_macos_applescript_contract():
     )
 
     assert scripts == [('display notification "内容" with title "标题"', {"wait": False})]
+
+
+def test_notification_runtime_reexports_split_module_contracts():
+    from goldmonitor import alert_delivery_runtime
+    from goldmonitor import daily_digest_delivery_runtime
+    from goldmonitor import desktop_notification_runtime
+    from goldmonitor import notification_channel_runtime
+    from goldmonitor import notification_runtime
+
+    expected = {
+        "emit_alert": alert_delivery_runtime.emit_alert,
+        "persist_alert_notification_update": (
+            alert_delivery_runtime.persist_alert_notification_update
+        ),
+        "resend_alert_notification": alert_delivery_runtime.resend_alert_notification,
+        "start_alert_notification_delivery": (
+            alert_delivery_runtime.start_alert_notification_delivery
+        ),
+        "build_daily_digest_snapshot": (
+            daily_digest_delivery_runtime.build_daily_digest_snapshot
+        ),
+        "daily_digest_status_payload": (
+            daily_digest_delivery_runtime.daily_digest_status_payload
+        ),
+        "dispatch_daily_digest": (
+            daily_digest_delivery_runtime.dispatch_daily_digest
+        ),
+        "run_daily_digest_once": daily_digest_delivery_runtime.run_daily_digest_once,
+        "selected_daily_digest_channels": (
+            daily_digest_delivery_runtime.selected_daily_digest_channels
+        ),
+        "play_system_alert_sound": (
+            desktop_notification_runtime.play_system_alert_sound
+        ),
+        "send_desktop_notification": (
+            desktop_notification_runtime.send_desktop_notification
+        ),
+        "show_alert_dialog": desktop_notification_runtime.show_alert_dialog,
+        "send_daily_digest_email": (
+            notification_channel_runtime.send_daily_digest_email
+        ),
+        "send_daily_digest_webhook": (
+            notification_channel_runtime.send_daily_digest_webhook
+        ),
+        "send_email_alert": notification_channel_runtime.send_email_alert,
+        "send_webhook_alert": notification_channel_runtime.send_webhook_alert,
+    }
+
+    assert set(notification_runtime.__all__) == set(expected)
+    for name, function in expected.items():
+        assert getattr(notification_runtime, name) is function

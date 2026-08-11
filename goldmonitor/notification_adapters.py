@@ -4,7 +4,12 @@ import subprocess
 import sys
 import threading
 
-from goldmonitor import notification_runtime as notification_runtime_core
+from goldmonitor import (
+    desktop_notification_runtime as desktop_notification_runtime_core,
+)
+from goldmonitor import (
+    notification_channel_runtime as notification_channel_runtime_core,
+)
 
 
 class DesktopNotificationAdapter:
@@ -46,7 +51,7 @@ class DesktopNotificationAdapter:
         self.logger = logger
 
     def send(self, title, body):
-        return notification_runtime_core.send_desktop_notification(
+        return desktop_notification_runtime_core.send_desktop_notification(
             title,
             body,
             sys_platform=self.sys_platform(),
@@ -59,7 +64,7 @@ class DesktopNotificationAdapter:
         )
 
     def show_dialog(self, title, message):
-        return notification_runtime_core.show_alert_dialog(
+        return desktop_notification_runtime_core.show_alert_dialog(
             title,
             message,
             enabled=self.get_settings().get("alert_dialog_enabled", True),
@@ -75,7 +80,7 @@ class DesktopNotificationAdapter:
         )
 
     def play_sound(self, level):
-        return notification_runtime_core.play_system_alert_sound(
+        return desktop_notification_runtime_core.play_system_alert_sound(
             level,
             enabled=self.get_settings().get("alert_sound_enabled", True),
             sys_platform=self.sys_platform(),
@@ -114,7 +119,7 @@ class EmailNotificationAdapter:
         timeout=10,
         blocking=False,
     ):
-        return notification_runtime_core.send_email_alert(
+        return notification_channel_runtime_core.send_email_alert(
             alert_type,
             title,
             message,
@@ -130,7 +135,7 @@ class EmailNotificationAdapter:
         )
 
     def send_digest(self, digest, timeout=10, blocking=False):
-        return notification_runtime_core.send_daily_digest_email(
+        return notification_channel_runtime_core.send_daily_digest_email(
             digest,
             get_settings=self.get_settings,
             smtp_module=self.smtp_module(),
@@ -175,7 +180,7 @@ class WebhookNotificationAdapter:
         timeout=8,
         blocking=False,
     ):
-        return notification_runtime_core.send_webhook_alert(
+        return notification_channel_runtime_core.send_webhook_alert(
             alert_type,
             title,
             message,
@@ -194,7 +199,7 @@ class WebhookNotificationAdapter:
         )
 
     def send_digest(self, digest, timeout=8, blocking=False):
-        return notification_runtime_core.send_daily_digest_webhook(
+        return notification_channel_runtime_core.send_daily_digest_webhook(
             digest,
             get_settings=self.get_settings,
             post=self.post,
