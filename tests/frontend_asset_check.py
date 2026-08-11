@@ -32,7 +32,11 @@ operations_config_js_path = root / "static" / "operations-config.js"
 operations_actions_js_path = root / "static" / "operations-actions.js"
 operations_update_js_path = root / "static" / "operations-update.js"
 history_review_js_path = root / "static" / "history-review-center.js"
+history_review_notes_js_path = root / "static" / "history-review-notes.js"
+history_review_timeline_js_path = root / "static" / "history-review-timeline.js"
 risk_analysis_js_path = root / "static" / "risk-analysis-center.js"
+risk_analysis_render_js_path = root / "static" / "risk-analysis-render.js"
+risk_analysis_comparison_js_path = root / "static" / "risk-analysis-comparison.js"
 alert_rule_js_path = root / "static" / "alert-rule-center.js"
 alert_rule_state_js_path = root / "static" / "alert-rule-state.js"
 alert_rule_socket_js_path = root / "static" / "alert-rule-socket.js"
@@ -45,6 +49,7 @@ alert_configuration_js_path = root / "static" / "alert-configuration-center.js"
 portfolio_js_path = root / "static" / "portfolio-center.js"
 portfolio_state_js_path = root / "static" / "portfolio-state.js"
 portfolio_render_js_path = root / "static" / "portfolio-render.js"
+portfolio_review_js_path = root / "static" / "portfolio-review.js"
 portfolio_detail_js_path = root / "static" / "portfolio-detail.js"
 portfolio_list_js_path = root / "static" / "portfolio-list.js"
 portfolio_actions_js_path = root / "static" / "portfolio-actions.js"
@@ -92,11 +97,21 @@ for operations_path in (
     if not operations_path.exists():
         raise SystemExit(f"operations script is missing: {operations_path.name}")
 
-if not history_review_js_path.exists():
-    raise SystemExit("history review center script must live in static/history-review-center.js")
+for history_review_path in (
+    history_review_js_path,
+    history_review_notes_js_path,
+    history_review_timeline_js_path,
+):
+    if not history_review_path.exists():
+        raise SystemExit(f"history review script is missing: {history_review_path.name}")
 
-if not risk_analysis_js_path.exists():
-    raise SystemExit("risk analysis center script must live in static/risk-analysis-center.js")
+for risk_analysis_path in (
+    risk_analysis_js_path,
+    risk_analysis_render_js_path,
+    risk_analysis_comparison_js_path,
+):
+    if not risk_analysis_path.exists():
+        raise SystemExit(f"risk analysis script is missing: {risk_analysis_path.name}")
 
 for alert_rule_path in (
     alert_rule_state_js_path,
@@ -117,6 +132,7 @@ if not alert_configuration_js_path.exists():
 for portfolio_path in (
     portfolio_state_js_path,
     portfolio_render_js_path,
+    portfolio_review_js_path,
     portfolio_detail_js_path,
     portfolio_list_js_path,
     portfolio_actions_js_path,
@@ -147,6 +163,7 @@ portfolio_js = portfolio_js_path.read_text(encoding="utf-8")
 portfolio_module_js = "\n".join((
     portfolio_state_js_path.read_text(encoding="utf-8"),
     portfolio_render_js_path.read_text(encoding="utf-8"),
+    portfolio_review_js_path.read_text(encoding="utf-8"),
     portfolio_detail_js_path.read_text(encoding="utf-8"),
     portfolio_list_js_path.read_text(encoding="utf-8"),
     portfolio_actions_js_path.read_text(encoding="utf-8"),
@@ -174,6 +191,16 @@ operations_module_js = "\n".join((
     operations_update_js_path.read_text(encoding="utf-8"),
     operations_js_path.read_text(encoding="utf-8"),
 ))
+history_review_module_js = "\n".join((
+    history_review_js_path.read_text(encoding="utf-8"),
+    history_review_notes_js_path.read_text(encoding="utf-8"),
+    history_review_timeline_js_path.read_text(encoding="utf-8"),
+))
+risk_analysis_module_js = "\n".join((
+    risk_analysis_js_path.read_text(encoding="utf-8"),
+    risk_analysis_render_js_path.read_text(encoding="utf-8"),
+    risk_analysis_comparison_js_path.read_text(encoding="utf-8"),
+))
 alert_log_js = alert_log_js_path.read_text(encoding="utf-8")
 
 js = "\n".join((
@@ -182,8 +209,8 @@ js = "\n".join((
     market_dashboard_js,
     settings_module_js,
     operations_module_js,
-    history_review_js_path.read_text(encoding="utf-8"),
-    risk_analysis_js_path.read_text(encoding="utf-8"),
+    history_review_module_js,
+    risk_analysis_module_js,
     alert_rule_js,
     alert_configuration_js,
     portfolio_module_js,
@@ -302,19 +329,39 @@ for moved in (
     if moved in operations_js_path.read_text(encoding="utf-8"):
         raise SystemExit(f"operations center keeps extracted implementation: {moved}")
 
-history_review_script = '<script src="/static/history-review-center.js?v={{ app_version }}"></script>'
-if history_review_script not in template:
-    raise SystemExit("template must reference versioned /static/history-review-center.js")
+history_review_scripts = tuple(
+    f'<script src="/static/{name}?v={{{{ app_version }}}}"></script>'
+    for name in (
+        "history-review-center.js",
+        "history-review-notes.js",
+        "history-review-timeline.js",
+    )
+)
+for script in history_review_scripts:
+    if script not in template:
+        raise SystemExit(f"template must reference history review script: {script}")
+history_review_positions = [template.find(script) for script in history_review_scripts]
+if history_review_positions != sorted(history_review_positions):
+    raise SystemExit("history review scripts must load in dependency order")
+if history_review_positions[-1] > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("history review scripts must load before static/app.js")
 
-if template.find(history_review_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
-    raise SystemExit("history review center script must load before static/app.js")
-
-risk_analysis_script = '<script src="/static/risk-analysis-center.js?v={{ app_version }}"></script>'
-if risk_analysis_script not in template:
-    raise SystemExit("template must reference versioned /static/risk-analysis-center.js")
-
-if template.find(risk_analysis_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
-    raise SystemExit("risk analysis center script must load before static/app.js")
+risk_analysis_scripts = tuple(
+    f'<script src="/static/{name}?v={{{{ app_version }}}}"></script>'
+    for name in (
+        "risk-analysis-center.js",
+        "risk-analysis-render.js",
+        "risk-analysis-comparison.js",
+    )
+)
+for script in risk_analysis_scripts:
+    if script not in template:
+        raise SystemExit(f"template must reference risk analysis script: {script}")
+risk_analysis_positions = [template.find(script) for script in risk_analysis_scripts]
+if risk_analysis_positions != sorted(risk_analysis_positions):
+    raise SystemExit("risk analysis scripts must load in dependency order")
+if risk_analysis_positions[-1] > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("risk analysis scripts must load before static/app.js")
 
 alert_rule_scripts = tuple(
     f'<script src="/static/{name}?v={{{{ app_version }}}}"></script>'
@@ -351,6 +398,7 @@ portfolio_scripts = tuple(
     for name in (
         "portfolio-state.js",
         "portfolio-render.js",
+        "portfolio-review.js",
         "portfolio-detail.js",
         "portfolio-list.js",
         "portfolio-actions.js",

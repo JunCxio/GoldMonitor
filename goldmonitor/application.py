@@ -29,7 +29,7 @@ from goldmonitor import data_archive_runtime as data_archive_runtime_core
 from goldmonitor import desktop_runtime as desktop_runtime_core
 from goldmonitor import desktop_status as desktop_status_core
 from goldmonitor import diagnostics_runtime as diagnostics_runtime_core
-from goldmonitor import event_timeline as event_timeline_core
+from goldmonitor import history_runtime as history_runtime_core
 from goldmonitor import floating_controller as floating_controller_core
 from goldmonitor import taskbar_controller as taskbar_controller_core
 from goldmonitor import taskbar_runtime as taskbar_runtime_core
@@ -52,6 +52,7 @@ from goldmonitor import review_notes as review_notes_core
 from goldmonitor import risk_analysis as risk_analysis_core
 from goldmonitor import runtime_state as runtime_state_core
 from goldmonitor import settings_store as settings_store_core
+from goldmonitor import settings_runtime as settings_runtime_core
 from goldmonitor import socket_bootstrap as socket_bootstrap_core
 from goldmonitor import storage_manifest as storage_manifest_core
 from goldmonitor import support_files as support_files_core
@@ -594,58 +595,56 @@ def _settings_options():
 
 
 def _settings_store():
-    return settings_store_core.SettingsFileStore(
-        SETTINGS_PATH,
+    return _get_settings_runtime().store()
+
+
+def _get_settings_runtime():
+    return settings_runtime_core.SettingsRuntime(
+        runtime,
+        settings_path=SETTINGS_PATH,
         defaults=DEFAULT_SETTINGS,
         options=_settings_options(),
         secret_keys=SECRET_SETTING_KEYS,
         read_secret=read_credential_secret,
         write_secret=write_credential_secret,
         credentials_required=os.name == "nt" or sys.platform == "darwin",
+        platform_name=_runtime_platform,
+        platform_capabilities=platform_capabilities,
+        default_export_dir=EXPORT_DIR,
+        resolve_export_dir=resolve_export_dir,
+        build_export_dir_check=build_export_dir_check,
+        taskbar_discovery_state=lambda: taskbar_runtime_core.taskbar_discovery_state(
+            os_name=os.name
+        ),
         logger=logging,
     )
 
 
 def apply_stored_secrets(settings):
-    return settings_store_core.apply_stored_secrets(settings, SECRET_SETTING_KEYS, read_credential_secret)
+    return _get_settings_runtime().apply_stored_secrets(settings)
 
 
 def persistable_settings_snapshot(settings, previous_settings=None):
-    return settings_store_core.persistable_settings_snapshot(
+    return _get_settings_runtime().persistable_snapshot(
         settings,
-        SECRET_SETTING_KEYS,
-        write_credential_secret,
         previous_settings=previous_settings,
-        credentials_required=os.name == "nt" or sys.platform == "darwin",
-        logger=logging,
     )
 
 
 def _normalize_settings(raw):
-    return settings_store_core.normalize_settings(raw, DEFAULT_SETTINGS, _settings_options())
+    return _get_settings_runtime().normalize(raw)
 
 
 def load_settings():
-
-    data, error = _settings_store().load()
-    runtime.last_settings_error = error or None
-    return data
+    return _get_settings_runtime().load()
 
 
 def save_settings(data=None):
-
-    with runtime.settings_lock:
-        if data is None:
-            data = runtime.app_settings
-        normalized = _settings_store().save(data, previous_settings=runtime.app_settings)
-        runtime.app_settings = normalized
-        runtime.last_settings_error = None
-        return dict(runtime.app_settings)
+    return _get_settings_runtime().save(data)
 
 
 def get_settings_snapshot():
-    with runtime.settings_lock:
-        return dict(runtime.app_settings)
+    return _get_settings_runtime().snapshot()
 
 
 def mask_secret(value):
@@ -653,20 +652,7 @@ def mask_secret(value):
 
 
 def public_settings_snapshot(settings=None):
-    snapshot = dict(settings or get_settings_snapshot())
-    public = settings_store_core.build_public_settings_snapshot(
-        snapshot,
-        SECRET_SETTING_KEYS,
-        platform=_runtime_platform(),
-        platform_capabilities=platform_capabilities(),
-    )
-    public["export_dir_default"] = EXPORT_DIR
-    public["export_dir_effective"] = resolve_export_dir(snapshot)
-    public["export_dir_check"] = build_export_dir_check(snapshot)
-    taskbar_state = taskbar_runtime_core.taskbar_discovery_state(os_name=os.name)
-    taskbar_state.update(dict(runtime.taskbar_layout_state))
-    public["taskbar_price_state"] = taskbar_state
-    return public
+    return _get_settings_runtime().public_snapshot(settings)
 
 
 def diagnostic_settings_snapshot(settings=None):
@@ -2972,44 +2958,27 @@ def _risk_history_store():
 
 
 def normalize_risk_analysis_history(items):
-    return _risk_history_store().normalize(items)
+    return _get_history_review_runtime().normalize_risk_history(items)
 
 
 def load_risk_analysis_history():
-    return _risk_history_store().load()
+    return _get_history_review_runtime().load_risk_history()
 
 
 def save_risk_analysis_history(items=None):
-    items = runtime.risk_analysis_history if items is None else items
-    return _risk_history_store().save(items)
+    return _get_history_review_runtime().save_risk_history(items)
 
 
 def get_risk_analysis_history_state():
-    with runtime.risk_history_lock:
-        return _risk_history_store().build_state(runtime.risk_analysis_history)
+    return _get_history_review_runtime().risk_history_state()
 
 
 def add_risk_analysis_history_entry(result, snapshot):
-
-    with runtime.risk_history_lock:
-        store = _risk_history_store()
-        runtime.risk_analysis_history, entry = store.add_entry(runtime.risk_analysis_history, result, snapshot)
-        try:
-            store.save(runtime.risk_analysis_history)
-        except OSError as exc:
-            logging.warning("failed to save risk analysis history: %s", exc)
-        return entry
+    return _get_history_review_runtime().add_risk_history_entry(result, snapshot)
 
 
 def clear_risk_analysis_history_state():
-
-    with runtime.risk_history_lock:
-        runtime.risk_analysis_history = []
-        try:
-            _risk_history_store().clear()
-        except OSError as exc:
-            logging.warning("failed to clear risk analysis history: %s", exc)
-        return _risk_history_store().build_state(runtime.risk_analysis_history)
+    return _get_history_review_runtime().clear_risk_history()
 
 
 def _price_history_store():
@@ -3022,198 +2991,199 @@ def _price_history_store():
     )
 
 
-def normalize_price_history(items):
-    return _price_history_store().normalize(items)
-
-
-def _price_history_db_path():
-    return _price_history_store().db_path()
-
-
-def _connect_price_history_db():
-    return _price_history_store().connect_db()
-
-
-def _upsert_price_history_points(items):
-    return _price_history_store().upsert_points(items)
-
-
-def _load_price_history_from_db():
-    return _price_history_store().load_from_db()
-
-
-def _filter_price_history_from_db(minutes=None, limit=600):
-    return _price_history_store().filter_from_db(minutes=minutes, limit=limit)
-
-
-def _load_price_history_json_archive():
-    return _price_history_store().load_json_archive()
-
-
-def load_price_history_archive():
-    return _price_history_store().load_archive()
-
-
-def _write_price_history_json_archive(items):
-    return _price_history_store().write_json_archive(items)
-
-
-def save_price_history_archive(items=None):
-    items = runtime.price_archive if items is None else items
-    return _price_history_store().save_archive(items)
-
-
-def add_price_history_entry(entry, force_save=False):
-
-    runtime.price_archive, runtime.last_price_history_save_at, point = _price_history_store().add_entry(
-        runtime.price_archive,
-        runtime.last_price_history_save_at,
-        entry,
-        force_save=force_save,
-    )
-    if point is None:
-        return
-
-
-def _filter_price_archive(minutes=None, limit=600):
-    with runtime.lock:
-        items = list(runtime.price_archive)
-    return _price_history_store().filter_archive(items, minutes=minutes, limit=limit)
-
-
-def _event_time_from_alert(entry):
-    return event_timeline_core.event_time_from_alert(entry, today_date=runtime.today_date)
-
-
-def normalize_event_timeline_request(data=None):
-    return event_timeline_core.normalize_event_timeline_request(
-        data,
+def _get_history_review_runtime():
+    return history_runtime_core.HistoryReviewRuntime(
+        runtime,
+        risk_history_store_factory=_risk_history_store,
+        price_history_store_factory=_price_history_store,
+        alert_log_reader=alert_log_export_entries,
+        get_fetch_status=get_fetch_status,
+        get_source_health_state=get_source_health_state,
+        get_source_comparison_state=get_source_comparison_state,
+        news_key=_news_key,
+        save_export_file=save_export_file,
         event_types=EVENT_TIMELINE_TYPES,
         allowed_minutes=EVENT_TIMELINE_ALLOWED_MINUTES,
         default_minutes=EVENT_TIMELINE_DEFAULT_MINUTES,
         default_limit=EVENT_TIMELINE_DEFAULT_LIMIT,
         max_limit=EVENT_TIMELINE_MAX_LIMIT,
+        risk_history_limit=RISK_ANALYSIS_HISTORY_LIMIT,
+        news_limit=NEWS_LIMIT,
+        alert_log_export_limit=ALERT_LOG_EXPORT_LIMIT,
+        price_history_export_limit=PRICE_HISTORY_EXPORT_LIMIT,
+        review_report_prefix=REVIEW_REPORT_EXPORT_PREFIX,
+        format_number=_format_number,
+        now_factory=datetime.now,
+        logger=logging,
     )
 
 
+def normalize_price_history(items):
+    return _get_history_review_runtime().normalize_price_history(items)
+
+
+def _price_history_db_path():
+    return _get_history_review_runtime().price_history_db_path()
+
+
+def _connect_price_history_db():
+    return _get_history_review_runtime().connect_price_history_db()
+
+
+def _upsert_price_history_points(items):
+    return _get_history_review_runtime().upsert_price_history_points(items)
+
+
+def _load_price_history_from_db():
+    return _get_history_review_runtime().load_price_history_from_db()
+
+
+def _filter_price_history_from_db(minutes=None, limit=600):
+    return _get_history_review_runtime().filter_price_history_from_db(
+        minutes=minutes,
+        limit=limit,
+    )
+
+
+def _load_price_history_json_archive():
+    return _get_history_review_runtime().load_price_history_json_archive()
+
+
+def load_price_history_archive():
+    return _get_history_review_runtime().load_price_history_archive()
+
+
+def _write_price_history_json_archive(items):
+    return _get_history_review_runtime().write_price_history_json_archive(items)
+
+
+def save_price_history_archive(items=None):
+    return _get_history_review_runtime().save_price_history_archive(items)
+
+
+def add_price_history_entry(entry, force_save=False):
+    _get_history_review_runtime().add_price_history_entry(
+        entry,
+        force_save=force_save,
+    )
+
+
+def _filter_price_archive(minutes=None, limit=600):
+    return _get_history_review_runtime().filter_price_archive(
+        minutes=minutes,
+        limit=limit,
+    )
+
+
+def _event_time_from_alert(entry):
+    return _get_history_review_runtime().event_time_from_alert(entry)
+
+
+def normalize_event_timeline_request(data=None):
+    return _get_history_review_runtime().normalize_timeline_request(data)
+
+
 def event_timeline_range(minutes):
-    return event_timeline_core.event_timeline_range(minutes, now_factory=datetime.now)
+    return _get_history_review_runtime().timeline_range(minutes)
 
 
 def make_timeline_event(event_type, timestamp, title, summary, source, payload=None, event_id=None):
-    return event_timeline_core.make_timeline_event(event_type, timestamp, title, summary, source, payload, event_id)
+    return _get_history_review_runtime().make_timeline_event(
+        event_type,
+        timestamp,
+        title,
+        summary,
+        source,
+        payload,
+        event_id,
+    )
 
 
 def build_event_price_summary(points):
-    return event_timeline_core.build_event_price_summary(points)
+    return _get_history_review_runtime().build_event_price_summary(points)
 
 
 def build_price_summary_timeline_event(points, start_time, end_time):
-    return event_timeline_core.build_price_summary_timeline_event(points, start_time, end_time)
+    return _get_history_review_runtime().build_price_summary_timeline_event(
+        points,
+        start_time,
+        end_time,
+    )
 
 
 def _event_timeline_sources():
-    with runtime.risk_history_lock:
-        risk_items = list(runtime.risk_analysis_history[:RISK_ANALYSIS_HISTORY_LIMIT])
-    with runtime.lock:
-        current_news_items = list(runtime.news_items[:NEWS_LIMIT])
-    with runtime.review_notes_lock:
-        current_review_notes = list(runtime.review_notes)
-    return {
-        "alert_entries": alert_log_export_entries(limit=ALERT_LOG_EXPORT_LIMIT),
-        "risk_items": risk_items,
-        "news_items": current_news_items,
-        "review_notes": current_review_notes,
-        "fetch_status": get_fetch_status(),
-        "source_health_state": get_source_health_state(),
-        "source_comparison_state": get_source_comparison_state(),
-        "today_date": runtime.today_date,
-        "news_key": _news_key,
-        "now_factory": datetime.now,
-    }
+    return _get_history_review_runtime().event_sources()
 
 
 def build_alert_timeline_events(start_time, end_time):
-    return event_timeline_core.build_alert_timeline_events(
+    return _get_history_review_runtime().build_alert_timeline_events(
         start_time,
         end_time,
-        alert_entries=alert_log_export_entries(limit=ALERT_LOG_EXPORT_LIMIT),
-        today_date=runtime.today_date,
     )
 
 
 def build_risk_timeline_events(start_time, end_time):
-    with runtime.risk_history_lock:
-        risk_items = list(runtime.risk_analysis_history[:RISK_ANALYSIS_HISTORY_LIMIT])
-    return event_timeline_core.build_risk_timeline_events(start_time, end_time, risk_items=risk_items)
+    return _get_history_review_runtime().build_risk_timeline_events(
+        start_time,
+        end_time,
+    )
 
 
 def build_news_timeline_events(start_time, end_time):
-    with runtime.lock:
-        items = list(runtime.news_items[:NEWS_LIMIT])
-    return event_timeline_core.build_news_timeline_events(start_time, end_time, news_items=items, news_key=_news_key)
+    return _get_history_review_runtime().build_news_timeline_events(
+        start_time,
+        end_time,
+    )
 
 
 def build_data_status_timeline_events(start_time, end_time):
-    return event_timeline_core.build_data_status_timeline_events(
+    return _get_history_review_runtime().build_data_status_timeline_events(
         start_time,
         end_time,
-        fetch_status=get_fetch_status(),
-        source_health_state=get_source_health_state(),
-        source_comparison_state=get_source_comparison_state(),
-        now_factory=datetime.now,
     )
 
 
 def build_event_timeline_events(start_time, end_time, types=None):
-    return event_timeline_core.build_event_timeline_events(start_time, end_time, types, **_event_timeline_sources())
+    return _get_history_review_runtime().build_event_timeline_events(
+        start_time,
+        end_time,
+        types,
+    )
 
 
 def build_event_timeline_state(minutes=None, limit=EVENT_TIMELINE_DEFAULT_LIMIT, types=None):
-    points = _filter_price_archive(minutes=minutes, limit=PRICE_HISTORY_EXPORT_LIMIT)
-    return event_timeline_core.build_event_timeline_state(
+    return _get_history_review_runtime().build_event_timeline_state(
         minutes=minutes,
         limit=limit,
         types=types,
-        price_points=points,
-        **_event_timeline_sources(),
     )
 
 
 def _build_price_event_state(items):
-    return event_timeline_core.build_price_chart_events(items, build_event_timeline_events)
+    return _get_history_review_runtime().build_price_event_state(items)
 
 
 def alert_level_label(alert_type):
-    return event_timeline_core.alert_level_label(alert_type)
+    return _get_history_review_runtime().alert_level_label(alert_type)
 
 
 def build_price_history_state(minutes=None, limit=600):
-    with runtime.lock:
-        items = list(runtime.price_archive)
-    return _price_history_store().build_state(
-        items,
+    return _get_history_review_runtime().build_price_history_state(
         minutes=minutes,
         limit=limit,
-        build_events=_build_price_event_state,
-        format_number=_format_number,
     )
 
 
 def build_price_history_csv(minutes=None):
-    with runtime.lock:
-        items = list(runtime.price_archive)
-    return _price_history_store().build_csv(items, minutes=minutes)
+    return _get_history_review_runtime().build_price_history_csv(minutes=minutes)
 
 
 def build_review_report(timeline_state):
-    return event_timeline_core.build_review_report(timeline_state)
+    return _get_history_review_runtime().build_review_report(timeline_state)
 
 
 def save_review_report(content, filename=None):
-    if not filename:
-        filename = event_timeline_core.review_report_filename(prefix=REVIEW_REPORT_EXPORT_PREFIX)
-    return save_export_file(filename, content)
+    return _get_history_review_runtime().save_review_report(content, filename)
 
 
 def _alert_log_store():

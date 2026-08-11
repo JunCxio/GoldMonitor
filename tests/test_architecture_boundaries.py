@@ -22,6 +22,8 @@ def test_application_composes_routes_sockets_state_and_desktop_services():
     source = read_text("goldmonitor/application.py")
 
     assert "application_state_bootstrap_core.ApplicationStateBootstrap(" in source
+    assert "settings_runtime_core.SettingsRuntime(" in source
+    assert "history_runtime_core.HistoryReviewRuntime(" in source
     assert "floating_controller_core.FloatingPriceController(" in source
     assert "taskbar_controller_core.TaskbarPriceController(" in source
     assert "http_routes_core.register_http_routes(" in source
@@ -56,3 +58,28 @@ def test_frontend_center_entries_only_bootstrap_split_modules():
     for path, expected in expected_entries.items():
         lines = [line.strip() for line in read_text(path).splitlines() if line.strip()]
         assert lines == [expected]
+
+
+def test_large_frontend_domains_are_split_by_responsibility():
+    expected_modules = (
+        "static/history-review-notes.js",
+        "static/history-review-timeline.js",
+        "static/risk-analysis-render.js",
+        "static/risk-analysis-comparison.js",
+        "static/portfolio-review.js",
+    )
+
+    for path in expected_modules:
+        assert read_text(path).strip()
+
+    for path in (
+        "static/history-review-center.js",
+        "static/history-review-notes.js",
+        "static/history-review-timeline.js",
+        "static/risk-analysis-center.js",
+        "static/risk-analysis-render.js",
+        "static/risk-analysis-comparison.js",
+        "static/portfolio-render.js",
+        "static/portfolio-review.js",
+    ):
+        assert len(read_text(path).splitlines()) < 520
