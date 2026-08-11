@@ -3,7 +3,7 @@ import sqlite3
 import threading
 from datetime import datetime
 
-from goldmonitor import notifications as notifications_core
+from goldmonitor import notification_delivery as notification_delivery_core
 
 
 def persist_alert_notification_update(
@@ -16,7 +16,7 @@ def persist_alert_notification_update(
     def updater(entry):
         updated = dict(entry)
         updated["notifications"] = [dict(item) for item in notifications]
-        updated["notification_summary"] = notifications_core.summarize_notifications(
+        updated["notification_summary"] = notification_delivery_core.summarize_notifications(
             updated["notifications"]
         )
         return updated
@@ -112,7 +112,7 @@ def emit_alert(
         if reason in messages:
             entry["notification_message"] = messages[reason]
         entry["notifications"] = [
-            notifications_core.notification_status(
+            notification_delivery_core.notification_status(
                 "all",
                 "通知",
                 "muted",
@@ -121,7 +121,7 @@ def emit_alert(
         ]
     else:
         entry["notifications"] = plan_notifications(entry, settings)
-    entry["notification_summary"] = notifications_core.summarize_notifications(
+    entry["notification_summary"] = notification_delivery_core.summarize_notifications(
         entry.get("notifications")
     )
     entry["related_news"] = select_news(title)

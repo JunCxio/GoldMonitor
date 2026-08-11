@@ -1,7 +1,7 @@
 import logging
 import threading
 
-from goldmonitor import notifications as notifications_core
+from goldmonitor import notification_transport as notification_transport_core
 
 
 def send_email_alert(
@@ -19,7 +19,7 @@ def send_email_alert(
     thread_factory=threading.Thread,
     logger=logging,
 ):
-    return notifications_core.send_email_notification(
+    return notification_transport_core.send_email_notification(
         get_settings(),
         alert_type,
         title,
@@ -53,7 +53,7 @@ def send_webhook_alert(
     thread_factory=threading.Thread,
     logger=logging,
 ):
-    return notifications_core.send_webhook_notification(
+    return notification_transport_core.send_webhook_notification(
         get_settings(),
         alert_type,
         title,
@@ -82,7 +82,7 @@ def send_daily_digest_email(
     thread_factory=threading.Thread,
     logger=logging,
 ):
-    return notifications_core.send_email_message(
+    return notification_transport_core.send_email_message(
         get_settings(),
         digest.get("subject", "GoldMonitor 每日摘要"),
         digest.get("message", ""),
@@ -108,7 +108,7 @@ def send_daily_digest_webhook(
     logger=logging,
 ):
     payload = digest.get("payload") if isinstance(digest.get("payload"), dict) else {}
-    return notifications_core.send_webhook_payload(
+    return notification_transport_core.send_webhook_payload(
         get_settings(),
         payload,
         post=post,

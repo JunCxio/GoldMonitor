@@ -1,7 +1,7 @@
 import logging
 
 from goldmonitor import daily_digest as daily_digest_core
-from goldmonitor import notifications as notifications_core
+from goldmonitor import notification_delivery as notification_delivery_core
 from goldmonitor import scheduler as scheduler_core
 
 
@@ -74,8 +74,8 @@ def dispatch_daily_digest(
     channels = selected_daily_digest_channels(settings)
     if "email" in channels:
         notifications.append(
-            notifications_core.deliver_notification(
-                notifications_core.notification_status(
+            notification_delivery_core.deliver_notification(
+                notification_delivery_core.notification_status(
                     "email",
                     "邮件",
                     "pending",
@@ -91,8 +91,8 @@ def dispatch_daily_digest(
         )
     if "webhook" in channels:
         notifications.append(
-            notifications_core.deliver_notification(
-                notifications_core.notification_status(
+            notification_delivery_core.deliver_notification(
+                notification_delivery_core.notification_status(
                     "webhook",
                     "Webhook",
                     "pending",
@@ -163,7 +163,7 @@ def run_daily_digest_once(
             if channels
             else []
         )
-        summary = notifications_core.summarize_notifications(notifications)
+        summary = notification_delivery_core.summarize_notifications(notifications)
         sent = summary.get("sent", 0) > 0
         if not channels:
             summary = {

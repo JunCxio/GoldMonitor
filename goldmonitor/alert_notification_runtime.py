@@ -3,7 +3,9 @@ import threading
 from datetime import datetime
 
 from goldmonitor import alert_delivery_runtime as alert_delivery_runtime_core
-from goldmonitor import notifications as notifications_core
+from goldmonitor import notification_delivery as notification_delivery_core
+from goldmonitor import notification_policy as notification_policy_core
+from goldmonitor import notification_transport as notification_transport_core
 
 
 class AlertNotificationRuntime:
@@ -60,7 +62,7 @@ class AlertNotificationRuntime:
                 "gold_price_source": self.state.gold_price_source,
                 "usdcny_rate_source": self.state.usdcny_rate_source,
             }
-        return notifications_core.build_alert_template_values(
+        return notification_transport_core.build_alert_template_values(
             alert_type,
             title,
             message,
@@ -69,7 +71,7 @@ class AlertNotificationRuntime:
         )
 
     def evaluate_delivery(self, entry, settings=None, now=None):
-        return notifications_core.evaluate_alert_delivery(
+        return notification_policy_core.evaluate_alert_delivery(
             entry,
             self.settings_snapshot(settings or self.get_settings()),
             self.state.alert_cooldown_state,
@@ -77,7 +79,7 @@ class AlertNotificationRuntime:
         )
 
     def dispatch(self, entry, title, blocking=True, on_update=None):
-        return notifications_core.dispatch_alert(
+        return notification_delivery_core.dispatch_alert(
             entry,
             title,
             self.settings_snapshot(),
@@ -90,7 +92,7 @@ class AlertNotificationRuntime:
         )
 
     def plan_notifications(self, entry, settings=None):
-        return notifications_core.plan_alert_notifications(
+        return notification_delivery_core.plan_alert_notifications(
             entry,
             self.settings_snapshot(settings or self.get_settings()),
         )
@@ -114,7 +116,7 @@ class AlertNotificationRuntime:
         persist_update=None,
     ):
         persist_update = persist_update or self.persist_notification_update
-        return notifications_core.deliver_alert_notifications(
+        return notification_delivery_core.deliver_alert_notifications(
             entry,
             title,
             settings,
@@ -169,7 +171,9 @@ class AlertNotificationRuntime:
             emit=self.emit,
             start_delivery=start_delivery,
             build_history_state=self.build_history_state,
-            local_delivery_enabled=notifications_core.alert_local_delivery_enabled,
+            local_delivery_enabled=(
+                notification_delivery_core.alert_local_delivery_enabled
+            ),
             send_desktop_notification=self.send_desktop_notification,
             play_system_alert_sound=self.play_system_alert_sound,
             show_alert_dialog=self.show_alert_dialog,

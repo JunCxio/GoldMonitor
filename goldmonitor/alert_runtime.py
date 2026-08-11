@@ -2,7 +2,7 @@ import logging
 from datetime import timedelta
 
 from goldmonitor import alert_rules as alert_rules_core
-from goldmonitor import notifications as notifications_core
+from goldmonitor import notification_policy as notification_policy_core
 from goldmonitor import portfolio as portfolio_core
 from goldmonitor import portfolio_analytics as portfolio_analytics_core
 from goldmonitor import targets as targets_core
@@ -540,11 +540,11 @@ class AlertRuntime:
         delivery = rule.get("delivery") if isinstance(rule.get("delivery"), dict) else {}
         configured_channels = delivery.get("channels", "inherit")
         alert_level = str(rule.get("alert_level") or "warning")
-        email_key = notifications_core.ALERT_CHANNEL_KEYS["email"].get(
+        email_key = notification_policy_core.ALERT_CHANNEL_KEYS["email"].get(
             alert_level,
             "email_warning_enabled",
         )
-        webhook_key = notifications_core.ALERT_CHANNEL_KEYS["webhook"].get(
+        webhook_key = notification_policy_core.ALERT_CHANNEL_KEYS["webhook"].get(
             alert_level,
             "webhook_warning_enabled",
         )
@@ -623,7 +623,7 @@ class AlertRuntime:
             "channels": channel_items,
             "cooldown_minutes": cooldown,
             "cooldown_inherited": cooldown_inherited,
-            "quiet_time_active": notifications_core.is_alert_quiet_time(
+            "quiet_time_active": notification_policy_core.is_alert_quiet_time(
                 settings,
                 now=now,
             ),

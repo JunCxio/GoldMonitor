@@ -43,7 +43,9 @@ from goldmonitor import market_data as market_data_core
 from goldmonitor import market_runtime as market_runtime_core
 from goldmonitor import news as news_core
 from goldmonitor import notification_adapters as notification_adapters_core
-from goldmonitor import notifications as notifications_core
+from goldmonitor import notification_delivery as notification_delivery_core
+from goldmonitor import notification_policy as notification_policy_core
+from goldmonitor import notification_transport as notification_transport_core
 from goldmonitor import operations_runtime as operations_runtime_core
 from goldmonitor import platform as platform_core
 from goldmonitor import platform_runtime as platform_runtime_core
@@ -2043,20 +2045,20 @@ class _SafeFormatDict(dict):
 
 
 def _format_template(template, values, fallback):
-    return notifications_core.format_template(template, values, fallback)
+    return notification_transport_core.format_template(template, values, fallback)
 
 
 def _time_to_minutes(value):
-    return notifications_core.time_to_minutes(value)
+    return notification_policy_core.time_to_minutes(value)
 
 
 def is_alert_quiet_time(settings=None, now=None):
     settings = settings or get_settings_snapshot()
-    return notifications_core.is_alert_quiet_time(settings, now=now)
+    return notification_policy_core.is_alert_quiet_time(settings, now=now)
 
 
 def _alert_cooldown_key(entry):
-    return notifications_core.alert_cooldown_key(entry)
+    return notification_policy_core.alert_cooldown_key(entry)
 
 
 def evaluate_alert_delivery(entry, settings=None, now=None):
@@ -2244,11 +2246,17 @@ def _get_daily_digest_runtime():
 
 
 def _notification_status(channel, label, status, message, **details):
-    return notifications_core.notification_status(channel, label, status, message, **details)
+    return notification_delivery_core.notification_status(
+        channel,
+        label,
+        status,
+        message,
+        **details,
+    )
 
 
 def _notification_summary(notifications):
-    return notifications_core.summarize_notifications(notifications)
+    return notification_delivery_core.summarize_notifications(notifications)
 
 
 def dispatch_alert(entry, title, blocking=True, on_update=None):

@@ -48,6 +48,16 @@ def test_notification_runtime_only_reexports_split_responsibilities():
     assert len(source.splitlines()) < 60
 
 
+def test_notifications_only_reexports_policy_transport_and_delivery():
+    source = read_text("goldmonitor/notifications.py")
+
+    assert "from goldmonitor.notification_delivery import" in source
+    assert "from goldmonitor.notification_policy import" in source
+    assert "from goldmonitor.notification_transport import" in source
+    assert "def " not in source
+    assert len(source.splitlines()) < 80
+
+
 def test_runtime_data_initialization_has_one_explicit_entrypoint():
     source = read_text("goldmonitor/application.py")
     stripped_lines = [line.strip() for line in source.splitlines()]
