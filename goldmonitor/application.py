@@ -61,7 +61,6 @@ from goldmonitor import socket_bootstrap as socket_bootstrap_core
 from goldmonitor import storage_manifest as storage_manifest_core
 from goldmonitor import support_files as support_files_core
 from goldmonitor import targets as targets_core
-from goldmonitor import update_manager as update_manager_core
 from goldmonitor import update_runtime as update_runtime_core
 from goldmonitor.alert_log import AlertLogStore
 from goldmonitor.diagnostics import build_health_summary
@@ -1258,111 +1257,6 @@ def is_socket_authorized(auth):
     return bool(token) and secrets.compare_digest(token, SOCKET_ACCESS_TOKEN)
 
 
-def compare_versions(left, right):
-    return update_manager_core.compare_versions(left, right)
-
-
-def _require_https_url(value, label):
-    return update_manager_core.require_https_url(value, label)
-
-
-def _require_official_update_url(value, label, allowed_names=None):
-    return update_manager_core.require_official_update_url(
-        value,
-        label,
-        allowed_names,
-        official_host=OFFICIAL_UPDATE_HOST,
-        official_path_prefix=OFFICIAL_UPDATE_PATH_PREFIX,
-    )
-
-
-def get_update_manifest_url():
-    return DEFAULT_UPDATE_MANIFEST_URL
-
-
-def _platform_update_key():
-    return update_manager_core.platform_update_key(sys_platform=sys.platform, os_name=os.name)
-
-
-def normalize_update_manifest(raw, base_url=None):
-    return update_manager_core.normalize_update_manifest(
-        raw,
-        base_url=base_url,
-        platform_key=_platform_update_key(),
-        official_host=OFFICIAL_UPDATE_HOST,
-        official_path_prefix=OFFICIAL_UPDATE_PATH_PREFIX,
-        asset_names=OFFICIAL_UPDATE_ASSET_NAMES,
-    )
-
-
-def normalize_github_release_manifest(raw):
-    return update_manager_core.normalize_github_release_manifest(
-        raw,
-        platform_key=_platform_update_key(),
-        official_host=OFFICIAL_UPDATE_HOST,
-        official_path_prefix=OFFICIAL_UPDATE_PATH_PREFIX,
-        asset_names=OFFICIAL_UPDATE_ASSET_NAMES,
-    )
-
-
-def github_release_api_url_from_manifest(manifest_url):
-    return update_manager_core.github_release_api_url_from_manifest(
-        manifest_url,
-        official_host=OFFICIAL_UPDATE_HOST,
-        official_path_prefix=OFFICIAL_UPDATE_PATH_PREFIX,
-    )
-
-
-def _update_request_headers():
-    return update_runtime_core.update_request_headers(HTTP_USER_AGENT)
-
-
-def _get_update_json(url, request_get=None, timeout=REQUEST_TIMEOUT):
-    return update_runtime_core.get_update_json(
-        url,
-        request_get=request_get or requests.get,
-        timeout=timeout,
-        headers=_update_request_headers(),
-    )
-
-
-def _update_fetch_error_message(manifest_error, api_error):
-    return update_runtime_core.update_fetch_error_message(manifest_error, api_error)
-
-
-def fetch_update_manifest(manifest_url=None, request_get=None):
-    return update_runtime_core.fetch_update_manifest(
-        manifest_url or get_update_manifest_url(),
-        require_official_update_url=lambda *args, **kwargs: _require_official_update_url(
-            *args,
-            **kwargs,
-        ),
-        github_release_api_url_from_manifest=(
-            lambda url: github_release_api_url_from_manifest(url)
-        ),
-        get_update_json=lambda url: _get_update_json(
-            url,
-            request_get=request_get,
-        ),
-        normalize_update_manifest=lambda raw, base_url=None: normalize_update_manifest(
-            raw,
-            base_url,
-        ),
-        normalize_github_release_manifest=lambda raw: normalize_github_release_manifest(raw),
-    )
-
-
-def get_update_status(expose_download=False):
-    manifest_url = get_update_manifest_url()
-    manifest = fetch_update_manifest(manifest_url)
-    return update_manager_core.build_update_status(
-        manifest,
-        APP_VERSION,
-        now=datetime.now(),
-        expose_download=expose_download,
-    )
-
-
 PUBLIC_UPDATE_STATUS_KEYS = (
     "state",
     "current_version",
@@ -1376,59 +1270,154 @@ PUBLIC_UPDATE_STATUS_KEYS = (
 )
 
 
-def public_update_status(status=None):
-    return update_runtime_core.public_update_status(
-        status,
-        PUBLIC_UPDATE_STATUS_KEYS,
+def _get_update_runtime():
+    if runtime.update_runtime_instance is None:
+        runtime.update_runtime_instance = update_runtime_core.UpdateRuntime(
+            runtime,
+            current_version=APP_VERSION,
+            manifest_url=DEFAULT_UPDATE_MANIFEST_URL,
+            official_host=OFFICIAL_UPDATE_HOST,
+            official_path_prefix=OFFICIAL_UPDATE_PATH_PREFIX,
+            official_asset_names=OFFICIAL_UPDATE_ASSET_NAMES,
+            update_dir=UPDATE_DIR,
+            installer_name=UPDATE_INSTALLER_NAME,
+            user_agent=HTTP_USER_AGENT,
+            request_timeout=REQUEST_TIMEOUT,
+            proxies=REQ_PROXY,
+            os_name=lambda: os.name,
+            sys_platform=lambda: sys.platform,
+            request_get=lambda *args, **kwargs: requests.get(*args, **kwargs),
+            path_exists=lambda path: os.path.exists(path),
+            popen=lambda *args, **kwargs: subprocess.Popen(*args, **kwargs),
+            create_new_process_group=lambda: getattr(
+                subprocess,
+                "CREATE_NEW_PROCESS_GROUP",
+                0,
+            ),
+            detached_process=lambda: getattr(subprocess, "DETACHED_PROCESS", 0),
+            emit=lambda event, payload: emit(event, payload),
+            public_status_keys=PUBLIC_UPDATE_STATUS_KEYS,
+            now_factory=datetime.now,
+        )
+    return runtime.update_runtime_instance
+
+
+def compare_versions(left, right):
+    return _get_update_runtime().compare_versions(left, right)
+
+
+def _require_https_url(value, label):
+    return _get_update_runtime().require_https_url(value, label)
+
+
+def _require_official_update_url(value, label, allowed_names=None):
+    return _get_update_runtime().require_official_update_url(
+        value,
+        label,
+        allowed_names,
     )
+
+
+def get_update_manifest_url():
+    return _get_update_runtime().get_manifest_url()
+
+
+def _platform_update_key():
+    return _get_update_runtime().platform_update_key()
+
+
+def normalize_update_manifest(raw, base_url=None):
+    return _get_update_runtime().normalize_update_manifest(
+        raw,
+        base_url,
+        platform_key=_platform_update_key(),
+    )
+
+
+def normalize_github_release_manifest(raw):
+    return _get_update_runtime().normalize_github_release_manifest(
+        raw,
+        platform_key=_platform_update_key(),
+    )
+
+
+def github_release_api_url_from_manifest(manifest_url):
+    return _get_update_runtime().github_release_api_url_from_manifest(manifest_url)
+
+
+def _update_request_headers():
+    return _get_update_runtime().request_headers()
+
+
+def _get_update_json(url, request_get=None, timeout=REQUEST_TIMEOUT):
+    return _get_update_runtime().get_update_json(
+        url,
+        request_get_override=request_get,
+        timeout=timeout,
+    )
+
+
+def _update_fetch_error_message(manifest_error, api_error):
+    return update_runtime_core.update_fetch_error_message(manifest_error, api_error)
+
+
+def fetch_update_manifest(manifest_url=None, request_get=None):
+    return _get_update_runtime().fetch_update_manifest(
+        manifest_url or get_update_manifest_url(),
+        request_get_override=request_get,
+        platform_key=_platform_update_key(),
+        require_official_update_url=lambda *args, **kwargs: _require_official_update_url(
+            *args,
+            **kwargs,
+        ),
+        github_release_api_url_from_manifest=(
+            lambda url: github_release_api_url_from_manifest(url)
+        ),
+        get_json=lambda url: _get_update_json(
+            url,
+            request_get=request_get,
+        ),
+        normalize_manifest=lambda raw, base_url=None: normalize_update_manifest(
+            raw,
+            base_url,
+        ),
+        normalize_github_manifest=lambda raw: normalize_github_release_manifest(raw),
+    )
+
+
+def get_update_status(expose_download=False):
+    return _get_update_runtime().get_update_status(
+        expose_download=expose_download,
+        get_manifest_url=get_update_manifest_url,
+        fetch_manifest=fetch_update_manifest,
+    )
+
+
+def public_update_status(status=None):
+    return _get_update_runtime().public_update_status(status)
 
 
 def record_update_status(status):
-    return update_runtime_core.record_update_status(
-        runtime.last_update_status,
-        runtime.last_update_status_lock,
-        status,
-        PUBLIC_UPDATE_STATUS_KEYS,
-    )
+    return _get_update_runtime().record_update_status(status)
 
 
 def get_last_update_status():
-    return update_runtime_core.get_last_update_status(
-        runtime.last_update_status,
-        runtime.last_update_status_lock,
-    )
+    return _get_update_runtime().get_last_update_status()
 
 
 def emit_update_status(status):
-    safe_status = record_update_status(status)
-    emit("update_status", safe_status)
-    return safe_status
+    return _get_update_runtime().emit_update_status(status)
 
 
 def download_update_installer(update_info, progress_callback=None):
-    return update_runtime_core.download_update_installer(
+    return _get_update_runtime().download_update_installer(
         update_info,
-        update_dir=UPDATE_DIR,
-        installer_name=UPDATE_INSTALLER_NAME,
-        request_get=lambda *args, **kwargs: requests.get(*args, **kwargs),
-        proxies=REQ_PROXY,
-        progress_callback=progress_callback,
+        progress_callback,
     )
 
 
 def launch_update_installer(installer_path):
-    return update_runtime_core.launch_update_installer(
-        installer_path,
-        path_exists=lambda path: os.path.exists(path),
-        build_installer_launch_plan=lambda path: update_manager_core.build_installer_launch_plan(
-            path,
-            os_name=os.name,
-            sys_platform=sys.platform,
-            create_new_process_group=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
-            detached_process=getattr(subprocess, "DETACHED_PROCESS", 0),
-        ),
-        popen=lambda *args, **kwargs: subprocess.Popen(*args, **kwargs),
-    )
+    return _get_update_runtime().launch_update_installer(installer_path)
 
 
 def read_log_tail(max_lines=120):
