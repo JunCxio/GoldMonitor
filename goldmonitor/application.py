@@ -55,6 +55,7 @@ from goldmonitor import portfolio_alerts as portfolio_alerts_core
 from goldmonitor import portfolio_runtime as portfolio_runtime_core
 from goldmonitor import review_notes as review_notes_core
 from goldmonitor import risk_analysis as risk_analysis_core
+from goldmonitor import risk_analysis_runtime as risk_analysis_runtime_core
 from goldmonitor import runtime_state as runtime_state_core
 from goldmonitor import settings_store as settings_store_core
 from goldmonitor import settings_runtime as settings_runtime_core
@@ -3334,9 +3335,35 @@ def _valid_market_price(value):
     return risk_analysis_core.valid_market_price(value)
 
 
+def _get_risk_analysis_runtime():
+    if runtime.risk_analysis_runtime_instance is None:
+        runtime.risk_analysis_runtime_instance = (
+            risk_analysis_runtime_core.RiskAnalysisRuntime(
+                runtime,
+                get_settings=lambda: get_settings_snapshot(),
+                get_source_health=lambda: get_source_health_state(),
+                request_client=lambda: requests,
+                default_settings=DEFAULT_SETTINGS,
+                fallback_models=DEEPSEEK_FALLBACK_MODELS,
+                user_agent=HTTP_USER_AGENT,
+                request_timeout=REQUEST_TIMEOUT,
+                assistant_timeout=RISK_ASSISTANT_TIMEOUT,
+                max_tokens_default=RISK_ASSISTANT_MAX_TOKENS,
+                temperature=RISK_ASSISTANT_TEMPERATURE,
+                proxies=REQ_PROXY,
+                section_labels=RISK_STRUCTURED_SECTION_LABELS,
+                valid_providers=VALID_RISK_ASSISTANT_PROVIDERS,
+                valid_depths=VALID_RISK_ASSISTANT_DEPTHS,
+                trend_periods=RISK_ASSISTANT_TREND_PERIODS,
+                news_limit=RISK_ASSISTANT_NEWS_LIMIT,
+                now_factory=datetime.now,
+            )
+        )
+    return runtime.risk_analysis_runtime_instance
+
+
 def risk_analysis_market_data_error():
-    with runtime.lock:
-        return risk_analysis_core.market_data_error(runtime.price_usd, runtime.price_rmb)
+    return _get_risk_analysis_runtime().market_data_error()
 
 
 def _summarize_price_series(points, field):
@@ -3376,61 +3403,46 @@ def build_risk_scorecard(context):
 
 
 def build_risk_analysis_context(trigger=None, depth=None):
-    return risk_analysis_core.build_context_from_runtime(
-        runtime,
-        get_settings_snapshot(),
-        trigger=trigger,
-        depth=depth,
-        valid_depths=VALID_RISK_ASSISTANT_DEPTHS,
-        trend_periods=RISK_ASSISTANT_TREND_PERIODS,
-        news_limit=RISK_ASSISTANT_NEWS_LIMIT,
-        source_health=get_source_health_state(),
-        now_factory=datetime.now,
-    )
+    return _get_risk_analysis_runtime().build_context(trigger, depth)
 
 
 def _risk_model_client():
-    return risk_analysis_core.RiskModelClient(
-        request_client=requests,
-        default_settings=DEFAULT_SETTINGS,
-        fallback_models=DEEPSEEK_FALLBACK_MODELS,
-        user_agent=HTTP_USER_AGENT,
-        request_timeout=REQUEST_TIMEOUT,
-        assistant_timeout=RISK_ASSISTANT_TIMEOUT,
-        max_tokens_default=RISK_ASSISTANT_MAX_TOKENS,
-        temperature=RISK_ASSISTANT_TEMPERATURE,
-        proxies=REQ_PROXY,
-        section_labels=RISK_STRUCTURED_SECTION_LABELS,
-    )
+    return _get_risk_analysis_runtime().model_client()
 
 
 def build_risk_analysis_snapshot(context):
-    return risk_analysis_core.build_snapshot(context)
+    return _get_risk_analysis_runtime().build_snapshot(context)
 
 
 def parse_risk_analysis_sections(content):
-    return risk_analysis_core.parse_sections(content, RISK_STRUCTURED_SECTION_LABELS)
+    return _get_risk_analysis_runtime().parse_sections(content)
 
 
 def build_risk_analysis_cache_key(snapshot):
-    return risk_analysis_core.build_cache_key(snapshot)
+    return _get_risk_analysis_runtime().build_cache_key(snapshot)
 
 
 def find_recent_risk_analysis_cache(snapshot, cache_minutes):
-    with runtime.risk_history_lock:
-        return risk_analysis_core.find_recent_cache(runtime.risk_analysis_history, snapshot, cache_minutes)
+    return _get_risk_analysis_runtime().find_recent_cache(snapshot, cache_minutes)
 
 
 def selected_risk_model_config(settings, provider=None):
-    return _risk_model_client().selected_model_config(settings, provider)
+    return _get_risk_analysis_runtime().selected_model_config(
+        settings,
+        provider,
+        client=_risk_model_client(),
+    )
 
 
 def test_risk_model_availability(settings):
-    return _risk_model_client().test_availability(settings, VALID_RISK_ASSISTANT_PROVIDERS)
+    return _get_risk_analysis_runtime().test_model_availability(
+        settings,
+        client=_risk_model_client(),
+    )
 
 
 def build_risk_analysis_messages(context):
-    return risk_analysis_core.build_messages(context)
+    return _get_risk_analysis_runtime().build_messages(context)
 
 
 def _chat_completions_url(base_url):
@@ -3442,33 +3454,55 @@ def _models_url(base_url):
 
 
 def fetch_risk_model_options(settings, provider=None):
-    return _risk_model_client().fetch_model_options(settings, provider)
+    return _get_risk_analysis_runtime().fetch_model_options(
+        settings,
+        provider,
+        client=_risk_model_client(),
+    )
 
 
 def call_openai_chat_completion(settings, context, provider, base_url, model, api_key):
-    return _risk_model_client().call_chat_completion(settings, context, provider, base_url, model, api_key)
+    return _get_risk_analysis_runtime().call_chat_completion(
+        settings,
+        context,
+        provider,
+        base_url,
+        model,
+        api_key,
+        client=_risk_model_client(),
+    )
 
 
 def call_deepseek_risk_analysis(settings, context):
-    return _risk_model_client().call_deepseek(settings, context)
+    return _get_risk_analysis_runtime().call_deepseek(
+        settings,
+        context,
+        client=_risk_model_client(),
+    )
 
 
 def call_openai_compatible_risk_analysis(settings, context):
-    return _risk_model_client().call_openai_compatible(settings, context)
+    return _get_risk_analysis_runtime().call_openai_compatible(
+        settings,
+        context,
+        client=_risk_model_client(),
+    )
 
 
 def run_risk_analysis(settings, context):
-    return _risk_model_client().run(settings, context)
+    return _get_risk_analysis_runtime().run(
+        settings,
+        context,
+        client=_risk_model_client(),
+    )
 
 
 def build_risk_analysis_error_payload(message, settings=None, snapshot=None):
-    payload = {
-        "message": message,
-        "diagnostic": risk_analysis_core.build_error_diagnostic(message, settings or get_settings_snapshot(), snapshot),
-    }
-    if snapshot is not None:
-        payload["snapshot"] = snapshot
-    return payload
+    return _get_risk_analysis_runtime().build_error_payload(
+        message,
+        settings,
+        snapshot,
+    )
 
 
 # ---------- 行情运行时 ----------
@@ -3685,8 +3719,7 @@ def _restore_alert_profile_apply_state(
 
 
 def _set_risk_analysis_last_started(value):
-
-    runtime.risk_analysis_last_started = value
+    return _get_risk_analysis_runtime().set_last_started(value)
 
 
 _base_socket_handlers = socket_bootstrap_core.register_socket_handlers(

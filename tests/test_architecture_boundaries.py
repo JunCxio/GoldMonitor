@@ -29,6 +29,7 @@ def test_application_composes_routes_sockets_state_and_desktop_services():
     assert "platform_integration_runtime_core.PlatformIntegrationRuntime(" in source
     assert "update_runtime_core.UpdateRuntime(" in source
     assert "export_runtime_core.ExportRuntime(" in source
+    assert "risk_analysis_runtime_core.RiskAnalysisRuntime(" in source
     assert "settings_runtime_core.SettingsRuntime(" in source
     assert "history_runtime_core.HistoryReviewRuntime(" in source
     assert "floating_controller_core.FloatingPriceController(" in source
