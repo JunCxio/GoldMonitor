@@ -63,6 +63,7 @@ function renderBackgroundTaskStatus() {
   summary.dataset.state = errorCount ? 'error' : (runningCount ? 'running' : 'ok');
 
   list.innerHTML = tasks.map(task => {
+    const taskName = String(task.name || '');
     const attentionRequired = !!task.attention_required;
     const meta = attentionRequired
       ? { label: '需处理', className: 'error' }
@@ -74,6 +75,9 @@ function renderBackgroundTaskStatus() {
     const failureNote = Number(task.consecutive_failures || 0)
       ? '连续失败 ' + Number(task.consecutive_failures) + ' 次'
       : '';
+    const pending = !!pendingBackgroundTaskRuns[taskName];
+    const taskRunning = task.state === 'running';
+    const buttonLabel = pending || taskRunning ? '检查中' : '立即检查';
     return [
       '<div class="ops-task-item" data-state="' + meta.className + '" data-attention="' + String(attentionRequired) + '">',
       '<div class="ops-task-ident">',
@@ -86,6 +90,7 @@ function renderBackgroundTaskStatus() {
       '<span>下次 ' + escapeHtml(nextRun) + '</span>',
       '</div>',
       '<span class="ops-task-state">' + meta.label + '</span>',
+      '<button class="settings-cancel btn-form ops-task-run" type="button" data-task-name="' + escapeHtml(taskName) + '" onclick="runBackgroundTaskNow(this.dataset.taskName)"' + (pending || taskRunning ? ' disabled' : '') + '>' + buttonLabel + '</button>',
       '</div>',
     ].join('');
   }).join('');
@@ -103,4 +108,13 @@ function refreshBackgroundTaskStatus() {
     window.setTimeout(() => { button.disabled = false; }, 600);
   }
   socket.emit('get_background_task_status');
+}
+
+function runBackgroundTaskNow(name) {
+  const taskName = String(name || '').trim();
+  if (!taskName || pendingBackgroundTaskRuns[taskName]) return;
+  pendingBackgroundTaskRuns[taskName] = true;
+  renderBackgroundTaskStatus();
+  setOpsStatus('正在检查后台任务...', true);
+  socket.emit('run_background_task', { name: taskName });
 }

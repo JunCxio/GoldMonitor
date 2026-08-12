@@ -198,6 +198,11 @@ SETTINGS_ONBOARDING_MARKER_PRESENT_AT_STARTUP = bool(
 )
 NEWS_REFRESH_INTERVAL = 15 * 60
 BACKGROUND_TASK_FAILURE_ALERT_THRESHOLD = 3
+BACKGROUND_TASK_NAMES = frozenset({
+    "news",
+    "daily_digest",
+    "notification_retry",
+})
 NEWS_LIMIT = 20
 RISK_ANALYSIS_HISTORY_LIMIT = 20
 PRICE_HISTORY_ARCHIVE_LIMIT = 20000
@@ -4298,6 +4303,13 @@ def _get_task_scheduler_runtime():
 
 def get_background_task_status():
     return _get_task_scheduler_runtime().status()
+
+
+def run_background_task_now(name):
+    task_name = str(name or "").strip()
+    if task_name not in BACKGROUND_TASK_NAMES:
+        raise ValueError("不支持的后台任务")
+    return _get_task_scheduler_runtime().run_task(task_name, force=True)
 
 
 def task_scheduler_loop():

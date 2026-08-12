@@ -1,4 +1,8 @@
+import threading
+import time
 from datetime import datetime, timedelta
+
+import pytest
 
 
 class Clock:
@@ -214,6 +218,60 @@ def test_scheduler_records_duration_and_force_run():
     assert result["task"]["last_message"] == "处理完成"
 
 
+def test_scheduler_rejects_overlapping_manual_runs():
+    from goldmonitor.task_scheduler import TaskSchedulerRuntime
+
+    clock = Clock(datetime(2026, 8, 12, 10, 0, 0))
+    started = threading.Event()
+    release = threading.Event()
+    first_result = []
+
+    def run():
+        started.set()
+        assert release.wait(timeout=2)
+        return True
+
+    scheduler = TaskSchedulerRuntime(now_factory=clock.now)
+    scheduler.register("news", "资讯刷新", 900, run, run_immediately=False)
+    worker = threading.Thread(
+        target=lambda: first_result.append(
+            scheduler.run_task("news", force=True)
+        ),
+    )
+    worker.start()
+    assert started.wait(timeout=2)
+
+    duplicate = scheduler.run_task("news", force=True)
+    release.set()
+    worker.join(timeout=2)
+
+    assert duplicate["ran"] is False
+    assert duplicate["reason"] == "running"
+    assert duplicate["task"]["state"] == "running"
+    assert first_result[0]["ran"] is True
+    assert scheduler.status()["tasks"][0]["run_count"] == 1
+
+
+def test_manual_task_failure_updates_failure_state_and_next_schedule():
+    from goldmonitor.task_scheduler import TaskSchedulerRuntime
+
+    clock = Clock(datetime(2026, 8, 12, 10, 0, 0))
+    scheduler = TaskSchedulerRuntime(now_factory=clock.now)
+    scheduler.register(
+        "news",
+        "资讯刷新",
+        900,
+        lambda: False,
+        run_immediately=False,
+    )
+
+    result = scheduler.run_task("news", force=True)
+
+    assert result["task"]["state"] == "error"
+    assert result["task"]["consecutive_failures"] == 1
+    assert result["task"]["next_run_at"] == "2026-08-12T10:15:00"
+
+
 def test_application_notification_retry_task_result_is_user_readable():
     import app
 
@@ -267,6 +325,165 @@ def test_background_task_status_socket_returns_scheduler_snapshot(monkeypatch):
         if item["name"] == "background_task_status"
     )
     assert payload == expected
+
+
+def test_application_manual_background_task_uses_allowlist(monkeypatch):
+    import app
+
+    calls = []
+
+    class Scheduler:
+        def run_task(self, name, *, force=False):
+            calls.append((name, force))
+            return {"ran": True, "task": {"name": name, "state": "ok"}}
+
+    monkeypatch.setattr(app, "_get_task_scheduler_runtime", lambda: Scheduler())
+
+    result = app.run_background_task_now("daily_digest")
+
+    assert result["ran"] is True
+    assert calls == [("daily_digest", True)]
+    with pytest.raises(ValueError, match="不支持的后台任务"):
+        app.run_background_task_now("unknown")
+
+
+def test_background_task_run_socket_returns_pending_result_and_status(monkeypatch):
+    import app
+
+    task = {
+        "name": "daily_digest",
+        "label": "每日摘要",
+        "state": "disabled",
+        "last_message": "每日摘要未启用",
+    }
+    expected_status = {
+        "summary": {"total": 3, "error": 0, "running": 0, "disabled": 1},
+        "tasks": [task],
+    }
+    monkeypatch.setattr(
+        app,
+        "run_background_task_now",
+        lambda name: {"ran": True, "task": task},
+    )
+    monkeypatch.setattr(app, "get_background_task_status", lambda: expected_status)
+
+    client = app.socketio.test_client(
+        app.app,
+        auth={"token": app.SOCKET_ACCESS_TOKEN},
+    )
+    client.get_received()
+    client.emit("run_background_task", {"name": "daily_digest"})
+    received = []
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        received.extend(client.get_received())
+        names = [item["name"] for item in received]
+        if "background_task_status" in names and names.count("background_task_run_result") >= 2:
+            break
+        time.sleep(0.01)
+
+    results = [
+        item["args"][0]
+        for item in received
+        if item["name"] == "background_task_run_result"
+    ]
+    assert results[0] == {
+        "ok": None,
+        "pending": True,
+        "name": "daily_digest",
+        "message": "正在检查后台任务...",
+    }
+    assert results[-1]["ok"] is True
+    assert results[-1]["task"] == task
+    assert results[-1]["message"] == "每日摘要未启用"
+    status = next(
+        item["args"][0]
+        for item in received
+        if item["name"] == "background_task_status"
+    )
+    assert status == expected_status
+
+
+def test_background_task_run_socket_rejects_unknown_task(monkeypatch):
+    import app
+
+    monkeypatch.setattr(
+        app,
+        "run_background_task_now",
+        lambda name: (_ for _ in ()).throw(ValueError("不支持的后台任务")),
+    )
+
+    client = app.socketio.test_client(
+        app.app,
+        auth={"token": app.SOCKET_ACCESS_TOKEN},
+    )
+    client.get_received()
+    client.emit("run_background_task", {"name": "unknown"})
+    received = []
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        received.extend(client.get_received())
+        results = [
+            item["args"][0]
+            for item in received
+            if item["name"] == "background_task_run_result"
+        ]
+        if len(results) >= 2:
+            break
+        time.sleep(0.01)
+
+    assert results[-1] == {
+        "ok": False,
+        "name": "unknown",
+        "message": "不支持的后台任务。",
+    }
+
+
+def test_background_task_run_socket_reports_running_task(monkeypatch):
+    import app
+
+    running_task = {
+        "name": "news",
+        "label": "资讯刷新",
+        "state": "running",
+        "last_message": "正在运行",
+    }
+    monkeypatch.setattr(
+        app,
+        "run_background_task_now",
+        lambda name: {
+            "ran": False,
+            "reason": "running",
+            "task": running_task,
+        },
+    )
+
+    client = app.socketio.test_client(
+        app.app,
+        auth={"token": app.SOCKET_ACCESS_TOKEN},
+    )
+    client.get_received()
+    client.emit("run_background_task", {"name": "news"})
+    received = []
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        received.extend(client.get_received())
+        results = [
+            item["args"][0]
+            for item in received
+            if item["name"] == "background_task_run_result"
+        ]
+        if len(results) >= 2:
+            break
+        time.sleep(0.01)
+
+    assert results[-1] == {
+        "ok": False,
+        "name": "news",
+        "reason": "running",
+        "task": running_task,
+        "message": "该任务正在运行，请稍后再试。",
+    }
 
 
 def test_application_task_event_sends_desktop_notification_and_broadcasts(monkeypatch):

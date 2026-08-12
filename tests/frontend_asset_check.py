@@ -433,6 +433,10 @@ for required in (
     'id="btnRefreshBackgroundTasks"',
     "socket.on('background_task_status'",
     "socket.emit('get_background_task_status')",
+    "socket.emit('run_background_task'",
+    "socket.on('background_task_run_result'",
+    "function runBackgroundTaskNow",
+    'data-task-name="',
     "if (data.background_task_status) applyBackgroundTaskStatus(data.background_task_status)",
     "if (nextTab === 'ops') socket.emit('get_background_task_status')",
 ):
@@ -443,6 +447,7 @@ for required in (
     ".ops-task-card",
     ".ops-task-item",
     ".ops-task-timing",
+    ".ops-task-run",
     '.ops-task-item[data-attention="true"]',
 ):
     if required not in css_path.read_text(encoding="utf-8"):

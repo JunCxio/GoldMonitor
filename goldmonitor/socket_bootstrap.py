@@ -408,6 +408,10 @@ def register_socket_handlers(application):
         get_background_task_status=(
             lambda: application.get_background_task_status()
         ),
+        run_background_task_now=(
+            lambda task_name: application.run_background_task_now(task_name)
+        ),
+        thread_factory=lambda **kwargs: threading.Thread(**kwargs),
     )
 
     socket_history_review_core.register_history_review_handlers(

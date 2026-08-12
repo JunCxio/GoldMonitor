@@ -264,15 +264,17 @@
   .ops-task-summary[data-state="error"] { color:var(--up); }
   .ops-task-list { display:grid; gap:6px; }
   .ops-task-empty { padding:11px 12px; border:1px solid var(--hairline); border-radius:9px; background:rgba(255,255,255,0.025); color:var(--text-dim); font-size:0.72rem; }
-  .ops-task-item { display:grid; grid-template-columns:minmax(0, 1.15fr) minmax(158px, 0.85fr) auto; align-items:center; gap:12px; min-width:0; padding:10px 11px; border:1px solid var(--hairline); border-radius:9px; background:rgba(255,255,255,0.025); }
+  .ops-task-item { display:grid; grid-template-columns:minmax(0, 1fr) auto; align-items:center; gap:8px 10px; min-width:0; padding:10px 11px; border:1px solid var(--hairline); border-radius:9px; background:rgba(255,255,255,0.025); }
   .ops-task-ident { display:grid; grid-template-columns:7px minmax(0, 1fr); align-items:center; gap:9px; min-width:0; }
   .ops-task-indicator { width:7px; height:24px; border-radius:99px; background:#656576; }
   .ops-task-ident strong, .ops-task-ident span { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .ops-task-ident strong { color:var(--text); font-size:0.75rem; line-height:1.4; }
   .ops-task-ident span { margin-top:2px; color:var(--text-dim); font-size:0.65rem; line-height:1.35; }
-  .ops-task-timing { min-width:0; color:var(--text-dim); font-size:0.63rem; line-height:1.5; text-align:right; }
-  .ops-task-timing span { display:block; white-space:nowrap; }
+  .ops-task-timing { grid-column:1; grid-row:2; min-width:0; padding-left:16px; color:var(--text-dim); font-size:0.63rem; line-height:1.5; text-align:left; }
+  .ops-task-timing span { display:block; white-space:normal; }
   .ops-task-state { min-width:42px; padding:3px 7px; border:1px solid var(--hairline); border-radius:999px; color:var(--text-dim); background:rgba(255,255,255,0.025); font-size:0.62rem; font-weight:800; text-align:center; }
+  .ops-task-run { grid-column:2; grid-row:2; justify-self:end; min-height:30px; padding:5px 9px; font-size:0.68rem; white-space:nowrap; }
+  .ops-task-run:disabled { opacity:0.48; cursor:not-allowed; transform:none; box-shadow:none; }
   .ops-task-item[data-state="running"] .ops-task-indicator { background:var(--gold); box-shadow:0 0 10px rgba(232,184,48,0.3); }
   .ops-task-item[data-state="running"] .ops-task-state { color:var(--gold); border-color:rgba(232,184,48,0.28); background:rgba(232,184,48,0.07); }
   .ops-task-item[data-state="ok"] .ops-task-indicator { background:var(--down); }
@@ -1336,9 +1338,6 @@
     .notification-retry-control { max-width:none; justify-items:start; grid-template-columns:auto minmax(0, 1fr); }
     .notification-retry-status { text-align:left; }
     .ops-task-card { max-width:none; }
-    .ops-task-item { grid-template-columns:minmax(0, 1fr) auto; gap:8px 10px; }
-    .ops-task-timing { grid-column:1 / -1; padding-left:16px; display:flex; justify-content:space-between; gap:10px; text-align:left; }
-    .ops-task-timing span { white-space:normal; }
     .setting-status-wide { max-width:none; }
     .today-overview-modal { height:calc(100dvh - 24px); max-height:calc(100dvh - 24px); }
     .today-overview-head { min-height:auto; padding:14px 16px 13px; }
