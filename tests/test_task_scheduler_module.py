@@ -64,7 +64,96 @@ def test_scheduler_summary_reports_tasks_waiting_for_first_run():
     status = scheduler.status()
 
     assert status["summary"]["waiting"] == 1
+    assert status["summary"]["delayed"] == 0
     assert status["tasks"][0]["last_duration_ms"] is None
+    assert status["tasks"][0]["schedule_delayed"] is False
+
+
+def test_scheduler_reports_task_after_schedule_delay_grace_period():
+    from goldmonitor.task_scheduler import TaskSchedulerRuntime
+
+    clock = Clock(datetime(2026, 8, 12, 10, 0, 0))
+    scheduler = TaskSchedulerRuntime(
+        now_factory=clock.now,
+        schedule_delay_grace_seconds=60,
+    )
+    scheduler.register(
+        "news",
+        "资讯刷新",
+        900,
+        lambda: True,
+        run_immediately=False,
+    )
+
+    clock.advance(960)
+    within_grace = scheduler.status()
+    clock.advance(1)
+    delayed = scheduler.status()
+
+    assert within_grace["summary"]["delayed"] == 0
+    assert within_grace["tasks"][0]["schedule_delay_seconds"] == 60
+    assert delayed["summary"]["delayed"] == 1
+    assert delayed["tasks"][0]["schedule_delayed"] is True
+    assert delayed["tasks"][0]["schedule_delay_seconds"] == 61
+    assert delayed["schedule_delay_grace_seconds"] == 60
+
+
+def test_scheduler_clears_schedule_delay_after_manual_check():
+    from goldmonitor.task_scheduler import TaskSchedulerRuntime
+
+    clock = Clock(datetime(2026, 8, 12, 10, 0, 0))
+    scheduler = TaskSchedulerRuntime(
+        now_factory=clock.now,
+        schedule_delay_grace_seconds=60,
+    )
+    scheduler.register(
+        "news",
+        "资讯刷新",
+        900,
+        lambda: True,
+        run_immediately=False,
+    )
+    clock.advance(961)
+    assert scheduler.status()["tasks"][0]["schedule_delayed"] is True
+
+    scheduler.run_task("news", force=True)
+    status = scheduler.status()
+
+    assert status["summary"]["delayed"] == 0
+    assert status["tasks"][0]["schedule_delayed"] is False
+    assert status["tasks"][0]["schedule_delay_seconds"] == 0
+
+
+def test_scheduler_does_not_report_running_task_as_delayed():
+    from goldmonitor.task_scheduler import TaskSchedulerRuntime
+
+    clock = Clock(datetime(2026, 8, 12, 10, 0, 0))
+    started = threading.Event()
+    release = threading.Event()
+
+    def run():
+        started.set()
+        assert release.wait(timeout=2)
+        return True
+
+    scheduler = TaskSchedulerRuntime(
+        now_factory=clock.now,
+        schedule_delay_grace_seconds=60,
+    )
+    scheduler.register("news", "资讯刷新", 900, run)
+    worker = threading.Thread(target=lambda: scheduler.run_task("news"))
+    worker.start()
+    assert started.wait(timeout=2)
+    clock.advance(120)
+
+    status = scheduler.status()
+    release.set()
+    worker.join(timeout=2)
+
+    assert status["summary"]["delayed"] == 0
+    assert status["tasks"][0]["state"] == "running"
+    assert status["tasks"][0]["schedule_delayed"] is False
+    assert status["tasks"][0]["schedule_delay_seconds"] == 0
 
 
 def test_scheduler_skips_tasks_until_their_next_run():

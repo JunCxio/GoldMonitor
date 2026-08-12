@@ -419,6 +419,9 @@ for required in (
     "function refreshBackgroundTaskStatus",
     "attention_required",
     "consecutive_failures",
+    "schedule_delayed",
+    "schedule_delay_seconds",
+    "function backgroundTaskDelayLabel",
     "function renderSourceHealth",
     "function renderRecentOpsRecords",
     "function previewDataArchive",
@@ -449,6 +452,7 @@ for required in (
     ".ops-task-timing",
     ".ops-task-run",
     '.ops-task-item[data-attention="true"]',
+    '.ops-task-item[data-state="delayed"]',
 ):
     if required not in css_path.read_text(encoding="utf-8"):
         raise SystemExit(f"static/app.css missing background task selector: {required}")

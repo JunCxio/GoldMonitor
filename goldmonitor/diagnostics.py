@@ -71,6 +71,7 @@ def build_health_summary(
     task_summary = background_tasks.get("summary") if isinstance(background_tasks.get("summary"), dict) else {}
     task_attention_count = int(task_summary.get("attention") or 0)
     task_error_count = int(task_summary.get("error") or 0)
+    task_delayed_count = int(task_summary.get("delayed") or 0)
 
     if fetch_status.get("ok") is False:
         messages.append(str(fetch_status.get("message") or "行情数据异常"))
@@ -86,6 +87,8 @@ def build_health_summary(
         messages.append(f"{task_attention_count} 个后台任务连续失败并需要处理")
     elif task_error_count:
         messages.append(f"{task_error_count} 个后台任务最近运行失败")
+    if task_delayed_count:
+        messages.append(f"{task_delayed_count} 个后台任务调度延迟")
     if not int(price_history.get("total") or 0):
         messages.append("暂无价格历史样本")
 
@@ -110,6 +113,7 @@ def build_health_summary(
             "notification_problem_alerts": notification_problem_alerts,
             "background_task_errors": task_error_count,
             "background_task_attention": task_attention_count,
+            "background_task_delayed": task_delayed_count,
         },
         "storage": (
             {key: dict(value) for key, value in sorted(storage_manifest.items())}

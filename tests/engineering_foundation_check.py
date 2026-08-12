@@ -117,6 +117,27 @@ def test_diagnostics_summary_counts_background_task_incidents():
     assert "1 个后台任务连续失败并需要处理" in summary["messages"]
 
 
+def test_diagnostics_summary_counts_delayed_background_tasks():
+    from goldmonitor.diagnostics import build_health_summary
+
+    summary = build_health_summary(
+        fetch_status={"ok": True},
+        source_health={"summary": {}},
+        price_history={"total": 8},
+        watch_targets={},
+        risk_history_count=0,
+        recent_alerts=[],
+        paths={},
+        background_tasks={
+            "summary": {"error": 0, "attention": 0, "delayed": 2},
+        },
+    )
+
+    assert summary["status"] == "degraded"
+    assert summary["counts"]["background_task_delayed"] == 2
+    assert "2 个后台任务调度延迟" in summary["messages"]
+
+
 def test_frontend_shell_static_resource_is_referenced():
     template = Path("templates/index.html").read_text(encoding="utf-8")
     shell = Path("static/app-shell.js")

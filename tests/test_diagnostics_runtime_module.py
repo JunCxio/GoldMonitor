@@ -64,11 +64,14 @@ def test_clipboard_summary_uses_fallback_status_and_masks_raw_structure():
             "paths": {"appdata": "/data", "exports": "/exports"},
             "background_tasks": {
                 "failure_alert_threshold": 3,
-                "summary": {"total": 3, "error": 1, "attention": 1},
+                "schedule_delay_grace_seconds": 60,
+                "summary": {"total": 3, "error": 1, "attention": 1, "delayed": 1},
                 "tasks": [{
                     "label": "资讯刷新",
                     "state": "error",
                     "consecutive_failures": 3,
+                    "schedule_delayed": True,
+                    "schedule_delay_seconds": 75,
                     "last_message": "资讯刷新失败",
                 }],
             },
@@ -91,5 +94,7 @@ def test_clipboard_summary_uses_fallback_status_and_masks_raw_structure():
     assert "实际显示器: DISPLAY2 / 2560×1440" in text
     assert "后台任务" in text
     assert "需要处理: 1" in text
-    assert "资讯刷新: 失败，连续失败 3 次" in text
+    assert "调度延迟: 1" in text
+    assert "延迟阈值: 超过计划时间 60 秒" in text
+    assert "资讯刷新: 失败，连续失败 3 次，调度延迟 75 秒" in text
     assert "后台任务提示" in text

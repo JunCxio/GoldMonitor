@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, Optional
 
 
 TASK_STATES = {"waiting", "running", "ok", "error", "disabled", "idle"}
+DEFAULT_SCHEDULE_DELAY_GRACE_SECONDS = 60
 
 
 @dataclass(frozen=True)
@@ -80,12 +81,17 @@ class TaskSchedulerRuntime:
         monotonic_factory=time.monotonic,
         logger=logging,
         failure_alert_threshold=3,
+        schedule_delay_grace_seconds=DEFAULT_SCHEDULE_DELAY_GRACE_SECONDS,
         event_handler=None,
     ):
         self.now_factory = now_factory
         self.monotonic_factory = monotonic_factory
         self.logger = logger
         self.failure_alert_threshold = max(1, int(failure_alert_threshold))
+        self.schedule_delay_grace_seconds = max(
+            0,
+            int(schedule_delay_grace_seconds),
+        )
         self.event_handler = event_handler
         self.lock = threading.RLock()
         self.tasks: Dict[str, ScheduledTask] = {}
@@ -225,7 +231,10 @@ class TaskSchedulerRuntime:
     def status(self, now=None):
         current = now or self.now_factory()
         with self.lock:
-            tasks = [self._public_state(state) for state in self.task_states.values()]
+            tasks = [
+                self._status_state(state, current)
+                for state in self.task_states.values()
+            ]
         return {
             "updated_at": current.isoformat(timespec="seconds"),
             "summary": {
@@ -235,8 +244,10 @@ class TaskSchedulerRuntime:
                 "disabled": sum(item["state"] == "disabled" for item in tasks),
                 "waiting": sum(item["state"] == "waiting" for item in tasks),
                 "attention": sum(bool(item["attention_required"]) for item in tasks),
+                "delayed": sum(bool(item["schedule_delayed"]) for item in tasks),
             },
             "failure_alert_threshold": self.failure_alert_threshold,
+            "schedule_delay_grace_seconds": self.schedule_delay_grace_seconds,
             "tasks": tasks,
         }
 
@@ -280,4 +291,16 @@ class TaskSchedulerRuntime:
         interval = payload.get("interval_seconds")
         if isinstance(interval, float) and interval.is_integer():
             payload["interval_seconds"] = int(interval)
+        return payload
+
+    def _status_state(self, state, current):
+        payload = self._public_state(state)
+        next_run_at = state.get("next_run_at")
+        delay_seconds = 0
+        if state.get("state") != "running" and isinstance(next_run_at, datetime):
+            delay_seconds = max(0, int((current - next_run_at).total_seconds()))
+        payload["schedule_delay_seconds"] = delay_seconds
+        payload["schedule_delayed"] = (
+            delay_seconds > self.schedule_delay_grace_seconds
+        )
         return payload

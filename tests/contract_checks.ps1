@@ -193,6 +193,7 @@ Assert-Contains -Path "goldmonitor\application.py" -Pattern 'start_task_schedule
 Assert-Contains -Path "goldmonitor\task_scheduler.py" -Pattern 'class TaskSchedulerRuntime' -Message "backend must provide a unified task scheduler runtime"
 Assert-Contains -Path "goldmonitor\task_scheduler.py" -Pattern 'failure_threshold' -Message "task scheduler must track repeated failures"
 Assert-Contains -Path "goldmonitor\task_scheduler.py" -Pattern 'recovered' -Message "task scheduler must report recovery after incidents"
+Assert-Contains -Path "goldmonitor\task_scheduler.py" -Pattern 'schedule_delayed' -Message "task scheduler must expose delayed schedules"
 Assert-Contains -Path "goldmonitor\socket_operations.py" -Pattern '@socketio\.on\("get_background_task_status"\)' -Message "backend must expose background task status"
 Assert-Contains -Path "goldmonitor\socket_operations.py" -Pattern '@socketio\.on\("run_background_task"\)' -Message "backend must expose controlled background task checks"
 Assert-Contains -Path "goldmonitor\application.py" -Pattern 'REVIEW_NOTES_PATH' -Message "backend must persist review notes locally"

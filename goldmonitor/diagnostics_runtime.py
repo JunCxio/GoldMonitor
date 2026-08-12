@@ -232,7 +232,9 @@ def build_diagnostics_clipboard_text(
         f"- 任务数量: {task_summary.get('total', len(scheduled_tasks))}",
         f"- 最近失败: {task_summary.get('error', 0)}",
         f"- 需要处理: {task_summary.get('attention', 0)}",
+        f"- 调度延迟: {task_summary.get('delayed', 0)}",
         f"- 提醒阈值: 连续失败 {background_tasks.get('failure_alert_threshold', 3)} 次",
+        f"- 延迟阈值: 超过计划时间 {background_tasks.get('schedule_delay_grace_seconds', 60)} 秒",
     ]
     for task in scheduled_tasks:
         if not isinstance(task, dict):
@@ -240,9 +242,15 @@ def build_diagnostics_clipboard_text(
         label = value(task.get("label") or task.get("name"), "未命名任务")
         task_state = diagnostics_task_state_label(task.get("state"))
         failures = int(task.get("consecutive_failures") or 0)
+        delay_seconds = int(task.get("schedule_delay_seconds") or 0)
         message = value(task.get("last_message"), "等待首次运行")
+        schedule_note = (
+            f"，调度延迟 {delay_seconds} 秒"
+            if task.get("schedule_delayed")
+            else ""
+        )
         lines.append(
-            f"- {label}: {task_state}，连续失败 {failures} 次，最近结果：{message}"
+            f"- {label}: {task_state}，连续失败 {failures} 次{schedule_note}，最近结果：{message}"
         )
     lines.extend([
         "",
@@ -283,11 +291,11 @@ def build_diagnostics_clipboard_text(
         lines.append(f"- 最近失败原因: {value(last_export.get('message'))}")
     if quality_reasons:
         lines.extend(["", "数据质量提示", *[f"- {item}" for item in quality_reasons[:5]]])
-    if int(task_summary.get("attention") or 0):
+    if int(task_summary.get("attention") or 0) or int(task_summary.get("delayed") or 0):
         lines.extend([
             "",
             "后台任务提示",
-            "- 打开设置中的“运维与数据”，查看连续失败任务的最近结果和下次运行时间。",
+            "- 打开设置中的“运维与数据”，查看异常任务的最近结果、下次运行时间并执行立即检查。",
         ])
     lines.extend([
         "",

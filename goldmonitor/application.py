@@ -198,6 +198,7 @@ SETTINGS_ONBOARDING_MARKER_PRESENT_AT_STARTUP = bool(
 )
 NEWS_REFRESH_INTERVAL = 15 * 60
 BACKGROUND_TASK_FAILURE_ALERT_THRESHOLD = 3
+BACKGROUND_TASK_SCHEDULE_DELAY_GRACE_SECONDS = 60
 BACKGROUND_TASK_NAMES = frozenset({
     "news",
     "daily_digest",
@@ -4275,6 +4276,9 @@ def _get_task_scheduler_runtime():
                 monotonic_factory=time.monotonic,
                 logger=logging,
                 failure_alert_threshold=BACKGROUND_TASK_FAILURE_ALERT_THRESHOLD,
+                schedule_delay_grace_seconds=(
+                    BACKGROUND_TASK_SCHEDULE_DELAY_GRACE_SECONDS
+                ),
                 event_handler=_handle_background_task_event,
             )
             scheduler.register(

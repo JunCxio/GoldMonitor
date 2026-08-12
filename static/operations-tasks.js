@@ -30,6 +30,13 @@ function backgroundTaskDurationLabel(value) {
   return (duration / 1000).toFixed(duration < 10000 ? 1 : 0) + ' 秒';
 }
 
+function backgroundTaskDelayLabel(value) {
+  const seconds = Math.max(0, Number(value) || 0);
+  if (seconds < 60) return Math.round(seconds) + ' 秒';
+  if (seconds < 3600) return Math.round(seconds / 60) + ' 分钟';
+  return (seconds / 3600).toFixed(seconds < 36000 ? 1 : 0) + ' 小时';
+}
+
 function renderBackgroundTaskStatus() {
   const list = document.getElementById('backgroundTaskStatus');
   const summary = document.getElementById('backgroundTaskSummary');
@@ -50,24 +57,32 @@ function renderBackgroundTaskStatus() {
   const disabledCount = Number(counts.disabled || 0);
   const waitingCount = Number(counts.waiting || 0);
   const attentionCount = Number(counts.attention || 0);
+  const delayedCount = Number(counts.delayed || 0);
   const transientErrorCount = Math.max(0, errorCount - attentionCount);
   const summaryParts = [];
   if (attentionCount) summaryParts.push(attentionCount + ' 项需处理');
   if (transientErrorCount) summaryParts.push(transientErrorCount + ' 项最近失败');
+  if (delayedCount) summaryParts.push(delayedCount + ' 项调度延迟');
   if (runningCount) summaryParts.push(runningCount + ' 项运行中');
   if (disabledCount) summaryParts.push(disabledCount + ' 项停用');
   if (waitingCount) summaryParts.push(waitingCount + ' 项等待首次运行');
   if (!summaryParts.length) summaryParts.push('调度运行正常');
   const updatedAt = payload.updated_at ? '，更新于 ' + formatBackgroundTaskTime(payload.updated_at) : '';
   summary.textContent = summaryParts.join('，') + updatedAt;
-  summary.dataset.state = errorCount ? 'error' : (runningCount ? 'running' : 'ok');
+  summary.dataset.state = errorCount
+    ? 'error'
+    : (delayedCount ? 'delayed' : (runningCount ? 'running' : 'ok'));
 
   list.innerHTML = tasks.map(task => {
     const taskName = String(task.name || '');
     const attentionRequired = !!task.attention_required;
+    const scheduleDelayed = !!task.schedule_delayed;
+    const stateMeta = backgroundTaskStateMeta(task.state);
     const meta = attentionRequired
       ? { label: '需处理', className: 'error' }
-      : backgroundTaskStateMeta(task.state);
+      : scheduleDelayed && stateMeta.className !== 'error'
+        ? { label: '延迟', className: 'delayed' }
+        : stateMeta;
     const duration = backgroundTaskDurationLabel(task.last_duration_ms);
     const lastRun = formatBackgroundTaskTime(task.last_completed_at || task.last_started_at);
     const nextRun = formatBackgroundTaskTime(task.next_run_at);
@@ -75,11 +90,14 @@ function renderBackgroundTaskStatus() {
     const failureNote = Number(task.consecutive_failures || 0)
       ? '连续失败 ' + Number(task.consecutive_failures) + ' 次'
       : '';
+    const delayNote = scheduleDelayed
+      ? '已延迟 ' + backgroundTaskDelayLabel(task.schedule_delay_seconds)
+      : '';
     const pending = !!pendingBackgroundTaskRuns[taskName];
     const taskRunning = task.state === 'running';
     const buttonLabel = pending || taskRunning ? '检查中' : '立即检查';
     return [
-      '<div class="ops-task-item" data-state="' + meta.className + '" data-attention="' + String(attentionRequired) + '">',
+      '<div class="ops-task-item" data-state="' + meta.className + '" data-attention="' + String(attentionRequired) + '" data-delayed="' + String(scheduleDelayed) + '">',
       '<div class="ops-task-ident">',
       '<span class="ops-task-indicator" aria-hidden="true"></span>',
       '<div><strong>' + escapeHtml(task.label || task.name || '后台任务') + '</strong>',
@@ -87,7 +105,7 @@ function renderBackgroundTaskStatus() {
       '</div>',
       '<div class="ops-task-timing">',
       '<span>最近 ' + escapeHtml(lastRun) + (duration ? ' · ' + escapeHtml(duration) : '') + (failureNote ? ' · ' + escapeHtml(failureNote) : '') + '</span>',
-      '<span>下次 ' + escapeHtml(nextRun) + '</span>',
+      '<span>下次 ' + escapeHtml(nextRun) + (delayNote ? ' · ' + escapeHtml(delayNote) : '') + '</span>',
       '</div>',
       '<span class="ops-task-state">' + meta.label + '</span>',
       '<button class="settings-cancel btn-form ops-task-run" type="button" data-task-name="' + escapeHtml(taskName) + '" onclick="runBackgroundTaskNow(this.dataset.taskName)"' + (pending || taskRunning ? ' disabled' : '') + '>' + buttonLabel + '</button>',
