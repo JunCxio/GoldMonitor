@@ -36,6 +36,7 @@ from goldmonitor import history_runtime as history_runtime_core
 from goldmonitor import floating_controller as floating_controller_core
 from goldmonitor import taskbar_controller as taskbar_controller_core
 from goldmonitor import taskbar_runtime as taskbar_runtime_core
+from goldmonitor import today_overview_runtime as today_overview_runtime_core
 from goldmonitor import instance_runtime as instance_runtime_core
 from goldmonitor import http_routes as http_routes_core
 from goldmonitor import market_adapters as market_adapters_core
@@ -179,6 +180,7 @@ REVIEW_NOTES_PATH = os.path.join(APPDATA_DIR, "review_notes.json")
 PRICE_HISTORY_PATH = os.path.join(APPDATA_DIR, "price_history.json")
 APP_LOG_PATH = os.path.join(APPDATA_DIR, "GoldMonitor.log")
 DAILY_DIGEST_STATE_PATH = os.path.join(APPDATA_DIR, "daily_digest_state.json")
+TODAY_OVERVIEW_STATE_PATH = os.path.join(APPDATA_DIR, "today_overview_state.json")
 SETTINGS_FILE_EXISTED_AT_STARTUP = os.path.isfile(SETTINGS_PATH)
 try:
     with open(SETTINGS_PATH, "r", encoding="utf-8") as _settings_marker_file:
@@ -1584,6 +1586,7 @@ def _data_archive_paths():
         "review_notes": {"path": REVIEW_NOTES_PATH, "kind": "json", "label": "复盘笔记"},
         "price_history": {"path": PRICE_HISTORY_PATH, "kind": "json", "label": "价格历史 JSON"},
         "daily_digest_state": {"path": DAILY_DIGEST_STATE_PATH, "kind": "json", "label": "每日摘要状态"},
+        "today_overview_state": {"path": TODAY_OVERVIEW_STATE_PATH, "kind": "json", "label": "今日概览查看状态"},
         "price_history_db": {"path": _price_history_db_path(), "kind": "sqlite", "label": "价格历史数据库"},
         "alert_log_db": {"path": _alert_log_db_path(), "kind": "sqlite", "label": "告警记录数据库"},
     }
@@ -1902,6 +1905,7 @@ def _get_diagnostics_runtime():
                 "review_notes": REVIEW_NOTES_PATH,
                 "price_history": PRICE_HISTORY_PATH,
                 "daily_digest_state": DAILY_DIGEST_STATE_PATH,
+                "today_overview_state": TODAY_OVERVIEW_STATE_PATH,
                 "price_history_db": _price_history_db_path(),
                 "alert_log_db": _alert_log_db_path(),
                 "log": APP_LOG_PATH,
@@ -2165,6 +2169,39 @@ def _get_daily_digest_runtime():
             logger=logging,
         )
     return runtime.daily_digest_runtime_instance
+
+
+def _get_today_overview_runtime():
+    if runtime.today_overview_runtime_instance is None:
+        runtime.today_overview_runtime_instance = (
+            today_overview_runtime_core.TodayOverviewRuntime(
+                runtime,
+                state_path=lambda: TODAY_OVERVIEW_STATE_PATH,
+                get_alert_entries=lambda: alert_log_export_entries(
+                    limit=ALERT_LOG_DB_LIMIT
+                ),
+                get_alert_rules=lambda: get_alert_rules_state(),
+                get_source_health=lambda: get_source_health_state(),
+                get_fetch_status=lambda: get_fetch_status(),
+                build_portfolio=lambda: build_portfolio_state(),
+                get_risk_history=lambda: get_risk_analysis_history_state(),
+                get_review_notes=lambda: get_review_notes_state(),
+                now_factory=datetime.now,
+            )
+        )
+    return runtime.today_overview_runtime_instance
+
+
+def get_today_overview_view_state():
+    return _get_today_overview_runtime().get_view_state()
+
+
+def build_today_overview_state(now=None):
+    return _get_today_overview_runtime().build(now=now)
+
+
+def mark_today_overview_viewed(now=None):
+    return _get_today_overview_runtime().mark_viewed(now=now)
 
 
 def _notification_status(channel, label, status, message, **details):

@@ -25,6 +25,7 @@ def test_storage_manifest_covers_current_persistent_paths():
             "review_notes": str(tmp / "review_notes.json"),
             "price_history": str(tmp / "price_history.json"),
             "daily_digest_state": str(tmp / "daily_digest_state.json"),
+            "today_overview_state": str(tmp / "today_overview_state.json"),
             "price_history_db": str(tmp / "price_history.sqlite3"),
             "alert_log_db": str(tmp / "alert_log.sqlite3"),
             "log": str(tmp / "GoldMonitor.log"),
@@ -43,6 +44,8 @@ def test_storage_manifest_covers_current_persistent_paths():
     assert manifest["daily_digest_state"]["schema"] == "versioned_object"
     assert manifest["daily_digest_state"]["expected_schema_version"] == 1
     assert manifest["daily_digest_state"]["format"] == "missing"
+    assert manifest["today_overview_state"]["schema"] == "versioned_object"
+    assert manifest["today_overview_state"]["expected_schema_version"] == 1
     assert manifest["source_metrics"]["schema"] == "versioned_object"
     assert manifest["source_metrics"]["expected_schema_version"] == 1
     assert manifest["price_history_db"]["kind"] == "sqlite"
@@ -168,6 +171,7 @@ def test_app_diagnostics_report_includes_complete_storage_manifest(monkeypatch, 
         "REVIEW_NOTES_PATH": tmp_path / "review_notes.json",
         "PRICE_HISTORY_PATH": tmp_path / "price_history.json",
         "DAILY_DIGEST_STATE_PATH": tmp_path / "daily_digest_state.json",
+        "TODAY_OVERVIEW_STATE_PATH": tmp_path / "today_overview_state.json",
         "APP_LOG_PATH": tmp_path / "GoldMonitor.log",
     }
     for name, value in path_keys.items():
@@ -188,6 +192,7 @@ def test_app_diagnostics_report_includes_complete_storage_manifest(monkeypatch, 
         "review_notes",
         "price_history",
         "daily_digest_state",
+        "today_overview_state",
         "price_history_db",
         "alert_log_db",
     }:
@@ -199,10 +204,12 @@ def test_app_diagnostics_report_includes_complete_storage_manifest(monkeypatch, 
     assert report["storage_manifest"]["review_notes"]["schema"] == "item_payload"
     assert report["storage_manifest"]["daily_digest_state"]["schema"] == "versioned_object"
     assert report["storage_manifest"]["daily_digest_state"]["expected_schema_version"] == 1
+    assert report["storage_manifest"]["today_overview_state"]["expected_schema_version"] == 1
     assert report["storage_manifest"]["source_metrics"]["schema"] == "versioned_object"
     assert report["storage_manifest"]["price_history_db"]["kind"] == "sqlite"
     assert report["data_schemas"]["portfolio_transactions"]["expected_schema_version"] == 1
     assert report["data_schemas"]["portfolio_alerts"]["expected_schema_version"] == 1
     assert report["data_schemas"]["review_notes"]["expected_schema_version"] == 1
     assert report["data_schemas"]["daily_digest_state"]["expected_schema_version"] == 1
+    assert report["data_schemas"]["today_overview_state"]["expected_schema_version"] == 1
     assert report["data_schemas"]["source_metrics"]["expected_schema_version"] == 1

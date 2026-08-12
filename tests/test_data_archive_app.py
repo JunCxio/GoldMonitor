@@ -23,6 +23,7 @@ def test_data_archive_paths_cover_all_restorable_state():
         "review_notes",
         "price_history",
         "daily_digest_state",
+        "today_overview_state",
         "price_history_db",
         "alert_log_db",
     }

@@ -15,6 +15,17 @@
   <div class="header">
     <h1>金价监控</h1>
     <div class="header-actions">
+      <button class="icon-btn today-overview-trigger" id="todayOverviewButton" type="button" onclick="openTodayOverview()" title="今日概览" aria-label="打开今日概览" aria-haspopup="dialog" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 5h10"></path>
+          <path d="M9 12h10"></path>
+          <path d="M9 19h10"></path>
+          <path d="m3 5 1.4 1.4L7 3.8"></path>
+          <path d="m3 12 1.4 1.4L7 10.8"></path>
+          <path d="m3 19 1.4 1.4L7 17.8"></path>
+        </svg>
+        <span class="today-overview-count" id="todayOverviewCount" aria-hidden="true" hidden>0</span>
+      </button>
       <button class="icon-btn" id="updateButton" onclick="openUpdate()" title="检查更新" aria-label="检查更新">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M21 12a9 9 0 0 1-15.32 6.36"></path>
@@ -244,6 +255,59 @@
       </div>
     </div>
   </div>
+</div>
+
+<div class="settings-backdrop today-overview-backdrop" id="todayOverviewBackdrop" onclick="onTodayOverviewBackdrop(event)">
+  <section class="settings-modal today-overview-modal" role="dialog" aria-modal="true" aria-labelledby="todayOverviewTitle" aria-describedby="todayOverviewSubtitle">
+    <div class="today-overview-head">
+      <div class="today-overview-heading">
+        <div class="today-overview-kicker">今日检查单</div>
+        <h2 id="todayOverviewTitle">今日概览</h2>
+        <p id="todayOverviewSubtitle">汇总当前待处理事项和本机今日活动。</p>
+      </div>
+      <div class="today-overview-head-actions">
+        <button class="today-overview-refresh" id="todayOverviewRefreshButton" type="button" onclick="requestTodayOverview(true)">刷新</button>
+        <button class="settings-close" id="todayOverviewCloseButton" type="button" onclick="closeTodayOverview()" aria-label="关闭今日概览">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+        </button>
+      </div>
+    </div>
+    <div class="today-overview-summary" id="todayOverviewSummary" aria-label="今日概览统计"></div>
+    <div class="today-overview-status" id="todayOverviewStatus" role="status" aria-live="polite"></div>
+    <div class="today-overview-workspace">
+      <section class="today-overview-section today-overview-attention-section" aria-labelledby="todayOverviewAttentionTitle">
+        <div class="today-overview-section-head">
+          <div>
+            <span>按处理优先级排列</span>
+            <h3 id="todayOverviewAttentionTitle">待处理事项</h3>
+          </div>
+          <strong id="todayOverviewAttentionCount">0 项</strong>
+        </div>
+        <div class="today-overview-attention-list" id="todayOverviewAttentionList"></div>
+      </section>
+      <aside class="today-overview-side">
+        <section class="today-overview-section today-overview-context-section" aria-labelledby="todayOverviewContextTitle">
+          <div class="today-overview-section-head">
+            <div>
+              <span>当前状态</span>
+              <h3 id="todayOverviewContextTitle">行情与持仓</h3>
+            </div>
+          </div>
+          <div class="today-overview-context" id="todayOverviewContext"></div>
+        </section>
+        <section class="today-overview-section today-overview-activity-section" aria-labelledby="todayOverviewActivityTitle">
+          <div class="today-overview-section-head">
+            <div>
+              <span>本机自然日</span>
+              <h3 id="todayOverviewActivityTitle">今日活动</h3>
+            </div>
+            <strong id="todayOverviewActivityCount">0 条</strong>
+          </div>
+          <div class="today-overview-activity-list" id="todayOverviewActivityList"></div>
+        </section>
+      </aside>
+    </div>
+  </section>
 </div>
 
 <div class="settings-backdrop" id="settingsBackdrop" onclick="onSettingsBackdrop(event)">
@@ -679,6 +743,7 @@
 <script src="/static/app-state.js?v={{ app_version }}"></script>
 <script src="/static/app-utils.js?v={{ app_version }}"></script>
 <script src="/static/market-dashboard.js?v={{ app_version }}"></script>
+<script src="/static/today-overview.js?v={{ app_version }}"></script>
 
 <script src="/static/settings-state.js?v={{ app_version }}"></script>
 <script src="/static/settings-socket.js?v={{ app_version }}"></script>
