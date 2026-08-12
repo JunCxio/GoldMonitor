@@ -256,6 +256,10 @@ def register_socket_handlers(application):
         run_daily_digest_once=lambda **kwargs: application.run_daily_digest_once(
             **kwargs
         ),
+        notification_retry_status=lambda: application.notification_retry_status(),
+        run_notification_retry_once=(
+            lambda **kwargs: application.run_notification_retry_once(**kwargs)
+        ),
     )
 
     socket_risk_analysis_core.register_risk_analysis_handlers(

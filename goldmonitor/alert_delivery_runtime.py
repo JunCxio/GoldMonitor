@@ -4,6 +4,7 @@ import threading
 from datetime import datetime
 
 from goldmonitor import notification_delivery as notification_delivery_core
+from goldmonitor import notification_retry as notification_retry_core
 
 
 def persist_alert_notification_update(
@@ -19,7 +20,7 @@ def persist_alert_notification_update(
         updated["notification_summary"] = notification_delivery_core.summarize_notifications(
             updated["notifications"]
         )
-        return updated
+        return notification_retry_core.apply_notification_retry_metadata(updated)
 
     ok, updated = update_entry(alert_id, updater)
     if ok and updated:
@@ -157,11 +158,18 @@ def resend_alert_notification(
     persist_update,
     start_notification_delivery,
     title_builder,
+    automatic=False,
+    retryable_only=False,
     now_factory=datetime.now,
 ):
     def updater(entry):
         updated = dict(entry)
-        updated["notifications"] = plan_notifications(updated, settings)
+        retry_plan = notification_retry_core.build_retry_notifications(
+            updated,
+            plan_notifications(updated, settings),
+            retryable_only=retryable_only,
+        )
+        updated["notifications"] = retry_plan["notifications"]
         updated["notification_summary"] = summarize_notifications(
             updated.get("notifications")
         )
@@ -171,10 +179,31 @@ def resend_alert_notification(
         updated["last_notification_resend_at"] = now_factory().isoformat(
             timespec="seconds"
         )
+        updated["notification_retry_next_at"] = ""
+        if automatic:
+            try:
+                retry_count = max(
+                    0,
+                    int(updated.get("notification_auto_retry_count") or 0),
+                )
+            except (TypeError, ValueError):
+                retry_count = 0
+            updated["notification_auto_retry_count"] = retry_count + 1
+            updated["last_notification_auto_retry_at"] = updated[
+                "last_notification_resend_at"
+            ]
         return updated
 
     ok, updated = update_entry(alert_id, updater)
-    if not (ok and updated and start_delivery):
+    if not (ok and updated):
+        return ok, updated
+    if not any(
+        item.get("status") == "pending"
+        for item in list(updated.get("notifications") or [])
+        if isinstance(item, dict)
+    ):
+        return False, updated
+    if not start_delivery:
         return ok, updated
     title = title_builder(updated)
     if blocking:

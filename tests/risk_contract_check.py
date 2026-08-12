@@ -937,9 +937,9 @@ try:
             if not status_event.get("ok") or not status_event.get("entry", {}).get("acknowledged"):
                 raise SystemExit(f"alert log status socket event must return updated alert, got: {status_event}")
             client.emit("resend_alert_notification", {"id": alert_id})
-            resend_event = wait_for_event(client, "alert_notification_resent")
-            if not resend_event.get("ok") or not resend_event.get("entry", {}).get("last_notification_resend_at"):
-                raise SystemExit(f"alert notification resend event must return updated alert, got: {resend_event}")
+            resend_event = wait_for_event(client, "alert_notification_resend_error")
+            if resend_event.get("message") != "当前告警没有需要重试的失败通知":
+                raise SystemExit(f"delivered channels must not be sent repeatedly, got: {resend_event}")
             client.emit("export_alert_log")
             alert_export = wait_for_event(client, "alert_log_exported")
             alert_saved_path = alert_export.get("saved_path", "")

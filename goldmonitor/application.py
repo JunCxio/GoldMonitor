@@ -47,6 +47,7 @@ from goldmonitor import news as news_core
 from goldmonitor import notification_adapters as notification_adapters_core
 from goldmonitor import notification_delivery as notification_delivery_core
 from goldmonitor import notification_policy as notification_policy_core
+from goldmonitor import notification_retry_runtime as notification_retry_runtime_core
 from goldmonitor import notification_transport as notification_transport_core
 from goldmonitor import operations_runtime as operations_runtime_core
 from goldmonitor import platform as platform_core
@@ -333,6 +334,7 @@ DEFAULT_SETTINGS = {
     "daily_digest_time": "20:00",
     "daily_digest_email_enabled": True,
     "daily_digest_webhook_enabled": False,
+    "notification_auto_retry_enabled": False,
     # 风险分析助手
     "risk_assistant_enabled": True,
     "risk_assistant_provider": "deepseek",
@@ -2171,6 +2173,36 @@ def _get_daily_digest_runtime():
     return runtime.daily_digest_runtime_instance
 
 
+def _get_notification_retry_runtime():
+    if runtime.notification_retry_runtime_instance is None:
+        runtime.notification_retry_runtime_instance = (
+            notification_retry_runtime_core.NotificationRetryRuntime(
+                get_settings=lambda: get_settings_snapshot(),
+                get_entries=lambda: alert_log_export_entries(
+                    limit=ALERT_LOG_EXPORT_LIMIT
+                ),
+                resend=lambda alert_id, **kwargs: resend_alert_notification(
+                    alert_id,
+                    retryable_only=bool(kwargs.get("automatic")),
+                    **kwargs,
+                ),
+                emit=lambda event, payload: socketio.emit(event, payload),
+                now_factory=datetime.now,
+                lock=runtime.notification_retry_lock,
+                logger=logging,
+            )
+        )
+    return runtime.notification_retry_runtime_instance
+
+
+def notification_retry_status():
+    return _get_notification_retry_runtime().status()
+
+
+def run_notification_retry_once(manual=False):
+    return _get_notification_retry_runtime().run_once(manual=manual)
+
+
 def _get_today_overview_runtime():
     if runtime.today_overview_runtime_instance is None:
         runtime.today_overview_runtime_instance = (
@@ -3271,7 +3303,13 @@ def _alert_resend_title(entry):
     return _get_alert_log_runtime().resend_title(entry)
 
 
-def resend_alert_notification(alert_id, blocking=False, start_delivery=True):
+def resend_alert_notification(
+    alert_id,
+    blocking=False,
+    start_delivery=True,
+    automatic=False,
+    retryable_only=False,
+):
     return _get_alert_log_runtime().resend_notification(
         alert_id,
         settings=get_settings_snapshot(),
@@ -3284,6 +3322,8 @@ def resend_alert_notification(alert_id, blocking=False, start_delivery=True):
         persist_update=_persist_alert_notification_update,
         start_notification_delivery=_start_alert_notification_delivery,
         title_builder=_alert_resend_title,
+        automatic=automatic,
+        retryable_only=retryable_only,
     )
 
 
@@ -3681,6 +3721,7 @@ def _build_socket_init_state():
         get_alert_rules=get_alert_rules_state,
         get_alert_profiles=get_alert_profiles_state,
         get_daily_digest_status=daily_digest_status_payload,
+        get_notification_retry_status=notification_retry_status,
         get_news=get_news_state,
         get_risk_history=get_risk_analysis_history_state,
     )
@@ -4168,8 +4209,18 @@ def start_news_fetching():
 
 
 def daily_digest_loop():
+    def run_tasks():
+        for task, label in (
+            (run_daily_digest_once, "每日摘要"),
+            (run_notification_retry_once, "通知重试"),
+        ):
+            try:
+                task()
+            except Exception:
+                logging.exception("%s后台任务执行失败", label)
+
     return desktop_runtime_core.run_periodic_task(
-        lambda: run_daily_digest_once(),
+        run_tasks,
         interval=30,
         sleep=lambda seconds: time.sleep(seconds),
         logger=logging,

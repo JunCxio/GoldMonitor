@@ -1593,6 +1593,30 @@ for required in (
         raise SystemExit(f"frontend missing daily digest contract: {required}")
 
 for required in (
+    'id="setNotificationAutoRetry"',
+    'id="notificationRetryStatus"',
+    'id="btnRetryFailedNotifications"',
+    "notificationRetryStatusState",
+    "function applyNotificationRetryStatus",
+    "function retryFailedNotifications",
+    "socket.emit('get_notification_retry_status')",
+    "socket.emit('retry_failed_notifications')",
+    "socket.on('notification_retry_status'",
+    "socket.on('notification_retry_result'",
+    "notification_auto_retry_enabled: document.getElementById('setNotificationAutoRetry').checked",
+    "if (data.notification_retry_status) applyNotificationRetryStatus(data.notification_retry_status)",
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing notification retry contract: {required}")
+
+for required in (
+    ".notification-retry-control",
+    ".notification-retry-status",
+):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing notification retry selector: {required}")
+
+for required in (
     'id="createReviewNoteButton"',
     'id="reviewNoteEditor"',
     'id="reviewNoteRelation"',

@@ -292,6 +292,42 @@ function renderDailyDigestPreview(data) {
   preview.value = [subject, message].filter(Boolean).join('\n\n');
 }
 
+function notificationRetryTimestamp(value) {
+  const text = String(value || '').trim();
+  return text ? text.replace('T', ' ').slice(0, 16) : '';
+}
+
+function setNotificationRetryStatus(message, ok) {
+  const status = document.getElementById('notificationRetryStatus');
+  if (!status) return;
+  status.textContent = message || '';
+  status.className = 'notification-retry-status';
+  if (ok === true) status.dataset.state = 'ok';
+  else if (ok === false) status.dataset.state = 'error';
+  else delete status.dataset.state;
+}
+
+function applyNotificationRetryStatus(data) {
+  notificationRetryStatusState = Object.assign(
+    {},
+    notificationRetryStatusState,
+    data && typeof data === 'object' ? data : {},
+  );
+  const pending = Number(notificationRetryStatusState.pending_count) || 0;
+  const eligible = Number(notificationRetryStatusState.eligible_count) || 0;
+  const nextRetry = notificationRetryTimestamp(notificationRetryStatusState.next_retry_at);
+  const enabled = notificationRetryStatusState.enabled != null
+    ? !!notificationRetryStatusState.enabled
+    : !!appSettings.notification_auto_retry_enabled;
+  const parts = [pending ? '待重试 ' + pending + ' 条' : '当前没有待重试通知'];
+  if (eligible) parts.push('可立即处理 ' + eligible + ' 条');
+  else if (nextRetry) parts.push('下次 ' + nextRetry);
+  if (pending && !enabled) parts.push('自动重试未开启');
+  setNotificationRetryStatus(parts.join('；'), pending ? null : true);
+  const button = document.getElementById('btnRetryFailedNotifications');
+  if (button) button.disabled = pending <= 0;
+}
+
 function applySettings(data) {
   appSettings = Object.assign({}, appSettings, data);
   applyPlatformLabels();
@@ -350,6 +386,10 @@ function applySettings(data) {
   document.getElementById('setDailyDigestTime').value = appSettings.daily_digest_time || '20:00';
   document.getElementById('setDailyDigestEmail').checked = appSettings.daily_digest_email_enabled !== false;
   document.getElementById('setDailyDigestWebhook').checked = !!appSettings.daily_digest_webhook_enabled;
+  document.getElementById('setNotificationAutoRetry').checked = !!appSettings.notification_auto_retry_enabled;
+  applyNotificationRetryStatus(Object.assign({}, notificationRetryStatusState, {
+    enabled: !!appSettings.notification_auto_retry_enabled,
+  }));
   applyDailyDigestStatus(Object.assign({}, dailyDigestStatusState, {
     enabled: !!appSettings.daily_digest_enabled,
     time: appSettings.daily_digest_time || '20:00',

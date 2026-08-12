@@ -48,6 +48,7 @@ function saveSettings() {
     daily_digest_time: document.getElementById('setDailyDigestTime').value,
     daily_digest_email_enabled: document.getElementById('setDailyDigestEmail').checked,
     daily_digest_webhook_enabled: document.getElementById('setDailyDigestWebhook').checked,
+    notification_auto_retry_enabled: document.getElementById('setNotificationAutoRetry').checked,
     risk_assistant_enabled: document.getElementById('setRiskAssistantEnabled').checked,
     risk_assistant_provider: document.getElementById('setRiskAssistantProvider').value,
     risk_assistant_depth: document.getElementById('setRiskAssistantDepth').value,
@@ -111,6 +112,13 @@ function testDailyDigest() {
   if (button) button.disabled = true;
   setDailyDigestStatus('正在测试发送每日摘要...', null);
   socket.emit('test_daily_digest');
+}
+
+function retryFailedNotifications() {
+  const button = document.getElementById('btnRetryFailedNotifications');
+  if (button) button.disabled = true;
+  setNotificationRetryStatus('正在重试队列中的失败渠道…', null);
+  socket.emit('retry_failed_notifications');
 }
 
 function testAlert() {

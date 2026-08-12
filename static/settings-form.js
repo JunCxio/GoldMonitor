@@ -254,6 +254,7 @@ function switchSettingsTab(tab) {
   if (body) body.scrollTop = 0;
   if (nextTab === 'risk') refreshRiskModels();
   if (nextTab === 'digest') socket.emit('get_daily_digest_status');
+  if (nextTab === 'general') socket.emit('get_notification_retry_status');
 }
 
 function openSettings() {

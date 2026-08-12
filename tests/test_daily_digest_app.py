@@ -200,6 +200,7 @@ def test_daily_digest_loop_runs_once_before_waiting(monkeypatch):
 
     calls = []
     monkeypatch.setattr(app, "run_daily_digest_once", lambda: calls.append("run"))
+    monkeypatch.setattr(app, "run_notification_retry_once", lambda: calls.append("retry"))
 
     def stop_after_first_iteration(seconds):
         assert seconds == 30
@@ -210,7 +211,31 @@ def test_daily_digest_loop_runs_once_before_waiting(monkeypatch):
     with pytest.raises(StopIteration):
         app.daily_digest_loop()
 
-    assert calls == ["run"]
+    assert calls == ["run", "retry"]
+
+
+def test_daily_digest_loop_still_runs_notification_retry_when_digest_fails(monkeypatch):
+    import app
+
+    calls = []
+
+    def fail_digest():
+        calls.append("digest")
+        raise RuntimeError("digest failed")
+
+    monkeypatch.setattr(app, "run_daily_digest_once", fail_digest)
+    monkeypatch.setattr(app, "run_notification_retry_once", lambda: calls.append("retry"))
+    monkeypatch.setattr(app.logging, "exception", lambda *args, **kwargs: None)
+
+    def stop_after_first_iteration(seconds):
+        raise StopIteration
+
+    monkeypatch.setattr(app.time, "sleep", stop_after_first_iteration)
+
+    with pytest.raises(StopIteration):
+        app.daily_digest_loop()
+
+    assert calls == ["digest", "retry"]
 
 
 def test_daily_digest_scheduler_starts_only_once(monkeypatch):

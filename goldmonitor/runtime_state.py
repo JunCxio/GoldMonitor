@@ -11,6 +11,7 @@ class ApplicationRuntimeState:
     last_update_status_lock: Any = field(default_factory=threading.RLock)
     last_export_status_lock: Any = field(default_factory=threading.RLock)
     daily_digest_lock: Any = field(default_factory=threading.Lock)
+    notification_retry_lock: Any = field(default_factory=threading.Lock)
     today_overview_lock: Any = field(default_factory=threading.RLock)
     review_notes_lock: Any = field(default_factory=threading.RLock)
     data_archive_lock: Any = field(default_factory=threading.Lock)
@@ -99,6 +100,7 @@ class ApplicationRuntimeState:
     diagnostics_runtime_instance: Any = None
     alert_notification_runtime_instance: Any = None
     daily_digest_runtime_instance: Any = None
+    notification_retry_runtime_instance: Any = None
     today_overview_runtime_instance: Any = None
     notification_adapters_instance: Any = None
     platform_integration_runtime_instance: Any = None

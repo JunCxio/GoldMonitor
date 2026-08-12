@@ -48,6 +48,7 @@ def _defaults():
         "daily_digest_time": "20:00",
         "daily_digest_email_enabled": True,
         "daily_digest_webhook_enabled": False,
+        "notification_auto_retry_enabled": False,
         "risk_assistant_enabled": True,
         "risk_assistant_provider": "deepseek",
         "risk_assistant_depth": "standard",

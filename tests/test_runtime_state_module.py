@@ -43,6 +43,7 @@ def test_runtime_state_exposes_service_slots_without_module_globals():
     assert state.data_archive_runtime_instance is None
     assert state.news_runtime_instance is None
     assert state.diagnostics_runtime_instance is None
+    assert state.notification_retry_runtime_instance is None
     assert state.update_runtime_instance is None
     assert state.export_runtime_instance is None
     assert state.risk_analysis_runtime_instance is None

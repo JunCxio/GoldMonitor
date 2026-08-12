@@ -184,6 +184,11 @@
   .settings-secret-control .settings-input { flex-basis:100%; }
   .settings-time-separator { color:var(--text-dim); font-size:0.7rem; }
   .setting-action-status { align-items:flex-end; flex-direction:column; }
+  .notification-retry-control { width:100%; max-width:340px; display:grid; grid-template-columns:auto minmax(0, 1fr); align-items:center; justify-items:end; gap:8px 10px; }
+  .notification-retry-status { min-width:0; color:var(--text-dim); font-size:0.7rem; line-height:1.45; text-align:right; overflow-wrap:anywhere; }
+  .notification-retry-status[data-state="ok"] { color:var(--down); }
+  .notification-retry-status[data-state="error"] { color:var(--up); }
+  .notification-retry-control .btn-form { grid-column:1 / -1; }
   .setting-field-error { grid-column:2; width:100%; margin-top:-8px; color:#f2a0ae; font-size:0.68rem; line-height:1.4; text-align:right; }
   .data-archive-preview { flex:1 1 100%; max-width:560px; color:var(--text-dim); font-size:0.68rem; line-height:1.55; overflow-wrap:anywhere; }
   .data-archive-preview-ok { color:var(--down); }
@@ -1301,6 +1306,8 @@
     .settings-stack { width:100%; max-width:none; justify-content:flex-start; }
     .settings-stack .settings-input { flex:1 1 128px; }
     .setting-action-status { align-items:stretch; }
+    .notification-retry-control { max-width:none; justify-items:start; grid-template-columns:auto minmax(0, 1fr); }
+    .notification-retry-status { text-align:left; }
     .setting-status-wide { max-width:none; }
     .today-overview-modal { height:calc(100dvh - 24px); max-height:calc(100dvh - 24px); }
     .today-overview-head { min-height:auto; padding:14px 16px 13px; }

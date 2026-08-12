@@ -136,7 +136,12 @@ def register_alert_log_handlers(
             return
         ok, entry = resend_alert_notification(data.get("id"), start_delivery=False)
         if not ok:
-            emit("alert_notification_resend_error", {"message": "未找到对应告警记录"})
+            message = (
+                "当前告警没有需要重试的失败通知"
+                if isinstance(entry, dict)
+                else "未找到对应告警记录"
+            )
+            emit("alert_notification_resend_error", {"message": message})
             return
         socketio.emit("alert_notification_resent", {"ok": True, "entry": entry})
         start_alert_notification_delivery(entry, alert_resend_title(entry))
