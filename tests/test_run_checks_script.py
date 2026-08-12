@@ -79,6 +79,7 @@ EXPECTED_COMPILE_TARGETS = (
     "tests/test_alert_rules_module.py",
     "tests/test_alert_log_runtime_module.py",
     "tests/test_alert_notification_runtime_module.py",
+    "tests/test_alert_batch_actions_app.py",
     "tests/test_architecture_boundaries.py",
     "tests/test_alert_rules_app.py",
     "tests/test_http_assets_app.py",

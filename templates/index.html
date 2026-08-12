@@ -284,6 +284,14 @@
           <strong id="todayOverviewAttentionCount">0 项</strong>
         </div>
         <div class="today-overview-filters" id="todayOverviewFilters" aria-label="待处理事项筛选"></div>
+        <div class="today-overview-batch" id="todayOverviewBatch" hidden>
+          <div class="today-overview-batch-copy">
+            <span>批量处理</span>
+            <small>仅作用于当前筛选中显示的事项</small>
+          </div>
+          <div class="today-overview-batch-actions" id="todayOverviewBatchActions"></div>
+          <div class="today-overview-action-record" id="todayOverviewActionRecord" hidden></div>
+        </div>
         <div class="today-overview-attention-list" id="todayOverviewAttentionList"></div>
       </section>
       <aside class="today-overview-side">
@@ -744,6 +752,7 @@
 <script src="/static/app-state.js?v={{ app_version }}"></script>
 <script src="/static/app-utils.js?v={{ app_version }}"></script>
 <script src="/static/market-dashboard.js?v={{ app_version }}"></script>
+<script src="/static/today-overview-batch.js?v={{ app_version }}"></script>
 <script src="/static/today-overview.js?v={{ app_version }}"></script>
 
 <script src="/static/settings-state.js?v={{ app_version }}"></script>

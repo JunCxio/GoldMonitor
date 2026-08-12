@@ -14,6 +14,7 @@ app_state_js_path = root / "static" / "app-state.js"
 app_utils_js_path = root / "static" / "app-utils.js"
 desktop_close_js_path = root / "static" / "desktop-close.js"
 market_dashboard_js_path = root / "static" / "market-dashboard.js"
+today_overview_batch_js_path = root / "static" / "today-overview-batch.js"
 today_overview_js_path = root / "static" / "today-overview.js"
 settings_js_path = root / "static" / "settings-center.js"
 settings_state_js_path = root / "static" / "settings-state.js"
@@ -73,6 +74,9 @@ if not market_dashboard_js_path.exists():
 
 if not today_overview_js_path.exists():
     raise SystemExit("today overview script must live in static/today-overview.js")
+
+if not today_overview_batch_js_path.exists():
+    raise SystemExit("today overview batch script must live in static/today-overview-batch.js")
 
 for settings_path in (
     settings_state_js_path,
@@ -151,7 +155,9 @@ if not alert_log_js_path.exists():
 
 app_js = js_path.read_text(encoding="utf-8")
 market_dashboard_js = market_dashboard_js_path.read_text(encoding="utf-8")
+today_overview_batch_js = today_overview_batch_js_path.read_text(encoding="utf-8")
 today_overview_js = today_overview_js_path.read_text(encoding="utf-8")
+today_overview_module_js = "\n".join((today_overview_batch_js, today_overview_js))
 settings_state_js = settings_state_js_path.read_text(encoding="utf-8")
 alert_rule_js = "\n".join((
     alert_rule_state_js_path.read_text(encoding="utf-8"),
@@ -249,12 +255,18 @@ if market_dashboard_script not in template:
 if template.find(market_dashboard_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
     raise SystemExit("market dashboard script must load before static/app.js")
 
-today_overview_script = '<script src="/static/today-overview.js?v={{ app_version }}"></script>'
-if today_overview_script not in template:
-    raise SystemExit("template must reference versioned /static/today-overview.js")
-
-if template.find(today_overview_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
-    raise SystemExit("today overview script must load before static/app.js")
+today_overview_scripts = (
+    '<script src="/static/today-overview-batch.js?v={{ app_version }}"></script>',
+    '<script src="/static/today-overview.js?v={{ app_version }}"></script>',
+)
+for script in today_overview_scripts:
+    if script not in template:
+        raise SystemExit(f"template must reference today overview script: {script}")
+today_overview_positions = [template.find(script) for script in today_overview_scripts]
+if today_overview_positions != sorted(today_overview_positions):
+    raise SystemExit("today overview scripts must load in dependency order")
+if today_overview_positions[-1] > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("today overview scripts must load before static/app.js")
 
 for required in (
     'id="todayOverviewButton"',
@@ -262,6 +274,9 @@ for required in (
     'id="todayOverviewBackdrop"',
     'id="todayOverviewSummary"',
     'id="todayOverviewFilters"',
+    'id="todayOverviewBatch"',
+    'id="todayOverviewBatchActions"',
+    'id="todayOverviewActionRecord"',
     'id="todayOverviewAttentionList"',
     'id="todayOverviewContext"',
     'id="todayOverviewActivityList"',
@@ -277,15 +292,22 @@ for required in (
     "function activateTodayOverviewItem",
     "function setTodayOverviewAttentionFilter",
     "function runTodayOverviewQuickAction",
+    "function runTodayOverviewBatchAction",
+    "function completeTodayOverviewBatchAction",
+    "function registerTodayOverviewBatchSocketHandlers",
+    "if (!window.confirm(prompt)) return;",
+    "可能发送邮件或 Webhook",
     "socket.emit('update_alert_log_handling'",
     "socket.emit('resend_alert_notification'",
+    "'batch_update_alert_log_handling'",
+    "'batch_resend_alert_notifications'",
     "refreshPrice();",
     "socketClient.on('today_overview_updated'",
     "socket.emit('get_today_overview'",
     "socket.emit('mark_today_overview_viewed'",
 ):
-    if required not in today_overview_js:
-        raise SystemExit(f"static/today-overview.js missing contract: {required}")
+    if required not in today_overview_module_js:
+        raise SystemExit(f"today overview scripts missing contract: {required}")
 
 if "registerTodayOverviewSocketHandlers(socket);" not in app_js:
     raise SystemExit("static/app.js must register today overview socket handlers")
@@ -298,6 +320,8 @@ for required in (
     ".today-overview-attention-item",
     ".today-overview-filter.active",
     ".today-overview-item-actions",
+    ".today-overview-batch-action",
+    ".today-overview-action-record",
     ".today-overview-market-state",
     ".today-overview-activity-item",
     ".today-overview-item-action:focus-visible",

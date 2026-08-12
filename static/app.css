@@ -1078,6 +1078,21 @@
   .today-overview-filter.active { border-color:rgba(232,184,48,0.25); background:rgba(232,184,48,0.075); color:#efd16d; }
   .today-overview-filter.active strong { color:#efd16d; }
   .today-overview-filter:focus-visible { outline:none; box-shadow:var(--focus-ring); }
+  .today-overview-batch { display:grid; grid-template-columns:auto minmax(0, 1fr); gap:8px 12px; align-items:center; margin:-3px 0 12px; padding:9px 10px; border:1px solid rgba(232,184,48,0.12); border-radius:8px; background:rgba(232,184,48,0.025); }
+  .today-overview-batch[hidden] { display:none; }
+  .today-overview-batch-copy { display:grid; gap:1px; }
+  .today-overview-batch-copy span { color:#c9b66e; font-size:0.62rem; font-weight:800; }
+  .today-overview-batch-copy small { color:#707083; font-size:0.56rem; white-space:nowrap; }
+  .today-overview-batch-actions { display:flex; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
+  .today-overview-batch-action { min-height:28px; padding:4px 8px; border:1px solid rgba(232,184,48,0.2); border-radius:7px; background:rgba(232,184,48,0.055); color:#e6cb6c; cursor:pointer; font-size:0.62rem; font-weight:750; }
+  .today-overview-batch-action:hover { border-color:rgba(232,184,48,0.34); background:rgba(232,184,48,0.1); }
+  .today-overview-batch-action:disabled { cursor:wait; opacity:0.48; }
+  .today-overview-batch-action:focus-visible { outline:none; box-shadow:var(--focus-ring); }
+  .today-overview-action-record { grid-column:1 / -1; display:grid; grid-template-columns:auto minmax(0, 1fr) auto; gap:7px; align-items:center; padding-top:7px; border-top:1px solid rgba(255,255,255,0.055); }
+  .today-overview-action-record[hidden] { display:none; }
+  .today-overview-action-record span { color:#77778a; font-size:0.57rem; font-weight:750; }
+  .today-overview-action-record strong { min-width:0; color:#aaaabb; font-size:0.6rem; font-weight:650; overflow-wrap:anywhere; }
+  .today-overview-action-record small { color:#626275; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.54rem; white-space:nowrap; }
   .today-overview-attention-list { min-height:0; display:grid; align-content:start; gap:8px; overflow-y:auto; padding-right:4px; }
   .today-overview-attention-item { position:relative; min-width:0; display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:12px; align-items:center; padding:13px 13px 13px 17px; border:1px solid rgba(255,255,255,0.065); border-radius:9px; background:rgba(255,255,255,0.022); overflow:hidden; }
   .today-overview-attention-item::before { content:""; position:absolute; top:0; bottom:0; left:0; width:3px; background:#77778b; }
@@ -1375,6 +1390,10 @@
     .today-overview-refresh { padding-left:9px; padding-right:9px; }
     .today-overview-summary-item { padding:11px 13px 10px; }
     .today-overview-attention-item { grid-template-columns:1fr; align-items:start; }
+    .today-overview-batch { grid-template-columns:1fr; }
+    .today-overview-batch-actions { justify-content:flex-start; }
+    .today-overview-action-record { grid-template-columns:auto minmax(0, 1fr); }
+    .today-overview-action-record small { grid-column:2; white-space:normal; }
     .today-overview-item-actions { justify-content:flex-start; max-width:none; }
     .today-overview-portfolio-summary { grid-template-columns:1fr; }
     .today-overview-portfolio-mode + .today-overview-portfolio-mode { border-left:0; border-top:1px solid var(--hairline); }

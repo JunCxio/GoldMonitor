@@ -411,9 +411,11 @@ function renderTodayOverview(data) {
     ? todayOverviewNumber(attention.total)
     : todayOverviewNumber(filterCounts[todayOverviewAttentionFilter]);
   todayOverviewItemIndex = {};
+  todayOverviewFilteredAttentionItems = filteredAttentionItems;
   updateTodayOverviewButton(summary);
   renderTodayOverviewSummary(summary);
   renderTodayOverviewFilters(attention);
+  renderTodayOverviewBatchTools(filteredAttentionItems);
   renderTodayOverviewAttention(
     filteredAttentionItems,
     filteredAttentionTotal,
@@ -461,6 +463,7 @@ function registerTodayOverviewSocketHandlers(socketClient) {
     const refreshButton = document.getElementById('todayOverviewRefreshButton');
     if (refreshButton) refreshButton.disabled = false;
     todayOverviewState = data && typeof data === 'object' ? data : {};
+    applyTodayOverviewBatchRefresh(todayOverviewState);
     renderTodayOverview(todayOverviewState);
     if (todayOverviewIsOpen()) todayOverviewShouldMarkViewed = true;
   });
@@ -525,6 +528,7 @@ function registerTodayOverviewSocketHandlers(socketClient) {
   TODAY_OVERVIEW_REFRESH_EVENTS.forEach(eventName => {
     socketClient.on(eventName, queueTodayOverviewRefresh);
   });
+  registerTodayOverviewBatchSocketHandlers(socketClient);
 }
 
 function openTodayOverview() {

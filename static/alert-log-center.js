@@ -68,6 +68,24 @@ function registerAlertLogSocketHandlers(socket) {
     status.className = 'log-status fail';
   });
 
+  socket.on('alert_log_handling_batch_updated', data => {
+    const status = document.getElementById('alertLogStatus');
+    const entries = data && Array.isArray(data.entries) ? data.entries : [];
+    entries.forEach(mergeAlertLogEntry);
+    const success = Number(data && data.success_count) || 0;
+    const failure = Number(data && data.failure_count) || 0;
+    status.textContent = failure
+      ? '批量处理完成：成功 ' + success + ' 条，失败 ' + failure + ' 条。'
+      : '已批量处理 ' + success + ' 条警报。';
+    status.className = 'log-status ' + (failure ? 'fail' : 'ok');
+  });
+
+  socket.on('alert_log_handling_batch_error', data => {
+    const status = document.getElementById('alertLogStatus');
+    status.textContent = (data && data.message) || '批量处理警报失败。';
+    status.className = 'log-status fail';
+  });
+
   socket.on('alert_notification_resent', data => {
     const status = document.getElementById('alertLogStatus');
     if (data && data.entry) mergeAlertLogEntry(data.entry);
@@ -78,6 +96,24 @@ function registerAlertLogSocketHandlers(socket) {
   socket.on('alert_notification_resend_error', data => {
     const status = document.getElementById('alertLogStatus');
     status.textContent = (data && data.message) || '通知重发失败。';
+    status.className = 'log-status fail';
+  });
+
+  socket.on('alert_notification_batch_resent', data => {
+    const status = document.getElementById('alertLogStatus');
+    const entries = data && Array.isArray(data.entries) ? data.entries : [];
+    entries.forEach(mergeAlertLogEntry);
+    const success = Number(data && data.success_count) || 0;
+    const failure = Number(data && data.failure_count) || 0;
+    status.textContent = failure
+      ? '批量重提完成：成功 ' + success + ' 条，失败 ' + failure + ' 条。'
+      : '已重新提交 ' + success + ' 条通知。';
+    status.className = 'log-status ' + (failure ? 'fail' : 'ok');
+  });
+
+  socket.on('alert_notification_batch_resend_error', data => {
+    const status = document.getElementById('alertLogStatus');
+    status.textContent = (data && data.message) || '批量重发通知失败。';
     status.className = 'log-status fail';
   });
 }

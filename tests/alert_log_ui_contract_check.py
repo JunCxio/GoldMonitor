@@ -53,6 +53,8 @@ for required in (
     "renderAlertLog",
     "analyzeAlertFromLog",
     "resendAlertNotification",
+    "alert_log_handling_batch_updated",
+    "alert_notification_batch_resent",
     "{ label: '分析'",
     "if (hasNotificationIssue) actions.push",
     "重发通知",
