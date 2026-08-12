@@ -1,3 +1,4 @@
+import os
 from types import SimpleNamespace
 
 
@@ -90,9 +91,10 @@ def test_platform_integration_runtime_binds_windows_startup_contract(monkeypatch
 
 def test_platform_integration_runtime_builds_script_startup_paths():
     runtime = _runtime()
+    script_path = os.path.abspath("/app/app.py")
 
-    assert runtime.current_executable() == "/app/app.py"
-    assert runtime.startup_command() == '"/app/app.py" --startup'
+    assert runtime.current_executable() == script_path
+    assert runtime.startup_command() == f'"{script_path}" --startup'
     assert runtime.macos_startup_arguments() == [
         "/usr/bin/python3",
         "/app/app.py",
