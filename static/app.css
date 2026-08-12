@@ -1061,12 +1061,12 @@
   .today-overview-status.loading { color:var(--gold); }
   .today-overview-status.ok { color:#72c5a1; }
   .today-overview-status.fail { color:var(--danger-text); }
-  .today-overview-workspace { flex:1 1 auto; min-height:0; display:grid; grid-template-columns:minmax(0, 1.12fr) minmax(360px, 0.88fr); }
+  .today-overview-workspace { flex:1 1 auto; min-height:0; display:grid; grid-template-columns:minmax(0, 1.12fr) minmax(360px, 0.88fr); overflow:hidden; }
   .today-overview-section { min-width:0; min-height:0; }
-  .today-overview-attention-section { display:flex; flex-direction:column; padding:20px 20px 22px 22px; border-right:1px solid var(--hairline); }
+  .today-overview-attention-section { display:flex; flex-direction:column; padding:20px 20px 22px 22px; border-right:1px solid var(--hairline); overflow:hidden; }
   .today-overview-side { min-width:0; min-height:0; display:grid; grid-template-rows:auto minmax(0, 1fr); }
   .today-overview-context-section { padding:20px 22px 18px; border-bottom:1px solid var(--hairline); }
-  .today-overview-activity-section { min-height:0; display:flex; flex-direction:column; padding:18px 22px 22px; }
+  .today-overview-activity-section { min-height:0; display:flex; flex-direction:column; padding:18px 22px 22px; overflow:hidden; }
   .today-overview-section-head { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom:13px; }
   .today-overview-section-head span { display:block; margin-bottom:3px; color:var(--text-dim); font-size:0.61rem; font-weight:750; letter-spacing:0.065em; }
   .today-overview-section-head h3 { color:var(--text-strong); font-size:0.9rem; letter-spacing:-0.01em; }
@@ -1120,7 +1120,7 @@
   .today-overview-action-detail li strong { color:#9d9daa; font-size:0.56rem; overflow-wrap:anywhere; }
   .today-overview-action-detail li small { color:#747486; font-size:0.55rem; line-height:1.4; overflow-wrap:anywhere; }
   .today-overview-action-clear { color:#6f9f8a; }
-  .today-overview-attention-list { min-height:0; display:grid; align-content:start; gap:8px; overflow-y:auto; padding-right:4px; }
+  .today-overview-attention-list { flex:1 1 0; min-height:0; display:grid; grid-auto-rows:max-content; align-content:start; gap:8px; overflow-y:auto; overscroll-behavior:contain; padding-right:4px; }
   .today-overview-attention-item { position:relative; min-width:0; display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:12px; align-items:center; padding:13px 13px 13px 17px; border:1px solid rgba(255,255,255,0.065); border-radius:9px; background:rgba(255,255,255,0.022); overflow:hidden; }
   .today-overview-attention-item::before { content:""; position:absolute; top:0; bottom:0; left:0; width:3px; background:#77778b; }
   .today-overview-attention-item.severity-critical { border-color:rgba(224,85,106,0.2); background:rgba(224,85,106,0.035); }
@@ -1170,7 +1170,7 @@
   .today-overview-pnl { display:block; margin-top:4px; color:var(--text-dim); font-size:0.6rem; }
   .today-overview-pnl.profit { color:var(--up); }
   .today-overview-pnl.loss { color:var(--down); }
-  .today-overview-activity-list { min-height:0; display:grid; align-content:start; overflow-y:auto; }
+  .today-overview-activity-list { flex:1 1 0; min-height:0; display:grid; align-content:start; overflow-y:auto; overscroll-behavior:contain; }
   .today-overview-activity-item { width:100%; min-width:0; display:grid; grid-template-columns:42px 10px minmax(0, 1fr); gap:8px; align-items:start; padding:9px 3px; border:0; border-bottom:1px solid rgba(255,255,255,0.05); background:transparent; color:inherit; cursor:pointer; text-align:left; }
   .today-overview-activity-item:hover .today-overview-activity-copy strong { color:var(--gold); }
   .today-overview-activity-item:focus-visible { outline:none; border-radius:7px; box-shadow:var(--focus-ring); }
@@ -1235,8 +1235,9 @@
     .settings-workspace { grid-template-columns:174px minmax(0, 1fr); }
     .settings-primary-modal .settings-body { padding-left:20px; padding-right:20px; }
     .today-overview-workspace { display:block; overflow-y:auto; }
-    .today-overview-attention-section { border-right:0; border-bottom:1px solid var(--hairline); }
-    .today-overview-attention-list, .today-overview-activity-list { overflow:visible; }
+    .today-overview-attention-section { border-right:0; border-bottom:1px solid var(--hairline); overflow:visible; }
+    .today-overview-activity-section { overflow:visible; }
+    .today-overview-attention-list, .today-overview-activity-list { flex:none; overflow:visible; }
     .today-overview-side { display:block; }
   }
 

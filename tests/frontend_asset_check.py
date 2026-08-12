@@ -323,7 +323,11 @@ if "requestTodayOverview(false);" not in app_js:
 
 for required in (
     ".today-overview-workspace",
+    ".today-overview-workspace { flex:1 1 auto; min-height:0; display:grid; grid-template-columns:minmax(0, 1.12fr) minmax(360px, 0.88fr); overflow:hidden; }",
     ".today-overview-attention-item",
+    ".today-overview-attention-list { flex:1 1 0; min-height:0; display:grid; grid-auto-rows:max-content;",
+    ".today-overview-activity-list { flex:1 1 0;",
+    ".today-overview-attention-list, .today-overview-activity-list { flex:none; overflow:visible; }",
     ".today-overview-filter.active",
     ".today-overview-item-actions",
     ".today-overview-batch-action",
