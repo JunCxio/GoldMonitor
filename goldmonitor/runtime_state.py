@@ -96,6 +96,14 @@ class ApplicationRuntimeState:
     data_archive_runtime_instance: Any = None
     news_runtime_instance: Any = None
     diagnostics_runtime_instance: Any = None
+    alert_notification_runtime_instance: Any = None
+    daily_digest_runtime_instance: Any = None
+    notification_adapters_instance: Any = None
+    platform_integration_runtime_instance: Any = None
+    update_runtime_instance: Any = None
+    export_runtime_instance: Any = None
+    risk_analysis_runtime_instance: Any = None
+    instance_runtime_instance: Any = None
     floating_controller_instance: Any = None
     taskbar_controller_instance: Any = None
 

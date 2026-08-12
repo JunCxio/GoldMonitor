@@ -17,19 +17,22 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 from flask_socketio import SocketIO, emit
 from goldmonitor import alert_rules as alert_rules_core
 from goldmonitor import alert_runtime as alert_runtime_core
+from goldmonitor import alert_log_runtime as alert_log_runtime_core
+from goldmonitor import alert_notification_runtime as alert_notification_runtime_core
 from goldmonitor import alert_profiles as alert_profiles_core
 from goldmonitor import app_state as app_state_core
 from goldmonitor import application_bootstrap as application_bootstrap_core
 from goldmonitor import application_state_bootstrap as application_state_bootstrap_core
 from goldmonitor import config_runtime as config_runtime_core
 from goldmonitor import desktop_ui as desktop_ui_core
-from goldmonitor import daily_digest as daily_digest_core
+from goldmonitor import daily_digest_runtime as daily_digest_runtime_core
 from goldmonitor import data_archive as data_archive_core
 from goldmonitor import data_archive_runtime as data_archive_runtime_core
 from goldmonitor import desktop_runtime as desktop_runtime_core
 from goldmonitor import desktop_status as desktop_status_core
 from goldmonitor import diagnostics_runtime as diagnostics_runtime_core
-from goldmonitor import event_timeline as event_timeline_core
+from goldmonitor import export_runtime as export_runtime_core
+from goldmonitor import history_runtime as history_runtime_core
 from goldmonitor import floating_controller as floating_controller_core
 from goldmonitor import taskbar_controller as taskbar_controller_core
 from goldmonitor import taskbar_runtime as taskbar_runtime_core
@@ -40,23 +43,26 @@ from goldmonitor import market_clients as market_clients_core
 from goldmonitor import market_data as market_data_core
 from goldmonitor import market_runtime as market_runtime_core
 from goldmonitor import news as news_core
-from goldmonitor import notifications as notifications_core
-from goldmonitor import notification_runtime as notification_runtime_core
+from goldmonitor import notification_adapters as notification_adapters_core
+from goldmonitor import notification_delivery as notification_delivery_core
+from goldmonitor import notification_policy as notification_policy_core
+from goldmonitor import notification_transport as notification_transport_core
 from goldmonitor import operations_runtime as operations_runtime_core
 from goldmonitor import platform as platform_core
-from goldmonitor import platform_runtime as platform_runtime_core
+from goldmonitor import platform_integration_runtime as platform_integration_runtime_core
 from goldmonitor import portfolio as portfolio_core
 from goldmonitor import portfolio_alerts as portfolio_alerts_core
 from goldmonitor import portfolio_runtime as portfolio_runtime_core
 from goldmonitor import review_notes as review_notes_core
 from goldmonitor import risk_analysis as risk_analysis_core
+from goldmonitor import risk_analysis_runtime as risk_analysis_runtime_core
 from goldmonitor import runtime_state as runtime_state_core
 from goldmonitor import settings_store as settings_store_core
+from goldmonitor import settings_runtime as settings_runtime_core
 from goldmonitor import socket_bootstrap as socket_bootstrap_core
 from goldmonitor import storage_manifest as storage_manifest_core
 from goldmonitor import support_files as support_files_core
 from goldmonitor import targets as targets_core
-from goldmonitor import update_manager as update_manager_core
 from goldmonitor import update_runtime as update_runtime_core
 from goldmonitor.alert_log import AlertLogStore
 from goldmonitor.diagnostics import build_health_summary
@@ -466,114 +472,85 @@ def _set_alert_dialog_active(value):
 
 
 # ---------- 设置与系统集成 ----------
+def _get_platform_integration_runtime():
+    if runtime.platform_integration_runtime_instance is None:
+        runtime.platform_integration_runtime_instance = (
+            platform_integration_runtime_core.PlatformIntegrationRuntime(
+                runtime,
+                credential_target_prefix=CREDENTIAL_TARGET_PREFIX,
+                credential_service_name=CREDENTIAL_SERVICE_NAME,
+                macos_launch_agent_id=MACOS_LAUNCH_AGENT_ID,
+                run_key_path=RUN_KEY_PATH,
+                run_key_name=RUN_KEY_NAME,
+                is_frozen=lambda: getattr(sys, "frozen", False),
+                executable=lambda: sys.executable,
+                argv0=lambda: sys.argv[0],
+                os_name=lambda: os.name,
+                sys_platform=lambda: sys.platform,
+                home_dir=lambda: os.path.expanduser("~"),
+                runner=lambda: subprocess.run,
+                logger=logging,
+            )
+        )
+    return runtime.platform_integration_runtime_instance
+
+
 def _current_executable():
-    return platform_core.current_executable(
-        getattr(sys, "frozen", False),
-        sys.executable,
-        sys.argv[0],
-    )
+    return _get_platform_integration_runtime().current_executable()
 
 
 def _credential_target_name(key):
-    return platform_runtime_core.credential_target_name(
-        key,
-        CREDENTIAL_TARGET_PREFIX,
-    )
+    return _get_platform_integration_runtime().credential_target_name(key)
 
 
 def _credential_store_override():
-    return runtime.credential_test_store if isinstance(runtime.credential_test_store, dict) else None
+    return _get_platform_integration_runtime().credential_store_override()
 
 
 def _read_windows_credential(key):
-    return platform_runtime_core.read_windows_credential(
-        key,
-        os_name=os.name,
-        target_name=lambda name: _credential_target_name(name),
-        logger=logging,
-    )
+    return _get_platform_integration_runtime().read_windows_credential(key)
 
 
 def _write_windows_credential(key, value):
-    return platform_runtime_core.write_windows_credential(
-        key,
-        value,
-        os_name=os.name,
-        target_name=lambda name: _credential_target_name(name),
-        logger=logging,
-    )
+    return _get_platform_integration_runtime().write_windows_credential(key, value)
 
 
 def _delete_windows_credential(key):
-    return platform_runtime_core.delete_windows_credential(
-        key,
-        os_name=os.name,
-        target_name=lambda name: _credential_target_name(name),
-    )
+    return _get_platform_integration_runtime().delete_windows_credential(key)
 
 
 def _run_macos_security(args):
-    return platform_runtime_core.run_macos_security(
-        args,
-        runner=subprocess.run,
-    )
+    return _get_platform_integration_runtime().run_macos_security(args)
 
 
 def _read_macos_credential(key):
-    return platform_runtime_core.read_macos_credential(
-        key,
-        sys_platform=sys.platform,
-        service_name=CREDENTIAL_SERVICE_NAME,
-        run_security=lambda args: _run_macos_security(args),
-    )
+    return _get_platform_integration_runtime().read_macos_credential(key)
 
 
 def _write_macos_credential(key, value):
-    return platform_runtime_core.write_macos_credential(
-        key,
-        value,
-        sys_platform=sys.platform,
-        service_name=CREDENTIAL_SERVICE_NAME,
-        run_security=lambda args: _run_macos_security(args),
-        logger=logging,
-    )
+    return _get_platform_integration_runtime().write_macos_credential(key, value)
 
 
 def _delete_macos_credential(key):
-    return platform_runtime_core.delete_macos_credential(
-        key,
-        sys_platform=sys.platform,
-        service_name=CREDENTIAL_SERVICE_NAME,
-        run_security=lambda args: _run_macos_security(args),
-    )
+    return _get_platform_integration_runtime().delete_macos_credential(key)
 
 
 def read_credential_secret(key):
-    return platform_runtime_core.read_credential_secret(
+    return _get_platform_integration_runtime().read_credential_secret(
         key,
-        store_override=lambda: _credential_store_override(),
-        os_name=os.name,
-        sys_platform=sys.platform,
-        read_windows=lambda name: _read_windows_credential(name),
-        read_macos=lambda name: _read_macos_credential(name),
+        read_windows=_read_windows_credential,
+        read_macos=_read_macos_credential,
     )
 
 
 def write_credential_secret(key, value):
-    return platform_runtime_core.write_credential_secret(
+    return _get_platform_integration_runtime().write_credential_secret(
         key,
         value,
-        store_override=lambda: _credential_store_override(),
-        os_name=os.name,
-        sys_platform=sys.platform,
-        write_windows=(
-            lambda name, secret: _write_windows_credential(name, secret)
-        ),
-        delete_windows=lambda name: _delete_windows_credential(name),
-        write_macos=(
-            lambda name, secret: _write_macos_credential(name, secret)
-        ),
-        delete_macos=lambda name: _delete_macos_credential(name),
+        write_windows=_write_windows_credential,
+        delete_windows=_delete_windows_credential,
+        write_macos=_write_macos_credential,
+        delete_macos=_delete_macos_credential,
     )
 
 
@@ -594,58 +571,58 @@ def _settings_options():
 
 
 def _settings_store():
-    return settings_store_core.SettingsFileStore(
-        SETTINGS_PATH,
+    return _get_settings_runtime().store()
+
+
+def _get_settings_runtime():
+    return settings_runtime_core.SettingsRuntime(
+        runtime,
+        settings_path=SETTINGS_PATH,
         defaults=DEFAULT_SETTINGS,
         options=_settings_options(),
         secret_keys=SECRET_SETTING_KEYS,
         read_secret=read_credential_secret,
         write_secret=write_credential_secret,
-        credentials_required=os.name == "nt" or sys.platform == "darwin",
+        credentials_required=(
+            _get_platform_integration_runtime().credentials_required()
+        ),
+        platform_name=_runtime_platform,
+        platform_capabilities=platform_capabilities,
+        default_export_dir=EXPORT_DIR,
+        resolve_export_dir=resolve_export_dir,
+        build_export_dir_check=build_export_dir_check,
+        taskbar_discovery_state=lambda: taskbar_runtime_core.taskbar_discovery_state(
+            os_name=os.name
+        ),
         logger=logging,
     )
 
 
 def apply_stored_secrets(settings):
-    return settings_store_core.apply_stored_secrets(settings, SECRET_SETTING_KEYS, read_credential_secret)
+    return _get_settings_runtime().apply_stored_secrets(settings)
 
 
 def persistable_settings_snapshot(settings, previous_settings=None):
-    return settings_store_core.persistable_settings_snapshot(
+    return _get_settings_runtime().persistable_snapshot(
         settings,
-        SECRET_SETTING_KEYS,
-        write_credential_secret,
         previous_settings=previous_settings,
-        credentials_required=os.name == "nt" or sys.platform == "darwin",
-        logger=logging,
     )
 
 
 def _normalize_settings(raw):
-    return settings_store_core.normalize_settings(raw, DEFAULT_SETTINGS, _settings_options())
+    return _get_settings_runtime().normalize(raw)
 
 
 def load_settings():
-
-    data, error = _settings_store().load()
-    runtime.last_settings_error = error or None
-    return data
+    return _get_settings_runtime().load()
 
 
 def save_settings(data=None):
-
-    with runtime.settings_lock:
-        if data is None:
-            data = runtime.app_settings
-        normalized = _settings_store().save(data, previous_settings=runtime.app_settings)
-        runtime.app_settings = normalized
-        runtime.last_settings_error = None
-        return dict(runtime.app_settings)
+    return _get_settings_runtime().save(data)
 
 
 def get_settings_snapshot():
-    with runtime.settings_lock:
-        return dict(runtime.app_settings)
+    return _get_settings_runtime().snapshot()
 
 
 def mask_secret(value):
@@ -653,20 +630,7 @@ def mask_secret(value):
 
 
 def public_settings_snapshot(settings=None):
-    snapshot = dict(settings or get_settings_snapshot())
-    public = settings_store_core.build_public_settings_snapshot(
-        snapshot,
-        SECRET_SETTING_KEYS,
-        platform=_runtime_platform(),
-        platform_capabilities=platform_capabilities(),
-    )
-    public["export_dir_default"] = EXPORT_DIR
-    public["export_dir_effective"] = resolve_export_dir(snapshot)
-    public["export_dir_check"] = build_export_dir_check(snapshot)
-    taskbar_state = taskbar_runtime_core.taskbar_discovery_state(os_name=os.name)
-    taskbar_state.update(dict(runtime.taskbar_layout_state))
-    public["taskbar_price_state"] = taskbar_state
-    return public
+    return _get_settings_runtime().public_snapshot(settings)
 
 
 def diagnostic_settings_snapshot(settings=None):
@@ -1238,52 +1202,26 @@ def build_portfolio_csv(kind="positions"):
 
 
 def _startup_command():
-    return platform_core.build_startup_command(_current_executable())
+    return _get_platform_integration_runtime().startup_command()
 
 
 def _macos_launch_agent_path():
-    return platform_core.macos_launch_agent_path(
-        os.path.expanduser("~"),
-        MACOS_LAUNCH_AGENT_ID,
-    )
+    return _get_platform_integration_runtime().macos_launch_agent_path()
 
 
 def _macos_startup_arguments():
-    return platform_core.build_macos_startup_arguments(
-        getattr(sys, "frozen", False),
-        sys.executable,
-        sys.argv[0],
-    )
+    return _get_platform_integration_runtime().macos_startup_arguments()
 
 
 def _set_macos_startup_enabled(enabled):
-    return platform_runtime_core.set_macos_startup_enabled(
-        enabled,
-        path=_macos_launch_agent_path(),
-        launch_agent_id=MACOS_LAUNCH_AGENT_ID,
-        startup_arguments=_macos_startup_arguments(),
-        current_executable=_current_executable(),
-        home_dir=os.path.expanduser("~"),
-        build_payload=platform_core.build_macos_launch_agent_payload,
-        runner=subprocess.run,
-    )
+    return _get_platform_integration_runtime().set_macos_startup_enabled(enabled)
 
 
 def set_startup_enabled(enabled):
-    if sys.platform == "darwin":
-        return _set_macos_startup_enabled(enabled)
-    supported, error = platform_core.startup_support_result(
+    return _get_platform_integration_runtime().set_startup_enabled(
         enabled,
-        sys.platform,
-        os.name,
-    )
-    if supported is not None:
-        return supported, error
-    return platform_runtime_core.set_windows_startup_enabled(
-        enabled,
-        run_key_path=RUN_KEY_PATH,
-        run_key_name=RUN_KEY_NAME,
-        startup_command=_startup_command(),
+        set_macos_startup=_set_macos_startup_enabled,
+        startup_command=_startup_command,
     )
 
 
@@ -1321,111 +1259,6 @@ def is_socket_authorized(auth):
     return bool(token) and secrets.compare_digest(token, SOCKET_ACCESS_TOKEN)
 
 
-def compare_versions(left, right):
-    return update_manager_core.compare_versions(left, right)
-
-
-def _require_https_url(value, label):
-    return update_manager_core.require_https_url(value, label)
-
-
-def _require_official_update_url(value, label, allowed_names=None):
-    return update_manager_core.require_official_update_url(
-        value,
-        label,
-        allowed_names,
-        official_host=OFFICIAL_UPDATE_HOST,
-        official_path_prefix=OFFICIAL_UPDATE_PATH_PREFIX,
-    )
-
-
-def get_update_manifest_url():
-    return DEFAULT_UPDATE_MANIFEST_URL
-
-
-def _platform_update_key():
-    return update_manager_core.platform_update_key(sys_platform=sys.platform, os_name=os.name)
-
-
-def normalize_update_manifest(raw, base_url=None):
-    return update_manager_core.normalize_update_manifest(
-        raw,
-        base_url=base_url,
-        platform_key=_platform_update_key(),
-        official_host=OFFICIAL_UPDATE_HOST,
-        official_path_prefix=OFFICIAL_UPDATE_PATH_PREFIX,
-        asset_names=OFFICIAL_UPDATE_ASSET_NAMES,
-    )
-
-
-def normalize_github_release_manifest(raw):
-    return update_manager_core.normalize_github_release_manifest(
-        raw,
-        platform_key=_platform_update_key(),
-        official_host=OFFICIAL_UPDATE_HOST,
-        official_path_prefix=OFFICIAL_UPDATE_PATH_PREFIX,
-        asset_names=OFFICIAL_UPDATE_ASSET_NAMES,
-    )
-
-
-def github_release_api_url_from_manifest(manifest_url):
-    return update_manager_core.github_release_api_url_from_manifest(
-        manifest_url,
-        official_host=OFFICIAL_UPDATE_HOST,
-        official_path_prefix=OFFICIAL_UPDATE_PATH_PREFIX,
-    )
-
-
-def _update_request_headers():
-    return update_runtime_core.update_request_headers(HTTP_USER_AGENT)
-
-
-def _get_update_json(url, request_get=None, timeout=REQUEST_TIMEOUT):
-    return update_runtime_core.get_update_json(
-        url,
-        request_get=request_get or requests.get,
-        timeout=timeout,
-        headers=_update_request_headers(),
-    )
-
-
-def _update_fetch_error_message(manifest_error, api_error):
-    return update_runtime_core.update_fetch_error_message(manifest_error, api_error)
-
-
-def fetch_update_manifest(manifest_url=None, request_get=None):
-    return update_runtime_core.fetch_update_manifest(
-        manifest_url or get_update_manifest_url(),
-        require_official_update_url=lambda *args, **kwargs: _require_official_update_url(
-            *args,
-            **kwargs,
-        ),
-        github_release_api_url_from_manifest=(
-            lambda url: github_release_api_url_from_manifest(url)
-        ),
-        get_update_json=lambda url: _get_update_json(
-            url,
-            request_get=request_get,
-        ),
-        normalize_update_manifest=lambda raw, base_url=None: normalize_update_manifest(
-            raw,
-            base_url,
-        ),
-        normalize_github_release_manifest=lambda raw: normalize_github_release_manifest(raw),
-    )
-
-
-def get_update_status(expose_download=False):
-    manifest_url = get_update_manifest_url()
-    manifest = fetch_update_manifest(manifest_url)
-    return update_manager_core.build_update_status(
-        manifest,
-        APP_VERSION,
-        now=datetime.now(),
-        expose_download=expose_download,
-    )
-
-
 PUBLIC_UPDATE_STATUS_KEYS = (
     "state",
     "current_version",
@@ -1439,59 +1272,154 @@ PUBLIC_UPDATE_STATUS_KEYS = (
 )
 
 
-def public_update_status(status=None):
-    return update_runtime_core.public_update_status(
-        status,
-        PUBLIC_UPDATE_STATUS_KEYS,
+def _get_update_runtime():
+    if runtime.update_runtime_instance is None:
+        runtime.update_runtime_instance = update_runtime_core.UpdateRuntime(
+            runtime,
+            current_version=APP_VERSION,
+            manifest_url=DEFAULT_UPDATE_MANIFEST_URL,
+            official_host=OFFICIAL_UPDATE_HOST,
+            official_path_prefix=OFFICIAL_UPDATE_PATH_PREFIX,
+            official_asset_names=OFFICIAL_UPDATE_ASSET_NAMES,
+            update_dir=UPDATE_DIR,
+            installer_name=UPDATE_INSTALLER_NAME,
+            user_agent=HTTP_USER_AGENT,
+            request_timeout=REQUEST_TIMEOUT,
+            proxies=REQ_PROXY,
+            os_name=lambda: os.name,
+            sys_platform=lambda: sys.platform,
+            request_get=lambda *args, **kwargs: requests.get(*args, **kwargs),
+            path_exists=lambda path: os.path.exists(path),
+            popen=lambda *args, **kwargs: subprocess.Popen(*args, **kwargs),
+            create_new_process_group=lambda: getattr(
+                subprocess,
+                "CREATE_NEW_PROCESS_GROUP",
+                0,
+            ),
+            detached_process=lambda: getattr(subprocess, "DETACHED_PROCESS", 0),
+            emit=lambda event, payload: emit(event, payload),
+            public_status_keys=PUBLIC_UPDATE_STATUS_KEYS,
+            now_factory=datetime.now,
+        )
+    return runtime.update_runtime_instance
+
+
+def compare_versions(left, right):
+    return _get_update_runtime().compare_versions(left, right)
+
+
+def _require_https_url(value, label):
+    return _get_update_runtime().require_https_url(value, label)
+
+
+def _require_official_update_url(value, label, allowed_names=None):
+    return _get_update_runtime().require_official_update_url(
+        value,
+        label,
+        allowed_names,
     )
+
+
+def get_update_manifest_url():
+    return _get_update_runtime().get_manifest_url()
+
+
+def _platform_update_key():
+    return _get_update_runtime().platform_update_key()
+
+
+def normalize_update_manifest(raw, base_url=None):
+    return _get_update_runtime().normalize_update_manifest(
+        raw,
+        base_url,
+        platform_key=_platform_update_key(),
+    )
+
+
+def normalize_github_release_manifest(raw):
+    return _get_update_runtime().normalize_github_release_manifest(
+        raw,
+        platform_key=_platform_update_key(),
+    )
+
+
+def github_release_api_url_from_manifest(manifest_url):
+    return _get_update_runtime().github_release_api_url_from_manifest(manifest_url)
+
+
+def _update_request_headers():
+    return _get_update_runtime().request_headers()
+
+
+def _get_update_json(url, request_get=None, timeout=REQUEST_TIMEOUT):
+    return _get_update_runtime().get_update_json(
+        url,
+        request_get_override=request_get,
+        timeout=timeout,
+    )
+
+
+def _update_fetch_error_message(manifest_error, api_error):
+    return update_runtime_core.update_fetch_error_message(manifest_error, api_error)
+
+
+def fetch_update_manifest(manifest_url=None, request_get=None):
+    return _get_update_runtime().fetch_update_manifest(
+        manifest_url or get_update_manifest_url(),
+        request_get_override=request_get,
+        platform_key=_platform_update_key(),
+        require_official_update_url=lambda *args, **kwargs: _require_official_update_url(
+            *args,
+            **kwargs,
+        ),
+        github_release_api_url_from_manifest=(
+            lambda url: github_release_api_url_from_manifest(url)
+        ),
+        get_json=lambda url: _get_update_json(
+            url,
+            request_get=request_get,
+        ),
+        normalize_manifest=lambda raw, base_url=None: normalize_update_manifest(
+            raw,
+            base_url,
+        ),
+        normalize_github_manifest=lambda raw: normalize_github_release_manifest(raw),
+    )
+
+
+def get_update_status(expose_download=False):
+    return _get_update_runtime().get_update_status(
+        expose_download=expose_download,
+        get_manifest_url=get_update_manifest_url,
+        fetch_manifest=fetch_update_manifest,
+    )
+
+
+def public_update_status(status=None):
+    return _get_update_runtime().public_update_status(status)
 
 
 def record_update_status(status):
-    return update_runtime_core.record_update_status(
-        runtime.last_update_status,
-        runtime.last_update_status_lock,
-        status,
-        PUBLIC_UPDATE_STATUS_KEYS,
-    )
+    return _get_update_runtime().record_update_status(status)
 
 
 def get_last_update_status():
-    return update_runtime_core.get_last_update_status(
-        runtime.last_update_status,
-        runtime.last_update_status_lock,
-    )
+    return _get_update_runtime().get_last_update_status()
 
 
 def emit_update_status(status):
-    safe_status = record_update_status(status)
-    emit("update_status", safe_status)
-    return safe_status
+    return _get_update_runtime().emit_update_status(status)
 
 
 def download_update_installer(update_info, progress_callback=None):
-    return update_runtime_core.download_update_installer(
+    return _get_update_runtime().download_update_installer(
         update_info,
-        update_dir=UPDATE_DIR,
-        installer_name=UPDATE_INSTALLER_NAME,
-        request_get=lambda *args, **kwargs: requests.get(*args, **kwargs),
-        proxies=REQ_PROXY,
-        progress_callback=progress_callback,
+        progress_callback,
     )
 
 
 def launch_update_installer(installer_path):
-    return update_runtime_core.launch_update_installer(
-        installer_path,
-        path_exists=lambda path: os.path.exists(path),
-        build_installer_launch_plan=lambda path: update_manager_core.build_installer_launch_plan(
-            path,
-            os_name=os.name,
-            sys_platform=sys.platform,
-            create_new_process_group=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
-            detached_process=getattr(subprocess, "DETACHED_PROCESS", 0),
-        ),
-        popen=lambda *args, **kwargs: subprocess.Popen(*args, **kwargs),
-    )
+    return _get_update_runtime().launch_update_installer(installer_path)
 
 
 def read_log_tail(max_lines=120):
@@ -1526,98 +1454,89 @@ def preview_config_backup(payload):
     )
 
 
+def _get_export_runtime():
+    if runtime.export_runtime_instance is None:
+        runtime.export_runtime_instance = export_runtime_core.ExportRuntime(
+            runtime,
+            get_settings=lambda: get_settings_snapshot(),
+            default_export_dir=lambda: EXPORT_DIR,
+            check_actions=lambda: EXPORT_DIR_CHECK_ACTIONS,
+            home_dir=lambda: os.path.expanduser("~"),
+            writer=lambda export_dir, filename, content: (
+                support_files_core.save_export_file(
+                    export_dir,
+                    filename,
+                    content,
+                )
+            ),
+            now_factory=datetime.now,
+        )
+    return runtime.export_runtime_instance
+
+
 def resolve_export_dir(settings=None):
-    return operations_runtime_core.resolve_export_dir(
-        get_settings_snapshot() if settings is None else settings,
-        EXPORT_DIR,
-    )
+    return _get_export_runtime().resolve_export_dir(settings)
 
 
 def _probe_export_dir_writable(export_dir):
-    return operations_runtime_core.probe_export_dir_writable(export_dir)
+    return _get_export_runtime().probe_export_dir_writable(export_dir)
 
 
 def build_export_dir_check(settings=None, probe_writer=None):
-    return operations_runtime_core.build_export_dir_check(
-        resolve_export_dir(settings),
-        actions=EXPORT_DIR_CHECK_ACTIONS,
+    return _get_export_runtime().build_export_dir_check(
+        settings,
         probe_writer=probe_writer or _probe_export_dir_writable,
     )
 
 
 def _export_dir_dialog_initial_dir(settings=None):
-    return operations_runtime_core.export_dir_dialog_initial_dir(
-        resolve_export_dir(settings),
-        home_dir=os.path.expanduser("~"),
-    )
+    return _get_export_runtime().export_dir_dialog_initial_dir(settings)
 
 
 def _normalize_export_dir_selection(selection):
-    return operations_runtime_core.normalize_export_dir_selection(selection)
+    return _get_export_runtime().normalize_export_dir_selection(selection)
 
 
 def build_export_dir_picker_payload(dialog, settings=None):
-    return operations_runtime_core.build_export_dir_picker_payload(
-        dialog,
-        _export_dir_dialog_initial_dir(settings),
-    )
+    return _get_export_runtime().build_export_dir_picker_payload(dialog, settings)
 
 
 def reset_last_export_status():
-
-    with runtime.last_export_status_lock:
-        runtime.last_export_status = {}
+    return _get_export_runtime().reset_last_export_status()
 
 
 def get_last_export_status():
-    with runtime.last_export_status_lock:
-        return dict(runtime.last_export_status) if isinstance(runtime.last_export_status, dict) else {}
+    return _get_export_runtime().get_last_export_status()
 
 
 def _set_last_export_status(status):
-
-    with runtime.last_export_status_lock:
-        runtime.last_export_status = dict(status)
+    return _get_export_runtime().set_last_export_status(status)
 
 
 def _export_failure_category(exc):
-    return operations_runtime_core.export_failure_category(exc)
+    return _get_export_runtime().export_failure_category(exc)
 
 
 def _export_failure_message(category, export_dir):
-    return operations_runtime_core.export_failure_message(category, export_dir)
+    return _get_export_runtime().export_failure_message(category, export_dir)
 
 
 def _build_export_failure_status(filename, export_dir, exc):
-    return operations_runtime_core.build_export_failure_status(
-        filename,
-        export_dir,
-        exc,
-        now_factory=datetime.now,
-    )
+    return _get_export_runtime().build_export_failure_status(filename, export_dir, exc)
 
 
 def build_export_status_snapshot(settings=None):
-    return operations_runtime_core.build_export_status_snapshot(
-        build_export_dir_check(settings),
-        get_last_export_status(),
-    )
+    return _get_export_runtime().build_export_status_snapshot(settings)
 
 
 def build_export_error_payload(default_message):
-    return operations_runtime_core.build_export_error_payload(
-        default_message,
-        get_last_export_status(),
-        build_export_dir_check(),
-    )
+    return _get_export_runtime().build_export_error_payload(default_message)
 
 
 def build_open_exports_folder_error_payload(export_dir, exc):
-    return operations_runtime_core.build_open_exports_folder_error_payload(
+    return _get_export_runtime().build_open_exports_folder_error_payload(
         export_dir,
         exc,
-        directory_status=build_export_dir_check(),
-        now_factory=datetime.now,
     )
 
 
@@ -1644,14 +1563,7 @@ def choose_export_dir_for_desktop():
 
 
 def save_export_file(filename, content):
-    return operations_runtime_core.save_export_file(
-        filename,
-        content,
-        export_dir=resolve_export_dir(),
-        writer=support_files_core.save_export_file,
-        set_status=_set_last_export_status,
-        now_factory=datetime.now,
-    )
+    return _get_export_runtime().save_export_file(filename, content)
 
 
 def _data_archive_paths():
@@ -2032,31 +1944,11 @@ def build_diagnostics_clipboard_text(report=None):
 
 
 def show_alert_dialog(title, message):
-    return notification_runtime_core.show_alert_dialog(
-        title,
-        message,
-        enabled=get_settings_snapshot().get("alert_dialog_enabled", True),
-        active_lock=runtime.alert_dialog_lock,
-        get_active=lambda: runtime.alert_dialog_active,
-        set_active=_set_alert_dialog_active,
-        sys_platform=sys.platform,
-        os_name=os.name,
-        applescript_string=_applescript_string,
-        run_applescript=_run_macos_osascript,
-        thread_factory=threading.Thread,
-        logger=logging,
-    )
+    return _get_notification_adapters().desktop.show_dialog(title, message)
 
 
 def play_system_alert_sound(level):
-    return notification_runtime_core.play_system_alert_sound(
-        level,
-        enabled=get_settings_snapshot().get("alert_sound_enabled", True),
-        sys_platform=sys.platform,
-        path_exists=os.path.exists,
-        popen=subprocess.Popen,
-        run_applescript=_run_macos_osascript,
-    )
+    return _get_notification_adapters().desktop.play_sound(level)
 
 
 def select_related_news(title, items=None, limit=3):
@@ -2075,37 +1967,36 @@ class _SafeFormatDict(dict):
 
 
 def _format_template(template, values, fallback):
-    return notifications_core.format_template(template, values, fallback)
+    return notification_transport_core.format_template(template, values, fallback)
 
 
 def _time_to_minutes(value):
-    return notifications_core.time_to_minutes(value)
+    return notification_policy_core.time_to_minutes(value)
 
 
 def is_alert_quiet_time(settings=None, now=None):
     settings = settings or get_settings_snapshot()
-    return notifications_core.is_alert_quiet_time(settings, now=now)
+    return notification_policy_core.is_alert_quiet_time(settings, now=now)
 
 
 def _alert_cooldown_key(entry):
-    return notifications_core.alert_cooldown_key(entry)
+    return notification_policy_core.alert_cooldown_key(entry)
 
 
 def evaluate_alert_delivery(entry, settings=None, now=None):
-    settings = settings or get_settings_snapshot()
-    return notifications_core.evaluate_alert_delivery(entry, settings, runtime.alert_cooldown_state, now=now)
+    return _get_alert_notification_runtime().evaluate_delivery(
+        entry,
+        settings=settings,
+        now=now,
+    )
 
 
 def build_alert_template_values(alert_type, title, message):
-    with runtime.lock:
-        market = {
-            "price_usd": runtime.price_usd,
-            "price_rmb": runtime.price_rmb,
-            "usdcny_rate": runtime.usdcny_rate,
-            "gold_price_source": runtime.gold_price_source,
-            "usdcny_rate_source": runtime.usdcny_rate_source,
-        }
-    return notifications_core.build_alert_template_values(alert_type, title, message, market, _alert_level_map)
+    return _get_alert_notification_runtime().build_template_values(
+        alert_type,
+        title,
+        message,
+    )
 
 
 class EmailNotifier:
@@ -2113,17 +2004,12 @@ class EmailNotifier:
 
     @staticmethod
     def send(alert_type, title, message, timeout=10, blocking=False):
-        return notification_runtime_core.send_email_alert(
-            alert_type, title, message,
-            get_settings=get_settings_snapshot,
-            build_values=build_alert_template_values,
-            smtp_module=smtplib,
-            default_subject_template=DEFAULT_EMAIL_SUBJECT_TEMPLATE,
-            default_body_template=DEFAULT_EMAIL_BODY_TEMPLATE,
+        return _get_notification_adapters().email.send_alert(
+            alert_type,
+            title,
+            message,
             timeout=timeout,
             blocking=blocking,
-            thread_factory=threading.Thread,
-            logger=logging,
         )
 
 
@@ -2132,205 +2018,261 @@ class WebhookNotifier:
 
     @staticmethod
     def send(alert_type, title, message, timeout=8, blocking=False):
-        return notification_runtime_core.send_webhook_alert(
-            alert_type, title, message,
-            get_settings=get_settings_snapshot,
-            build_values=build_alert_template_values,
-            post=requests.post,
-            require_https_url=_require_https_url,
-            app_name="GoldMonitor",
-            app_version=APP_VERSION,
-            user_agent=HTTP_USER_AGENT,
-            proxies=REQ_PROXY,
+        return _get_notification_adapters().webhook.send_alert(
+            alert_type,
+            title,
+            message,
             timeout=timeout,
             blocking=blocking,
-            thread_factory=threading.Thread,
-            logger=logging,
         )
 
 
 class DailyDigestEmailNotifier:
     @staticmethod
     def send(digest, timeout=10, blocking=False):
-        return notification_runtime_core.send_daily_digest_email(
+        return _get_notification_adapters().email.send_digest(
             digest,
-            get_settings=get_settings_snapshot,
-            smtp_module=smtplib,
             timeout=timeout,
             blocking=blocking,
-            thread_factory=threading.Thread,
-            logger=logging,
         )
 
 
 class DailyDigestWebhookNotifier:
     @staticmethod
     def send(digest, timeout=8, blocking=False):
-        return notification_runtime_core.send_daily_digest_webhook(
+        return _get_notification_adapters().webhook.send_digest(
             digest,
-            get_settings=get_settings_snapshot,
-            post=requests.post,
-            require_https_url=_require_https_url,
-            user_agent=HTTP_USER_AGENT,
-            proxies=REQ_PROXY,
             timeout=timeout,
             blocking=blocking,
-            thread_factory=threading.Thread,
-            logger=logging,
         )
 
 
+def _get_notification_adapters():
+    if runtime.notification_adapters_instance is None:
+        runtime.notification_adapters_instance = (
+            notification_adapters_core.NotificationAdapters(
+                desktop=notification_adapters_core.DesktopNotificationAdapter(
+                    get_settings=lambda: get_settings_snapshot(),
+                    active_lock=lambda: runtime.alert_dialog_lock,
+                    get_active=lambda: runtime.alert_dialog_active,
+                    set_active=lambda value: _set_alert_dialog_active(value),
+                    base_dir=lambda: _basedir,
+                    app_id=APP_USER_MODEL_ID,
+                    applescript_string=_applescript_string,
+                    run_applescript=lambda *args, **kwargs: (
+                        _run_macos_osascript(*args, **kwargs)
+                    ),
+                    sys_platform=lambda: sys.platform,
+                    os_name=lambda: os.name,
+                    path_exists=lambda path: os.path.exists(path),
+                    popen=lambda *args, **kwargs: subprocess.Popen(
+                        *args,
+                        **kwargs,
+                    ),
+                    thread_factory=lambda **kwargs: threading.Thread(**kwargs),
+                    logger=logging,
+                ),
+                email=notification_adapters_core.EmailNotificationAdapter(
+                    get_settings=lambda: get_settings_snapshot(),
+                    build_alert_values=lambda *args: (
+                        build_alert_template_values(*args)
+                    ),
+                    smtp_module=lambda: smtplib,
+                    default_subject_template=DEFAULT_EMAIL_SUBJECT_TEMPLATE,
+                    default_body_template=DEFAULT_EMAIL_BODY_TEMPLATE,
+                    thread_factory=lambda **kwargs: threading.Thread(**kwargs),
+                    logger=logging,
+                ),
+                webhook=notification_adapters_core.WebhookNotificationAdapter(
+                    get_settings=lambda: get_settings_snapshot(),
+                    build_alert_values=lambda *args: (
+                        build_alert_template_values(*args)
+                    ),
+                    post=lambda *args, **kwargs: requests.post(*args, **kwargs),
+                    require_https_url=_require_https_url,
+                    app_name="GoldMonitor",
+                    app_version=APP_VERSION,
+                    user_agent=HTTP_USER_AGENT,
+                    proxies=REQ_PROXY,
+                    thread_factory=lambda **kwargs: threading.Thread(**kwargs),
+                    logger=logging,
+                ),
+            )
+        )
+    return runtime.notification_adapters_instance
+
+
+def _get_alert_notification_runtime():
+    if runtime.alert_notification_runtime_instance is None:
+        runtime.alert_notification_runtime_instance = (
+            alert_notification_runtime_core.AlertNotificationRuntime(
+                runtime,
+                get_settings=lambda: get_settings_snapshot(),
+                generate_id=lambda: _generate_alert_log_id(),
+                select_news=lambda title: select_related_news(title),
+                save_entry=lambda entry: save_alert_log_entry(entry),
+                update_entry=lambda alert_id, updater: (
+                    _update_alert_log_entry_payload(alert_id, updater)
+                ),
+                emit=lambda event, payload: socketio.emit(event, payload),
+                build_history_state=lambda **kwargs: (
+                    build_price_history_state(**kwargs)
+                ),
+                send_desktop_notification=lambda title, body: (
+                    send_desktop_notification(title, body)
+                ),
+                play_system_alert_sound=lambda level: (
+                    play_system_alert_sound(level)
+                ),
+                show_alert_dialog=lambda title, message: (
+                    show_alert_dialog(title, message)
+                ),
+                email_sender=lambda *args, **kwargs: (
+                    EmailNotifier.send(*args, **kwargs)
+                ),
+                webhook_sender=lambda *args, **kwargs: (
+                    WebhookNotifier.send(*args, **kwargs)
+                ),
+                alert_level_map=_alert_level_map,
+                alert_log_limit=ALERT_LOG_MEMORY_LIMIT,
+                now_factory=datetime.now,
+                thread_factory=lambda **kwargs: threading.Thread(**kwargs),
+                logger=logging,
+            )
+        )
+    return runtime.alert_notification_runtime_instance
+
+
+def _get_daily_digest_runtime():
+    if runtime.daily_digest_runtime_instance is None:
+        runtime.daily_digest_runtime_instance = daily_digest_runtime_core.DailyDigestRuntime(
+            runtime,
+            state_path=lambda: DAILY_DIGEST_STATE_PATH,
+            get_settings=lambda: get_settings_snapshot(),
+            build_timeline=lambda **kwargs: build_event_timeline_state(**kwargs),
+            build_portfolio=lambda: build_portfolio_state(),
+            get_source_health=lambda: get_source_health_state(),
+            email_sender=lambda *args, **kwargs: (
+                DailyDigestEmailNotifier.send(*args, **kwargs)
+            ),
+            webhook_sender=lambda *args, **kwargs: (
+                DailyDigestWebhookNotifier.send(*args, **kwargs)
+            ),
+            emit=lambda event, payload: socketio.emit(event, payload),
+            timeline_max_limit=EVENT_TIMELINE_MAX_LIMIT,
+            timeline_types=EVENT_TIMELINE_TYPES,
+            now_factory=datetime.now,
+            logger=logging,
+        )
+    return runtime.daily_digest_runtime_instance
+
+
 def _notification_status(channel, label, status, message, **details):
-    return notifications_core.notification_status(channel, label, status, message, **details)
+    return notification_delivery_core.notification_status(
+        channel,
+        label,
+        status,
+        message,
+        **details,
+    )
 
 
 def _notification_summary(notifications):
-    return notifications_core.summarize_notifications(notifications)
+    return notification_delivery_core.summarize_notifications(notifications)
 
 
 def dispatch_alert(entry, title, blocking=True, on_update=None):
     """通知渠道分发: 根据设置决定哪些渠道发送"""
-    settings = get_settings_snapshot()
-    return notifications_core.dispatch_alert(
+    return _get_alert_notification_runtime().dispatch(
         entry,
         title,
-        settings,
-        email_sender=EmailNotifier.send,
-        webhook_sender=WebhookNotifier.send,
-        logger=logging,
         blocking=blocking,
-        thread_factory=threading.Thread if not blocking else None,
         on_update=on_update,
     )
 
 
 def _plan_alert_notifications(entry, settings=None):
-    return notifications_core.plan_alert_notifications(entry, settings or get_settings_snapshot())
+    return _get_alert_notification_runtime().plan_notifications(
+        entry,
+        settings=settings,
+    )
 
 
 def _persist_alert_notification_update(alert_id, notifications):
-    return notification_runtime_core.persist_alert_notification_update(
+    return _get_alert_notification_runtime().persist_notification_update(
         alert_id,
         notifications,
-        update_entry=_update_alert_log_entry_payload,
-        emit=socketio.emit,
     )
 
 
 def _deliver_alert_notifications(alert_id, entry, title, settings, notifications):
-    return notifications_core.deliver_alert_notifications(
+    return _get_alert_notification_runtime().deliver_notifications(
+        alert_id,
         entry,
         title,
         settings,
-        email_sender=EmailNotifier.send,
-        webhook_sender=WebhookNotifier.send,
-        notifications=notifications,
-        on_update=lambda items, item: _persist_alert_notification_update(alert_id, items),
-        logger=logging,
+        notifications,
+        persist_update=_persist_alert_notification_update,
     )
 
 
 def _start_alert_notification_delivery(entry, title, settings=None):
-    return notification_runtime_core.start_alert_notification_delivery(
+    return _get_alert_notification_runtime().start_delivery(
         entry,
         title,
-        get_settings=lambda: settings or get_settings_snapshot(),
+        settings=settings,
         deliver=_deliver_alert_notifications,
-        thread_factory=threading.Thread,
     )
 
 
 def _daily_digest_state_store(now_factory=None):
-    return daily_digest_core.DailyDigestStateStore(
-        DAILY_DIGEST_STATE_PATH,
-        now_factory=now_factory or datetime.now,
-    )
+    return _get_daily_digest_runtime().state_store(now_factory=now_factory)
 
 
 def get_daily_digest_state():
-    return _daily_digest_state_store().load()
+    return _get_daily_digest_runtime().get_state()
 
 
 def selected_daily_digest_channels(settings=None):
-    return notification_runtime_core.selected_daily_digest_channels(
-        settings or get_settings_snapshot()
+    return _get_daily_digest_runtime().selected_channels(
+        settings=settings,
     )
 
 
 def build_daily_digest_snapshot(now=None):
-    now = now or datetime.now()
-    return notification_runtime_core.build_daily_digest_snapshot(
-        now=now,
-        build_timeline=build_event_timeline_state,
-        build_portfolio=build_portfolio_state,
-        get_source_health=get_source_health_state,
-        timeline_max_limit=EVENT_TIMELINE_MAX_LIMIT,
-        timeline_types=EVENT_TIMELINE_TYPES,
-    )
+    return _get_daily_digest_runtime().build_snapshot(now=now)
 
 
 def daily_digest_status_payload(now=None):
-    now = now or datetime.now()
-    return notification_runtime_core.daily_digest_status_payload(
-        now=now,
-        settings=get_settings_snapshot(),
-        state=get_daily_digest_state(),
-    )
+    return _get_daily_digest_runtime().status_payload(now=now)
 
 
 def _dispatch_daily_digest(digest, settings, blocking=False):
-    return notification_runtime_core.dispatch_daily_digest(
+    return _get_daily_digest_runtime().dispatch(
         digest,
-        settings,
-        email_sender=DailyDigestEmailNotifier.send,
-        webhook_sender=DailyDigestWebhookNotifier.send,
-        logger=logging,
+        settings=settings,
+        blocking=blocking,
     )
 
 
 def run_daily_digest_once(now=None, force=False, manual=False, blocking=False):
-    now = now or datetime.now()
-    settings = get_settings_snapshot()
-    return notification_runtime_core.run_daily_digest_once(
+    return _get_daily_digest_runtime().run_once(
         now=now,
         force=force,
         manual=manual,
-        settings=settings,
-        lock=runtime.daily_digest_lock,
-        state_store=_daily_digest_state_store(now_factory=lambda: now),
         build_digest=lambda value: build_daily_digest_snapshot(now=value),
-        email_sender=DailyDigestEmailNotifier.send,
-        webhook_sender=DailyDigestWebhookNotifier.send,
-        emit_status=socketio.emit,
         status_payload=lambda value: daily_digest_status_payload(now=value),
-        logger=logging,
+        blocking=blocking,
     )
 
 
 def emit_alert(entry, title):
-    settings = get_settings_snapshot()
-    return notification_runtime_core.emit_alert(
+    return _get_alert_notification_runtime().emit_alert(
         entry,
         title,
-        settings=settings,
-        market_lock=runtime.lock,
-        market_price=lambda mode: runtime.price_usd if mode == "usd" else runtime.price_rmb if mode == "rmb" else None,
-        generate_id=_generate_alert_log_id,
         evaluate_delivery=evaluate_alert_delivery,
         plan_notifications=_plan_alert_notifications,
-        select_news=select_related_news,
-        alert_log=runtime.alert_log,
-        alert_log_limit=ALERT_LOG_MEMORY_LIMIT,
-        save_entry=save_alert_log_entry,
-        emit=socketio.emit,
         start_delivery=_start_alert_notification_delivery,
-        build_history_state=build_price_history_state,
-        local_delivery_enabled=notifications_core.alert_local_delivery_enabled,
-        send_desktop_notification=send_desktop_notification,
-        play_system_alert_sound=play_system_alert_sound,
-        show_alert_dialog=show_alert_dialog,
-        now_factory=datetime.now,
-        logger=logging,
     )
 
 
@@ -2345,29 +2287,38 @@ def initialize_market_cache():
         runtime.usdcny_rate_error = "启动时使用缓存汇率"
 
 
+def _get_instance_runtime():
+    if runtime.instance_runtime_instance is None:
+        runtime.instance_runtime_instance = instance_runtime_core.InstanceRuntime(
+            runtime,
+            default_host=DEFAULT_HOST,
+            default_port=DEFAULT_PORT,
+            app_name=APP_NAME,
+            proxies=REQ_PROXY,
+            socket_factory=lambda: socket.socket,
+            request_get=lambda: requests.get,
+            request_post=lambda: requests.post,
+            browser_open=lambda: __import__("webbrowser").open,
+            clock=time.time,
+            sleep=time.sleep,
+        )
+    return runtime.instance_runtime_instance
+
+
 def find_available_port(preferred=DEFAULT_PORT):
-    return instance_runtime_core.find_available_port(
-        preferred,
-        host=DEFAULT_HOST,
-        socket_factory=socket.socket,
-    )
+    return _get_instance_runtime().find_available_port(preferred)
 
 
 def local_app_url(host=DEFAULT_HOST, port=DEFAULT_PORT, path="/"):
-    return instance_runtime_core.local_app_url(host, port, path)
+    return _get_instance_runtime().local_app_url(host, port, path)
 
 
 def is_tcp_port_open(host, port, timeout=0.05):
-    return instance_runtime_core.is_tcp_port_open(
-        host,
-        port,
-        timeout=timeout,
-        socket_factory=socket.socket,
-    )
+    return _get_instance_runtime().is_tcp_port_open(host, port, timeout)
 
 
 def is_goldmonitor_health_payload(payload):
-    return instance_runtime_core.is_application_health_payload(payload, APP_NAME)
+    return _get_instance_runtime().is_application_health_payload(payload)
 
 
 def find_existing_goldmonitor_instance(
@@ -2378,12 +2329,10 @@ def find_existing_goldmonitor_instance(
     port_probe=None,
     timeout=0.2,
 ):
-    return instance_runtime_core.find_existing_instance(
+    return _get_instance_runtime().find_existing_instance(
         host,
         preferred,
-        app_name=APP_NAME,
-        proxies=REQ_PROXY,
-        request_get=request_get or requests.get,
+        request_get_override=request_get,
         port_probe=port_probe or (lambda *args: is_tcp_port_open(*args)),
         port_count=port_count,
         timeout=timeout,
@@ -2398,16 +2347,12 @@ def open_existing_goldmonitor_instance(
     browser_open=None,
     timeout=0.5,
 ):
-    if browser_open is None:
-        import webbrowser
-        browser_open = webbrowser.open
-    return instance_runtime_core.open_existing_instance(
+    return _get_instance_runtime().open_existing_instance(
         host,
         port,
         desktop_mode=desktop_mode,
-        proxies=REQ_PROXY,
-        request_post=request_post or requests.post,
-        browser_open=browser_open,
+        request_post_override=request_post,
+        browser_open_override=browser_open,
         timeout=timeout,
     )
 
@@ -2876,16 +2821,7 @@ def fetch_market_data_result():
 
 # ---------- 桌面通知 ----------
 def send_desktop_notification(title, body):
-    return notification_runtime_core.send_desktop_notification(
-        title,
-        body,
-        sys_platform=sys.platform,
-        base_dir=_basedir,
-        app_id=APP_USER_MODEL_ID,
-        applescript_string=_applescript_string,
-        run_applescript=_run_macos_osascript,
-        path_exists=os.path.exists,
-    )
+    return _get_notification_adapters().desktop.send(title, body)
 
 
 # ---------- 资讯 ----------
@@ -2972,44 +2908,27 @@ def _risk_history_store():
 
 
 def normalize_risk_analysis_history(items):
-    return _risk_history_store().normalize(items)
+    return _get_history_review_runtime().normalize_risk_history(items)
 
 
 def load_risk_analysis_history():
-    return _risk_history_store().load()
+    return _get_history_review_runtime().load_risk_history()
 
 
 def save_risk_analysis_history(items=None):
-    items = runtime.risk_analysis_history if items is None else items
-    return _risk_history_store().save(items)
+    return _get_history_review_runtime().save_risk_history(items)
 
 
 def get_risk_analysis_history_state():
-    with runtime.risk_history_lock:
-        return _risk_history_store().build_state(runtime.risk_analysis_history)
+    return _get_history_review_runtime().risk_history_state()
 
 
 def add_risk_analysis_history_entry(result, snapshot):
-
-    with runtime.risk_history_lock:
-        store = _risk_history_store()
-        runtime.risk_analysis_history, entry = store.add_entry(runtime.risk_analysis_history, result, snapshot)
-        try:
-            store.save(runtime.risk_analysis_history)
-        except OSError as exc:
-            logging.warning("failed to save risk analysis history: %s", exc)
-        return entry
+    return _get_history_review_runtime().add_risk_history_entry(result, snapshot)
 
 
 def clear_risk_analysis_history_state():
-
-    with runtime.risk_history_lock:
-        runtime.risk_analysis_history = []
-        try:
-            _risk_history_store().clear()
-        except OSError as exc:
-            logging.warning("failed to clear risk analysis history: %s", exc)
-        return _risk_history_store().build_state(runtime.risk_analysis_history)
+    return _get_history_review_runtime().clear_risk_history()
 
 
 def _price_history_store():
@@ -3022,198 +2941,199 @@ def _price_history_store():
     )
 
 
-def normalize_price_history(items):
-    return _price_history_store().normalize(items)
-
-
-def _price_history_db_path():
-    return _price_history_store().db_path()
-
-
-def _connect_price_history_db():
-    return _price_history_store().connect_db()
-
-
-def _upsert_price_history_points(items):
-    return _price_history_store().upsert_points(items)
-
-
-def _load_price_history_from_db():
-    return _price_history_store().load_from_db()
-
-
-def _filter_price_history_from_db(minutes=None, limit=600):
-    return _price_history_store().filter_from_db(minutes=minutes, limit=limit)
-
-
-def _load_price_history_json_archive():
-    return _price_history_store().load_json_archive()
-
-
-def load_price_history_archive():
-    return _price_history_store().load_archive()
-
-
-def _write_price_history_json_archive(items):
-    return _price_history_store().write_json_archive(items)
-
-
-def save_price_history_archive(items=None):
-    items = runtime.price_archive if items is None else items
-    return _price_history_store().save_archive(items)
-
-
-def add_price_history_entry(entry, force_save=False):
-
-    runtime.price_archive, runtime.last_price_history_save_at, point = _price_history_store().add_entry(
-        runtime.price_archive,
-        runtime.last_price_history_save_at,
-        entry,
-        force_save=force_save,
-    )
-    if point is None:
-        return
-
-
-def _filter_price_archive(minutes=None, limit=600):
-    with runtime.lock:
-        items = list(runtime.price_archive)
-    return _price_history_store().filter_archive(items, minutes=minutes, limit=limit)
-
-
-def _event_time_from_alert(entry):
-    return event_timeline_core.event_time_from_alert(entry, today_date=runtime.today_date)
-
-
-def normalize_event_timeline_request(data=None):
-    return event_timeline_core.normalize_event_timeline_request(
-        data,
+def _get_history_review_runtime():
+    return history_runtime_core.HistoryReviewRuntime(
+        runtime,
+        risk_history_store_factory=_risk_history_store,
+        price_history_store_factory=_price_history_store,
+        alert_log_reader=alert_log_export_entries,
+        get_fetch_status=get_fetch_status,
+        get_source_health_state=get_source_health_state,
+        get_source_comparison_state=get_source_comparison_state,
+        news_key=_news_key,
+        save_export_file=save_export_file,
         event_types=EVENT_TIMELINE_TYPES,
         allowed_minutes=EVENT_TIMELINE_ALLOWED_MINUTES,
         default_minutes=EVENT_TIMELINE_DEFAULT_MINUTES,
         default_limit=EVENT_TIMELINE_DEFAULT_LIMIT,
         max_limit=EVENT_TIMELINE_MAX_LIMIT,
+        risk_history_limit=RISK_ANALYSIS_HISTORY_LIMIT,
+        news_limit=NEWS_LIMIT,
+        alert_log_export_limit=ALERT_LOG_EXPORT_LIMIT,
+        price_history_export_limit=PRICE_HISTORY_EXPORT_LIMIT,
+        review_report_prefix=REVIEW_REPORT_EXPORT_PREFIX,
+        format_number=_format_number,
+        now_factory=datetime.now,
+        logger=logging,
     )
 
 
+def normalize_price_history(items):
+    return _get_history_review_runtime().normalize_price_history(items)
+
+
+def _price_history_db_path():
+    return _get_history_review_runtime().price_history_db_path()
+
+
+def _connect_price_history_db():
+    return _get_history_review_runtime().connect_price_history_db()
+
+
+def _upsert_price_history_points(items):
+    return _get_history_review_runtime().upsert_price_history_points(items)
+
+
+def _load_price_history_from_db():
+    return _get_history_review_runtime().load_price_history_from_db()
+
+
+def _filter_price_history_from_db(minutes=None, limit=600):
+    return _get_history_review_runtime().filter_price_history_from_db(
+        minutes=minutes,
+        limit=limit,
+    )
+
+
+def _load_price_history_json_archive():
+    return _get_history_review_runtime().load_price_history_json_archive()
+
+
+def load_price_history_archive():
+    return _get_history_review_runtime().load_price_history_archive()
+
+
+def _write_price_history_json_archive(items):
+    return _get_history_review_runtime().write_price_history_json_archive(items)
+
+
+def save_price_history_archive(items=None):
+    return _get_history_review_runtime().save_price_history_archive(items)
+
+
+def add_price_history_entry(entry, force_save=False):
+    _get_history_review_runtime().add_price_history_entry(
+        entry,
+        force_save=force_save,
+    )
+
+
+def _filter_price_archive(minutes=None, limit=600):
+    return _get_history_review_runtime().filter_price_archive(
+        minutes=minutes,
+        limit=limit,
+    )
+
+
+def _event_time_from_alert(entry):
+    return _get_history_review_runtime().event_time_from_alert(entry)
+
+
+def normalize_event_timeline_request(data=None):
+    return _get_history_review_runtime().normalize_timeline_request(data)
+
+
 def event_timeline_range(minutes):
-    return event_timeline_core.event_timeline_range(minutes, now_factory=datetime.now)
+    return _get_history_review_runtime().timeline_range(minutes)
 
 
 def make_timeline_event(event_type, timestamp, title, summary, source, payload=None, event_id=None):
-    return event_timeline_core.make_timeline_event(event_type, timestamp, title, summary, source, payload, event_id)
+    return _get_history_review_runtime().make_timeline_event(
+        event_type,
+        timestamp,
+        title,
+        summary,
+        source,
+        payload,
+        event_id,
+    )
 
 
 def build_event_price_summary(points):
-    return event_timeline_core.build_event_price_summary(points)
+    return _get_history_review_runtime().build_event_price_summary(points)
 
 
 def build_price_summary_timeline_event(points, start_time, end_time):
-    return event_timeline_core.build_price_summary_timeline_event(points, start_time, end_time)
+    return _get_history_review_runtime().build_price_summary_timeline_event(
+        points,
+        start_time,
+        end_time,
+    )
 
 
 def _event_timeline_sources():
-    with runtime.risk_history_lock:
-        risk_items = list(runtime.risk_analysis_history[:RISK_ANALYSIS_HISTORY_LIMIT])
-    with runtime.lock:
-        current_news_items = list(runtime.news_items[:NEWS_LIMIT])
-    with runtime.review_notes_lock:
-        current_review_notes = list(runtime.review_notes)
-    return {
-        "alert_entries": alert_log_export_entries(limit=ALERT_LOG_EXPORT_LIMIT),
-        "risk_items": risk_items,
-        "news_items": current_news_items,
-        "review_notes": current_review_notes,
-        "fetch_status": get_fetch_status(),
-        "source_health_state": get_source_health_state(),
-        "source_comparison_state": get_source_comparison_state(),
-        "today_date": runtime.today_date,
-        "news_key": _news_key,
-        "now_factory": datetime.now,
-    }
+    return _get_history_review_runtime().event_sources()
 
 
 def build_alert_timeline_events(start_time, end_time):
-    return event_timeline_core.build_alert_timeline_events(
+    return _get_history_review_runtime().build_alert_timeline_events(
         start_time,
         end_time,
-        alert_entries=alert_log_export_entries(limit=ALERT_LOG_EXPORT_LIMIT),
-        today_date=runtime.today_date,
     )
 
 
 def build_risk_timeline_events(start_time, end_time):
-    with runtime.risk_history_lock:
-        risk_items = list(runtime.risk_analysis_history[:RISK_ANALYSIS_HISTORY_LIMIT])
-    return event_timeline_core.build_risk_timeline_events(start_time, end_time, risk_items=risk_items)
+    return _get_history_review_runtime().build_risk_timeline_events(
+        start_time,
+        end_time,
+    )
 
 
 def build_news_timeline_events(start_time, end_time):
-    with runtime.lock:
-        items = list(runtime.news_items[:NEWS_LIMIT])
-    return event_timeline_core.build_news_timeline_events(start_time, end_time, news_items=items, news_key=_news_key)
+    return _get_history_review_runtime().build_news_timeline_events(
+        start_time,
+        end_time,
+    )
 
 
 def build_data_status_timeline_events(start_time, end_time):
-    return event_timeline_core.build_data_status_timeline_events(
+    return _get_history_review_runtime().build_data_status_timeline_events(
         start_time,
         end_time,
-        fetch_status=get_fetch_status(),
-        source_health_state=get_source_health_state(),
-        source_comparison_state=get_source_comparison_state(),
-        now_factory=datetime.now,
     )
 
 
 def build_event_timeline_events(start_time, end_time, types=None):
-    return event_timeline_core.build_event_timeline_events(start_time, end_time, types, **_event_timeline_sources())
+    return _get_history_review_runtime().build_event_timeline_events(
+        start_time,
+        end_time,
+        types,
+    )
 
 
 def build_event_timeline_state(minutes=None, limit=EVENT_TIMELINE_DEFAULT_LIMIT, types=None):
-    points = _filter_price_archive(minutes=minutes, limit=PRICE_HISTORY_EXPORT_LIMIT)
-    return event_timeline_core.build_event_timeline_state(
+    return _get_history_review_runtime().build_event_timeline_state(
         minutes=minutes,
         limit=limit,
         types=types,
-        price_points=points,
-        **_event_timeline_sources(),
     )
 
 
 def _build_price_event_state(items):
-    return event_timeline_core.build_price_chart_events(items, build_event_timeline_events)
+    return _get_history_review_runtime().build_price_event_state(items)
 
 
 def alert_level_label(alert_type):
-    return event_timeline_core.alert_level_label(alert_type)
+    return _get_history_review_runtime().alert_level_label(alert_type)
 
 
 def build_price_history_state(minutes=None, limit=600):
-    with runtime.lock:
-        items = list(runtime.price_archive)
-    return _price_history_store().build_state(
-        items,
+    return _get_history_review_runtime().build_price_history_state(
         minutes=minutes,
         limit=limit,
-        build_events=_build_price_event_state,
-        format_number=_format_number,
     )
 
 
 def build_price_history_csv(minutes=None):
-    with runtime.lock:
-        items = list(runtime.price_archive)
-    return _price_history_store().build_csv(items, minutes=minutes)
+    return _get_history_review_runtime().build_price_history_csv(minutes=minutes)
 
 
 def build_review_report(timeline_state):
-    return event_timeline_core.build_review_report(timeline_state)
+    return _get_history_review_runtime().build_review_report(timeline_state)
 
 
 def save_review_report(content, filename=None):
-    if not filename:
-        filename = event_timeline_core.review_report_filename(prefix=REVIEW_REPORT_EXPORT_PREFIX)
-    return save_export_file(filename, content)
+    return _get_history_review_runtime().save_review_report(content, filename)
 
 
 def _alert_log_store():
@@ -3226,74 +3146,96 @@ def _alert_log_store():
     )
 
 
+def _get_alert_log_runtime():
+    return alert_log_runtime_core.AlertLogRuntime(
+        runtime,
+        store_factory=_alert_log_store,
+        alert_level_label=alert_level_label,
+        now_factory=datetime.now,
+    )
+
+
 def _alert_log_db_path():
-    return _alert_log_store().db_path()
+    return _get_alert_log_runtime().db_path()
 
 
 def _generate_alert_log_id():
-    return AlertLogStore.generate_id()
+    return _get_alert_log_runtime().generate_id()
 
 
 def _coerce_alert_log_bool(value, default=False):
-    return AlertLogStore.coerce_bool(value, default)
+    return _get_alert_log_runtime().coerce_bool(value, default)
 
 
 def normalize_alert_log_entry(entry, default_read=False):
-    return _alert_log_store().normalize_entry(entry, default_read=default_read)
+    return _get_alert_log_runtime().normalize_entry(
+        entry,
+        default_read=default_read,
+    )
 
 
 def _connect_alert_log_db():
-    return _alert_log_store().connect_db()
+    return _get_alert_log_runtime().connect_db()
 
 
 def save_alert_log_entry(entry):
-    return _alert_log_store().save_entry(entry)
+    return _get_alert_log_runtime().save_entry(entry)
 
 
 def load_alert_log_archive(limit=ALERT_LOG_MEMORY_LIMIT):
-    return _alert_log_store().load_archive(limit=limit)
+    return _get_alert_log_runtime().load_archive(limit=limit)
 
 
 def clear_alert_log_archive():
-    return _alert_log_store().clear_archive()
+    return _get_alert_log_runtime().clear_archive()
 
 
 def _apply_alert_log_status(entry, read=None, acknowledged=None):
-    return _alert_log_store().apply_status(entry, read=read, acknowledged=acknowledged)
+    return _get_alert_log_runtime().apply_status(
+        entry,
+        read=read,
+        acknowledged=acknowledged,
+    )
 
 
 def _apply_alert_log_handling(entry, handled=None, note=None):
-    return _alert_log_store().apply_handling(entry, handled=handled, note=note)
+    return _get_alert_log_runtime().apply_handling(
+        entry,
+        handled=handled,
+        note=note,
+    )
 
 
 def _replace_alert_log_entry(updated):
-    return AlertLogStore.replace_memory_entry(runtime.alert_log, updated)
+    return _get_alert_log_runtime().replace_memory_entry(updated)
 
 
 def _update_alert_log_entry_payload(alert_id, updater):
-    return _alert_log_store().update_entry_payload(alert_id, updater, memory_entries=runtime.alert_log)
+    return _get_alert_log_runtime().update_entry_payload(alert_id, updater)
 
 
 def update_alert_log_status(alert_id, read=None, acknowledged=None):
-    return _update_alert_log_entry_payload(
+    return _get_alert_log_runtime().update_status(
         alert_id,
-        lambda entry: _apply_alert_log_status(entry, read=read, acknowledged=acknowledged),
+        read=read,
+        acknowledged=acknowledged,
     )
 
 
 def update_alert_log_handling(alert_id, handled=None, note=None):
-    return _update_alert_log_entry_payload(
+    return _get_alert_log_runtime().update_handling(
         alert_id,
-        lambda entry: _apply_alert_log_handling(entry, handled=handled, note=note),
+        handled=handled,
+        note=note,
     )
 
 
 def _alert_resend_title(entry):
-    return str(entry.get("title") or f"金价预警 - {alert_level_label(entry.get('type'))}")
+    return _get_alert_log_runtime().resend_title(entry)
 
 
 def resend_alert_notification(alert_id, blocking=False, start_delivery=True):
-    return notification_runtime_core.resend_alert_notification(
+    return _get_alert_log_runtime().resend_notification(
         alert_id,
         settings=get_settings_snapshot(),
         blocking=blocking,
@@ -3305,20 +3247,19 @@ def resend_alert_notification(alert_id, blocking=False, start_delivery=True):
         persist_update=_persist_alert_notification_update,
         start_notification_delivery=_start_alert_notification_delivery,
         title_builder=_alert_resend_title,
-        now_factory=datetime.now,
     )
 
 
 def alert_log_export_entries(limit=ALERT_LOG_EXPORT_LIMIT):
-    return _alert_log_store().export_entries(runtime.alert_log, limit=limit)
+    return _get_alert_log_runtime().export_entries(limit=limit)
 
 
 def _format_alert_notifications(entry):
-    return AlertLogStore.format_notifications(entry)
+    return _get_alert_log_runtime().format_notifications(entry)
 
 
 def build_alert_log_csv():
-    return _alert_log_store().build_csv(runtime.alert_log)
+    return _get_alert_log_runtime().build_csv()
 
 
 def _history_number(value):
@@ -3397,9 +3338,35 @@ def _valid_market_price(value):
     return risk_analysis_core.valid_market_price(value)
 
 
+def _get_risk_analysis_runtime():
+    if runtime.risk_analysis_runtime_instance is None:
+        runtime.risk_analysis_runtime_instance = (
+            risk_analysis_runtime_core.RiskAnalysisRuntime(
+                runtime,
+                get_settings=lambda: get_settings_snapshot(),
+                get_source_health=lambda: get_source_health_state(),
+                request_client=lambda: requests,
+                default_settings=DEFAULT_SETTINGS,
+                fallback_models=DEEPSEEK_FALLBACK_MODELS,
+                user_agent=HTTP_USER_AGENT,
+                request_timeout=REQUEST_TIMEOUT,
+                assistant_timeout=RISK_ASSISTANT_TIMEOUT,
+                max_tokens_default=RISK_ASSISTANT_MAX_TOKENS,
+                temperature=RISK_ASSISTANT_TEMPERATURE,
+                proxies=REQ_PROXY,
+                section_labels=RISK_STRUCTURED_SECTION_LABELS,
+                valid_providers=VALID_RISK_ASSISTANT_PROVIDERS,
+                valid_depths=VALID_RISK_ASSISTANT_DEPTHS,
+                trend_periods=RISK_ASSISTANT_TREND_PERIODS,
+                news_limit=RISK_ASSISTANT_NEWS_LIMIT,
+                now_factory=datetime.now,
+            )
+        )
+    return runtime.risk_analysis_runtime_instance
+
+
 def risk_analysis_market_data_error():
-    with runtime.lock:
-        return risk_analysis_core.market_data_error(runtime.price_usd, runtime.price_rmb)
+    return _get_risk_analysis_runtime().market_data_error()
 
 
 def _summarize_price_series(points, field):
@@ -3439,61 +3406,46 @@ def build_risk_scorecard(context):
 
 
 def build_risk_analysis_context(trigger=None, depth=None):
-    return risk_analysis_core.build_context_from_runtime(
-        runtime,
-        get_settings_snapshot(),
-        trigger=trigger,
-        depth=depth,
-        valid_depths=VALID_RISK_ASSISTANT_DEPTHS,
-        trend_periods=RISK_ASSISTANT_TREND_PERIODS,
-        news_limit=RISK_ASSISTANT_NEWS_LIMIT,
-        source_health=get_source_health_state(),
-        now_factory=datetime.now,
-    )
+    return _get_risk_analysis_runtime().build_context(trigger, depth)
 
 
 def _risk_model_client():
-    return risk_analysis_core.RiskModelClient(
-        request_client=requests,
-        default_settings=DEFAULT_SETTINGS,
-        fallback_models=DEEPSEEK_FALLBACK_MODELS,
-        user_agent=HTTP_USER_AGENT,
-        request_timeout=REQUEST_TIMEOUT,
-        assistant_timeout=RISK_ASSISTANT_TIMEOUT,
-        max_tokens_default=RISK_ASSISTANT_MAX_TOKENS,
-        temperature=RISK_ASSISTANT_TEMPERATURE,
-        proxies=REQ_PROXY,
-        section_labels=RISK_STRUCTURED_SECTION_LABELS,
-    )
+    return _get_risk_analysis_runtime().model_client()
 
 
 def build_risk_analysis_snapshot(context):
-    return risk_analysis_core.build_snapshot(context)
+    return _get_risk_analysis_runtime().build_snapshot(context)
 
 
 def parse_risk_analysis_sections(content):
-    return risk_analysis_core.parse_sections(content, RISK_STRUCTURED_SECTION_LABELS)
+    return _get_risk_analysis_runtime().parse_sections(content)
 
 
 def build_risk_analysis_cache_key(snapshot):
-    return risk_analysis_core.build_cache_key(snapshot)
+    return _get_risk_analysis_runtime().build_cache_key(snapshot)
 
 
 def find_recent_risk_analysis_cache(snapshot, cache_minutes):
-    with runtime.risk_history_lock:
-        return risk_analysis_core.find_recent_cache(runtime.risk_analysis_history, snapshot, cache_minutes)
+    return _get_risk_analysis_runtime().find_recent_cache(snapshot, cache_minutes)
 
 
 def selected_risk_model_config(settings, provider=None):
-    return _risk_model_client().selected_model_config(settings, provider)
+    return _get_risk_analysis_runtime().selected_model_config(
+        settings,
+        provider,
+        client=_risk_model_client(),
+    )
 
 
 def test_risk_model_availability(settings):
-    return _risk_model_client().test_availability(settings, VALID_RISK_ASSISTANT_PROVIDERS)
+    return _get_risk_analysis_runtime().test_model_availability(
+        settings,
+        client=_risk_model_client(),
+    )
 
 
 def build_risk_analysis_messages(context):
-    return risk_analysis_core.build_messages(context)
+    return _get_risk_analysis_runtime().build_messages(context)
 
 
 def _chat_completions_url(base_url):
@@ -3505,33 +3457,55 @@ def _models_url(base_url):
 
 
 def fetch_risk_model_options(settings, provider=None):
-    return _risk_model_client().fetch_model_options(settings, provider)
+    return _get_risk_analysis_runtime().fetch_model_options(
+        settings,
+        provider,
+        client=_risk_model_client(),
+    )
 
 
 def call_openai_chat_completion(settings, context, provider, base_url, model, api_key):
-    return _risk_model_client().call_chat_completion(settings, context, provider, base_url, model, api_key)
+    return _get_risk_analysis_runtime().call_chat_completion(
+        settings,
+        context,
+        provider,
+        base_url,
+        model,
+        api_key,
+        client=_risk_model_client(),
+    )
 
 
 def call_deepseek_risk_analysis(settings, context):
-    return _risk_model_client().call_deepseek(settings, context)
+    return _get_risk_analysis_runtime().call_deepseek(
+        settings,
+        context,
+        client=_risk_model_client(),
+    )
 
 
 def call_openai_compatible_risk_analysis(settings, context):
-    return _risk_model_client().call_openai_compatible(settings, context)
+    return _get_risk_analysis_runtime().call_openai_compatible(
+        settings,
+        context,
+        client=_risk_model_client(),
+    )
 
 
 def run_risk_analysis(settings, context):
-    return _risk_model_client().run(settings, context)
+    return _get_risk_analysis_runtime().run(
+        settings,
+        context,
+        client=_risk_model_client(),
+    )
 
 
 def build_risk_analysis_error_payload(message, settings=None, snapshot=None):
-    payload = {
-        "message": message,
-        "diagnostic": risk_analysis_core.build_error_diagnostic(message, settings or get_settings_snapshot(), snapshot),
-    }
-    if snapshot is not None:
-        payload["snapshot"] = snapshot
-    return payload
+    return _get_risk_analysis_runtime().build_error_payload(
+        message,
+        settings,
+        snapshot,
+    )
 
 
 # ---------- 行情运行时 ----------
@@ -3748,8 +3722,7 @@ def _restore_alert_profile_apply_state(
 
 
 def _set_risk_analysis_last_started(value):
-
-    runtime.risk_analysis_last_started = value
+    return _get_risk_analysis_runtime().set_last_started(value)
 
 
 _base_socket_handlers = socket_bootstrap_core.register_socket_handlers(
@@ -4177,14 +4150,7 @@ def start_daily_digest_scheduler():
 
 
 def wait_for_server_ready(timeout=3.0):
-    return instance_runtime_core.wait_for_server_ready(
-        DEFAULT_HOST,
-        runtime.server_port,
-        timeout=timeout,
-        socket_factory=socket.socket,
-        clock=time.time,
-        sleep=time.sleep,
-    )
+    return _get_instance_runtime().wait_for_server_ready(timeout)
 
 
 # ---------- 系统托盘 ----------

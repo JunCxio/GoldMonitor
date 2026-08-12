@@ -123,3 +123,108 @@ def wait_for_server_ready(
                 return True
         sleep(0.05)
     return False
+
+
+class InstanceRuntime:
+    def __init__(
+        self,
+        state,
+        *,
+        default_host,
+        default_port,
+        app_name,
+        proxies,
+        socket_factory,
+        request_get,
+        request_post,
+        browser_open,
+        clock=time.time,
+        sleep=time.sleep,
+    ):
+        self.state = state
+        self.default_host = default_host
+        self.default_port = default_port
+        self.app_name = app_name
+        self.proxies = proxies
+        self.socket_factory = socket_factory
+        self.request_get = request_get
+        self.request_post = request_post
+        self.browser_open = browser_open
+        self.clock = clock
+        self.sleep = sleep
+
+    def find_available_port(self, preferred=None):
+        return find_available_port(
+            self.default_port if preferred is None else preferred,
+            host=self.default_host,
+            socket_factory=self.socket_factory(),
+        )
+
+    def local_app_url(self, host=None, port=None, path="/"):
+        return local_app_url(
+            self.default_host if host is None else host,
+            self.default_port if port is None else port,
+            path,
+        )
+
+    def is_tcp_port_open(self, host, port, timeout=0.05):
+        return is_tcp_port_open(
+            host,
+            port,
+            timeout=timeout,
+            socket_factory=self.socket_factory(),
+        )
+
+    def is_application_health_payload(self, payload):
+        return is_application_health_payload(payload, self.app_name)
+
+    def find_existing_instance(
+        self,
+        host=None,
+        preferred=None,
+        *,
+        port_count=50,
+        request_get_override=None,
+        port_probe=None,
+        timeout=0.2,
+    ):
+        return find_existing_instance(
+            self.default_host if host is None else host,
+            self.default_port if preferred is None else preferred,
+            app_name=self.app_name,
+            proxies=self.proxies,
+            request_get=request_get_override or self.request_get(),
+            port_probe=port_probe or self.is_tcp_port_open,
+            port_count=port_count,
+            timeout=timeout,
+        )
+
+    def open_existing_instance(
+        self,
+        host=None,
+        port=None,
+        *,
+        desktop_mode=False,
+        request_post_override=None,
+        browser_open_override=None,
+        timeout=0.5,
+    ):
+        return open_existing_instance(
+            self.default_host if host is None else host,
+            self.default_port if port is None else port,
+            desktop_mode=desktop_mode,
+            proxies=self.proxies,
+            request_post=request_post_override or self.request_post(),
+            browser_open=browser_open_override or self.browser_open(),
+            timeout=timeout,
+        )
+
+    def wait_for_server_ready(self, timeout=3.0):
+        return wait_for_server_ready(
+            self.default_host,
+            self.state.server_port,
+            timeout=timeout,
+            socket_factory=self.socket_factory(),
+            clock=self.clock,
+            sleep=self.sleep,
+        )

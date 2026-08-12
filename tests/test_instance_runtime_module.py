@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -125,3 +126,47 @@ def test_port_selection_and_server_wait_use_injected_socket_factory():
         clock=lambda: 0.0,
         sleep=lambda _seconds: None,
     ) is True
+
+
+def test_instance_runtime_composes_discovery_activation_and_server_wait():
+    class FakeSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def settimeout(self, timeout):
+            self.timeout = timeout
+
+        def connect_ex(self, address):
+            return 0
+
+    opened = []
+    runtime = instance_runtime.InstanceRuntime(
+        SimpleNamespace(server_port=5002),
+        default_host="127.0.0.1",
+        default_port=5000,
+        app_name="金价监控",
+        proxies={"http": None, "https": None},
+        socket_factory=lambda: lambda *_args: FakeSocket(),
+        request_get=lambda: lambda url, **kwargs: FakeResponse({
+            "app": "金价监控",
+            "version": "1.0.17",
+        }),
+        request_post=lambda: lambda url, **kwargs: FakeResponse({
+            "ok": True,
+            "desktop": False,
+        }),
+        browser_open=lambda: opened.append,
+        clock=lambda: 0.0,
+        sleep=lambda _seconds: None,
+    )
+
+    assert runtime.local_app_url(path="api/health") == (
+        "http://127.0.0.1:5000/api/health"
+    )
+    assert runtime.find_existing_instance(port_count=1) == 5000
+    assert runtime.open_existing_instance(desktop_mode=False) is True
+    assert opened == ["http://127.0.0.1:5000/"]
+    assert runtime.wait_for_server_ready() is True

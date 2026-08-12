@@ -6,7 +6,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def test_alert_delivery_respects_quiet_time_force_and_cooldown():
-    from goldmonitor.notifications import evaluate_alert_delivery, is_alert_quiet_time
+    from goldmonitor.notification_policy import (
+        evaluate_alert_delivery,
+        is_alert_quiet_time,
+    )
 
     settings = {
         "alert_quiet_start": "22:00",
@@ -53,7 +56,7 @@ def test_alert_delivery_respects_quiet_time_force_and_cooldown():
 
 
 def test_alert_cooldown_is_scoped_to_the_specific_alert_rule():
-    from goldmonitor.notifications import evaluate_alert_delivery
+    from goldmonitor.notification_policy import evaluate_alert_delivery
 
     settings = {"alert_cooldown_minutes": 30}
     cooldown_state = {}
@@ -84,11 +87,11 @@ def test_alert_cooldown_is_scoped_to_the_specific_alert_rule():
 
 
 def test_rule_delivery_overrides_channels_and_cooldown():
-    from goldmonitor.notifications import (
+    from goldmonitor.notification_delivery import (
         alert_local_delivery_enabled,
-        evaluate_alert_delivery,
         plan_alert_notifications,
     )
+    from goldmonitor.notification_policy import evaluate_alert_delivery
 
     settings = {
         "alert_cooldown_minutes": 30,
@@ -127,7 +130,11 @@ def test_rule_delivery_overrides_channels_and_cooldown():
 
 
 def test_templates_and_webhook_payload_use_market_context_without_leaking_format_errors():
-    from goldmonitor.notifications import build_alert_template_values, build_webhook_payload, format_template
+    from goldmonitor.notification_transport import (
+        build_alert_template_values,
+        build_webhook_payload,
+        format_template,
+    )
 
     values = build_alert_template_values(
         "critical",
@@ -167,7 +174,7 @@ def test_templates_and_webhook_payload_use_market_context_without_leaking_format
 
 
 def test_dispatch_alert_reports_final_delivery_statuses():
-    from goldmonitor.notifications import dispatch_alert
+    from goldmonitor.notification_delivery import dispatch_alert
 
     class QuietLogger:
         def warning(self, *args, **kwargs):
@@ -218,7 +225,10 @@ def test_dispatch_alert_reports_final_delivery_statuses():
 
 
 def test_delivery_failure_log_does_not_include_raw_error_details():
-    from goldmonitor.notifications import deliver_notification, notification_status
+    from goldmonitor.notification_delivery import (
+        deliver_notification,
+        notification_status,
+    )
 
     warnings = []
 
@@ -242,7 +252,7 @@ def test_delivery_failure_log_does_not_include_raw_error_details():
 
 
 def test_dispatch_alert_async_returns_pending_then_reports_retried_result():
-    from goldmonitor.notifications import dispatch_alert
+    from goldmonitor.notification_delivery import dispatch_alert
 
     attempts = []
     updates = []
@@ -284,7 +294,10 @@ def test_dispatch_alert_async_returns_pending_then_reports_retried_result():
 
 
 def test_summarize_notifications_prioritizes_muted_and_partial_failures():
-    from goldmonitor.notifications import notification_status, summarize_notifications
+    from goldmonitor.notification_delivery import (
+        notification_status,
+        summarize_notifications,
+    )
 
     muted = summarize_notifications([
         notification_status("all", "通知", "muted", "当前处于静默时段，仅记录提醒。"),
@@ -322,7 +335,10 @@ def test_summarize_notifications_prioritizes_muted_and_partial_failures():
 
 
 def test_generic_email_and_webhook_senders_preserve_digest_content():
-    from goldmonitor.notifications import send_email_message, send_webhook_payload
+    from goldmonitor.notification_transport import (
+        send_email_message,
+        send_webhook_payload,
+    )
 
     sent_mail = {}
 
@@ -397,6 +413,56 @@ def test_generic_email_and_webhook_senders_preserve_digest_content():
     assert posted["url"] == "https://example.com/hook"
     assert posted["json"]["kind"] == "daily_summary"
     assert posted["headers"]["User-Agent"] == "GoldMonitor/1.0.5"
+
+
+def test_notifications_module_reexports_split_core_contracts():
+    from goldmonitor import notification_delivery
+    from goldmonitor import notification_policy
+    from goldmonitor import notification_transport
+    from goldmonitor import notifications
+
+    expected = {
+        "ALERT_CHANNEL_KEYS": notification_policy.ALERT_CHANNEL_KEYS,
+        "SafeFormatDict": notification_transport.SafeFormatDict,
+        "alert_cooldown_key": notification_policy.alert_cooldown_key,
+        "alert_local_delivery_enabled": (
+            notification_delivery.alert_local_delivery_enabled
+        ),
+        "build_alert_template_values": (
+            notification_transport.build_alert_template_values
+        ),
+        "build_email_message": notification_transport.build_email_message,
+        "build_plain_email_message": (
+            notification_transport.build_plain_email_message
+        ),
+        "build_webhook_payload": notification_transport.build_webhook_payload,
+        "deliver_alert_notifications": (
+            notification_delivery.deliver_alert_notifications
+        ),
+        "deliver_notification": notification_delivery.deliver_notification,
+        "dispatch_alert": notification_delivery.dispatch_alert,
+        "evaluate_alert_delivery": notification_policy.evaluate_alert_delivery,
+        "format_template": notification_transport.format_template,
+        "is_alert_quiet_time": notification_policy.is_alert_quiet_time,
+        "notification_status": notification_delivery.notification_status,
+        "plan_alert_notifications": (
+            notification_delivery.plan_alert_notifications
+        ),
+        "send_email_message": notification_transport.send_email_message,
+        "send_email_notification": (
+            notification_transport.send_email_notification
+        ),
+        "send_webhook_notification": (
+            notification_transport.send_webhook_notification
+        ),
+        "send_webhook_payload": notification_transport.send_webhook_payload,
+        "summarize_notifications": notification_delivery.summarize_notifications,
+        "time_to_minutes": notification_policy.time_to_minutes,
+    }
+
+    assert set(notifications.__all__) == set(expected)
+    for name, value in expected.items():
+        assert getattr(notifications, name) is value
 
 
 if __name__ == "__main__":
