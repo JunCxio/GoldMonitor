@@ -36,7 +36,13 @@ def register_operations_handlers(
     record_update_status,
     download_update_installer,
     launch_update_installer,
+    get_background_task_status,
 ):
+    @socketio.on("get_background_task_status")
+    def on_get_background_task_status():
+        emit("background_task_status", get_background_task_status())
+
+
     @socketio.on("get_source_health")
     def on_get_source_health():
         emit("source_health_updated", get_source_health_state())

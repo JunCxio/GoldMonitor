@@ -33,8 +33,7 @@ def run_application(
     wait_for_server_ready,
     update_floating_price,
     start_background_fetching,
-    start_news_fetching,
-    start_daily_digest_scheduler,
+    start_task_scheduler,
     get_settings,
     start_desktop_window,
     thread_factory,
@@ -79,8 +78,7 @@ def run_application(
         wait_for_server_ready()
         update_floating_price()
         start_background_fetching()
-        start_news_fetching()
-        start_daily_digest_scheduler()
+        start_task_scheduler()
         start_hidden = (
             os_name == "nt" or sys_platform == "darwin"
         ) and startup_mode and get_settings().get("startup_to_tray", True)
@@ -88,8 +86,7 @@ def run_application(
         return "desktop"
 
     start_background_fetching()
-    start_news_fetching()
-    start_daily_digest_scheduler()
+    start_task_scheduler()
     web_url = local_app_url(default_host, runtime.server_port)
     output(f"金价监控服务已启动 -> {web_url}")
     try:

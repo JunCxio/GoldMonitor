@@ -1,7 +1,5 @@
 from datetime import datetime
 
-import pytest
-
 
 def digest_settings(**updates):
     import app
@@ -195,50 +193,7 @@ def test_manual_digest_socket_sends_result_and_updated_status(monkeypatch, tmp_p
     assert not any(item["name"] == "daily_digest_test_result" for item in other_received)
 
 
-def test_daily_digest_loop_runs_once_before_waiting(monkeypatch):
-    import app
-
-    calls = []
-    monkeypatch.setattr(app, "run_daily_digest_once", lambda: calls.append("run"))
-    monkeypatch.setattr(app, "run_notification_retry_once", lambda: calls.append("retry"))
-
-    def stop_after_first_iteration(seconds):
-        assert seconds == 30
-        raise StopIteration
-
-    monkeypatch.setattr(app.time, "sleep", stop_after_first_iteration)
-
-    with pytest.raises(StopIteration):
-        app.daily_digest_loop()
-
-    assert calls == ["run", "retry"]
-
-
-def test_daily_digest_loop_still_runs_notification_retry_when_digest_fails(monkeypatch):
-    import app
-
-    calls = []
-
-    def fail_digest():
-        calls.append("digest")
-        raise RuntimeError("digest failed")
-
-    monkeypatch.setattr(app, "run_daily_digest_once", fail_digest)
-    monkeypatch.setattr(app, "run_notification_retry_once", lambda: calls.append("retry"))
-    monkeypatch.setattr(app.logging, "exception", lambda *args, **kwargs: None)
-
-    def stop_after_first_iteration(seconds):
-        raise StopIteration
-
-    monkeypatch.setattr(app.time, "sleep", stop_after_first_iteration)
-
-    with pytest.raises(StopIteration):
-        app.daily_digest_loop()
-
-    assert calls == ["digest", "retry"]
-
-
-def test_daily_digest_scheduler_starts_only_once(monkeypatch):
+def test_task_scheduler_starts_only_once(monkeypatch):
     import app
 
     created = []
@@ -251,10 +206,10 @@ def test_daily_digest_scheduler_starts_only_once(monkeypatch):
         def start(self):
             self.item["started"] = True
 
-    monkeypatch.setattr(app, "_daily_digest_scheduler_started", False)
+    monkeypatch.setattr(app, "_task_scheduler_started", False)
     monkeypatch.setattr(app.threading, "Thread", CapturedThread)
 
-    app.start_daily_digest_scheduler()
-    app.start_daily_digest_scheduler()
+    app.start_task_scheduler()
+    app.start_task_scheduler()
 
-    assert created == [{"target": app.daily_digest_loop, "daemon": True, "started": True}]
+    assert created == [{"target": app.task_scheduler_loop, "daemon": True, "started": True}]

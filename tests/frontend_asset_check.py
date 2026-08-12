@@ -27,6 +27,7 @@ settings_actions_js_path = root / "static" / "settings-actions.js"
 operations_js_path = root / "static" / "operations-center.js"
 operations_state_js_path = root / "static" / "operations-state.js"
 operations_socket_js_path = root / "static" / "operations-socket.js"
+operations_tasks_js_path = root / "static" / "operations-tasks.js"
 operations_sources_js_path = root / "static" / "operations-sources.js"
 operations_records_js_path = root / "static" / "operations-records.js"
 operations_archive_js_path = root / "static" / "operations-archive.js"
@@ -94,6 +95,7 @@ for settings_path in (
 for operations_path in (
     operations_state_js_path,
     operations_socket_js_path,
+    operations_tasks_js_path,
     operations_sources_js_path,
     operations_records_js_path,
     operations_archive_js_path,
@@ -194,6 +196,7 @@ settings_module_js = "\n".join((
 operations_module_js = "\n".join((
     operations_state_js_path.read_text(encoding="utf-8"),
     operations_socket_js_path.read_text(encoding="utf-8"),
+    operations_tasks_js_path.read_text(encoding="utf-8"),
     operations_sources_js_path.read_text(encoding="utf-8"),
     operations_records_js_path.read_text(encoding="utf-8"),
     operations_archive_js_path.read_text(encoding="utf-8"),
@@ -391,6 +394,7 @@ operations_scripts = tuple(
     for name in (
         "operations-state.js",
         "operations-socket.js",
+        "operations-tasks.js",
         "operations-sources.js",
         "operations-records.js",
         "operations-archive.js",
@@ -411,6 +415,8 @@ if operations_positions[-1] > template.find('<script src="/static/app.js?v={{ ap
 
 for required in (
     "function registerOperationsSocketHandlers",
+    "function applyBackgroundTaskStatus",
+    "function refreshBackgroundTaskStatus",
     "function renderSourceHealth",
     "function renderRecentOpsRecords",
     "function previewDataArchive",
@@ -419,6 +425,25 @@ for required in (
 ):
     if required not in operations_module_js:
         raise SystemExit(f"operations modules missing contract: {required}")
+
+for required in (
+    'id="backgroundTaskStatus"',
+    'id="btnRefreshBackgroundTasks"',
+    "socket.on('background_task_status'",
+    "socket.emit('get_background_task_status')",
+    "if (data.background_task_status) applyBackgroundTaskStatus(data.background_task_status)",
+    "if (nextTab === 'ops') socket.emit('get_background_task_status')",
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing background task status contract: {required}")
+
+for required in (
+    ".ops-task-card",
+    ".ops-task-item",
+    ".ops-task-timing",
+):
+    if required not in css_path.read_text(encoding="utf-8"):
+        raise SystemExit(f"static/app.css missing background task selector: {required}")
 
 for moved in (
     "function registerOperationsSocketHandlers",

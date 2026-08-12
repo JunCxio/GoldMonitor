@@ -405,6 +405,9 @@ def register_socket_handlers(application):
             lambda installer_path:
             application.launch_update_installer(installer_path)
         ),
+        get_background_task_status=(
+            lambda: application.get_background_task_status()
+        ),
     )
 
     socket_history_review_core.register_history_review_handlers(

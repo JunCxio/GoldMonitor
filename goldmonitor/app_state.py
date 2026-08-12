@@ -95,6 +95,7 @@ def build_runtime_socket_init_state(
     get_news,
     get_risk_history,
     get_notification_retry_status,
+    get_background_task_status,
 ):
     with runtime.lock:
         state = build_socket_init_state(
@@ -122,6 +123,7 @@ def build_runtime_socket_init_state(
         state["alert_profiles"] = get_alert_profiles()
         state["daily_digest_status"] = get_daily_digest_status()
         state["notification_retry_status"] = get_notification_retry_status()
+        state["background_task_status"] = get_background_task_status()
     state["news"] = get_news()
     state["risk_analysis_history"] = get_risk_history()
     return state

@@ -121,6 +121,10 @@ def test_build_runtime_socket_init_state_collects_runtime_and_external_sections(
             "enabled": False,
             "pending_count": 0,
         },
+        get_background_task_status=lambda: {
+            "summary": {"total": 3},
+            "tasks": [{"name": "news"}],
+        },
         get_news=lambda: {"items": [{"title": "news"}]},
         get_risk_history=lambda: {"items": [{"id": "risk-1"}]},
     )
@@ -130,4 +134,5 @@ def test_build_runtime_socket_init_state_collects_runtime_and_external_sections(
     assert state["price_history_state"] == {"limit": 240}
     assert state["alert_rules"]["items"][0]["id"] == "rule-1"
     assert state["notification_retry_status"]["pending_count"] == 0
+    assert state["background_task_status"]["summary"]["total"] == 3
     assert state["news"]["items"][0]["title"] == "news"

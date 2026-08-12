@@ -1,4 +1,8 @@
 function registerOperationsSocketHandlers(socket) {
+  socket.on('background_task_status', data => {
+    applyBackgroundTaskStatus(data || {});
+  });
+
   socket.on('update_status', data => {
     applyUpdateStatus(data || {});
   });

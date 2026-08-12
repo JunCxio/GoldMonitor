@@ -64,6 +64,7 @@ from goldmonitor import settings_runtime as settings_runtime_core
 from goldmonitor import socket_bootstrap as socket_bootstrap_core
 from goldmonitor import storage_manifest as storage_manifest_core
 from goldmonitor import support_files as support_files_core
+from goldmonitor import task_scheduler as task_scheduler_core
 from goldmonitor import targets as targets_core
 from goldmonitor import update_runtime as update_runtime_core
 from goldmonitor.alert_log import AlertLogStore
@@ -405,7 +406,7 @@ _RUNTIME_STATE_ALIASES.update({
     "_credential_test_store": "credential_test_store",
     "_alert_dialog_lock": "alert_dialog_lock",
     "_alert_dialog_active": "alert_dialog_active",
-    "_daily_digest_scheduler_started": "daily_digest_scheduler_started",
+    "_task_scheduler_started": "task_scheduler_started",
     "_market_runtime_instance": "market_runtime_instance",
     "_portfolio_runtime_instance": "portfolio_runtime_instance",
     "_alert_runtime_instance": "alert_runtime_instance",
@@ -445,7 +446,6 @@ _RUNTIME_STATE_ALIASES.update({
     "_taskbar_restart_count": "taskbar_restart_count",
     "_taskbar_layout_state": "taskbar_layout_state",
     "_background_fetch_started": "background_fetch_started",
-    "_news_fetch_started": "news_fetch_started",
 })
 
 
@@ -3400,13 +3400,6 @@ def initialize_application_state():
     return _application_state_bootstrap().initialize()
 
 
-def news_loop():
-    return _get_news_runtime().run_loop(
-        interval=NEWS_REFRESH_INTERVAL,
-        sleep=time.sleep,
-    )
-
-
 def _format_number(value, digits=2):
     return risk_analysis_core.format_number(value, digits)
 
@@ -3722,6 +3715,7 @@ def _build_socket_init_state():
         get_alert_profiles=get_alert_profiles_state,
         get_daily_digest_status=daily_digest_status_payload,
         get_notification_retry_status=notification_retry_status,
+        get_background_task_status=get_background_task_status,
         get_news=get_news_state,
         get_risk_history=get_risk_analysis_history_state,
     )
@@ -3833,14 +3827,9 @@ def _set_background_fetch_started(value):
     runtime.background_fetch_started = bool(value)
 
 
-def _set_news_fetch_started(value):
+def _set_task_scheduler_started(value):
 
-    runtime.news_fetch_started = bool(value)
-
-
-def _set_daily_digest_scheduler_started(value):
-
-    runtime.daily_digest_scheduler_started = bool(value)
+    runtime.task_scheduler_started = bool(value)
 
 
 def _set_floating_hwnd(value):
@@ -4199,40 +4188,107 @@ def start_background_fetching():
     )
 
 
-def start_news_fetching():
-    return desktop_runtime_core.start_thread_once(
-        is_started=lambda: runtime.news_fetch_started,
-        mark_started=_set_news_fetch_started,
-        target=news_loop,
-        thread_factory=threading.Thread,
+def _news_task_result(result):
+    if result:
+        state = get_news_state()
+        count = len(state.get("items") or [])
+        return {
+            "state": "ok",
+            "result": "completed",
+            "message": f"资讯已刷新，共 {count} 条",
+        }
+    state = get_news_state()
+    return {
+        "state": "error",
+        "result": "failed",
+        "message": state.get("error") or "资讯刷新失败",
+    }
+
+
+def _notification_retry_task_result(result):
+    payload = result if isinstance(result, dict) else {}
+    status = str(payload.get("status") or "completed")
+    if status == "disabled":
+        return {
+            "state": "disabled",
+            "result": status,
+            "message": "自动重试未开启",
+        }
+    if status == "running":
+        return {
+            "state": "idle",
+            "result": status,
+            "message": "已有通知重试任务正在运行",
+        }
+    attempted = int(payload.get("attempted_count") or 0)
+    succeeded = int(payload.get("success_count") or 0)
+    failed = int(payload.get("failure_count") or 0)
+    if failed or payload.get("ok") is False:
+        return {
+            "state": "error",
+            "result": status,
+            "message": f"重试完成，{succeeded} 项成功，{failed} 项失败",
+        }
+    message = (
+        f"重试完成，{succeeded} 项成功"
+        if attempted
+        else "本轮没有待重试通知"
+    )
+    return {
+        "state": "ok",
+        "result": status,
+        "message": message,
+    }
+
+
+def _get_task_scheduler_runtime():
+    with runtime.lock:
+        if runtime.task_scheduler_runtime_instance is None:
+            scheduler = task_scheduler_core.TaskSchedulerRuntime(
+                now_factory=datetime.now,
+                monotonic_factory=time.monotonic,
+                logger=logging,
+            )
+            scheduler.register(
+                "news",
+                "资讯刷新",
+                NEWS_REFRESH_INTERVAL,
+                lambda: refresh_gold_news(emit_update=True),
+                result_handler=_news_task_result,
+            )
+            scheduler.register(
+                "daily_digest",
+                "每日摘要",
+                30,
+                lambda: run_daily_digest_once(),
+            )
+            scheduler.register(
+                "notification_retry",
+                "通知重试",
+                30,
+                lambda: run_notification_retry_once(),
+                result_handler=_notification_retry_task_result,
+            )
+            runtime.task_scheduler_runtime_instance = scheduler
+    return runtime.task_scheduler_runtime_instance
+
+
+def get_background_task_status():
+    return _get_task_scheduler_runtime().status()
+
+
+def task_scheduler_loop():
+    return _get_task_scheduler_runtime().run_loop(
+        sleep=time.sleep,
+        tick_interval=30,
     )
 
 
-def daily_digest_loop():
-    def run_tasks():
-        for task, label in (
-            (run_daily_digest_once, "每日摘要"),
-            (run_notification_retry_once, "通知重试"),
-        ):
-            try:
-                task()
-            except Exception:
-                logging.exception("%s后台任务执行失败", label)
-
-    return desktop_runtime_core.run_periodic_task(
-        run_tasks,
-        interval=30,
-        sleep=lambda seconds: time.sleep(seconds),
-        logger=logging,
-        error_message="执行每日摘要任务失败",
-    )
-
-
-def start_daily_digest_scheduler():
+def start_task_scheduler():
     return desktop_runtime_core.start_thread_once(
-        is_started=lambda: runtime.daily_digest_scheduler_started,
-        mark_started=_set_daily_digest_scheduler_started,
-        target=daily_digest_loop,
+        is_started=lambda: runtime.task_scheduler_started,
+        mark_started=_set_task_scheduler_started,
+        target=task_scheduler_loop,
         thread_factory=threading.Thread,
     )
 
@@ -4314,8 +4370,7 @@ def main():
         wait_for_server_ready=wait_for_server_ready,
         update_floating_price=update_floating_price,
         start_background_fetching=start_background_fetching,
-        start_news_fetching=start_news_fetching,
-        start_daily_digest_scheduler=start_daily_digest_scheduler,
+        start_task_scheduler=start_task_scheduler,
         get_settings=get_settings_snapshot,
         start_desktop_window=start_desktop_window,
         thread_factory=threading.Thread,

@@ -256,6 +256,31 @@
   .update-install:disabled, .btn-set:disabled, .settings-save:disabled, .price-retry:disabled, .risk-open:disabled { opacity:0.48; cursor:not-allowed; transform:none; box-shadow:none; filter:none; }
   .settings-primary-modal .settings-save:disabled { border-color:var(--control-border); background:#292831; color:#777684; opacity:1; }
   .ops-update-card { align-items:stretch; max-width:min(520px, 100%); }
+  .ops-task-card { width:100%; max-width:min(560px, 100%); }
+  .ops-task-card-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px; }
+  .ops-task-summary { min-width:0; color:var(--text-dim); font-size:0.7rem; line-height:1.45; overflow-wrap:anywhere; }
+  .ops-task-summary[data-state="ok"] { color:var(--down); }
+  .ops-task-summary[data-state="running"] { color:var(--gold); }
+  .ops-task-summary[data-state="error"] { color:var(--up); }
+  .ops-task-list { display:grid; gap:6px; }
+  .ops-task-empty { padding:11px 12px; border:1px solid var(--hairline); border-radius:9px; background:rgba(255,255,255,0.025); color:var(--text-dim); font-size:0.72rem; }
+  .ops-task-item { display:grid; grid-template-columns:minmax(0, 1.15fr) minmax(158px, 0.85fr) auto; align-items:center; gap:12px; min-width:0; padding:10px 11px; border:1px solid var(--hairline); border-radius:9px; background:rgba(255,255,255,0.025); }
+  .ops-task-ident { display:grid; grid-template-columns:7px minmax(0, 1fr); align-items:center; gap:9px; min-width:0; }
+  .ops-task-indicator { width:7px; height:24px; border-radius:99px; background:#656576; }
+  .ops-task-ident strong, .ops-task-ident span { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ops-task-ident strong { color:var(--text); font-size:0.75rem; line-height:1.4; }
+  .ops-task-ident span { margin-top:2px; color:var(--text-dim); font-size:0.65rem; line-height:1.35; }
+  .ops-task-timing { min-width:0; color:var(--text-dim); font-size:0.63rem; line-height:1.5; text-align:right; }
+  .ops-task-timing span { display:block; white-space:nowrap; }
+  .ops-task-state { min-width:42px; padding:3px 7px; border:1px solid var(--hairline); border-radius:999px; color:var(--text-dim); background:rgba(255,255,255,0.025); font-size:0.62rem; font-weight:800; text-align:center; }
+  .ops-task-item[data-state="running"] .ops-task-indicator { background:var(--gold); box-shadow:0 0 10px rgba(232,184,48,0.3); }
+  .ops-task-item[data-state="running"] .ops-task-state { color:var(--gold); border-color:rgba(232,184,48,0.28); background:rgba(232,184,48,0.07); }
+  .ops-task-item[data-state="ok"] .ops-task-indicator { background:var(--down); }
+  .ops-task-item[data-state="ok"] .ops-task-state { color:var(--down); border-color:rgba(55,211,139,0.24); background:rgba(55,211,139,0.07); }
+  .ops-task-item[data-state="error"] { border-color:rgba(224,85,106,0.24); background:rgba(224,85,106,0.035); }
+  .ops-task-item[data-state="error"] .ops-task-indicator { background:var(--up); }
+  .ops-task-item[data-state="error"] .ops-task-state { color:var(--up); border-color:rgba(224,85,106,0.28); background:rgba(224,85,106,0.07); }
+  .ops-task-item[data-state="disabled"] .ops-task-indicator, .ops-task-item[data-state="idle"] .ops-task-indicator { background:#767682; }
   .ops-update-copy { min-width:180px; max-width:100%; flex:1 1 220px; text-align:left; }
   .ops-update-status { color:var(--text); font-size:0.8rem; line-height:1.35; white-space:normal; overflow-wrap:anywhere; }
   .ops-update-status[data-state="error"] { color:var(--up); }
@@ -1308,6 +1333,10 @@
     .setting-action-status { align-items:stretch; }
     .notification-retry-control { max-width:none; justify-items:start; grid-template-columns:auto minmax(0, 1fr); }
     .notification-retry-status { text-align:left; }
+    .ops-task-card { max-width:none; }
+    .ops-task-item { grid-template-columns:minmax(0, 1fr) auto; gap:8px 10px; }
+    .ops-task-timing { grid-column:1 / -1; padding-left:16px; display:flex; justify-content:space-between; gap:10px; text-align:left; }
+    .ops-task-timing span { white-space:normal; }
     .setting-status-wide { max-width:none; }
     .today-overview-modal { height:calc(100dvh - 24px); max-height:calc(100dvh - 24px); }
     .today-overview-head { min-height:auto; padding:14px 16px 13px; }
