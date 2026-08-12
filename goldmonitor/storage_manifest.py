@@ -42,6 +42,13 @@ STORAGE_DEFINITIONS = (
         "schema": "versioned_object",
         "expected_schema_version": 1,
     },
+    {
+        "key": "today_overview_state",
+        "label": "今日概览查看状态",
+        "kind": "json",
+        "schema": "versioned_object",
+        "expected_schema_version": 1,
+    },
     {"key": "price_history_db", "label": "价格历史数据库", "kind": "sqlite", "schema": "sqlite"},
     {"key": "alert_log_db", "label": "告警记录数据库", "kind": "sqlite", "schema": "sqlite"},
     {"key": "log", "label": "运行日志", "kind": "log", "schema": "text"},

@@ -88,6 +88,7 @@ class DataArchiveRuntime:
                 runtime.price_refresh_lock,
                 runtime.risk_analysis_lock,
                 runtime.daily_digest_lock,
+                runtime.today_overview_lock,
                 runtime.lock,
                 runtime.settings_lock,
                 runtime.risk_history_lock,

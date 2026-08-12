@@ -8,6 +8,7 @@ def _runtime_state():
         price_refresh_lock=threading.RLock(),
         risk_analysis_lock=threading.RLock(),
         daily_digest_lock=threading.RLock(),
+        today_overview_lock=threading.RLock(),
         lock=threading.RLock(),
         settings_lock=threading.RLock(),
         risk_history_lock=threading.RLock(),

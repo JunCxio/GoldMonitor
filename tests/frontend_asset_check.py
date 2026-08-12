@@ -14,6 +14,7 @@ app_state_js_path = root / "static" / "app-state.js"
 app_utils_js_path = root / "static" / "app-utils.js"
 desktop_close_js_path = root / "static" / "desktop-close.js"
 market_dashboard_js_path = root / "static" / "market-dashboard.js"
+today_overview_js_path = root / "static" / "today-overview.js"
 settings_js_path = root / "static" / "settings-center.js"
 settings_state_js_path = root / "static" / "settings-state.js"
 settings_socket_js_path = root / "static" / "settings-socket.js"
@@ -69,6 +70,9 @@ for shared_path in (app_state_js_path, app_utils_js_path, desktop_close_js_path)
 
 if not market_dashboard_js_path.exists():
     raise SystemExit("market dashboard script must live in static/market-dashboard.js")
+
+if not today_overview_js_path.exists():
+    raise SystemExit("today overview script must live in static/today-overview.js")
 
 for settings_path in (
     settings_state_js_path,
@@ -147,6 +151,7 @@ if not alert_log_js_path.exists():
 
 app_js = js_path.read_text(encoding="utf-8")
 market_dashboard_js = market_dashboard_js_path.read_text(encoding="utf-8")
+today_overview_js = today_overview_js_path.read_text(encoding="utf-8")
 settings_state_js = settings_state_js_path.read_text(encoding="utf-8")
 alert_rule_js = "\n".join((
     alert_rule_state_js_path.read_text(encoding="utf-8"),
@@ -207,6 +212,7 @@ js = "\n".join((
     app_state_js_path.read_text(encoding="utf-8"),
     app_utils_js_path.read_text(encoding="utf-8"),
     market_dashboard_js,
+    today_overview_js,
     settings_module_js,
     operations_module_js,
     history_review_module_js,
@@ -242,6 +248,55 @@ if market_dashboard_script not in template:
 
 if template.find(market_dashboard_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
     raise SystemExit("market dashboard script must load before static/app.js")
+
+today_overview_script = '<script src="/static/today-overview.js?v={{ app_version }}"></script>'
+if today_overview_script not in template:
+    raise SystemExit("template must reference versioned /static/today-overview.js")
+
+if template.find(today_overview_script) > template.find('<script src="/static/app.js?v={{ app_version }}"></script>'):
+    raise SystemExit("today overview script must load before static/app.js")
+
+for required in (
+    'id="todayOverviewButton"',
+    'id="todayOverviewCount"',
+    'id="todayOverviewBackdrop"',
+    'id="todayOverviewSummary"',
+    'id="todayOverviewAttentionList"',
+    'id="todayOverviewContext"',
+    'id="todayOverviewActivityList"',
+):
+    if required not in template:
+        raise SystemExit(f"template missing today overview anchor: {required}")
+
+for required in (
+    "function registerTodayOverviewSocketHandlers",
+    "function openTodayOverview",
+    "function closeTodayOverview",
+    "function renderTodayOverview",
+    "function activateTodayOverviewItem",
+    "socketClient.on('today_overview_updated'",
+    "socket.emit('get_today_overview'",
+    "socket.emit('mark_today_overview_viewed'",
+):
+    if required not in today_overview_js:
+        raise SystemExit(f"static/today-overview.js missing contract: {required}")
+
+if "registerTodayOverviewSocketHandlers(socket);" not in app_js:
+    raise SystemExit("static/app.js must register today overview socket handlers")
+
+if "requestTodayOverview(false);" not in app_js:
+    raise SystemExit("static/app.js must request today overview after init_state")
+
+for required in (
+    ".today-overview-workspace",
+    ".today-overview-attention-item",
+    ".today-overview-market-state",
+    ".today-overview-activity-item",
+    ".today-overview-item-action:focus-visible",
+    "@media (prefers-reduced-motion: reduce)",
+):
+    if required not in css_path.read_text(encoding="utf-8"):
+        raise SystemExit(f"static/app.css missing today overview selector: {required}")
 
 settings_scripts = tuple(
     f'<script src="/static/{name}?v={{{{ app_version }}}}"></script>'

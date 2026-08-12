@@ -35,6 +35,7 @@ def test_application_composes_routes_sockets_state_and_desktop_services():
     assert "history_runtime_core.HistoryReviewRuntime(" in source
     assert "floating_controller_core.FloatingPriceController(" in source
     assert "taskbar_controller_core.TaskbarPriceController(" in source
+    assert "today_overview_runtime_core.TodayOverviewRuntime(" in source
     assert "http_routes_core.register_http_routes(" in source
     assert "socket_bootstrap_core.register_socket_handlers(" in source
     assert "application_bootstrap_core.run_application(" in source

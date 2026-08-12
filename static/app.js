@@ -54,6 +54,7 @@ socket.on('init_state', data => {
   setAlertEntries(data.alert_log || []);
   maybeOpenOnboarding();
   socket.emit('get_settings');
+  requestTodayOverview(false);
 });
 
 socket.on('show_close_dialog', data => {
@@ -61,6 +62,8 @@ socket.on('show_close_dialog', data => {
 });
 
 registerMarketDashboardSocketHandlers(socket);
+
+registerTodayOverviewSocketHandlers(socket);
 
 registerSettingsSocketHandlers(socket);
 

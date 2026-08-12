@@ -19,6 +19,7 @@ from goldmonitor import socket_portfolio as socket_portfolio_core
 from goldmonitor import socket_risk_analysis as socket_risk_analysis_core
 from goldmonitor import socket_runtime as socket_runtime_core
 from goldmonitor import socket_settings as socket_settings_core
+from goldmonitor import socket_today_overview as socket_today_overview_core
 
 
 def register_socket_handlers(application):
@@ -469,5 +470,12 @@ def register_socket_handlers(application):
             application._start_alert_notification_delivery(entry, title)
         ),
         alert_resend_title=lambda entry: application._alert_resend_title(entry),
+    )
+    socket_today_overview_core.register_today_overview_handlers(
+        socketio,
+        build_today_overview=lambda: application.build_today_overview_state(),
+        mark_today_overview_viewed=(
+            lambda: application.mark_today_overview_viewed()
+        ),
     )
     return base_handlers
