@@ -22,6 +22,10 @@ def test_report_builder_filters_storage_schema_and_rule_runtime_state():
         settings={},
         last_update_status={},
         logs=[],
+        background_tasks={
+            "summary": {"total": 3, "error": 1, "attention": 1},
+            "tasks": [{"name": "news", "state": "error"}],
+        },
         health_summary_builder=lambda **kwargs: {"status": "ok"},
     ))
 
@@ -30,6 +34,7 @@ def test_report_builder_filters_storage_schema_and_rule_runtime_state():
     }
     assert report["alert_rules"]["schema_version"] == 2
     assert "items" not in report["alert_rules"]
+    assert report["background_tasks"]["summary"]["attention"] == 1
 
 
 def test_clipboard_summary_uses_fallback_status_and_masks_raw_structure():
@@ -57,6 +62,16 @@ def test_clipboard_summary_uses_fallback_status_and_masks_raw_structure():
             "source_health": {"summary": {}, "quality": {"label": "数据可信", "score": 100}},
             "price_history": {"total": 12},
             "paths": {"appdata": "/data", "exports": "/exports"},
+            "background_tasks": {
+                "failure_alert_threshold": 3,
+                "summary": {"total": 3, "error": 1, "attention": 1},
+                "tasks": [{
+                    "label": "资讯刷新",
+                    "state": "error",
+                    "consecutive_failures": 3,
+                    "last_message": "资讯刷新失败",
+                }],
+            },
         },
         default_settings={
             "risk_assistant_provider": "deepseek",
@@ -74,3 +89,7 @@ def test_clipboard_summary_uses_fallback_status_and_masks_raw_structure():
     assert "目录状态: 可写" in text
     assert "任务栏选择: 固定到 DISPLAY2" in text
     assert "实际显示器: DISPLAY2 / 2560×1440" in text
+    assert "后台任务" in text
+    assert "需要处理: 1" in text
+    assert "资讯刷新: 失败，连续失败 3 次" in text
+    assert "后台任务提示" in text

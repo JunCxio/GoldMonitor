@@ -197,6 +197,7 @@ SETTINGS_ONBOARDING_MARKER_PRESENT_AT_STARTUP = bool(
     )
 )
 NEWS_REFRESH_INTERVAL = 15 * 60
+BACKGROUND_TASK_FAILURE_ALERT_THRESHOLD = 3
 NEWS_LIMIT = 20
 RISK_ANALYSIS_HISTORY_LIMIT = 20
 PRICE_HISTORY_ARCHIVE_LIMIT = 20000
@@ -1924,6 +1925,7 @@ def _get_diagnostics_runtime():
             read_logs=lambda: read_log_tail(),
             health_summary_builder=build_health_summary,
             get_export_status=lambda: build_export_status_snapshot(),
+            get_background_tasks=lambda: get_background_task_status(),
             default_settings=DEFAULT_SETTINGS,
             platform_name=sys.platform,
             now_factory=datetime.now,
@@ -4241,6 +4243,25 @@ def _notification_retry_task_result(result):
     }
 
 
+def _handle_background_task_event(event):
+    notification = task_scheduler_core.build_task_event_notification(event)
+    if notification:
+        try:
+            send_desktop_notification(
+                notification["title"],
+                notification["body"],
+            )
+        except Exception:
+            logging.exception("发送后台任务运维通知失败")
+    try:
+        socketio.emit(
+            "background_task_status",
+            _get_task_scheduler_runtime().status(),
+        )
+    except Exception:
+        logging.exception("广播后台任务状态失败")
+
+
 def _get_task_scheduler_runtime():
     with runtime.lock:
         if runtime.task_scheduler_runtime_instance is None:
@@ -4248,6 +4269,8 @@ def _get_task_scheduler_runtime():
                 now_factory=datetime.now,
                 monotonic_factory=time.monotonic,
                 logger=logging,
+                failure_alert_threshold=BACKGROUND_TASK_FAILURE_ALERT_THRESHOLD,
+                event_handler=_handle_background_task_event,
             )
             scheduler.register(
                 "news",

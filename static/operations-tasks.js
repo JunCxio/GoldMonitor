@@ -49,8 +49,11 @@ function renderBackgroundTaskStatus() {
   const runningCount = Number(counts.running || 0);
   const disabledCount = Number(counts.disabled || 0);
   const waitingCount = Number(counts.waiting || 0);
+  const attentionCount = Number(counts.attention || 0);
+  const transientErrorCount = Math.max(0, errorCount - attentionCount);
   const summaryParts = [];
-  if (errorCount) summaryParts.push(errorCount + ' 项失败');
+  if (attentionCount) summaryParts.push(attentionCount + ' 项需处理');
+  if (transientErrorCount) summaryParts.push(transientErrorCount + ' 项最近失败');
   if (runningCount) summaryParts.push(runningCount + ' 项运行中');
   if (disabledCount) summaryParts.push(disabledCount + ' 项停用');
   if (waitingCount) summaryParts.push(waitingCount + ' 项等待首次运行');
@@ -60,20 +63,26 @@ function renderBackgroundTaskStatus() {
   summary.dataset.state = errorCount ? 'error' : (runningCount ? 'running' : 'ok');
 
   list.innerHTML = tasks.map(task => {
-    const meta = backgroundTaskStateMeta(task.state);
+    const attentionRequired = !!task.attention_required;
+    const meta = attentionRequired
+      ? { label: '需处理', className: 'error' }
+      : backgroundTaskStateMeta(task.state);
     const duration = backgroundTaskDurationLabel(task.last_duration_ms);
     const lastRun = formatBackgroundTaskTime(task.last_completed_at || task.last_started_at);
     const nextRun = formatBackgroundTaskTime(task.next_run_at);
     const message = task.last_message || '等待首次运行';
+    const failureNote = Number(task.consecutive_failures || 0)
+      ? '连续失败 ' + Number(task.consecutive_failures) + ' 次'
+      : '';
     return [
-      '<div class="ops-task-item" data-state="' + meta.className + '">',
+      '<div class="ops-task-item" data-state="' + meta.className + '" data-attention="' + String(attentionRequired) + '">',
       '<div class="ops-task-ident">',
       '<span class="ops-task-indicator" aria-hidden="true"></span>',
       '<div><strong>' + escapeHtml(task.label || task.name || '后台任务') + '</strong>',
       '<span title="' + escapeHtml(message) + '">' + escapeHtml(message) + '</span></div>',
       '</div>',
       '<div class="ops-task-timing">',
-      '<span>最近 ' + escapeHtml(lastRun) + (duration ? ' · ' + escapeHtml(duration) : '') + '</span>',
+      '<span>最近 ' + escapeHtml(lastRun) + (duration ? ' · ' + escapeHtml(duration) : '') + (failureNote ? ' · ' + escapeHtml(failureNote) : '') + '</span>',
       '<span>下次 ' + escapeHtml(nextRun) + '</span>',
       '</div>',
       '<span class="ops-task-state">' + meta.label + '</span>',

@@ -108,6 +108,62 @@ def test_scheduler_isolates_task_exceptions_and_keeps_running_other_tasks():
     assert status["summary"]["error"] == 1
 
 
+def test_scheduler_notifies_once_at_failure_threshold_and_once_after_recovery():
+    from goldmonitor.task_scheduler import TaskSchedulerRuntime
+
+    clock = Clock(datetime(2026, 8, 12, 10, 0, 0))
+    events = []
+    results = [False, False, False, False, True]
+    scheduler = TaskSchedulerRuntime(
+        now_factory=clock.now,
+        failure_alert_threshold=3,
+        event_handler=events.append,
+    )
+    scheduler.register("news", "资讯刷新", 30, lambda: results.pop(0))
+
+    for _ in range(5):
+        scheduler.run_due()
+        clock.advance(30)
+
+    notable = [event for event in events if event["type"] != "completed"]
+    assert [event["type"] for event in notable] == [
+        "failure_threshold",
+        "recovered",
+    ]
+    assert notable[0]["task"]["consecutive_failures"] == 3
+    assert notable[0]["task"]["attention_required"] is True
+    assert notable[1]["task"]["consecutive_failures"] == 0
+    assert notable[1]["task"]["attention_required"] is False
+    assert scheduler.status()["summary"]["attention"] == 0
+
+
+def test_task_event_notification_builds_failure_and_recovery_copy():
+    from goldmonitor.task_scheduler import build_task_event_notification
+
+    failure = build_task_event_notification({
+        "type": "failure_threshold",
+        "task": {
+            "label": "资讯刷新",
+            "consecutive_failures": 3,
+            "last_message": "资讯刷新失败",
+        },
+    })
+    recovered = build_task_event_notification({
+        "type": "recovered",
+        "task": {"label": "资讯刷新"},
+    })
+
+    assert failure == {
+        "title": "后台任务需要处理",
+        "body": "资讯刷新已连续失败 3 次。最近结果：资讯刷新失败",
+    }
+    assert recovered == {
+        "title": "后台任务已恢复",
+        "body": "资讯刷新已恢复正常运行。",
+    }
+    assert build_task_event_notification({"type": "completed"}) is None
+
+
 def test_scheduler_treats_disabled_and_not_due_results_as_normal_checks():
     from goldmonitor.task_scheduler import TaskSchedulerRuntime
 
@@ -211,3 +267,41 @@ def test_background_task_status_socket_returns_scheduler_snapshot(monkeypatch):
         if item["name"] == "background_task_status"
     )
     assert payload == expected
+
+
+def test_application_task_event_sends_desktop_notification_and_broadcasts(monkeypatch):
+    import app
+
+    notifications = []
+    broadcasts = []
+    expected_status = {"summary": {"attention": 1}, "tasks": []}
+    monkeypatch.setattr(
+        app,
+        "send_desktop_notification",
+        lambda title, body: notifications.append((title, body)),
+    )
+    monkeypatch.setattr(
+        app,
+        "_get_task_scheduler_runtime",
+        lambda: type("Scheduler", (), {"status": lambda self: expected_status})(),
+    )
+    monkeypatch.setattr(
+        app.socketio,
+        "emit",
+        lambda event, payload: broadcasts.append((event, payload)),
+    )
+
+    app._handle_background_task_event({
+        "type": "failure_threshold",
+        "task": {
+            "label": "资讯刷新",
+            "consecutive_failures": 3,
+            "last_message": "网络不可用",
+        },
+    })
+
+    assert notifications == [(
+        "后台任务需要处理",
+        "资讯刷新已连续失败 3 次。最近结果：网络不可用",
+    )]
+    assert broadcasts == [("background_task_status", expected_status)]

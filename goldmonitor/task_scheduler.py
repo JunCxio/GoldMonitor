@@ -49,6 +49,29 @@ def normalize_task_result(result):
     }
 
 
+def build_task_event_notification(event):
+    payload = event if isinstance(event, dict) else {}
+    task = payload.get("task") if isinstance(payload.get("task"), dict) else {}
+    event_type = str(payload.get("type") or "")
+    label = str(task.get("label") or task.get("name") or "后台任务")
+    message = str(task.get("last_message") or "").strip()
+    if event_type == "failure_threshold":
+        failures = int(task.get("consecutive_failures") or 0)
+        detail = f"{label}已连续失败 {failures} 次"
+        if message:
+            detail += f"。最近结果：{message}"
+        return {
+            "title": "后台任务需要处理",
+            "body": detail,
+        }
+    if event_type == "recovered":
+        return {
+            "title": "后台任务已恢复",
+            "body": f"{label}已恢复正常运行。",
+        }
+    return None
+
+
 class TaskSchedulerRuntime:
     def __init__(
         self,
@@ -56,10 +79,14 @@ class TaskSchedulerRuntime:
         now_factory=datetime.now,
         monotonic_factory=time.monotonic,
         logger=logging,
+        failure_alert_threshold=3,
+        event_handler=None,
     ):
         self.now_factory = now_factory
         self.monotonic_factory = monotonic_factory
         self.logger = logger
+        self.failure_alert_threshold = max(1, int(failure_alert_threshold))
+        self.event_handler = event_handler
         self.lock = threading.RLock()
         self.tasks: Dict[str, ScheduledTask] = {}
         self.task_states: Dict[str, Dict[str, Any]] = {}
@@ -109,6 +136,10 @@ class TaskSchedulerRuntime:
                 ),
                 "run_count": 0,
                 "failure_count": 0,
+                "consecutive_failures": 0,
+                "attention_required": False,
+                "last_incident_at": "",
+                "last_recovered_at": "",
             }
         return task
 
@@ -157,6 +188,7 @@ class TaskSchedulerRuntime:
         duration_ms = max(0, round((self.monotonic_factory() - monotonic_started) * 1000))
         with self.lock:
             state = self.task_states[name]
+            attention_was_required = bool(state["attention_required"])
             state["state"] = outcome_state
             state["last_completed_at"] = completed_at
             state["last_message"] = message
@@ -167,9 +199,27 @@ class TaskSchedulerRuntime:
             if outcome_state == "error":
                 state["last_error_at"] = completed_at
                 state["failure_count"] += 1
+                state["consecutive_failures"] += 1
+                if (
+                    state["consecutive_failures"] >= self.failure_alert_threshold
+                    and not state["attention_required"]
+                ):
+                    state["attention_required"] = True
+                    state["last_incident_at"] = completed_at
             else:
                 state["last_success_at"] = completed_at
+                state["consecutive_failures"] = 0
+                state["attention_required"] = False
+                if attention_was_required and outcome_state in {"ok", "idle"}:
+                    state["last_recovered_at"] = completed_at
             public_state = self._public_state(state)
+            if public_state["attention_required"] and not attention_was_required:
+                event_type = "failure_threshold"
+            elif attention_was_required and outcome_state in {"ok", "idle"}:
+                event_type = "recovered"
+            else:
+                event_type = "completed"
+        self._emit_event(event_type, public_state)
         return {"ran": True, "task": public_state}
 
     def status(self, now=None):
@@ -184,7 +234,9 @@ class TaskSchedulerRuntime:
                 "error": sum(item["state"] == "error" for item in tasks),
                 "disabled": sum(item["state"] == "disabled" for item in tasks),
                 "waiting": sum(item["state"] == "waiting" for item in tasks),
+                "attention": sum(bool(item["attention_required"]) for item in tasks),
             },
+            "failure_alert_threshold": self.failure_alert_threshold,
             "tasks": tasks,
         }
 
@@ -199,6 +251,18 @@ class TaskSchedulerRuntime:
                 self.logger.exception("后台任务调度检查失败")
             sleep(interval)
 
+    def _emit_event(self, event_type, task_state):
+        if self.event_handler is None:
+            return
+        try:
+            self.event_handler({
+                "type": event_type,
+                "task": dict(task_state),
+                "failure_alert_threshold": self.failure_alert_threshold,
+            })
+        except Exception:
+            self.logger.exception("后台任务状态事件处理失败")
+
     @staticmethod
     def _public_state(state):
         payload = dict(state)
@@ -207,6 +271,8 @@ class TaskSchedulerRuntime:
             "last_completed_at",
             "last_success_at",
             "last_error_at",
+            "last_incident_at",
+            "last_recovered_at",
             "next_run_at",
         ):
             value = payload.get(key)

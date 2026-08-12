@@ -417,6 +417,8 @@ for required in (
     "function registerOperationsSocketHandlers",
     "function applyBackgroundTaskStatus",
     "function refreshBackgroundTaskStatus",
+    "attention_required",
+    "consecutive_failures",
     "function renderSourceHealth",
     "function renderRecentOpsRecords",
     "function previewDataArchive",
@@ -441,6 +443,7 @@ for required in (
     ".ops-task-card",
     ".ops-task-item",
     ".ops-task-timing",
+    '.ops-task-item[data-attention="true"]',
 ):
     if required not in css_path.read_text(encoding="utf-8"):
         raise SystemExit(f"static/app.css missing background task selector: {required}")
