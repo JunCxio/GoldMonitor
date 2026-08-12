@@ -65,15 +65,41 @@ def test_clipboard_summary_uses_fallback_status_and_masks_raw_structure():
             "background_tasks": {
                 "failure_alert_threshold": 3,
                 "schedule_delay_grace_seconds": 60,
-                "summary": {"total": 3, "error": 1, "attention": 1, "delayed": 1},
-                "tasks": [{
-                    "label": "资讯刷新",
-                    "state": "error",
-                    "consecutive_failures": 3,
-                    "schedule_delayed": True,
-                    "schedule_delay_seconds": 75,
-                    "last_message": "资讯刷新失败",
-                }],
+                "summary": {
+                    "total": 3,
+                    "error": 1,
+                    "attention": 1,
+                    "delayed": 1,
+                    "queue_attention": 1,
+                },
+                "tasks": [
+                    {
+                        "name": "news",
+                        "label": "资讯刷新",
+                        "state": "error",
+                        "consecutive_failures": 3,
+                        "schedule_delayed": True,
+                        "schedule_delay_seconds": 75,
+                        "last_message": "资讯刷新失败",
+                    },
+                    {
+                        "name": "notification_retry",
+                        "label": "通知重试",
+                        "state": "disabled",
+                        "consecutive_failures": 0,
+                        "last_message": "自动重试未开启",
+                        "queue": {
+                            "available": True,
+                            "enabled": False,
+                            "pending_count": 2,
+                            "eligible_count": 1,
+                            "exhausted_count": 1,
+                            "expired_count": 1,
+                            "non_retryable_count": 1,
+                            "stopped_count": 3,
+                        },
+                    },
+                ],
             },
         },
         default_settings={
@@ -97,4 +123,5 @@ def test_clipboard_summary_uses_fallback_status_and_masks_raw_structure():
     assert "调度延迟: 1" in text
     assert "延迟阈值: 超过计划时间 60 秒" in text
     assert "资讯刷新: 失败，连续失败 3 次，调度延迟 75 秒" in text
+    assert "通知重试队列: 待重试 2 条，可立即处理 1 条，达到上限 1 条，已过期 1 条，不可重试 1 条，自动重试关闭" in text
     assert "后台任务提示" in text

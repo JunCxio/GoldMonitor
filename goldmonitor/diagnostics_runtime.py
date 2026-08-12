@@ -252,6 +252,20 @@ def build_diagnostics_clipboard_text(
         lines.append(
             f"- {label}: {task_state}，连续失败 {failures} 次{schedule_note}，最近结果：{message}"
         )
+        queue = task.get("queue") if isinstance(task.get("queue"), dict) else {}
+        if task.get("name") == "notification_retry" and queue:
+            if queue.get("available") is False:
+                lines.append("- 通知重试队列: 状态读取失败")
+            else:
+                lines.append(
+                    "- 通知重试队列: "
+                    f"待重试 {int(queue.get('pending_count') or 0)} 条，"
+                    f"可立即处理 {int(queue.get('eligible_count') or 0)} 条，"
+                    f"达到上限 {int(queue.get('exhausted_count') or 0)} 条，"
+                    f"已过期 {int(queue.get('expired_count') or 0)} 条，"
+                    f"不可重试 {int(queue.get('non_retryable_count') or 0)} 条，"
+                    f"自动重试{'开启' if queue.get('enabled') else '关闭'}"
+                )
     lines.extend([
         "",
         "更新状态",
@@ -291,7 +305,11 @@ def build_diagnostics_clipboard_text(
         lines.append(f"- 最近失败原因: {value(last_export.get('message'))}")
     if quality_reasons:
         lines.extend(["", "数据质量提示", *[f"- {item}" for item in quality_reasons[:5]]])
-    if int(task_summary.get("attention") or 0) or int(task_summary.get("delayed") or 0):
+    if (
+        int(task_summary.get("attention") or 0)
+        or int(task_summary.get("delayed") or 0)
+        or int(task_summary.get("queue_attention") or 0)
+    ):
         lines.extend([
             "",
             "后台任务提示",

@@ -416,6 +416,79 @@ def test_background_task_status_socket_returns_scheduler_snapshot(monkeypatch):
     assert payload == expected
 
 
+def test_application_background_task_status_includes_sanitized_retry_queue(monkeypatch):
+    import app
+
+    scheduler_status = {
+        "summary": {
+            "total": 3,
+            "error": 0,
+            "running": 0,
+            "disabled": 1,
+            "delayed": 0,
+        },
+        "tasks": [
+            {"name": "news", "state": "ok"},
+            {"name": "notification_retry", "state": "disabled"},
+        ],
+    }
+    retry_status = {
+        "enabled": False,
+        "pending_count": 2,
+        "eligible_count": 1,
+        "exhausted_count": 1,
+        "expired_count": 2,
+        "non_retryable_count": 3,
+        "next_retry_at": "2026-08-12T12:10:00",
+        "interval_minutes": 10,
+        "window_hours": 24,
+        "max_rounds": 3,
+        "candidates": [{"id": "private-alert-id"}],
+    }
+
+    class Scheduler:
+        def status(self):
+            return scheduler_status
+
+    monkeypatch.setattr(app, "_get_task_scheduler_runtime", lambda: Scheduler())
+    monkeypatch.setattr(app, "notification_retry_status", lambda: retry_status)
+
+    result = app.get_background_task_status()
+    queue = result["tasks"][1]["queue"]
+
+    assert queue["available"] is True
+    assert queue["stopped_count"] == 6
+    assert queue["attention_required"] is True
+    assert "candidates" not in queue
+    assert result["summary"]["queue_attention"] == 1
+    assert result["summary"]["queue_stopped"] == 6
+
+
+def test_application_background_task_status_handles_retry_queue_failure(monkeypatch):
+    import app
+
+    class Scheduler:
+        def status(self):
+            return {
+                "summary": {"total": 1},
+                "tasks": [{"name": "notification_retry", "state": "idle"}],
+            }
+
+    monkeypatch.setattr(app, "_get_task_scheduler_runtime", lambda: Scheduler())
+    monkeypatch.setattr(
+        app,
+        "notification_retry_status",
+        lambda: (_ for _ in ()).throw(RuntimeError("数据库不可用")),
+    )
+
+    result = app.get_background_task_status()
+    queue = result["tasks"][0]["queue"]
+
+    assert queue["available"] is False
+    assert queue["attention_required"] is True
+    assert result["summary"]["queue_attention"] == 1
+
+
 def test_application_manual_background_task_uses_allowlist(monkeypatch):
     import app
 

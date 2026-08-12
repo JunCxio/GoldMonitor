@@ -37,6 +37,33 @@ function backgroundTaskDelayLabel(value) {
   return (seconds / 3600).toFixed(seconds < 36000 ? 1 : 0) + ' 小时';
 }
 
+function backgroundTaskQueueMeta(queue) {
+  if (!queue || typeof queue !== 'object') return null;
+  if (queue.available === false) {
+    return { text: '队列状态读取失败', attention: true };
+  }
+  const pending = Number(queue.pending_count) || 0;
+  const eligible = Number(queue.eligible_count) || 0;
+  const exhausted = Number(queue.exhausted_count) || 0;
+  const expired = Number(queue.expired_count) || 0;
+  const nonRetryable = Number(queue.non_retryable_count) || 0;
+  const stopped = exhausted + expired + nonRetryable;
+  const parts = [pending ? '待重试 ' + pending + ' 条' : '队列为空'];
+  if (eligible) parts.push('可立即处理 ' + eligible + ' 条');
+  else if (pending && queue.next_retry_at) {
+    parts.push('下次 ' + formatBackgroundTaskTime(queue.next_retry_at));
+  }
+  if (pending && !queue.enabled) parts.push('自动重试未开启');
+  if (exhausted) parts.push('达到上限 ' + exhausted + ' 条');
+  if (expired) parts.push('已过期 ' + expired + ' 条');
+  if (nonRetryable) parts.push('不可重试 ' + nonRetryable + ' 条');
+  return {
+    text: parts.join(' · '),
+    attention: !!queue.attention_required,
+    stopped: stopped > 0,
+  };
+}
+
 function renderBackgroundTaskStatus() {
   const list = document.getElementById('backgroundTaskStatus');
   const summary = document.getElementById('backgroundTaskSummary');
@@ -58,11 +85,13 @@ function renderBackgroundTaskStatus() {
   const waitingCount = Number(counts.waiting || 0);
   const attentionCount = Number(counts.attention || 0);
   const delayedCount = Number(counts.delayed || 0);
+  const queueAttentionCount = Number(counts.queue_attention || 0);
   const transientErrorCount = Math.max(0, errorCount - attentionCount);
   const summaryParts = [];
   if (attentionCount) summaryParts.push(attentionCount + ' 项需处理');
   if (transientErrorCount) summaryParts.push(transientErrorCount + ' 项最近失败');
   if (delayedCount) summaryParts.push(delayedCount + ' 项调度延迟');
+  if (queueAttentionCount) summaryParts.push('通知队列待处理');
   if (runningCount) summaryParts.push(runningCount + ' 项运行中');
   if (disabledCount) summaryParts.push(disabledCount + ' 项停用');
   if (waitingCount) summaryParts.push(waitingCount + ' 项等待首次运行');
@@ -71,17 +100,21 @@ function renderBackgroundTaskStatus() {
   summary.textContent = summaryParts.join('，') + updatedAt;
   summary.dataset.state = errorCount
     ? 'error'
-    : (delayedCount ? 'delayed' : (runningCount ? 'running' : 'ok'));
+    : (delayedCount || queueAttentionCount ? 'delayed' : (runningCount ? 'running' : 'ok'));
 
   list.innerHTML = tasks.map(task => {
     const taskName = String(task.name || '');
     const attentionRequired = !!task.attention_required;
     const scheduleDelayed = !!task.schedule_delayed;
+    const queueMeta = backgroundTaskQueueMeta(task.queue);
+    const queueAttention = !!(queueMeta && queueMeta.attention);
     const stateMeta = backgroundTaskStateMeta(task.state);
     const meta = attentionRequired
       ? { label: '需处理', className: 'error' }
       : scheduleDelayed && stateMeta.className !== 'error'
         ? { label: '延迟', className: 'delayed' }
+        : queueAttention && stateMeta.className !== 'error'
+          ? { label: '待处理', className: 'delayed' }
         : stateMeta;
     const duration = backgroundTaskDurationLabel(task.last_duration_ms);
     const lastRun = formatBackgroundTaskTime(task.last_completed_at || task.last_started_at);
@@ -97,7 +130,7 @@ function renderBackgroundTaskStatus() {
     const taskRunning = task.state === 'running';
     const buttonLabel = pending || taskRunning ? '检查中' : '立即检查';
     return [
-      '<div class="ops-task-item" data-state="' + meta.className + '" data-attention="' + String(attentionRequired) + '" data-delayed="' + String(scheduleDelayed) + '">',
+      '<div class="ops-task-item" data-state="' + meta.className + '" data-attention="' + String(attentionRequired) + '" data-delayed="' + String(scheduleDelayed) + '" data-queue-attention="' + String(queueAttention) + '">',
       '<div class="ops-task-ident">',
       '<span class="ops-task-indicator" aria-hidden="true"></span>',
       '<div><strong>' + escapeHtml(task.label || task.name || '后台任务') + '</strong>',
@@ -106,6 +139,7 @@ function renderBackgroundTaskStatus() {
       '<div class="ops-task-timing">',
       '<span>最近 ' + escapeHtml(lastRun) + (duration ? ' · ' + escapeHtml(duration) : '') + (failureNote ? ' · ' + escapeHtml(failureNote) : '') + '</span>',
       '<span>下次 ' + escapeHtml(nextRun) + (delayNote ? ' · ' + escapeHtml(delayNote) : '') + '</span>',
+      queueMeta ? '<span class="ops-task-queue" data-state="' + (queueMeta.attention ? 'attention' : (queueMeta.stopped ? 'stopped' : 'normal')) + '">' + escapeHtml(queueMeta.text) + '</span>' : '',
       '</div>',
       '<span class="ops-task-state">' + meta.label + '</span>',
       '<button class="settings-cancel btn-form ops-task-run" type="button" data-task-name="' + escapeHtml(taskName) + '" onclick="runBackgroundTaskNow(this.dataset.taskName)"' + (pending || taskRunning ? ' disabled' : '') + '>' + buttonLabel + '</button>',

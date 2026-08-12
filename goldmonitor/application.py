@@ -204,6 +204,18 @@ BACKGROUND_TASK_NAMES = frozenset({
     "daily_digest",
     "notification_retry",
 })
+NOTIFICATION_RETRY_QUEUE_STATUS_KEYS = (
+    "enabled",
+    "pending_count",
+    "eligible_count",
+    "exhausted_count",
+    "expired_count",
+    "non_retryable_count",
+    "next_retry_at",
+    "interval_minutes",
+    "window_hours",
+    "max_rounds",
+)
 NEWS_LIMIT = 20
 RISK_ANALYSIS_HISTORY_LIMIT = 20
 PRICE_HISTORY_ARCHIVE_LIMIT = 20000
@@ -4262,7 +4274,7 @@ def _handle_background_task_event(event):
     try:
         socketio.emit(
             "background_task_status",
-            _get_task_scheduler_runtime().status(),
+            get_background_task_status(),
         )
     except Exception:
         logging.exception("广播后台任务状态失败")
@@ -4305,8 +4317,51 @@ def _get_task_scheduler_runtime():
     return runtime.task_scheduler_runtime_instance
 
 
+def _notification_retry_queue_summary():
+    try:
+        status = notification_retry_status()
+    except Exception:
+        logging.exception("读取通知重试队列状态失败")
+        return {
+            "available": False,
+            "attention_required": True,
+            "message": "通知重试队列状态读取失败",
+        }
+    summary = {
+        key: status.get(key)
+        for key in NOTIFICATION_RETRY_QUEUE_STATUS_KEYS
+    }
+    stopped_count = sum(
+        int(summary.get(key) or 0)
+        for key in (
+            "exhausted_count",
+            "expired_count",
+            "non_retryable_count",
+        )
+    )
+    summary.update({
+        "available": True,
+        "stopped_count": stopped_count,
+        "attention_required": bool(
+            int(summary.get("pending_count") or 0)
+            and not summary.get("enabled")
+        ),
+    })
+    return summary
+
+
 def get_background_task_status():
-    return _get_task_scheduler_runtime().status()
+    payload = _get_task_scheduler_runtime().status()
+    queue = _notification_retry_queue_summary()
+    for task in payload.get("tasks", []):
+        if task.get("name") == "notification_retry":
+            task["queue"] = queue
+            break
+    summary = payload.get("summary")
+    if isinstance(summary, dict):
+        summary["queue_attention"] = int(bool(queue.get("attention_required")))
+        summary["queue_stopped"] = int(queue.get("stopped_count") or 0)
+    return payload
 
 
 def run_background_task_now(name):

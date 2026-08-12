@@ -196,6 +196,7 @@ Assert-Contains -Path "goldmonitor\task_scheduler.py" -Pattern 'recovered' -Mess
 Assert-Contains -Path "goldmonitor\task_scheduler.py" -Pattern 'schedule_delayed' -Message "task scheduler must expose delayed schedules"
 Assert-Contains -Path "goldmonitor\socket_operations.py" -Pattern '@socketio\.on\("get_background_task_status"\)' -Message "backend must expose background task status"
 Assert-Contains -Path "goldmonitor\socket_operations.py" -Pattern '@socketio\.on\("run_background_task"\)' -Message "backend must expose controlled background task checks"
+Assert-Contains -Path "goldmonitor\application.py" -Pattern 'NOTIFICATION_RETRY_QUEUE_STATUS_KEYS' -Message "operations status must expose a sanitized notification retry queue summary"
 Assert-Contains -Path "goldmonitor\application.py" -Pattern 'REVIEW_NOTES_PATH' -Message "backend must persist review notes locally"
 Assert-Contains -Path "goldmonitor\socket_history_review.py" -Pattern '@socketio\.on\("save_review_note"\)' -Message "backend must expose review note save"
 Assert-Contains -Path "goldmonitor\socket_history_review.py" -Pattern '@socketio\.on\("delete_review_note"\)' -Message "backend must expose review note deletion"

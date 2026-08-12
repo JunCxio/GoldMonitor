@@ -273,6 +273,7 @@
   .ops-task-ident span { margin-top:2px; color:var(--text-dim); font-size:0.65rem; line-height:1.35; }
   .ops-task-timing { grid-column:1; grid-row:2; min-width:0; padding-left:16px; color:var(--text-dim); font-size:0.63rem; line-height:1.5; text-align:left; }
   .ops-task-timing span { display:block; white-space:normal; }
+  .ops-task-queue[data-state="attention"], .ops-task-queue[data-state="stopped"] { color:var(--gold); }
   .ops-task-state { min-width:42px; padding:3px 7px; border:1px solid var(--hairline); border-radius:999px; color:var(--text-dim); background:rgba(255,255,255,0.025); font-size:0.62rem; font-weight:800; text-align:center; }
   .ops-task-run { grid-column:2; grid-row:2; justify-self:end; min-height:30px; padding:5px 9px; font-size:0.68rem; white-space:nowrap; }
   .ops-task-run:disabled { opacity:0.48; cursor:not-allowed; transform:none; box-shadow:none; }
