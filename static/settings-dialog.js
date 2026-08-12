@@ -51,6 +51,7 @@ function closeSettings(force) {
     return;
   }
   backdrop.classList.remove('show');
+  stopBackgroundTaskAutoRefresh();
   hideSettingsDiscardPrompt();
   clearSettingsValidation();
   settingsInitialSnapshot = '';

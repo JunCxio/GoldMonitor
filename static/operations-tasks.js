@@ -149,17 +149,82 @@ function renderBackgroundTaskStatus() {
 }
 
 function applyBackgroundTaskStatus(data) {
+  finishBackgroundTaskStatusRequest();
   backgroundTaskStatus = data && typeof data === 'object' ? data : {};
   renderBackgroundTaskStatus();
 }
 
-function refreshBackgroundTaskStatus() {
+function setBackgroundTaskRefreshPending(pending, manual = false) {
+  backgroundTaskRefreshPending = !!pending;
+  backgroundTaskManualRefreshPending = backgroundTaskRefreshPending && !!manual;
   const button = document.getElementById('btnRefreshBackgroundTasks');
   if (button) {
-    button.disabled = true;
-    window.setTimeout(() => { button.disabled = false; }, 600);
+    button.disabled = backgroundTaskManualRefreshPending;
+    button.textContent = backgroundTaskManualRefreshPending ? '正在刷新' : '刷新状态';
+    button.setAttribute('aria-busy', String(backgroundTaskManualRefreshPending));
   }
+  const card = button && button.closest('.ops-task-card');
+  if (card) card.setAttribute('aria-busy', String(backgroundTaskRefreshPending));
+}
+
+function finishBackgroundTaskStatusRequest() {
+  if (backgroundTaskRefreshTimeout !== null) {
+    window.clearTimeout(backgroundTaskRefreshTimeout);
+    backgroundTaskRefreshTimeout = null;
+  }
+  setBackgroundTaskRefreshPending(false);
+}
+
+function requestBackgroundTaskStatus({ manual = false } = {}) {
+  if (backgroundTaskRefreshPending) {
+    if (manual) setBackgroundTaskRefreshPending(true, true);
+    return false;
+  }
+  setBackgroundTaskRefreshPending(true, manual);
+  backgroundTaskRefreshTimeout = window.setTimeout(
+    finishBackgroundTaskStatusRequest,
+    BACKGROUND_TASK_REFRESH_TIMEOUT_MS,
+  );
   socket.emit('get_background_task_status');
+  return true;
+}
+
+function backgroundTaskAutoRefreshActive() {
+  const backdrop = document.getElementById('settingsBackdrop');
+  return !!(
+    backdrop &&
+    backdrop.classList.contains('show') &&
+    activeSettingsTab === 'ops' &&
+    document.visibilityState === 'visible'
+  );
+}
+
+function startBackgroundTaskAutoRefresh() {
+  if (backgroundTaskRefreshTimer !== null) return;
+  requestBackgroundTaskStatus();
+  backgroundTaskRefreshTimer = window.setInterval(() => {
+    if (!backgroundTaskAutoRefreshActive()) {
+      stopBackgroundTaskAutoRefresh();
+      return;
+    }
+    requestBackgroundTaskStatus();
+  }, BACKGROUND_TASK_REFRESH_INTERVAL_MS);
+}
+
+function stopBackgroundTaskAutoRefresh() {
+  if (backgroundTaskRefreshTimer !== null) {
+    window.clearInterval(backgroundTaskRefreshTimer);
+    backgroundTaskRefreshTimer = null;
+  }
+}
+
+function syncBackgroundTaskAutoRefresh() {
+  if (backgroundTaskAutoRefreshActive()) startBackgroundTaskAutoRefresh();
+  else stopBackgroundTaskAutoRefresh();
+}
+
+function refreshBackgroundTaskStatus() {
+  requestBackgroundTaskStatus({ manual: true });
 }
 
 function runBackgroundTaskNow(name) {
@@ -170,3 +235,6 @@ function runBackgroundTaskNow(name) {
   setOpsStatus('正在检查后台任务...', true);
   socket.emit('run_background_task', { name: taskName });
 }
+
+document.addEventListener('visibilitychange', syncBackgroundTaskAutoRefresh);
+window.addEventListener('pagehide', stopBackgroundTaskAutoRefresh);

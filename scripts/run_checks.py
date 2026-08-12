@@ -149,6 +149,7 @@ COMPILE_TARGETS = (
     "tests/test_storage_manifest_module.py",
     "tests/test_today_overview_module.py",
     "tests/test_today_overview_runtime_module.py",
+    "tests/test_operations_auto_refresh.py",
     "scripts/verify_release_assets.py",
     "scripts/run_checks.py",
 )

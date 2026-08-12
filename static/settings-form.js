@@ -255,7 +255,7 @@ function switchSettingsTab(tab) {
   if (nextTab === 'risk') refreshRiskModels();
   if (nextTab === 'digest') socket.emit('get_daily_digest_status');
   if (nextTab === 'general') socket.emit('get_notification_retry_status');
-  if (nextTab === 'ops') socket.emit('get_background_task_status');
+  syncBackgroundTaskAutoRefresh();
 }
 
 function openSettings() {

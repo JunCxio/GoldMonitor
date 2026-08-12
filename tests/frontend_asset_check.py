@@ -417,6 +417,15 @@ for required in (
     "function registerOperationsSocketHandlers",
     "function applyBackgroundTaskStatus",
     "function refreshBackgroundTaskStatus",
+    "function backgroundTaskAutoRefreshActive",
+    "function requestBackgroundTaskStatus",
+    "function startBackgroundTaskAutoRefresh",
+    "function stopBackgroundTaskAutoRefresh",
+    "function syncBackgroundTaskAutoRefresh",
+    "BACKGROUND_TASK_REFRESH_INTERVAL_MS",
+    "BACKGROUND_TASK_REFRESH_TIMEOUT_MS",
+    "visibilitychange",
+    "pagehide",
     "attention_required",
     "consecutive_failures",
     "schedule_delayed",
@@ -446,10 +455,13 @@ for required in (
     "function runBackgroundTaskNow",
     'data-task-name="',
     "if (data.background_task_status) applyBackgroundTaskStatus(data.background_task_status)",
-    "if (nextTab === 'ops') socket.emit('get_background_task_status')",
+    "syncBackgroundTaskAutoRefresh();",
 ):
     if required not in template + js:
         raise SystemExit(f"frontend missing background task status contract: {required}")
+
+if "window.setTimeout(() => { button.disabled = false; }, 600)" in operations_tasks_js_path.read_text(encoding="utf-8"):
+    raise SystemExit("background task refresh button must follow the real request lifecycle")
 
 for required in (
     ".ops-task-card",
