@@ -1088,11 +1088,38 @@
   .today-overview-batch-action:hover { border-color:rgba(232,184,48,0.34); background:rgba(232,184,48,0.1); }
   .today-overview-batch-action:disabled { cursor:wait; opacity:0.48; }
   .today-overview-batch-action:focus-visible { outline:none; box-shadow:var(--focus-ring); }
-  .today-overview-action-record { grid-column:1 / -1; display:grid; grid-template-columns:auto minmax(0, 1fr) auto; gap:7px; align-items:center; padding-top:7px; border-top:1px solid rgba(255,255,255,0.055); }
+  .today-overview-action-record { grid-column:1 / -1; min-width:0; padding-top:7px; border-top:1px solid rgba(255,255,255,0.055); }
   .today-overview-action-record[hidden] { display:none; }
-  .today-overview-action-record span { color:#77778a; font-size:0.57rem; font-weight:750; }
-  .today-overview-action-record strong { min-width:0; color:#aaaabb; font-size:0.6rem; font-weight:650; overflow-wrap:anywhere; }
-  .today-overview-action-record small { color:#626275; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.54rem; white-space:nowrap; }
+  .today-overview-action-record-toggle { width:100%; min-width:0; display:grid; grid-template-columns:auto minmax(0, 1fr) auto auto; gap:7px; align-items:center; padding:0; border:0; background:transparent; color:inherit; cursor:pointer; text-align:left; }
+  .today-overview-action-record-toggle > span { color:#77778a; font-size:0.57rem; font-weight:750; }
+  .today-overview-action-record-toggle > strong { min-width:0; color:#aaaabb; font-size:0.6rem; font-weight:650; overflow-wrap:anywhere; }
+  .today-overview-action-record-toggle > small { color:#626275; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.54rem; white-space:nowrap; }
+  .today-overview-action-record-toggle > b { color:#b7a760; font-size:0.56rem; font-weight:800; white-space:nowrap; }
+  .today-overview-action-record-toggle:hover > strong { color:#d0d0d9; }
+  .today-overview-action-record-toggle:focus-visible { outline:none; border-radius:5px; box-shadow:var(--focus-ring); }
+  .today-overview-action-history { max-height:min(280px, 34vh); display:grid; gap:7px; margin-top:9px; padding:9px 2px 1px 8px; border-top:1px solid rgba(255,255,255,0.055); overflow-y:auto; }
+  .today-overview-action-history[hidden] { display:none; }
+  .today-overview-action-history-title { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:0 5px 2px 2px; color:#77778a; font-size:0.57rem; font-weight:750; }
+  .today-overview-action-history-title small { color:#5f5f71; font-size:0.54rem; font-weight:600; }
+  .today-overview-action-history-item { position:relative; display:grid; gap:8px; padding:9px 10px 9px 13px; border:1px solid rgba(255,255,255,0.06); border-radius:7px; background:rgba(7,7,14,0.28); overflow:hidden; }
+  .today-overview-action-history-item::before { content:""; position:absolute; inset:0 auto 0 0; width:2px; background:#72c5a1; }
+  .today-overview-action-history-item.partial::before, .today-overview-action-history-item.retained::before { background:var(--gold); }
+  .today-overview-action-history-item.fail::before { background:var(--danger); }
+  .today-overview-action-history-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+  .today-overview-action-history-head > div { min-width:0; display:flex; align-items:baseline; gap:7px; }
+  .today-overview-action-history-head span { color:#69697b; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.53rem; }
+  .today-overview-action-history-head strong { color:#bcbcc8; font-size:0.61rem; }
+  .today-overview-action-history-head > small { color:#77778a; font-size:0.54rem; white-space:nowrap; }
+  .today-overview-action-detail { display:grid; gap:5px; padding-top:7px; border-top:1px solid rgba(255,255,255,0.05); }
+  .today-overview-action-detail-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .today-overview-action-detail-head strong { color:#a7a7b5; font-size:0.57rem; }
+  .today-overview-action-detail-head span { color:#68687a; font-size:0.53rem; }
+  .today-overview-action-detail > p, .today-overview-action-clear { color:#737385; font-size:0.56rem; line-height:1.45; }
+  .today-overview-action-detail ul { display:grid; gap:4px; margin:0; padding:0; list-style:none; }
+  .today-overview-action-detail li { min-width:0; display:grid; grid-template-columns:minmax(110px, 0.42fr) minmax(0, 1fr); gap:8px; align-items:baseline; }
+  .today-overview-action-detail li strong { color:#9d9daa; font-size:0.56rem; overflow-wrap:anywhere; }
+  .today-overview-action-detail li small { color:#747486; font-size:0.55rem; line-height:1.4; overflow-wrap:anywhere; }
+  .today-overview-action-clear { color:#6f9f8a; }
   .today-overview-attention-list { min-height:0; display:grid; align-content:start; gap:8px; overflow-y:auto; padding-right:4px; }
   .today-overview-attention-item { position:relative; min-width:0; display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:12px; align-items:center; padding:13px 13px 13px 17px; border:1px solid rgba(255,255,255,0.065); border-radius:9px; background:rgba(255,255,255,0.022); overflow:hidden; }
   .today-overview-attention-item::before { content:""; position:absolute; top:0; bottom:0; left:0; width:3px; background:#77778b; }
@@ -1392,8 +1419,13 @@
     .today-overview-attention-item { grid-template-columns:1fr; align-items:start; }
     .today-overview-batch { grid-template-columns:1fr; }
     .today-overview-batch-actions { justify-content:flex-start; }
-    .today-overview-action-record { grid-template-columns:auto minmax(0, 1fr); }
-    .today-overview-action-record small { grid-column:2; white-space:normal; }
+    .today-overview-action-record-toggle { grid-template-columns:auto minmax(0, 1fr) auto; }
+    .today-overview-action-record-toggle > small { grid-column:2; white-space:normal; }
+    .today-overview-action-record-toggle > b { grid-column:3; grid-row:1 / span 2; }
+    .today-overview-action-history { max-height:32vh; padding-left:4px; }
+    .today-overview-action-history-head { display:grid; gap:4px; }
+    .today-overview-action-history-head > small { white-space:normal; }
+    .today-overview-action-detail li { grid-template-columns:1fr; gap:2px; }
     .today-overview-item-actions { justify-content:flex-start; max-width:none; }
     .today-overview-portfolio-summary { grid-template-columns:1fr; }
     .today-overview-portfolio-mode + .today-overview-portfolio-mode { border-left:0; border-top:1px solid var(--hairline); }
