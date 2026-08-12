@@ -2,7 +2,8 @@
 function setPortfolioView(view) {
   captureActivePortfolioDraft();
   captureActivePortfolioTransactionDraft();
-  portfolioView = ['positions', 'transactions', 'review'].includes(view) ? view : 'positions';
+  captureActivePortfolioInvestmentDraft();
+  portfolioView = ['positions', 'transactions', 'investment', 'review'].includes(view) ? view : 'positions';
   if (portfolioView !== 'positions') {
     activePortfolioDetailId = null;
     activePortfolioAlertEditorId = null;

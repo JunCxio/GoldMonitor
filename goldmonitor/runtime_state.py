@@ -14,6 +14,7 @@ class ApplicationRuntimeState:
     notification_retry_lock: Any = field(default_factory=threading.Lock)
     today_overview_lock: Any = field(default_factory=threading.RLock)
     review_notes_lock: Any = field(default_factory=threading.RLock)
+    investment_plan_lock: Any = field(default_factory=threading.RLock)
     data_archive_lock: Any = field(default_factory=threading.Lock)
     data_archive_upload_lock: Any = field(default_factory=threading.Lock)
     price_refresh_lock: Any = field(default_factory=threading.Lock)
@@ -67,6 +68,7 @@ class ApplicationRuntimeState:
     review_notes: List[Dict[str, Any]] = field(default_factory=list)
     portfolio_positions: List[Dict[str, Any]] = field(default_factory=list)
     portfolio_transactions: List[Dict[str, Any]] = field(default_factory=list)
+    portfolio_investment_plans: List[Dict[str, Any]] = field(default_factory=list)
     portfolio_import_backup: Dict[str, Any] = field(default_factory=dict)
     portfolio_alerts: List[Dict[str, Any]] = field(default_factory=list)
     alerted_flags: Dict[str, bool] = field(default_factory=dict)
@@ -93,6 +95,7 @@ class ApplicationRuntimeState:
     data_archive_uploads: Dict[str, Any] = field(default_factory=dict)
     market_runtime_instance: Any = None
     portfolio_runtime_instance: Any = None
+    portfolio_investment_runtime_instance: Any = None
     alert_runtime_instance: Any = None
     config_restore_service: Any = None
     data_archive_runtime_instance: Any = None

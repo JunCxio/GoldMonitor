@@ -20,6 +20,11 @@ def register_portfolio_handlers(
     upsert_portfolio_alert,
     reset_portfolio_alert,
     delete_portfolio_alert,
+    get_portfolio_investment_plan_state,
+    upsert_portfolio_investment_plan,
+    delete_portfolio_investment_plan,
+    toggle_portfolio_investment_plan,
+    execute_portfolio_investment_plan,
     broadcast_alert_rule_views,
     build_portfolio_csv,
     save_export_file,
@@ -85,6 +90,80 @@ def register_portfolio_handlers(
             emit("portfolio_updated", state)
             return
         socketio.emit("portfolio_updated", state)
+
+    @socketio.on("get_portfolio_investment_plans")
+    def on_get_portfolio_investment_plans():
+        emit(
+            "portfolio_investment_plans_updated",
+            get_portfolio_investment_plan_state(),
+        )
+
+    @socketio.on("save_portfolio_investment_plan")
+    def on_save_portfolio_investment_plan(data=None):
+        try:
+            plan, state = upsert_portfolio_investment_plan(data)
+        except ValueError as exc:
+            emit("portfolio_investment_plan_error", {"message": str(exc)})
+            return
+        except OSError:
+            emit("portfolio_investment_plan_error", {
+                "message": "定投计划保存失败，请检查配置目录权限。",
+            })
+            return
+        emit("portfolio_investment_plan_saved", {"ok": True, "plan": plan})
+        socketio.emit("portfolio_investment_plans_updated", state)
+
+    @socketio.on("delete_portfolio_investment_plan")
+    def on_delete_portfolio_investment_plan(data=None):
+        plan_id = data.get("id") if isinstance(data, dict) else None
+        try:
+            ok, state = delete_portfolio_investment_plan(plan_id)
+        except OSError:
+            emit("portfolio_investment_plan_error", {
+                "message": "定投计划删除失败，请检查配置目录权限。",
+            })
+            return
+        if not ok:
+            emit("portfolio_investment_plan_error", {"message": "未找到定投计划"})
+            return
+        socketio.emit("portfolio_investment_plans_updated", state)
+
+    @socketio.on("toggle_portfolio_investment_plan")
+    def on_toggle_portfolio_investment_plan(data=None):
+        payload = data if isinstance(data, dict) else {}
+        try:
+            _plan, state = toggle_portfolio_investment_plan(
+                payload.get("id"),
+                payload.get("enabled") is True,
+            )
+        except ValueError as exc:
+            emit("portfolio_investment_plan_error", {"message": str(exc)})
+            return
+        except OSError:
+            emit("portfolio_investment_plan_error", {
+                "message": "定投计划状态保存失败，请检查配置目录权限。",
+            })
+            return
+        socketio.emit("portfolio_investment_plans_updated", state)
+
+    @socketio.on("execute_portfolio_investment_plan")
+    def on_execute_portfolio_investment_plan(data=None):
+        plan_id = data.get("id") if isinstance(data, dict) else None
+        try:
+            result = execute_portfolio_investment_plan(plan_id)
+        except ValueError as exc:
+            emit("portfolio_investment_plan_error", {"message": str(exc)})
+            return
+        except OSError:
+            emit("portfolio_investment_plan_error", {
+                "message": "定投执行失败，请检查配置目录权限。",
+            })
+            return
+        emit("portfolio_investment_plan_executed", result)
+        emit(
+            "portfolio_investment_plans_updated",
+            get_portfolio_investment_plan_state(),
+        )
 
     @socketio.on("preview_import_portfolio_transactions")
     def on_preview_import_portfolio_transactions(data=None):

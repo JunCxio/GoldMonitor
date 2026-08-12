@@ -87,6 +87,7 @@ function renderPortfolioTransactions(box) {
     const mode = item.mode || 'rmb';
     const typeText = item.type === 'sell' ? '卖出' : '买入';
     const typeClass = item.type === 'sell' ? 'sell' : 'buy';
+    const sourceBadge = item.source === 'investment_plan' ? '<span class="portfolio-source-badge">定投</span>' : '';
     const realizedText = item.type === 'sell' ? ' · 已实现 ' + formatPortfolioMoney(item.realized_pnl, mode) : '';
     const metaParts = [
       portfolioModeLabel(mode),
@@ -99,7 +100,7 @@ function renderPortfolioTransactions(box) {
     return [
       '<div class="' + cls + '">',
       '<div class="portfolio-main">',
-      '<div class="portfolio-line"><span class="portfolio-transaction-type ' + typeClass + '">' + escapeHtml(typeText) + '</span> ' + escapeHtml(item.name || '未命名流水') + escapeHtml(realizedText) + '</div>',
+      '<div class="portfolio-line"><span class="portfolio-transaction-type ' + typeClass + '">' + escapeHtml(typeText) + '</span>' + sourceBadge + ' ' + escapeHtml(item.name || '未命名流水') + escapeHtml(realizedText) + '</div>',
       '<div class="portfolio-meta">' + escapeHtml(metaParts.join(' · ')) + '</div>',
       '</div>',
       '<div class="portfolio-actions">',

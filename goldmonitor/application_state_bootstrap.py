@@ -46,6 +46,9 @@ class ApplicationStateBootstrap:
         self.runtime.review_notes = self.loaders["review_notes"]()
         self.runtime.portfolio_positions = self.loaders["portfolio_positions"]()
         self.runtime.portfolio_transactions = self.loaders["portfolio_transactions"]()
+        self.runtime.portfolio_investment_plans = self.loaders[
+            "portfolio_investment_plans"
+        ]()
         self.runtime.portfolio_import_backup = self.loaders[
             "portfolio_import_backup"
         ]()

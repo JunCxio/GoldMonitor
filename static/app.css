@@ -791,7 +791,7 @@
   .portfolio-tools-menu[hidden] { display:none; }
   .portfolio-tools-menu .btn-clear-sm { width:100%; justify-content:flex-start; }
   .portfolio-import-file { display:none; }
-  .portfolio-tabs { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:6px; margin-bottom:8px; }
+  .portfolio-tabs { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:6px; margin-bottom:8px; }
   .portfolio-tab { min-height:32px; border:1px solid var(--control-border); border-radius:8px; background:rgba(255,255,255,0.026); color:var(--text-dim); font-size:0.72rem; font-weight:800; cursor:pointer; }
   .portfolio-tab.active { color:#f0f0f4; border-color:rgba(232,184,48,0.26); background:rgba(232,184,48,0.075); }
   .portfolio-card.portfolio-detail-mode .portfolio-tabs,
@@ -882,6 +882,38 @@
   .portfolio-transaction-type { display:inline-flex; align-items:center; min-height:20px; padding:2px 7px; margin-right:4px; border-radius:999px; font-size:0.66rem; font-weight:900; border:1px solid rgba(255,255,255,0.08); }
   .portfolio-transaction-type.buy { color:var(--down); background:rgba(49,208,170,0.08); }
   .portfolio-transaction-type.sell { color:var(--up); background:rgba(255,91,111,0.08); }
+  .portfolio-source-badge { display:inline-flex; align-items:center; min-height:20px; margin-right:4px; padding:2px 6px; border:1px solid rgba(232,184,48,0.22); border-radius:6px; color:var(--gold); background:rgba(232,184,48,0.07); font-size:0.6rem; font-weight:900; vertical-align:middle; }
+  .portfolio-summary.portfolio-investment-summary { display:block; }
+  .portfolio-investment-overview { display:grid; grid-template-columns:minmax(96px, 0.55fr) minmax(0, 1.45fr) minmax(104px, 0.7fr); min-width:0; border:1px solid rgba(232,184,48,0.15); border-radius:9px; background:linear-gradient(90deg, rgba(232,184,48,0.055), rgba(255,255,255,0.018)); overflow:hidden; }
+  .portfolio-investment-overview-count, .portfolio-investment-next, .portfolio-investment-overview-flags { min-width:0; padding:10px; }
+  .portfolio-investment-overview-count, .portfolio-investment-next { border-right:1px solid rgba(255,255,255,0.055); }
+  .portfolio-investment-overview span, .portfolio-investment-overview small { display:block; color:var(--text-dim); font-size:0.6rem; line-height:1.3; }
+  .portfolio-investment-overview-count > strong { display:block; margin:2px 0; color:var(--gold); font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:1.15rem; line-height:1.1; }
+  .portfolio-investment-next strong { display:block; margin:3px 0; color:#f0f0f4; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.82rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-investment-overview-flags { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:7px; align-items:center; }
+  .portfolio-investment-overview-flags div { min-width:0; text-align:center; }
+  .portfolio-investment-overview-flags strong { display:block; margin-top:2px; color:#f0f0f4; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.82rem; }
+  .portfolio-investment-note { grid-column:span 2; white-space:normal; }
+  .portfolio-investment-card { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:10px; align-items:center; min-width:0; padding:10px; border:1px solid rgba(255,255,255,0.055); border-radius:9px; background:rgba(255,255,255,0.022); }
+  .portfolio-investment-card.expanded { border-color:rgba(232,184,48,0.24); background:rgba(232,184,48,0.04); }
+  .portfolio-investment-card-main { min-width:0; }
+  .portfolio-investment-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; min-width:0; }
+  .portfolio-investment-card-head > div { min-width:0; }
+  .portfolio-investment-state { flex:0 0 auto; min-height:20px; display:inline-flex; align-items:center; padding:2px 6px; border:1px solid var(--hairline); border-radius:6px; color:var(--text-dim); background:rgba(255,255,255,0.025); font-size:0.6rem; font-weight:900; white-space:nowrap; }
+  .portfolio-investment-state.on { color:var(--down); border-color:rgba(76,175,132,0.24); background:rgba(76,175,132,0.075); }
+  .portfolio-investment-state.attention { color:var(--gold); border-color:rgba(232,184,48,0.24); background:rgba(232,184,48,0.075); }
+  .portfolio-investment-state.warn { color:var(--up); border-color:rgba(224,85,106,0.25); background:rgba(224,85,106,0.075); }
+  .portfolio-investment-timeline { position:relative; display:grid; grid-template-columns:minmax(4px, 4px) repeat(2, minmax(0, 1fr)); gap:8px 10px; min-width:0; margin-top:9px; padding-top:9px; border-top:1px solid rgba(255,255,255,0.05); }
+  .portfolio-investment-timeline-marker { position:relative; align-self:stretch; width:2px; margin-left:1px; border-radius:99px; background:rgba(232,184,48,0.28); }
+  .portfolio-investment-timeline-marker::before { content:""; position:absolute; top:1px; left:50%; width:6px; height:6px; border-radius:50%; background:var(--gold); box-shadow:0 0 0 3px rgba(232,184,48,0.1); transform:translateX(-50%); }
+  .portfolio-investment-timeline > div:not(.portfolio-investment-timeline-marker) { min-width:0; }
+  .portfolio-investment-timeline span, .portfolio-investment-timeline small { display:block; color:var(--text-dim); font-size:0.58rem; line-height:1.3; }
+  .portfolio-investment-timeline strong { display:block; margin:2px 0; color:#f0f0f4; font-size:0.66rem; font-weight:850; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-investment-actions { display:grid; grid-template-columns:repeat(2, minmax(64px, 1fr)); gap:5px; width:146px; }
+  .portfolio-investment-actions .btn-clear-sm { width:100%; min-width:0; justify-content:center; }
+  .portfolio-investment-editor { grid-column:1 / -1; }
+  .portfolio-investment-enabled { min-height:36px; display:flex; align-items:center; gap:7px; align-self:end; padding:8px 10px; border:1px solid var(--control-border); border-radius:8px; background:rgba(255,255,255,0.025); color:var(--text-dim); font-size:0.68rem; cursor:pointer; }
+  .portfolio-investment-enabled input { width:14px; height:14px; accent-color:var(--gold); }
   .portfolio-detail { grid-column:1 / -1; display:grid; gap:9px; min-width:0; padding-top:10px; border-top:1px solid var(--hairline); }
   .portfolio-detail-focus { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px; align-items:center; min-width:0; padding:8px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(255,255,255,0.018); }
   .portfolio-detail-focus-main { min-width:0; }
@@ -1281,6 +1313,14 @@
   }
 
   @media (max-width:720px) {
+    .portfolio-investment-overview { grid-template-columns:minmax(90px, 0.62fr) minmax(0, 1.38fr); }
+    .portfolio-investment-next { border-right:0; }
+    .portfolio-investment-overview-flags { grid-column:1 / -1; border-top:1px solid rgba(255,255,255,0.055); }
+    .portfolio-investment-card { grid-template-columns:1fr; }
+    .portfolio-investment-actions { width:100%; grid-template-columns:repeat(4, minmax(0, 1fr)); }
+  }
+
+  @media (max-width:720px) {
     .main-layout { gap:8px; }
     .main-left { gap:8px; }
     .chart-header { flex-direction:column; align-items:stretch; }
@@ -1421,6 +1461,12 @@
     .watch-target-actions { justify-content:flex-start; }
     .watch-target-fields { grid-template-columns:1fr; }
     .portfolio-summary { grid-template-columns:1fr; }
+    .portfolio-investment-overview { grid-template-columns:1fr; }
+    .portfolio-investment-overview-count, .portfolio-investment-next { border-right:0; border-bottom:1px solid rgba(255,255,255,0.055); }
+    .portfolio-investment-overview-flags { grid-column:auto; border-top:0; }
+    .portfolio-investment-timeline { grid-template-columns:minmax(4px, 4px) minmax(0, 1fr); }
+    .portfolio-investment-timeline > div:last-child { grid-column:2; }
+    .portfolio-investment-actions { grid-template-columns:repeat(2, minmax(0, 1fr)); }
     .portfolio-item { grid-template-columns:1fr; }
     .portfolio-actions { justify-content:flex-start; }
     .portfolio-fields { grid-template-columns:1fr; }

@@ -55,6 +55,7 @@ portfolio_render_js_path = root / "static" / "portfolio-render.js"
 portfolio_review_js_path = root / "static" / "portfolio-review.js"
 portfolio_detail_js_path = root / "static" / "portfolio-detail.js"
 portfolio_list_js_path = root / "static" / "portfolio-list.js"
+portfolio_investment_js_path = root / "static" / "portfolio-investment.js"
 portfolio_actions_js_path = root / "static" / "portfolio-actions.js"
 portfolio_import_js_path = root / "static" / "portfolio-import.js"
 alert_log_js_path = root / "static" / "alert-log-center.js"
@@ -179,6 +180,7 @@ portfolio_module_js = "\n".join((
     portfolio_review_js_path.read_text(encoding="utf-8"),
     portfolio_detail_js_path.read_text(encoding="utf-8"),
     portfolio_list_js_path.read_text(encoding="utf-8"),
+    portfolio_investment_js_path.read_text(encoding="utf-8"),
     portfolio_actions_js_path.read_text(encoding="utf-8"),
     portfolio_import_js_path.read_text(encoding="utf-8"),
     portfolio_js,
@@ -556,6 +558,7 @@ portfolio_scripts = tuple(
         "portfolio-review.js",
         "portfolio-detail.js",
         "portfolio-list.js",
+        "portfolio-investment.js",
         "portfolio-actions.js",
         "portfolio-import.js",
         "portfolio-center.js",
@@ -688,6 +691,9 @@ for required in (
     "function renderPortfolioPositionDetail",
     "function renderPortfolioPositions",
     "function savePortfolioTransaction",
+    "function renderPortfolioInvestments",
+    "function savePortfolioInvestmentPlan",
+    "portfolioView === 'investment'",
     "function previewPortfolioImport",
 ):
     if required not in portfolio_module_js:

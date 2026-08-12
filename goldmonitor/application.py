@@ -54,6 +54,8 @@ from goldmonitor import platform as platform_core
 from goldmonitor import platform_integration_runtime as platform_integration_runtime_core
 from goldmonitor import portfolio as portfolio_core
 from goldmonitor import portfolio_alerts as portfolio_alerts_core
+from goldmonitor import portfolio_investment as portfolio_investment_core
+from goldmonitor import portfolio_investment_runtime as portfolio_investment_runtime_core
 from goldmonitor import portfolio_runtime as portfolio_runtime_core
 from goldmonitor import review_notes as review_notes_core
 from goldmonitor import risk_analysis as risk_analysis_core
@@ -169,6 +171,7 @@ ALERT_PROFILES_PATH = os.path.join(APPDATA_DIR, "alert_profiles.json")
 WATCH_TARGETS_PATH = os.path.join(APPDATA_DIR, "watch_targets.json")
 PORTFOLIO_POSITIONS_PATH = os.path.join(APPDATA_DIR, "portfolio_positions.json")
 PORTFOLIO_TRANSACTIONS_PATH = os.path.join(APPDATA_DIR, "portfolio_transactions.json")
+PORTFOLIO_INVESTMENT_PLANS_PATH = os.path.join(APPDATA_DIR, "portfolio_investment_plans.json")
 PORTFOLIO_IMPORT_BACKUP_PATH = os.path.join(APPDATA_DIR, "portfolio_import_backup.json")
 PORTFOLIO_ALERTS_PATH = os.path.join(APPDATA_DIR, "portfolio_alerts.json")
 MARKET_CACHE_PATH = os.path.join(APPDATA_DIR, "market_cache.json")
@@ -203,6 +206,7 @@ BACKGROUND_TASK_NAMES = frozenset({
     "news",
     "daily_digest",
     "notification_retry",
+    "portfolio_investment",
 })
 NOTIFICATION_RETRY_QUEUE_STATUS_KEYS = (
     "enabled",
@@ -1005,12 +1009,24 @@ def _portfolio_alert_store():
     )
 
 
+def _portfolio_investment_plan_store():
+    return portfolio_investment_core.InvestmentPlanStore(
+        PORTFOLIO_INVESTMENT_PLANS_PATH,
+        now_factory=datetime.now,
+        id_factory=portfolio_investment_core.generate_investment_plan_id,
+    )
+
+
 def load_portfolio_positions():
     return _portfolio_store().load()
 
 
 def load_portfolio_transactions():
     return _portfolio_transaction_store().load()
+
+
+def load_portfolio_investment_plans():
+    return _portfolio_investment_plan_store().load()
 
 
 def load_portfolio_alerts():
@@ -1025,6 +1041,11 @@ def save_portfolio_positions(items=None):
 def save_portfolio_transactions(items=None):
     items = runtime.portfolio_transactions if items is None else items
     return _portfolio_transaction_store().save(items)
+
+
+def save_portfolio_investment_plans(items=None):
+    items = runtime.portfolio_investment_plans if items is None else items
+    return _portfolio_investment_plan_store().save(items)
 
 
 def empty_portfolio_import_backup():
@@ -1080,7 +1101,53 @@ def _build_portfolio_state_from_snapshots(transactions, positions, prices, alert
 
 
 def build_portfolio_state():
-        return _get_portfolio_runtime().build_state()
+    state = _get_portfolio_runtime().build_state()
+    state["investment_plans"] = get_portfolio_investment_plan_state()
+    return state
+
+
+def _get_portfolio_investment_runtime():
+    if runtime.portfolio_investment_runtime_instance is None:
+        runtime.portfolio_investment_runtime_instance = (
+            portfolio_investment_runtime_core.PortfolioInvestmentRuntime(
+                runtime,
+                save_plans=lambda items=None: save_portfolio_investment_plans(items),
+                save_transactions=lambda items=None: save_portfolio_transactions(items),
+                build_portfolio_state=lambda: build_portfolio_state(),
+                emit_event=lambda event, payload: socketio.emit(event, payload),
+                now_factory=datetime.now,
+            )
+        )
+    return runtime.portfolio_investment_runtime_instance
+
+
+def get_portfolio_investment_plan_state():
+    return _get_portfolio_investment_runtime().state_payload()
+
+
+def upsert_portfolio_investment_plan(data):
+    return _get_portfolio_investment_runtime().upsert(data)
+
+
+def delete_portfolio_investment_plan(plan_id):
+    return _get_portfolio_investment_runtime().delete(plan_id)
+
+
+def toggle_portfolio_investment_plan(plan_id, enabled):
+    return _get_portfolio_investment_runtime().toggle(plan_id, enabled)
+
+
+def execute_portfolio_investment_plan(plan_id):
+    return _get_portfolio_investment_runtime().execute(plan_id, force=True)
+
+
+def run_portfolio_investment_plans():
+    result = _get_portfolio_investment_runtime().run_due()
+    socketio.emit(
+        "portfolio_investment_plans_updated",
+        get_portfolio_investment_plan_state(),
+    )
+    return result
 
 
 def _portfolio_analytics_days(value):
@@ -1192,8 +1259,10 @@ def upsert_portfolio_position(data):
 
 
 def delete_portfolio_position(position_id):
-
-        return _get_portfolio_runtime().delete_position(position_id)
+    ok, _state = _get_portfolio_runtime().delete_position(position_id)
+    if ok:
+        _get_portfolio_investment_runtime().pause_for_position(position_id)
+    return ok, build_portfolio_state()
 
 
 def upsert_portfolio_transaction(data):
@@ -1598,6 +1667,7 @@ def _data_archive_paths():
         "watch_targets": {"path": WATCH_TARGETS_PATH, "kind": "json", "label": "目标价观察清单"},
         "portfolio_positions": {"path": PORTFOLIO_POSITIONS_PATH, "kind": "json", "label": "持仓记录"},
         "portfolio_transactions": {"path": PORTFOLIO_TRANSACTIONS_PATH, "kind": "json", "label": "持仓流水"},
+        "portfolio_investment_plans": {"path": PORTFOLIO_INVESTMENT_PLANS_PATH, "kind": "json", "label": "持仓定投计划"},
         "portfolio_import_backup": {"path": PORTFOLIO_IMPORT_BACKUP_PATH, "kind": "json", "label": "持仓导入备份"},
         "portfolio_alerts": {"path": PORTFOLIO_ALERTS_PATH, "kind": "json", "label": "持仓提醒"},
         "market_cache": {"path": MARKET_CACHE_PATH, "kind": "json", "label": "行情缓存"},
@@ -1660,6 +1730,7 @@ def _get_data_archive_runtime():
                 "settings": lambda: load_settings(),
                 "portfolio_positions": lambda: load_portfolio_positions(),
                 "portfolio_transactions": lambda: load_portfolio_transactions(),
+                "portfolio_investment_plans": lambda: load_portfolio_investment_plans(),
                 "portfolio_import_backup": lambda: load_portfolio_import_backup(),
                 "alert_rules": lambda: load_alert_rules(),
                 "sync_legacy_alert_rule_views": lambda: _sync_legacy_alert_rule_views(),
@@ -1915,6 +1986,7 @@ def _get_diagnostics_runtime():
                 "watch_targets": WATCH_TARGETS_PATH,
                 "portfolio_positions": PORTFOLIO_POSITIONS_PATH,
                 "portfolio_transactions": PORTFOLIO_TRANSACTIONS_PATH,
+                "portfolio_investment_plans": PORTFOLIO_INVESTMENT_PLANS_PATH,
                 "portfolio_import_backup": PORTFOLIO_IMPORT_BACKUP_PATH,
                 "portfolio_alerts": PORTFOLIO_ALERTS_PATH,
                 "market_cache": MARKET_CACHE_PATH,
@@ -3394,6 +3466,7 @@ def _application_state_bootstrap():
             "review_notes": lambda: load_review_notes(),
             "portfolio_positions": lambda: load_portfolio_positions(),
             "portfolio_transactions": lambda: load_portfolio_transactions(),
+            "portfolio_investment_plans": lambda: load_portfolio_investment_plans(),
             "portfolio_import_backup": lambda: load_portfolio_import_backup(),
             "news": lambda: load_news_cache(),
             "risk_analysis_history": lambda: load_risk_analysis_history(),
@@ -4312,6 +4385,12 @@ def _get_task_scheduler_runtime():
                 30,
                 lambda: run_notification_retry_once(),
                 result_handler=_notification_retry_task_result,
+            )
+            scheduler.register(
+                "portfolio_investment",
+                "持仓定投",
+                30,
+                lambda: run_portfolio_investment_plans(),
             )
             runtime.task_scheduler_runtime_instance = scheduler
     return runtime.task_scheduler_runtime_instance

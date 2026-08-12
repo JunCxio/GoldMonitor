@@ -138,6 +138,51 @@ function normalizePortfolioImportBackup(data) {
   };
 }
 
+function normalizePortfolioInvestmentPlan(item) {
+  const source = item && typeof item === 'object' && !Array.isArray(item) ? item : {};
+  return {
+    id: source.id || '',
+    name: source.name || '',
+    position_id: source.position_id || '',
+    position_name: source.position_name || '',
+    mode: source.mode === 'usd' ? 'usd' : 'rmb',
+    amount: Number.isFinite(Number(source.amount)) ? Number(source.amount) : 0,
+    fee: Number.isFinite(Number(source.fee)) ? Number(source.fee) : 0,
+    frequency: ['daily', 'monthly', 'yearly'].includes(source.frequency) ? source.frequency : 'monthly',
+    time: source.time || '09:00',
+    month: Number.isFinite(Number(source.month)) ? Number(source.month) : 1,
+    day: Number.isFinite(Number(source.day)) ? Number(source.day) : 1,
+    enabled: source.enabled !== false,
+    next_run_at: source.next_run_at || '',
+    last_scheduled_at: source.last_scheduled_at || '',
+    last_executed_at: source.last_executed_at || '',
+    last_transaction_id: source.last_transaction_id || '',
+    last_price: source.last_price == null ? null : Number(source.last_price),
+    last_quantity: source.last_quantity == null ? null : Number(source.last_quantity),
+    last_result: source.last_result || 'waiting',
+    last_message: source.last_message || '等待首次执行',
+    status: source.status || (source.enabled === false ? 'paused' : 'active'),
+    created_at: source.created_at || '',
+    updated_at: source.updated_at || '',
+  };
+}
+
+function normalizePortfolioInvestmentState(data) {
+  const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  const items = Array.isArray(source.items) ? source.items.map(normalizePortfolioInvestmentPlan).filter(item => item.id) : [];
+  const summary = source.summary && typeof source.summary === 'object' ? source.summary : {};
+  return {
+    items,
+    summary: {
+      total: Number.isFinite(Number(summary.total)) ? Number(summary.total) : items.length,
+      enabled: Number.isFinite(Number(summary.enabled)) ? Number(summary.enabled) : items.filter(item => item.enabled).length,
+      due: Number.isFinite(Number(summary.due)) ? Number(summary.due) : items.filter(item => item.status === 'due').length,
+      attention: Number.isFinite(Number(summary.attention)) ? Number(summary.attention) : items.filter(item => ['waiting_price', 'orphaned', 'error'].includes(item.last_result)).length,
+    },
+    updated_at: source.updated_at || '',
+  };
+}
+
 function normalizePortfolioState(data) {
   const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
   const items = Array.isArray(source.items)
@@ -146,6 +191,9 @@ function normalizePortfolioState(data) {
   const transactions = Array.isArray(source.transactions)
     ? source.transactions.map(item => (item && typeof item === 'object') ? Object.assign({}, item) : null).filter(Boolean)
     : [];
+  const investmentPlans = source.investment_plans == null
+    ? normalizePortfolioInvestmentState(portfolioState && portfolioState.investment_plans)
+    : normalizePortfolioInvestmentState(source.investment_plans);
   return {
     items,
     transactions,
@@ -155,6 +203,7 @@ function normalizePortfolioState(data) {
     prices: source.prices && typeof source.prices === 'object' && !Array.isArray(source.prices) ? Object.assign({}, source.prices) : {},
     review: normalizePortfolioReview(source.review),
     alerts: normalizePortfolioAlertsState(source.alerts),
+    investment_plans: investmentPlans,
     import_backup: normalizePortfolioImportBackup(source.import_backup),
   };
 }
@@ -163,6 +212,7 @@ function applyPortfolio(data) {
   captureActivePortfolioDraft();
   captureActivePortfolioTransactionDraft();
   captureActivePortfolioAlertDraft();
+  captureActivePortfolioInvestmentDraft();
   portfolioState = normalizePortfolioState(data);
   if (activePortfolioPositionId && activePortfolioPositionId !== 'new' && !portfolioState.items.some(item => item.id === activePortfolioPositionId)) {
     clearPortfolioDraft(activePortfolioPositionId);
@@ -178,12 +228,19 @@ function applyPortfolio(data) {
     clearPortfolioTransactionDraft(activePortfolioTransactionId);
     activePortfolioTransactionId = null;
   }
+  if (activePortfolioInvestmentPlanId && activePortfolioInvestmentPlanId !== 'new' && !portfolioState.investment_plans.items.some(item => item.id === activePortfolioInvestmentPlanId)) {
+    clearPortfolioInvestmentDraft(activePortfolioInvestmentPlanId);
+    activePortfolioInvestmentPlanId = null;
+  }
   if (pendingPortfolioSave) {
     if (pendingPortfolioSave.kind === 'transaction') {
       clearPortfolioTransactionDraft(pendingPortfolioSave.id);
       if (activePortfolioTransactionId === pendingPortfolioSave.id) activePortfolioTransactionId = null;
     } else if (pendingPortfolioSave.kind === 'alert') {
       clearPortfolioAlertDraft(pendingPortfolioSave.id);
+    } else if (pendingPortfolioSave.kind === 'investment') {
+      clearPortfolioInvestmentDraft(pendingPortfolioSave.id);
+      if (activePortfolioInvestmentPlanId === pendingPortfolioSave.id) activePortfolioInvestmentPlanId = null;
     } else if (pendingPortfolioSave.kind === 'position') {
       clearPortfolioDraft(pendingPortfolioSave.id);
       if (activePortfolioPositionId === pendingPortfolioSave.id) activePortfolioPositionId = null;

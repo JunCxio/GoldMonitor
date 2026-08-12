@@ -24,6 +24,7 @@ def test_application_state_bootstrap_loads_all_runtime_state_in_order():
             "review_notes": loader("review_notes", [{"id": "note-1"}]),
             "portfolio_positions": loader("portfolio_positions", [{"id": "position-1"}]),
             "portfolio_transactions": loader("portfolio_transactions", [{"id": "transaction-1"}]),
+            "portfolio_investment_plans": loader("portfolio_investment_plans", [{"id": "plan-1"}]),
             "portfolio_import_backup": loader("portfolio_import_backup", {"available": False}),
             "news": loader("news", [{"title": "news-1"}]),
             "risk_analysis_history": loader("risk_analysis_history", [{"id": "risk-1"}]),
@@ -46,6 +47,7 @@ def test_application_state_bootstrap_loads_all_runtime_state_in_order():
     assert runtime.review_notes == [{"id": "note-1"}]
     assert runtime.portfolio_positions == [{"id": "position-1"}]
     assert runtime.portfolio_transactions == [{"id": "transaction-1"}]
+    assert runtime.portfolio_investment_plans == [{"id": "plan-1"}]
     assert runtime.portfolio_import_backup == {"available": False}
     assert runtime.news_items == [{"title": "news-1"}]
     assert runtime.risk_analysis_history == [{"id": "risk-1"}]
@@ -70,6 +72,7 @@ def test_application_state_bootstrap_migrates_existing_settings_marker():
         "review_notes": lambda: [],
         "portfolio_positions": lambda: [],
         "portfolio_transactions": lambda: [],
+        "portfolio_investment_plans": lambda: [],
         "portfolio_import_backup": lambda: {},
         "news": lambda: [],
         "risk_analysis_history": lambda: [],

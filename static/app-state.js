@@ -6,7 +6,7 @@ const socket = io(window.GoldMonitorShell.withSocketDefaults({
 const PORTFOLIO_TRANSACTION_IMPORT_FIELDS = ['id', 'position_id', 'type', 'name', 'mode', 'price', 'quantity', 'fee', 'trade_date', 'note'];
 const PORTFOLIO_TRANSACTION_IMPORT_REQUIRED_FIELDS = ['name', 'type', 'mode', 'price', 'quantity'];
 
-let portfolioState = { items: [], transactions: [], total: 0, rmb_summary: {}, usd_summary: {}, prices: {}, review: { rmb: {}, usd: {} }, alerts: { items: [], total: 0, enabled: 0, triggered: 0 }, import_backup: { available: false } };
+let portfolioState = { items: [], transactions: [], total: 0, rmb_summary: {}, usd_summary: {}, prices: {}, review: { rmb: {}, usd: {} }, alerts: { items: [], total: 0, enabled: 0, triggered: 0 }, investment_plans: { items: [], summary: { total: 0, enabled: 0, due: 0, attention: 0 }, updated_at: '' }, import_backup: { available: false } };
 let portfolioAnalyticsState = null;
 let portfolioAnalyticsRange = 90;
 let portfolioAnalyticsLoading = false;
@@ -24,6 +24,8 @@ let activePortfolioAlertEditorId = null;
 let portfolioDrafts = {};
 let activePortfolioTransactionId = null;
 let portfolioTransactionDrafts = {};
+let activePortfolioInvestmentPlanId = null;
+let portfolioInvestmentDrafts = {};
 let portfolioAlertDrafts = {};
 let pendingPortfolioSave = null;
 let pendingPortfolioImportMessage = '';

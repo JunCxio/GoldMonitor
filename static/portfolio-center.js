@@ -18,6 +18,34 @@ function registerPortfolioSocketHandlers(socketClient) {
     setPortfolioStatus((data && data.message) || '持仓更新失败。', 'fail');
   });
 
+  socketClient.on('portfolio_investment_plans_updated', data => {
+    captureActivePortfolioInvestmentDraft();
+    portfolioState.investment_plans = normalizePortfolioInvestmentState(data);
+    if (activePortfolioInvestmentPlanId && activePortfolioInvestmentPlanId !== 'new' && !portfolioState.investment_plans.items.some(item => item.id === activePortfolioInvestmentPlanId)) {
+      clearPortfolioInvestmentDraft(activePortfolioInvestmentPlanId);
+      activePortfolioInvestmentPlanId = null;
+    }
+    if (pendingPortfolioSave && pendingPortfolioSave.kind === 'investment') {
+      clearPortfolioInvestmentDraft(pendingPortfolioSave.id);
+      activePortfolioInvestmentPlanId = null;
+      pendingPortfolioSave = null;
+    }
+    renderPortfolio();
+  });
+
+  socketClient.on('portfolio_investment_plan_saved', data => {
+    setPortfolioStatus(data && data.plan ? '定投计划已保存。' : '定投计划保存完成。', 'ok');
+  });
+
+  socketClient.on('portfolio_investment_plan_executed', data => {
+    setPortfolioStatus((data && data.message) || '定投计划已执行。', data && data.ok === false ? 'fail' : 'ok');
+  });
+
+  socketClient.on('portfolio_investment_plan_error', data => {
+    pendingPortfolioSave = null;
+    setPortfolioStatus((data && data.message) || '定投计划操作失败。', 'fail');
+  });
+
   socketClient.on('portfolio_exported', data => {
     const count = data && Number.isFinite(Number(data.count)) ? Number(data.count) : portfolioState.total;
     const kindText = data && data.kind === 'review' ? '复盘' : data && data.kind === 'transactions' ? '流水' : '持仓';

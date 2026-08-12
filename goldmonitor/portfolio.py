@@ -437,10 +437,23 @@ def normalize_portfolio_transaction(item, existing=None, now_factory=None, id_fa
 
     trade_date = _normalize_entry_date(item.get("trade_date", existing.get("trade_date", "")))
     note = _clean_text(item.get("note", existing.get("note", "")), PORTFOLIO_NOTE_LIMIT)
+    source = _clean_text(item.get("source", existing.get("source", "")), 40)
+    source_id = _clean_text(item.get("source_id", existing.get("source_id", "")), 80)
+    scheduled_at = _clean_text(
+        item.get("scheduled_at", existing.get("scheduled_at", "")),
+        32,
+    )
+    execution_kind = _clean_text(
+        item.get("execution_kind", existing.get("execution_kind", "")),
+        20,
+    )
+    planned_amount = _positive_float_or_none(
+        item.get("planned_amount", existing.get("planned_amount"))
+    )
     created_at = str(existing.get("created_at") or item.get("created_at") or now)
     updated_at = now
 
-    return {
+    transaction = {
         "id": transaction_id,
         "position_id": position_id,
         "name": name,
@@ -454,6 +467,17 @@ def normalize_portfolio_transaction(item, existing=None, now_factory=None, id_fa
         "created_at": created_at,
         "updated_at": updated_at,
     }
+    if source:
+        transaction["source"] = source
+    if source_id:
+        transaction["source_id"] = source_id
+    if scheduled_at:
+        transaction["scheduled_at"] = scheduled_at
+    if execution_kind:
+        transaction["execution_kind"] = execution_kind
+    if planned_amount is not None:
+        transaction["planned_amount"] = planned_amount
+    return transaction
 
 
 def normalize_portfolio_transactions(items, now_factory=None, id_factory=None, position_id_factory=None):

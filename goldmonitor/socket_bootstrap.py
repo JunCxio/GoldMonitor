@@ -207,6 +207,22 @@ def register_socket_handlers(application):
         delete_portfolio_alert=(
             lambda alert_id: application.delete_portfolio_alert(alert_id)
         ),
+        get_portfolio_investment_plan_state=(
+            lambda: application.get_portfolio_investment_plan_state()
+        ),
+        upsert_portfolio_investment_plan=(
+            lambda data: application.upsert_portfolio_investment_plan(data)
+        ),
+        delete_portfolio_investment_plan=(
+            lambda plan_id: application.delete_portfolio_investment_plan(plan_id)
+        ),
+        toggle_portfolio_investment_plan=(
+            lambda plan_id, enabled:
+            application.toggle_portfolio_investment_plan(plan_id, enabled)
+        ),
+        execute_portfolio_investment_plan=(
+            lambda plan_id: application.execute_portfolio_investment_plan(plan_id)
+        ),
         broadcast_alert_rule_views=(
             lambda: application._broadcast_alert_rule_views()
         ),

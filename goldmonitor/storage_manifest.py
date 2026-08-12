@@ -19,6 +19,7 @@ STORAGE_DEFINITIONS = (
     {"key": "watch_targets", "label": "目标价观察清单", "kind": "json", "schema": "item_payload"},
     {"key": "portfolio_positions", "label": "持仓记录", "kind": "json", "schema": "item_payload"},
     {"key": "portfolio_transactions", "label": "持仓流水", "kind": "json", "schema": "item_payload"},
+    {"key": "portfolio_investment_plans", "label": "持仓定投计划", "kind": "json", "schema": "item_payload"},
     {"key": "portfolio_import_backup", "label": "持仓导入备份", "kind": "json", "schema": "plain_json"},
     {"key": "portfolio_alerts", "label": "持仓提醒", "kind": "json", "schema": "item_payload"},
     {"key": "market_cache", "label": "行情缓存", "kind": "json", "schema": "plain_json"},

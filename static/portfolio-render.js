@@ -25,6 +25,11 @@ function renderPortfolioSummaryCard(title, mode, summary) {
 function renderPortfolioSummary() {
   const box = document.getElementById('portfolioSummary');
   if (!box) return;
+  box.classList.remove('portfolio-investment-summary');
+  if (portfolioView === 'investment') {
+    renderPortfolioInvestmentSummary(box);
+    return;
+  }
   box.innerHTML = [
     renderPortfolioSummaryCard('人民币持仓', 'rmb', portfolioState.rmb_summary),
     renderPortfolioSummaryCard('美元持仓', 'usd', portfolioState.usd_summary),
@@ -252,6 +257,16 @@ function renderPortfolioControls() {
     ].join('');
     return;
   }
+  if (portfolioView === 'investment') {
+    box.innerHTML = [
+      '<label class="portfolio-control portfolio-search">',
+      '<span>搜索</span>',
+      '<input type="search" value="' + escapeHtml(portfolioSearch) + '" placeholder="计划或持仓名称" oninput="setPortfolioSearch(this.value)">',
+      '</label>',
+      '<div class="portfolio-controls-note portfolio-investment-note">应用关闭期间只补最近一期，并按恢复后的最新行情生成买入流水。</div>',
+    ].join('');
+    return;
+  }
   const search = [
     '<label class="portfolio-control portfolio-search">',
     '<span>搜索</span>',
@@ -453,6 +468,10 @@ function renderPortfolio() {
     renderPortfolioTransactions(box);
     return;
   }
+  if (portfolioView === 'investment') {
+    renderPortfolioInvestments(box);
+    return;
+  }
   renderPortfolioPositions(box);
 }
 
@@ -481,7 +500,9 @@ function renderPortfolioHeaderChrome(detailItem) {
     primary.textContent = '返回列表';
     primary.onclick = closePortfolioDetail;
   } else {
-    primary.textContent = '新增流水';
-    primary.onclick = () => setActivePortfolioTransaction('new');
+    primary.textContent = portfolioView === 'investment' ? '新增计划' : '新增流水';
+    primary.onclick = portfolioView === 'investment'
+      ? () => setActivePortfolioInvestmentPlan('new')
+      : () => setActivePortfolioTransaction('new');
   }
 }

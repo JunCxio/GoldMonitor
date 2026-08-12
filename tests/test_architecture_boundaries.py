@@ -98,6 +98,7 @@ def test_large_frontend_domains_are_split_by_responsibility():
         "static/risk-analysis-render.js",
         "static/risk-analysis-comparison.js",
         "static/portfolio-review.js",
+        "static/portfolio-investment.js",
     )
 
     for path in expected_modules:
@@ -112,5 +113,6 @@ def test_large_frontend_domains_are_split_by_responsibility():
         "static/risk-analysis-comparison.js",
         "static/portfolio-render.js",
         "static/portfolio-review.js",
+        "static/portfolio-investment.js",
     ):
         assert len(read_text(path).splitlines()) < 520
