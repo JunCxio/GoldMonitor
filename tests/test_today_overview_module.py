@@ -137,7 +137,18 @@ def test_today_overview_separates_today_activity_from_cross_day_attention():
     assert attention_ids.count("alert:alert-old-critical") == 1
     combined = result["attention"]["items"][0]
     assert combined["reason_codes"] == ["unhandled", "notification_issue"]
+    assert combined["quick_actions"] == [
+        {"kind": "handle_alert", "label": "标记已处理", "target_id": "alert-old-critical"},
+        {"kind": "resend_notification", "label": "重发通知", "target_id": "alert-old-critical"},
+    ]
     assert combined["occurred_today"] is False
+    assert result["attention"]["filter_counts"] == {
+        "all": 7,
+        "alert": 3,
+        "notification": 2,
+        "rule": 3,
+        "market": 1,
+    }
     assert "rule:rule-disabled" not in attention_ids
     assert result["portfolio"]["current"]["rmb"]["total_pnl"] == 650.0
     assert [item["id"] for item in result["portfolio"]["transactions_today"]] == [
@@ -192,6 +203,57 @@ def test_today_overview_ignores_initial_market_waiting_and_normal_quality():
 
     assert initial["summary"]["attention_total"] == 0
     assert normal["summary"]["attention_total"] == 0
+
+
+def test_today_overview_market_issue_exposes_refresh_action():
+    from goldmonitor.today_overview import build_today_overview
+
+    result = build_today_overview(
+        market_quality={"level": "stale", "score": 40, "label": "行情过期"},
+        fetch_status={"ok": False, "message": "行情数据已过期", "retryable": True},
+        now=datetime(2026, 8, 12, 8, 0),
+    )
+
+    item = result["attention"]["items"][0]
+    assert item["kind"] == "market"
+    assert item["quick_actions"] == [
+        {"kind": "refresh_market", "label": "重新获取", "target_id": "market-quality"}
+    ]
+
+
+def test_today_overview_alert_quick_actions_follow_remaining_issue():
+    from goldmonitor.today_overview import build_today_overview
+
+    base = {
+        "id": "combined-alert",
+        "timestamp": "2026-08-12T08:00:00",
+        "read": False,
+        "handled": False,
+        "notification_summary": {"status": "failed"},
+    }
+    combined = build_today_overview(
+        alert_entries=[base],
+        now=datetime(2026, 8, 12, 9, 0),
+    )["attention"]["items"][0]
+    notification_only = build_today_overview(
+        alert_entries=[{**base, "handled": True}],
+        now=datetime(2026, 8, 12, 9, 0),
+    )["attention"]["items"][0]
+    handling_only = build_today_overview(
+        alert_entries=[{**base, "notification_summary": {"status": "sent"}}],
+        now=datetime(2026, 8, 12, 9, 0),
+    )["attention"]["items"][0]
+
+    assert [action["kind"] for action in combined["quick_actions"]] == [
+        "handle_alert",
+        "resend_notification",
+    ]
+    assert [action["kind"] for action in notification_only["quick_actions"]] == [
+        "resend_notification"
+    ]
+    assert [action["kind"] for action in handling_only["quick_actions"]] == [
+        "handle_alert"
+    ]
 
 
 def test_today_overview_is_deterministic_limits_output_and_does_not_mutate_inputs():

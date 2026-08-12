@@ -261,6 +261,7 @@ for required in (
     'id="todayOverviewCount"',
     'id="todayOverviewBackdrop"',
     'id="todayOverviewSummary"',
+    'id="todayOverviewFilters"',
     'id="todayOverviewAttentionList"',
     'id="todayOverviewContext"',
     'id="todayOverviewActivityList"',
@@ -274,6 +275,11 @@ for required in (
     "function closeTodayOverview",
     "function renderTodayOverview",
     "function activateTodayOverviewItem",
+    "function setTodayOverviewAttentionFilter",
+    "function runTodayOverviewQuickAction",
+    "socket.emit('update_alert_log_handling'",
+    "socket.emit('resend_alert_notification'",
+    "refreshPrice();",
     "socketClient.on('today_overview_updated'",
     "socket.emit('get_today_overview'",
     "socket.emit('mark_today_overview_viewed'",
@@ -290,6 +296,8 @@ if "requestTodayOverview(false);" not in app_js:
 for required in (
     ".today-overview-workspace",
     ".today-overview-attention-item",
+    ".today-overview-filter.active",
+    ".today-overview-item-actions",
     ".today-overview-market-state",
     ".today-overview-activity-item",
     ".today-overview-item-action:focus-visible",
@@ -1682,12 +1690,13 @@ for forbidden in (
     "alertLogView === 'handled'",
     "alertLogView === 'failed'",
     "const actions = hasNotificationIssue ? [",
-    "标记已处理",
-    "取消处理",
-    "log-handled",
 ):
     if forbidden in js:
         raise SystemExit(f"static/app.js keeps removed alert log workflow: {forbidden}")
+
+for forbidden in ("标记已处理", "取消处理", "log-handled"):
+    if forbidden in alert_log_js:
+        raise SystemExit(f"alert log keeps removed handling workflow: {forbidden}")
 
 for pattern in (
     r"clearThreshold\(.*?rule\.type.*?>停用预警</button>",

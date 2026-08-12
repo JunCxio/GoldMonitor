@@ -1059,6 +1059,7 @@
   .today-overview-status { min-height:0; padding:0 22px; color:var(--text-dim); font-size:0.7rem; line-height:1.45; }
   .today-overview-status:not(:empty) { min-height:36px; display:flex; align-items:center; border-bottom:1px solid var(--hairline); }
   .today-overview-status.loading { color:var(--gold); }
+  .today-overview-status.ok { color:#72c5a1; }
   .today-overview-status.fail { color:var(--danger-text); }
   .today-overview-workspace { flex:1 1 auto; min-height:0; display:grid; grid-template-columns:minmax(0, 1.12fr) minmax(360px, 0.88fr); }
   .today-overview-section { min-width:0; min-height:0; }
@@ -1070,6 +1071,13 @@
   .today-overview-section-head span { display:block; margin-bottom:3px; color:var(--text-dim); font-size:0.61rem; font-weight:750; letter-spacing:0.065em; }
   .today-overview-section-head h3 { color:var(--text-strong); font-size:0.9rem; letter-spacing:-0.01em; }
   .today-overview-section-head > strong { color:var(--text-dim); font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.68rem; font-weight:700; white-space:nowrap; }
+  .today-overview-filters { display:flex; flex-wrap:wrap; gap:6px; margin:-2px 0 12px; }
+  .today-overview-filter { min-height:27px; display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border:1px solid rgba(255,255,255,0.065); border-radius:7px; background:rgba(255,255,255,0.018); color:#8f8fa1; cursor:pointer; font-size:0.62rem; font-weight:750; }
+  .today-overview-filter strong { min-width:16px; color:#6f6f82; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.58rem; text-align:right; }
+  .today-overview-filter:hover { border-color:rgba(255,255,255,0.12); color:#c7c7d1; }
+  .today-overview-filter.active { border-color:rgba(232,184,48,0.25); background:rgba(232,184,48,0.075); color:#efd16d; }
+  .today-overview-filter.active strong { color:#efd16d; }
+  .today-overview-filter:focus-visible { outline:none; box-shadow:var(--focus-ring); }
   .today-overview-attention-list { min-height:0; display:grid; align-content:start; gap:8px; overflow-y:auto; padding-right:4px; }
   .today-overview-attention-item { position:relative; min-width:0; display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:12px; align-items:center; padding:13px 13px 13px 17px; border:1px solid rgba(255,255,255,0.065); border-radius:9px; background:rgba(255,255,255,0.022); overflow:hidden; }
   .today-overview-attention-item::before { content:""; position:absolute; top:0; bottom:0; left:0; width:3px; background:#77778b; }
@@ -1088,8 +1096,13 @@
   .today-overview-attention-item p { margin-top:4px; color:var(--text-dim); font-size:0.69rem; line-height:1.45; overflow-wrap:anywhere; }
   .today-overview-reasons { display:flex; gap:5px; flex-wrap:wrap; margin-top:7px; }
   .today-overview-reasons span { padding:2px 6px; border-radius:5px; background:rgba(255,255,255,0.035); color:#9696a8; font-size:0.59rem; }
+  .today-overview-item-actions { display:flex; justify-content:flex-end; gap:6px; flex-wrap:wrap; max-width:196px; }
   .today-overview-item-action { min-height:30px; padding:5px 9px; border:1px solid var(--control-border); border-radius:7px; background:var(--control-bg); color:#c9c9d3; cursor:pointer; font-size:0.66rem; font-weight:750; white-space:nowrap; }
   .today-overview-item-action:hover { border-color:var(--control-border-strong); background:rgba(232,184,48,0.08); color:var(--gold); }
+  .today-overview-item-action.primary { border-color:rgba(232,184,48,0.22); background:rgba(232,184,48,0.065); color:#efd16d; }
+  .today-overview-item-action.secondary { background:transparent; color:#9696a8; }
+  .today-overview-item-action:disabled { cursor:wait; opacity:0.48; }
+  .today-overview-item-action.is-pending { border-color:rgba(232,184,48,0.3); color:#efd16d; }
   .today-overview-item-action:focus-visible { outline:none; box-shadow:var(--focus-ring); }
   .today-overview-context { display:grid; gap:10px; }
   .today-overview-market-state { width:100%; min-width:0; display:grid; grid-template-columns:auto minmax(0, 1fr) auto; gap:9px; align-items:center; padding:10px 11px; border:1px solid rgba(255,255,255,0.065); border-radius:9px; background:rgba(255,255,255,0.022); color:inherit; cursor:pointer; text-align:left; }
@@ -1362,7 +1375,7 @@
     .today-overview-refresh { padding-left:9px; padding-right:9px; }
     .today-overview-summary-item { padding:11px 13px 10px; }
     .today-overview-attention-item { grid-template-columns:1fr; align-items:start; }
-    .today-overview-item-action { justify-self:start; }
+    .today-overview-item-actions { justify-content:flex-start; max-width:none; }
     .today-overview-portfolio-summary { grid-template-columns:1fr; }
     .today-overview-portfolio-mode + .today-overview-portfolio-mode { border-left:0; border-top:1px solid var(--hairline); }
   }
