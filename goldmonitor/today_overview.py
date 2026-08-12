@@ -210,9 +210,23 @@ def _alert_attention(entries, start, end):
             reason_codes.append("unhandled")
         if notification_issue:
             reason_codes.append("notification_issue")
+        source_id = entry.get("id") or entry.get("alert_id") or timestamp
+        quick_actions = []
+        if unhandled:
+            quick_actions.append({
+                "kind": "handle_alert",
+                "label": "标记已处理",
+                "target_id": str(source_id or ""),
+            })
+        if notification_issue:
+            quick_actions.append({
+                "kind": "resend_notification",
+                "label": "重发通知",
+                "target_id": str(source_id or ""),
+            })
         items.append(_attention_item(
             "alert",
-            entry.get("id") or entry.get("alert_id") or timestamp,
+            source_id,
             priority,
             _alert_title(entry),
             entry.get("message") or "警报需要处理。",
@@ -223,6 +237,7 @@ def _alert_attention(entries, start, end):
             alert_type=alert_type,
             rule_id=str(entry.get("rule_id") or ""),
             notification_status=notification_status,
+            quick_actions=quick_actions,
         ))
     return items, {
         "unread": unread_count,
@@ -287,6 +302,11 @@ def _market_attention(market_quality, fetch_status, generated_at):
         market_level=level,
         market_score=quality.get("score"),
         details=reasons,
+        quick_actions=[{
+            "kind": "refresh_market",
+            "label": "重新获取",
+            "target_id": "market-quality",
+        }],
     )
 
 
@@ -423,6 +443,23 @@ def _sort_activity(items):
     return sorted(items, key=lambda item: (str(item.get("timestamp") or ""), item["id"]), reverse=True)
 
 
+def _attention_filter_counts(items):
+    counts = {
+        "all": len(items),
+        "alert": 0,
+        "notification": 0,
+        "rule": 0,
+        "market": 0,
+    }
+    for item in items:
+        kind = str(item.get("kind") or "")
+        if kind in counts:
+            counts[kind] += 1
+        if "notification_issue" in list(item.get("reason_codes") or []):
+            counts["notification"] += 1
+    return counts
+
+
 def _latest_summary(item, keys, summary_builder=None):
     if not item:
         return None
@@ -468,6 +505,7 @@ def build_today_overview(
     attention = alert_attention + rule_attention + ([market_item] if market_item else [])
     attention = _sort_attention(attention)
     attention_total = len(attention)
+    attention_filter_counts = _attention_filter_counts(attention)
     attention = attention[:_bounded_limit(attention_limit, TODAY_OVERVIEW_ATTENTION_LIMIT)]
 
     alert_activity = _alert_activity(alerts, start, end)
@@ -518,6 +556,7 @@ def build_today_overview(
             "items": attention,
             "total": attention_total,
             "truncated": attention_total > len(attention),
+            "filter_counts": attention_filter_counts,
         },
         "activity": {
             "items": activity,

@@ -4,6 +4,10 @@ let todayOverviewRefreshTimer = null;
 let todayOverviewLastFocused = null;
 let todayOverviewShouldMarkViewed = false;
 let todayOverviewItemIndex = {};
+let todayOverviewAttentionFilter = 'all';
+let todayOverviewPendingAction = null;
+let todayOverviewActionFeedback = null;
+let todayOverviewFeedbackTimer = null;
 
 const TODAY_OVERVIEW_REFRESH_EVENTS = [
   'alert',
@@ -111,13 +115,31 @@ function todayOverviewActivityLabel(kind) {
 
 function todayOverviewActionLabel(action) {
   return ({
-    open_alert: '查看警报',
-    open_rule: '检查规则',
-    open_market_status: '查看行情',
+    open_alert: '查看详情',
+    open_rule: '编辑规则',
+    open_market_status: '查看详情',
     open_portfolio_transaction: '查看流水',
     open_risk_analysis: '查看分析',
     open_review_note: '查看笔记',
   })[action && action.kind] || '查看';
+}
+
+function todayOverviewFilterLabel(filter) {
+  return ({
+    all: '全部',
+    alert: '警报',
+    notification: '通知异常',
+    rule: '规则',
+    market: '行情',
+  })[filter] || '全部';
+}
+
+function todayOverviewFilterMatches(item, filter) {
+  if (filter === 'all') return true;
+  if (filter === 'notification') {
+    return Array.isArray(item.reason_codes) && item.reason_codes.includes('notification_issue');
+  }
+  return item.kind === filter;
 }
 
 function setTodayOverviewStatus(message, type) {
@@ -125,6 +147,30 @@ function setTodayOverviewStatus(message, type) {
   if (!status) return;
   status.textContent = message || '';
   status.className = 'today-overview-status' + (type ? ' ' + type : '');
+}
+
+function setTodayOverviewActionFeedback(message, type, autoClear) {
+  todayOverviewActionFeedback = message ? { message, type: type || '' } : null;
+  if (todayOverviewFeedbackTimer) clearTimeout(todayOverviewFeedbackTimer);
+  todayOverviewFeedbackTimer = null;
+  setTodayOverviewStatus(message, type);
+  if (message && autoClear) {
+    todayOverviewFeedbackTimer = setTimeout(() => {
+      todayOverviewFeedbackTimer = null;
+      todayOverviewActionFeedback = null;
+      if (!todayOverviewPendingAction) setTodayOverviewStatus('', '');
+    }, 4000);
+  }
+}
+
+function renderTodayOverviewFeedback() {
+  if (todayOverviewPendingAction) {
+    setTodayOverviewStatus(todayOverviewPendingAction.message, 'loading');
+  } else if (todayOverviewActionFeedback) {
+    setTodayOverviewStatus(todayOverviewActionFeedback.message, todayOverviewActionFeedback.type);
+  } else {
+    setTodayOverviewStatus('', '');
+  }
 }
 
 function updateTodayOverviewButton(summary) {
@@ -162,16 +208,66 @@ function todayOverviewAttentionMeta(item) {
   return parts.join(' · ') || '当前状态';
 }
 
+function renderTodayOverviewFilters(attention) {
+  const box = document.getElementById('todayOverviewFilters');
+  if (!box) return;
+  const counts = attention && attention.filter_counts && typeof attention.filter_counts === 'object'
+    ? attention.filter_counts
+    : {};
+  const filters = ['all', 'alert', 'notification', 'rule', 'market'];
+  if (!filters.includes(todayOverviewAttentionFilter)) todayOverviewAttentionFilter = 'all';
+  box.innerHTML = filters.map(filter => {
+    const count = Math.max(0, Math.trunc(todayOverviewNumber(counts[filter])));
+    const active = filter === todayOverviewAttentionFilter;
+    return [
+      '<button class="today-overview-filter' + (active ? ' active' : '') + '" type="button"',
+      ' onclick="setTodayOverviewAttentionFilter(\'' + filter + '\')"',
+      ' aria-pressed="' + String(active) + '">',
+      '<span>' + escapeHtml(todayOverviewFilterLabel(filter)) + '</span>',
+      '<strong>' + escapeHtml(String(count)) + '</strong>',
+      '</button>',
+    ].join('');
+  }).join('');
+}
+
+function setTodayOverviewAttentionFilter(filter) {
+  todayOverviewAttentionFilter = ['all', 'alert', 'notification', 'rule', 'market'].includes(filter) ? filter : 'all';
+  if (todayOverviewState) renderTodayOverview(todayOverviewState);
+}
+
+function todayOverviewQuickActionButtons(item, token) {
+  const actions = Array.isArray(item.quick_actions) ? item.quick_actions : [];
+  const pending = todayOverviewPendingAction && todayOverviewPendingAction.itemId === item.id;
+  const quickButtons = actions.map((action, index) => {
+    const actionPending = pending && todayOverviewPendingAction.kind === action.kind;
+    const label = actionPending ? '处理中…' : (action.label || '处理');
+    return [
+      '<button class="today-overview-item-action primary' + (actionPending ? ' is-pending' : '') + '" type="button"',
+      ' onclick="runTodayOverviewQuickAction(\'' + token + '\', ' + index + ')"',
+      todayOverviewPendingAction ? ' disabled' : '',
+      '>' + escapeHtml(label) + '</button>',
+    ].join('');
+  }).join('');
+  const detailButton = [
+    '<button class="today-overview-item-action secondary" type="button"',
+    ' onclick="activateTodayOverviewItem(\'' + token + '\')">',
+    escapeHtml(todayOverviewActionLabel(item.action)),
+    '</button>',
+  ].join('');
+  return '<div class="today-overview-item-actions">' + quickButtons + detailButton + '</div>';
+}
+
 function renderTodayOverviewAttention(items, total, truncated) {
   const list = document.getElementById('todayOverviewAttentionList');
   const count = document.getElementById('todayOverviewAttentionCount');
   if (!list || !count) return;
   count.textContent = todayOverviewCountText(total, '项');
   if (!items.length) {
+    const filtered = todayOverviewAttentionFilter !== 'all';
     list.innerHTML = [
       '<div class="today-overview-empty clear">',
-      '<strong>当前没有待处理事项</strong>',
-      '<span>警报、规则和行情状态均无需人工介入。</span>',
+      '<strong>' + (filtered ? '当前分类没有待处理事项' : '当前没有待处理事项') + '</strong>',
+      '<span>' + (filtered ? '可切换到其他分类继续检查。' : '警报、规则和行情状态均无需人工介入。') + '</span>',
       '</div>',
     ].join('');
     return;
@@ -194,7 +290,7 @@ function renderTodayOverviewAttention(items, total, truncated) {
       '<p>' + escapeHtml(item.summary || '请检查相关状态。') + '</p>',
       tags ? '<div class="today-overview-reasons">' + tags + '</div>' : '',
       '</div>',
-      '<button class="today-overview-item-action" type="button" onclick="activateTodayOverviewItem(\'' + token + '\')">' + escapeHtml(todayOverviewActionLabel(item.action)) + '</button>',
+      todayOverviewQuickActionButtons(item, token),
       '</article>',
     ].join('');
   }).join('') + (truncated
@@ -309,10 +405,22 @@ function renderTodayOverview(data) {
   const activity = state.activity && typeof state.activity === 'object' ? state.activity : {};
   const attentionItems = Array.isArray(attention.items) ? attention.items : [];
   const activityItems = Array.isArray(activity.items) ? activity.items : [];
+  const filteredAttentionItems = attentionItems.filter(item => todayOverviewFilterMatches(item, todayOverviewAttentionFilter));
+  const filterCounts = attention.filter_counts && typeof attention.filter_counts === 'object' ? attention.filter_counts : {};
+  const filteredAttentionTotal = todayOverviewAttentionFilter === 'all'
+    ? todayOverviewNumber(attention.total)
+    : todayOverviewNumber(filterCounts[todayOverviewAttentionFilter]);
   todayOverviewItemIndex = {};
+  todayOverviewFilteredAttentionItems = filteredAttentionItems;
   updateTodayOverviewButton(summary);
   renderTodayOverviewSummary(summary);
-  renderTodayOverviewAttention(attentionItems, attention.total, attention.truncated);
+  renderTodayOverviewFilters(attention);
+  renderTodayOverviewBatchTools(filteredAttentionItems);
+  renderTodayOverviewAttention(
+    filteredAttentionItems,
+    filteredAttentionTotal,
+    filteredAttentionTotal > filteredAttentionItems.length,
+  );
   renderTodayOverviewContext(state.market, state.portfolio);
   renderTodayOverviewActivity(activityItems, activity.total, activity.truncated);
   const subtitle = document.getElementById('todayOverviewSubtitle');
@@ -321,7 +429,7 @@ function renderTodayOverview(data) {
   if (subtitle) {
     subtitle.textContent = [dateText, updatedText ? updatedText + ' 更新' : ''].filter(Boolean).join(' · ') || '汇总当前待处理事项和本机今日活动。';
   }
-  setTodayOverviewStatus('', '');
+  renderTodayOverviewFeedback();
 }
 
 function requestTodayOverview(manual) {
@@ -332,7 +440,12 @@ function requestTodayOverview(manual) {
   todayOverviewLoading = true;
   const refreshButton = document.getElementById('todayOverviewRefreshButton');
   if (refreshButton) refreshButton.disabled = true;
-  if (manual || !todayOverviewState) setTodayOverviewStatus('正在更新今日概览…', 'loading');
+  if (manual) {
+    setTodayOverviewActionFeedback('', '');
+    setTodayOverviewStatus('正在更新今日概览…', 'loading');
+  } else if (!todayOverviewState && !todayOverviewPendingAction) {
+    setTodayOverviewStatus('正在更新今日概览…', 'loading');
+  }
   socket.emit('get_today_overview');
 }
 
@@ -350,6 +463,7 @@ function registerTodayOverviewSocketHandlers(socketClient) {
     const refreshButton = document.getElementById('todayOverviewRefreshButton');
     if (refreshButton) refreshButton.disabled = false;
     todayOverviewState = data && typeof data === 'object' ? data : {};
+    applyTodayOverviewBatchRefresh(todayOverviewState);
     renderTodayOverview(todayOverviewState);
     if (todayOverviewIsOpen()) todayOverviewShouldMarkViewed = true;
   });
@@ -365,9 +479,56 @@ function registerTodayOverviewSocketHandlers(socketClient) {
     setTodayOverviewStatus((data && data.message) || '今日概览加载失败，请稍后重试。', 'fail');
   });
 
+  socketClient.on('alert_log_handling_updated', data => {
+    const pending = todayOverviewPendingAction;
+    if (!pending || pending.kind !== 'handle_alert') return;
+    const entryId = data && data.entry ? String(data.entry.id || '') : '';
+    if (entryId && entryId !== pending.targetId) return;
+    todayOverviewPendingAction = null;
+    setTodayOverviewActionFeedback('警报已标记为已处理。', 'ok', true);
+    if (todayOverviewState) renderTodayOverview(todayOverviewState);
+  });
+
+  socketClient.on('alert_log_handling_error', data => {
+    if (!todayOverviewPendingAction || todayOverviewPendingAction.kind !== 'handle_alert') return;
+    todayOverviewPendingAction = null;
+    setTodayOverviewActionFeedback((data && data.message) || '警报处理失败。', 'fail', true);
+    if (todayOverviewState) renderTodayOverview(todayOverviewState);
+  });
+
+  socketClient.on('alert_notification_resent', data => {
+    const pending = todayOverviewPendingAction;
+    if (!pending || pending.kind !== 'resend_notification') return;
+    const entryId = data && data.entry ? String(data.entry.id || '') : '';
+    if (entryId && entryId !== pending.targetId) return;
+    todayOverviewPendingAction = null;
+    setTodayOverviewActionFeedback('通知已重新提交，投递结果会自动更新。', 'ok', true);
+    if (todayOverviewState) renderTodayOverview(todayOverviewState);
+  });
+
+  socketClient.on('alert_notification_resend_error', data => {
+    if (!todayOverviewPendingAction || todayOverviewPendingAction.kind !== 'resend_notification') return;
+    todayOverviewPendingAction = null;
+    setTodayOverviewActionFeedback((data && data.message) || '通知重发失败。', 'fail', true);
+    if (todayOverviewState) renderTodayOverview(todayOverviewState);
+  });
+
+  socketClient.on('fetch_status', data => {
+    if (!todayOverviewPendingAction || todayOverviewPendingAction.kind !== 'refresh_market') return;
+    if (data && data.retryable === false && data.ok !== true) return;
+    todayOverviewPendingAction = null;
+    if (data && data.ok === true) {
+      setTodayOverviewActionFeedback('行情已更新。', 'ok', true);
+    } else {
+      setTodayOverviewActionFeedback((data && data.message) || '行情重新获取失败。', 'fail', true);
+    }
+    if (todayOverviewState) renderTodayOverview(todayOverviewState);
+  });
+
   TODAY_OVERVIEW_REFRESH_EVENTS.forEach(eventName => {
     socketClient.on(eventName, queueTodayOverviewRefresh);
   });
+  registerTodayOverviewBatchSocketHandlers(socketClient);
 }
 
 function openTodayOverview() {
@@ -493,6 +654,45 @@ function activateTodayOverviewItem(token) {
   if (!item) return;
   const action = item.action && typeof item.action === 'object' ? item.action : {};
   activateTodayOverviewAction(action.kind, action.target_id, item.timestamp);
+}
+
+function runTodayOverviewQuickAction(token, actionIndex) {
+  const item = todayOverviewItemIndex[token];
+  const actions = item && Array.isArray(item.quick_actions) ? item.quick_actions : [];
+  const action = actions[actionIndex];
+  if (!item || !action || todayOverviewPendingAction) return;
+  if (!socket.connected) {
+    setTodayOverviewActionFeedback('本地服务未连接，暂时无法处理该事项。', 'fail', true);
+    return;
+  }
+  const messages = {
+    handle_alert: '正在更新警报处置状态…',
+    resend_notification: '正在重新提交通知…',
+    refresh_market: '正在重新获取行情数据…',
+  };
+  todayOverviewActionFeedback = null;
+  todayOverviewPendingAction = {
+    itemId: item.id,
+    targetId: String(action.target_id || item.source_id || ''),
+    kind: action.kind,
+    message: messages[action.kind] || '正在处理…',
+  };
+  renderTodayOverview(todayOverviewState);
+  if (action.kind === 'handle_alert') {
+    socket.emit('update_alert_log_handling', {
+      id: todayOverviewPendingAction.targetId,
+      handled: true,
+      note: '',
+    });
+  } else if (action.kind === 'resend_notification') {
+    socket.emit('resend_alert_notification', { id: todayOverviewPendingAction.targetId });
+  } else if (action.kind === 'refresh_market') {
+    refreshPrice();
+  } else {
+    todayOverviewPendingAction = null;
+    setTodayOverviewActionFeedback('该处理操作暂不可用。', 'fail', true);
+    renderTodayOverview(todayOverviewState);
+  }
 }
 
 document.addEventListener('keydown', handleTodayOverviewKeydown);
