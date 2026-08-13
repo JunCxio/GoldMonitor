@@ -100,6 +100,7 @@ def test_large_frontend_domains_are_split_by_responsibility():
         "static/portfolio-review.js",
         "static/portfolio-investment-list.js",
         "static/portfolio-investment-projection.js",
+        "static/portfolio-investment-simulation.js",
         "static/portfolio-investment.js",
         "static/portfolio-investment-actions.js",
     )
@@ -118,6 +119,7 @@ def test_large_frontend_domains_are_split_by_responsibility():
         "static/portfolio-review.js",
         "static/portfolio-investment-list.js",
         "static/portfolio-investment-projection.js",
+        "static/portfolio-investment-simulation.js",
         "static/portfolio-investment.js",
         "static/portfolio-investment-actions.js",
     ):

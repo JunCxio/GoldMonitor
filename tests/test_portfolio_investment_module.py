@@ -1,6 +1,6 @@
 import csv
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import StringIO
 
 
@@ -1201,3 +1201,269 @@ def test_investment_plan_execution_csv_supports_plan_without_executions():
     assert count == 0
     assert rows == []
     assert content.startswith("plan_id,plan_name,transaction_id,")
+
+
+def test_investment_history_simulation_generates_daily_weekly_and_monthly_runs():
+    from goldmonitor.portfolio_investment import investment_plan_history_simulation
+
+    now = datetime(2026, 8, 12, 10, 0)
+    history = [
+        {
+            "timestamp": datetime(2026, 7, 1, 9, 0).isoformat(),
+            "rmb": 500 + offset,
+            "usd": 2500 + offset,
+        }
+        for offset in range(43)
+    ]
+    base = {
+        "id": "plan-simulation",
+        "name": "历史模拟",
+        "position_name": "积存金",
+        "mode": "rmb",
+        "amount": 1000,
+        "fee": 2,
+        "time": "09:00",
+        "month": 1,
+        "day": 1,
+        "weekday": 1,
+        "start_date": "",
+        "end_date": "",
+        "created_at": "2026-07-01T08:00:00",
+    }
+
+    daily = investment_plan_history_simulation(
+        {**base, "frequency": "daily"},
+        history,
+        days=7,
+        now=now,
+    )
+    weekly = investment_plan_history_simulation(
+        {**base, "frequency": "weekly", "weekday": 3},
+        history,
+        days=30,
+        now=now,
+    )
+    monthly = investment_plan_history_simulation(
+        {**base, "frequency": "monthly", "day": 31},
+        history,
+        days=90,
+        now=now,
+    )
+
+    assert daily["scheduled_count"] == 7
+    assert weekly["scheduled_count"] == 5
+    assert monthly["scheduled_count"] == 1
+    assert monthly["executions"][0]["scheduled_at"] == "2026-07-31T09:00:00"
+
+
+def test_investment_history_simulation_respects_created_at_target_and_yearly_schedule():
+    from goldmonitor.portfolio_investment import investment_plan_history_simulation
+
+    now = datetime(2026, 8, 12, 10, 0)
+    history = [
+        {
+            "timestamp": (datetime(2026, 8, 9, 9, 0) + timedelta(days=offset)).isoformat(),
+            "rmb": 500,
+        }
+        for offset in range(4)
+    ]
+    daily = {
+        "id": "plan-target",
+        "mode": "rmb",
+        "amount": 1000,
+        "fee": 0,
+        "target_count": 2,
+        "frequency": "daily",
+        "time": "09:00",
+        "month": 1,
+        "day": 1,
+        "weekday": 1,
+        "start_date": "",
+        "end_date": "",
+        "created_at": "2026-08-10T08:00:00",
+    }
+    yearly = {
+        **daily,
+        "id": "plan-yearly",
+        "target_count": 0,
+        "frequency": "yearly",
+        "month": 8,
+        "day": 10,
+        "created_at": "2025-01-01T08:00:00",
+    }
+
+    limited = investment_plan_history_simulation(daily, history, days=7, now=now)
+    annual = investment_plan_history_simulation(yearly, history, days=90, now=now)
+
+    assert [item["scheduled_at"] for item in limited["executions"]] == [
+        "2026-08-10T09:00:00",
+        "2026-08-11T09:00:00",
+    ]
+    assert annual["scheduled_count"] == 1
+    assert annual["executions"][0]["scheduled_at"] == "2026-08-10T09:00:00"
+
+
+def test_investment_history_simulation_uses_mode_fee_rounding_and_valuation():
+    from goldmonitor.portfolio_investment import investment_plan_history_simulation
+
+    plan = {
+        "id": "plan-usd",
+        "mode": "usd",
+        "amount": 1000,
+        "fee": 3,
+        "frequency": "daily",
+        "time": "09:00",
+        "month": 1,
+        "day": 1,
+        "weekday": 1,
+        "start_date": "2026-08-11",
+        "end_date": "",
+        "created_at": "2026-08-01T08:00:00",
+    }
+    history = [
+        {"timestamp": "2026-08-11T09:00:00", "rmb": 500, "usd": 2500},
+        {"timestamp": "2026-08-12T09:00:00", "rmb": 510, "usd": 2600},
+        {"timestamp": "2026-08-12T10:00:00", "rmb": 520, "usd": 2700},
+    ]
+
+    result = investment_plan_history_simulation(
+        plan,
+        history,
+        days=7,
+        now=datetime(2026, 8, 12, 10, 0),
+    )
+
+    assert result["scheduled_count"] == 2
+    assert result["covered_count"] == 2
+    assert result["executions"][0]["price"] == 2500
+    assert result["executions"][0]["quantity"] == 0.4
+    assert result["executions"][1]["quantity"] == round(1000 / 2600, 8)
+    assert result["total_fees"] == 6
+    assert result["latest_price"] == 2700
+    assert result["market_value"] == result["quantity"] * 2700
+    assert result["pnl"] == result["market_value"] - result["actual_cost"]
+
+
+def test_investment_history_simulation_reports_partial_and_missing_coverage():
+    from goldmonitor.portfolio_investment import investment_plan_history_simulation
+
+    plan = {
+        "id": "plan-partial",
+        "mode": "rmb",
+        "amount": 1000,
+        "fee": 0,
+        "frequency": "daily",
+        "time": "09:00",
+        "month": 1,
+        "day": 1,
+        "weekday": 1,
+        "start_date": "2026-08-10",
+        "end_date": "",
+        "created_at": "2026-08-01T08:00:00",
+    }
+    history = []
+    cursor = datetime(2026, 8, 9, 0, 0)
+    while cursor <= datetime(2026, 8, 12, 10, 0):
+        if not datetime(2026, 8, 10, 7, 0) <= cursor <= datetime(2026, 8, 10, 11, 0):
+            history.append({"timestamp": cursor.isoformat(), "rmb": 500})
+        cursor += timedelta(hours=1)
+
+    partial = investment_plan_history_simulation(
+        plan,
+        list(reversed(history)) + [
+            {"timestamp": "invalid", "rmb": 999},
+            {"timestamp": "2026-08-12T11:00:00", "rmb": 999},
+        ],
+        days=7,
+        now=datetime(2026, 8, 12, 10, 0),
+    )
+    missing = investment_plan_history_simulation(
+        plan,
+        [],
+        days=7,
+        now=datetime(2026, 8, 12, 10, 0),
+    )
+
+    assert partial["usable"] is True
+    assert partial["partial"] is True
+    assert partial["covered_count"] == 2
+    assert partial["missing_count"] == 1
+    assert partial["coverage"]["interval_seconds"] == 3600
+    assert partial["coverage"]["interval_label"] == "约 1 小时"
+    assert missing["usable"] is False
+    assert missing["partial"] is True
+    assert missing["covered_count"] == 0
+    assert missing["actual_cost"] == 0
+    assert missing["market_value"] is None
+
+
+def test_investment_history_simulation_caps_sparse_sample_match_tolerance():
+    from goldmonitor.portfolio_investment import investment_plan_history_simulation
+
+    plan = {
+        "id": "plan-sparse",
+        "mode": "rmb",
+        "amount": 1000,
+        "fee": 0,
+        "frequency": "daily",
+        "time": "09:00",
+        "month": 1,
+        "day": 1,
+        "weekday": 1,
+        "start_date": "2026-08-11",
+        "end_date": "",
+        "created_at": "2026-08-01T08:00:00",
+    }
+    history = [
+        {"timestamp": "2026-08-01T00:00:00", "rmb": 500},
+        {"timestamp": "2026-08-08T00:00:00", "rmb": 510},
+    ]
+
+    result = investment_plan_history_simulation(
+        plan,
+        history,
+        days=7,
+        now=datetime(2026, 8, 12, 10, 0),
+    )
+
+    assert result["coverage"]["interval_seconds"] == 7 * 24 * 60 * 60
+    assert result["coverage"]["match_tolerance_seconds"] == 2 * 60 * 60
+    assert result["covered_count"] == 0
+
+
+def test_investment_history_simulation_does_not_mutate_inputs_and_validates_range():
+    from copy import deepcopy
+
+    import pytest
+
+    from goldmonitor.portfolio_investment import investment_plan_history_simulation
+
+    plan = {
+        "id": "plan-immutable",
+        "mode": "rmb",
+        "amount": 1000,
+        "fee": 0,
+        "frequency": "monthly",
+        "time": "09:00",
+        "month": 1,
+        "day": 1,
+        "weekday": 1,
+        "start_date": "",
+        "end_date": "",
+        "created_at": "2026-01-01T08:00:00",
+    }
+    history = [{"timestamp": "2026-08-01T09:00:00", "rmb": 500}]
+    original_plan = deepcopy(plan)
+    original_history = deepcopy(history)
+
+    investment_plan_history_simulation(
+        plan,
+        history,
+        days=30,
+        now=datetime(2026, 8, 12, 10, 0),
+    )
+
+    assert plan == original_plan
+    assert history == original_history
+    with pytest.raises(ValueError, match="仅支持 7、30 或 90 天"):
+        investment_plan_history_simulation(plan, history, days=14)

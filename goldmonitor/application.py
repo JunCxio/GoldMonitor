@@ -1129,6 +1129,21 @@ def build_portfolio_investment_executions_csv(plan_id):
     return _get_portfolio_investment_runtime().build_executions_csv(plan_id)
 
 
+def build_portfolio_investment_simulation(plan_id, days):
+    try:
+        window_days = int(days)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("历史模拟范围无效") from exc
+    if window_days not in portfolio_investment_core.INVESTMENT_SIMULATION_WINDOWS:
+        raise ValueError("历史模拟仅支持 7、30 或 90 天")
+    history = _analytics_price_history(window_days, limit=1000)
+    return _get_portfolio_investment_runtime().simulate(
+        plan_id,
+        history,
+        window_days,
+    )
+
+
 def preview_portfolio_investment_schedule(data):
     return _get_portfolio_investment_runtime().preview_schedule(data)
 

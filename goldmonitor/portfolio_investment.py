@@ -4,6 +4,7 @@ import json
 import math
 import os
 import secrets
+from bisect import bisect_left
 from datetime import date, datetime, timedelta
 from io import StringIO
 
@@ -19,6 +20,7 @@ INVESTMENT_COMMITMENT_WINDOW_DAYS = 30
 INVESTMENT_ACTUAL_WINDOW_DAYS = 30
 INVESTMENT_ACTUAL_TREND_MONTHS = 6
 INVESTMENT_RELIABILITY_WINDOW_DAYS = 90
+INVESTMENT_SIMULATION_WINDOWS = {7, 30, 90}
 INVESTMENT_EXECUTION_CSV_FIELDS = [
     "plan_id",
     "plan_name",
@@ -1131,6 +1133,260 @@ def investment_plan_performance(plan, transactions, current_price=None, history_
         "pnl_percent": pnl_percent,
         "valuation_status": "valued" if market_value is not None else "waiting_price" if executions else "empty",
         "recent_executions": executions[:max(1, int(history_limit))],
+    }
+
+
+def _simulation_history_timestamp(value):
+    text = _clean_text(value)
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
+
+
+def _simulation_interval_seconds(points):
+    deltas = sorted(
+        int((current[0] - previous[0]).total_seconds())
+        for previous, current in zip(points, points[1:])
+        if current[0] > previous[0]
+    )
+    if not deltas:
+        return None
+    middle = len(deltas) // 2
+    return (
+        deltas[middle]
+        if len(deltas) % 2
+        else int(round((deltas[middle - 1] + deltas[middle]) / 2))
+    )
+
+
+def _simulation_interval_label(seconds):
+    if not seconds:
+        return "样本不足"
+    if seconds < 60:
+        return f"约 {seconds} 秒"
+    if seconds < 3600:
+        return f"约 {max(1, round(seconds / 60))} 分钟"
+    if seconds < 86400:
+        return f"约 {max(1, round(seconds / 3600))} 小时"
+    return f"约 {max(1, round(seconds / 86400))} 天"
+
+
+def _nearest_simulation_point(points, timestamps, target, tolerance_seconds):
+    if not points:
+        return None
+    index = bisect_left(timestamps, target)
+    candidates = []
+    if index < len(points):
+        candidates.append(points[index])
+    if index > 0:
+        candidates.append(points[index - 1])
+    if not candidates:
+        return None
+    matched = min(
+        candidates,
+        key=lambda item: (
+            abs((item[0] - target).total_seconds()),
+            item[0] > target,
+        ),
+    )
+    return (
+        matched
+        if abs((matched[0] - target).total_seconds()) <= tolerance_seconds
+        else None
+    )
+
+
+def _investment_simulation_run_ats(plan, start_at, end_at):
+    schedule = normalize_investment_schedule(plan)
+    target_count = _target_count(plan.get("target_count", 0))
+    plan_start = parse_plan_datetime(plan.get("created_at"))
+    schedule_start = parse_plan_date(schedule.get("start_date"))
+    if schedule_start:
+        schedule_start_at = datetime.combine(schedule_start, datetime.min.time())
+        plan_start = max(plan_start, schedule_start_at) if plan_start else schedule_start_at
+    plan_start = plan_start or start_at
+    candidate = next_plan_run_in_window(
+        schedule,
+        plan_start - timedelta(microseconds=1),
+    )
+    run_ats = []
+    generated_count = 0
+    while candidate is not None and candidate <= end_at:
+        generated_count += 1
+        if candidate >= start_at:
+            run_ats.append(candidate)
+        if target_count and generated_count >= target_count:
+            break
+        try:
+            candidate = next_plan_run_in_window(schedule, candidate)
+        except (OverflowError, ValueError):
+            candidate = None
+    return run_ats
+
+
+def investment_plan_history_simulation(plan, price_history, *, days=30, now=None):
+    if not isinstance(plan, dict):
+        raise ValueError("定投计划格式无效")
+    try:
+        window_days = int(days)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("历史模拟范围无效") from exc
+    if window_days not in INVESTMENT_SIMULATION_WINDOWS:
+        raise ValueError("历史模拟仅支持 7、30 或 90 天")
+
+    now = now or datetime.now()
+    start_at = datetime.combine(
+        now.date() - timedelta(days=window_days - 1),
+        datetime.min.time(),
+    )
+    mode = _clean_text(plan.get("mode", "rmb")).lower()
+    if mode not in {"rmb", "usd"}:
+        raise ValueError("定投持仓单位无效")
+    amount = _positive_float(plan.get("amount"))
+    fee = _nonnegative_float(plan.get("fee", 0))
+    if amount is None or fee is None:
+        raise ValueError("定投金额或手续费无效")
+
+    points_by_timestamp = {}
+    for raw in list(price_history or []):
+        if not isinstance(raw, dict):
+            continue
+        timestamp = _simulation_history_timestamp(raw.get("timestamp"))
+        price = _positive_float(raw.get(mode))
+        if timestamp is None or timestamp > now or price is None:
+            continue
+        points_by_timestamp[timestamp] = price
+    points = sorted(points_by_timestamp.items(), key=lambda item: item[0])
+    interval_seconds = _simulation_interval_seconds(points)
+    maximum_tolerance_seconds = 2 * 60 * 60 if window_days <= 30 else 24 * 60 * 60
+    tolerance_seconds = min(
+        max(60, interval_seconds or 0),
+        maximum_tolerance_seconds,
+    )
+    eligible_points = [
+        item for item in points
+        if item[0] >= start_at - timedelta(seconds=tolerance_seconds)
+    ]
+    timestamps = [item[0] for item in eligible_points]
+    run_ats = _investment_simulation_run_ats(plan, start_at, now)
+
+    executions = []
+    total_quantity = 0.0
+    gross_invested = 0.0
+    total_fees = 0.0
+    for scheduled_at in run_ats:
+        matched = _nearest_simulation_point(
+            eligible_points,
+            timestamps,
+            scheduled_at,
+            tolerance_seconds,
+        )
+        if matched is None:
+            executions.append({
+                "scheduled_at": scheduled_at.isoformat(timespec="seconds"),
+                "status": "missing",
+                "sample_timestamp": "",
+                "sample_offset_seconds": None,
+                "price": None,
+                "quantity": None,
+                "gross_amount": None,
+                "fee": fee,
+                "total_cost": None,
+            })
+            continue
+        sample_timestamp, price = matched
+        quantity = round(amount / price, 8)
+        gross_amount = price * quantity
+        total_cost = gross_amount + fee
+        total_quantity += quantity
+        gross_invested += gross_amount
+        total_fees += fee
+        executions.append({
+            "scheduled_at": scheduled_at.isoformat(timespec="seconds"),
+            "status": "estimated",
+            "sample_timestamp": sample_timestamp.isoformat(timespec="seconds"),
+            "sample_offset_seconds": int(
+                abs((sample_timestamp - scheduled_at).total_seconds())
+            ),
+            "price": price,
+            "quantity": quantity,
+            "gross_amount": gross_amount,
+            "fee": fee,
+            "total_cost": total_cost,
+        })
+
+    latest_match = _nearest_simulation_point(
+        eligible_points,
+        timestamps,
+        now,
+        tolerance_seconds,
+    )
+    latest_price = latest_match[1] if latest_match is not None else None
+    actual_cost = gross_invested + total_fees
+    market_value = (
+        total_quantity * latest_price
+        if total_quantity > 0 and latest_price is not None
+        else None
+    )
+    pnl = market_value - actual_cost if market_value is not None else None
+    covered_count = sum(item["status"] == "estimated" for item in executions)
+    scheduled_count = len(executions)
+    missing_count = scheduled_count - covered_count
+    point_count = len(eligible_points)
+    return {
+        "days": window_days,
+        "supported": True,
+        "usable": covered_count > 0,
+        "partial": missing_count > 0,
+        "mode": mode,
+        "scheduled_count": scheduled_count,
+        "covered_count": covered_count,
+        "missing_count": missing_count,
+        "planned_amount": amount * scheduled_count,
+        "covered_planned_amount": amount * covered_count,
+        "actual_cost": actual_cost,
+        "total_fees": total_fees,
+        "quantity": total_quantity,
+        "average_price": (
+            gross_invested / total_quantity if total_quantity > 0 else None
+        ),
+        "latest_price": latest_price,
+        "latest_price_timestamp": (
+            latest_match[0].isoformat(timespec="seconds")
+            if latest_match is not None
+            else ""
+        ),
+        "market_value": market_value,
+        "pnl": pnl,
+        "pnl_percent": (
+            pnl / actual_cost * 100
+            if pnl is not None and actual_cost > 0
+            else None
+        ),
+        "coverage": {
+            "point_count": point_count,
+            "first_timestamp": (
+                eligible_points[0][0].isoformat(timespec="seconds")
+                if eligible_points
+                else ""
+            ),
+            "last_timestamp": (
+                eligible_points[-1][0].isoformat(timespec="seconds")
+                if eligible_points
+                else ""
+            ),
+            "interval_seconds": interval_seconds,
+            "interval_label": _simulation_interval_label(interval_seconds),
+            "match_tolerance_seconds": tolerance_seconds,
+            "covered_percent": (
+                covered_count / scheduled_count * 100 if scheduled_count else None
+            ),
+        },
+        "executions": executions,
     }
 
 

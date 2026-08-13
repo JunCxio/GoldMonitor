@@ -57,6 +57,7 @@ portfolio_detail_js_path = root / "static" / "portfolio-detail.js"
 portfolio_list_js_path = root / "static" / "portfolio-list.js"
 portfolio_investment_list_js_path = root / "static" / "portfolio-investment-list.js"
 portfolio_investment_projection_js_path = root / "static" / "portfolio-investment-projection.js"
+portfolio_investment_simulation_js_path = root / "static" / "portfolio-investment-simulation.js"
 portfolio_investment_js_path = root / "static" / "portfolio-investment.js"
 portfolio_investment_actions_js_path = root / "static" / "portfolio-investment-actions.js"
 portfolio_actions_js_path = root / "static" / "portfolio-actions.js"
@@ -566,6 +567,7 @@ portfolio_scripts = tuple(
         "portfolio-list.js",
         "portfolio-investment-list.js",
         "portfolio-investment-projection.js",
+        "portfolio-investment-simulation.js",
         "portfolio-investment.js",
         "portfolio-investment-actions.js",
         "portfolio-actions.js",

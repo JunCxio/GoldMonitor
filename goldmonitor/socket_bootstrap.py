@@ -240,6 +240,10 @@ def register_socket_handlers(application):
             lambda plan_id:
             application.build_portfolio_investment_executions_csv(plan_id)
         ),
+        build_portfolio_investment_simulation=(
+            lambda plan_id, days:
+            application.build_portfolio_investment_simulation(plan_id, days)
+        ),
         broadcast_alert_rule_views=(
             lambda: application._broadcast_alert_rule_views()
         ),

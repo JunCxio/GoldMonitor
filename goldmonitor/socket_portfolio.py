@@ -30,6 +30,7 @@ def register_portfolio_handlers(
     skip_portfolio_investment_plan,
     execute_portfolio_investment_plan,
     build_portfolio_investment_executions_csv,
+    build_portfolio_investment_simulation,
     broadcast_alert_rule_views,
     build_portfolio_csv,
     save_export_file,
@@ -221,6 +222,30 @@ def register_portfolio_handlers(
             "portfolio_investment_plans_updated",
             get_portfolio_investment_plan_state(),
         )
+
+    @socketio.on("simulate_portfolio_investment_plan")
+    def on_simulate_portfolio_investment_plan(data=None):
+        payload = data if isinstance(data, dict) else {}
+        plan_id = str(payload.get("id") or "").strip()
+        request_id = str(payload.get("request_id") or "").strip()
+        try:
+            result = build_portfolio_investment_simulation(
+                plan_id,
+                payload.get("days"),
+            )
+        except (OSError, ValueError) as exc:
+            emit("portfolio_investment_plan_simulation_error", {
+                "id": plan_id,
+                "request_id": request_id,
+                "message": str(exc),
+            })
+            return
+        emit("portfolio_investment_plan_simulation", {
+            "ok": True,
+            "id": plan_id,
+            "request_id": request_id,
+            "result": result,
+        })
 
     @socketio.on("skip_portfolio_investment_plan")
     def on_skip_portfolio_investment_plan(data=None):

@@ -430,3 +430,136 @@ def test_app_rejects_execution_export_for_missing_investment_plan(monkeypatch):
 
     assert error["message"] == "未找到定投计划"
     client.disconnect()
+
+
+def test_app_simulates_investment_plan_history_with_request_id(monkeypatch, tmp_path):
+    import app
+
+    plan = {
+        "id": "plan-simulation",
+        "name": "每日定投",
+        "position_name": "积存金",
+        "mode": "rmb",
+        "amount": 1000.0,
+        "fee": 1.0,
+        "frequency": "daily",
+        "time": "09:00",
+        "month": 1,
+        "day": 1,
+        "weekday": 1,
+        "start_date": "2026-08-11",
+        "end_date": "",
+        "enabled": True,
+        "created_at": "2026-08-01T08:00:00",
+    }
+    history = [
+        {"timestamp": "2026-08-11T09:00:00", "rmb": 500.0, "usd": 2500.0},
+        {"timestamp": "2026-08-12T09:00:00", "rmb": 510.0, "usd": 2550.0},
+        {"timestamp": "2026-08-12T10:00:00", "rmb": 520.0, "usd": 2600.0},
+    ]
+    monkeypatch.setattr(
+        app,
+        "PORTFOLIO_INVESTMENT_PLANS_PATH",
+        str(tmp_path / "portfolio_investment_plans.json"),
+    )
+    monkeypatch.setattr(app, "portfolio_investment_plans", [plan])
+    monkeypatch.setattr(app, "portfolio_transactions", [])
+    monkeypatch.setattr(app, "portfolio_positions", [])
+    monkeypatch.setattr(app, "portfolio_alerts", [])
+    monkeypatch.setattr(app, "portfolio_import_backup", app.empty_portfolio_import_backup())
+    monkeypatch.setattr(app, "_analytics_price_history", lambda days, limit=1000: history)
+    _reset_portfolio_runtime(app)
+    app._get_portfolio_investment_runtime().now_factory = lambda: datetime(2026, 8, 12, 10, 0)
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+    client.emit("simulate_portfolio_investment_plan", {
+        "id": "plan-simulation",
+        "days": 7,
+        "request_id": "simulation-1",
+    })
+    events = client.get_received()
+    simulated = next(
+        item["args"][0]
+        for item in events
+        if item["name"] == "portfolio_investment_plan_simulation"
+    )
+
+    assert simulated["ok"] is True
+    assert simulated["id"] == "plan-simulation"
+    assert simulated["request_id"] == "simulation-1"
+    assert simulated["result"]["covered_count"] == 2
+    assert simulated["result"]["latest_price"] == 520.0
+    assert app.portfolio_transactions == []
+    client.disconnect()
+
+
+def test_app_rejects_invalid_or_missing_investment_simulation(monkeypatch):
+    import app
+
+    monkeypatch.setattr(app, "portfolio_investment_plans", [])
+    monkeypatch.setattr(app, "portfolio_transactions", [])
+    monkeypatch.setattr(app, "_analytics_price_history", lambda days, limit=1000: [])
+    _reset_portfolio_runtime(app)
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+
+    client.emit("simulate_portfolio_investment_plan", {
+        "id": "missing-plan",
+        "days": 30,
+        "request_id": "missing",
+    })
+    missing_events = client.get_received()
+    missing = next(
+        item["args"][0]
+        for item in missing_events
+        if item["name"] == "portfolio_investment_plan_simulation_error"
+    )
+    assert missing == {
+        "id": "missing-plan",
+        "request_id": "missing",
+        "message": "未找到定投计划",
+    }
+
+    plan = {
+        "id": "plan-invalid-range",
+        "mode": "rmb",
+        "amount": 1000,
+        "fee": 0,
+        "frequency": "monthly",
+        "time": "09:00",
+        "month": 1,
+        "day": 1,
+        "weekday": 1,
+        "start_date": "",
+        "end_date": "",
+    }
+    monkeypatch.setattr(app, "portfolio_investment_plans", [plan])
+    _reset_portfolio_runtime(app)
+    client.emit("simulate_portfolio_investment_plan", {
+        "id": "plan-invalid-range",
+        "days": 14,
+        "request_id": "invalid",
+    })
+    invalid_events = client.get_received()
+    invalid = next(
+        item["args"][0]
+        for item in invalid_events
+        if item["name"] == "portfolio_investment_plan_simulation_error"
+    )
+    assert invalid["request_id"] == "invalid"
+    assert invalid["message"] == "历史模拟仅支持 7、30 或 90 天"
+
+    client.emit("simulate_portfolio_investment_plan", {
+        "id": "plan-invalid-range",
+        "request_id": "empty",
+    })
+    empty_events = client.get_received()
+    empty = next(
+        item["args"][0]
+        for item in empty_events
+        if item["name"] == "portfolio_investment_plan_simulation_error"
+    )
+    assert empty["request_id"] == "empty"
+    assert empty["message"] == "历史模拟范围无效"
+    client.disconnect()

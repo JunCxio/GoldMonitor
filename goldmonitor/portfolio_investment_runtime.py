@@ -48,6 +48,20 @@ class PortfolioInvestmentRuntime:
         )
         return content, count, plan
 
+    def simulate(self, plan_id, price_history, days):
+        plan_id = str(plan_id or "").strip()
+        with self.state.investment_plan_lock:
+            index = self._find_plan_index(plan_id)
+            if index < 0:
+                raise ValueError("未找到定投计划")
+            plan = dict(self.state.portfolio_investment_plans[index])
+        return investment_core.investment_plan_history_simulation(
+            plan,
+            price_history,
+            days=days,
+            now=self.now_factory(),
+        )
+
     def preview_schedule(self, data):
         payload = dict(data or {})
         plan_id = str(payload.get("id") or "").strip()

@@ -15,6 +15,7 @@ def read_investment_source():
         for name in (
             "portfolio-investment-list.js",
             "portfolio-investment-projection.js",
+            "portfolio-investment-simulation.js",
             "portfolio-investment.js",
             "portfolio-investment-actions.js",
         )
@@ -74,6 +75,94 @@ if (plan.variance.planned_amount !== 2200 || plan.variance.latest.id !== 'execut
     assert result.returncode == 0, result.stderr
 
 
+def test_investment_history_simulation_frontend_requests_and_renders_results():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("需要 Node.js 执行定投前端行为测试")
+
+    source = (ROOT / "static" / "portfolio-investment-simulation.js").read_text(encoding="utf-8")
+    script = """
+const vm = require('vm');
+const emits = [];
+const context = {
+  console,
+  portfolioInvestmentSimulations: {}, portfolioInvestmentSimulationSeq: 0,
+  activePortfolioInvestmentPlanId: 'plan-1', renderPortfolio: () => {},
+  socket: { emit: (...args) => emits.push(args) },
+  escapeHtml: value => String(value),
+  formatPortfolioMoney: (value, mode) => (mode === 'usd' ? '$' : '¥') + Number(value).toFixed(2),
+  formatPortfolioSignedMoney: value => String(value),
+  formatPortfolioPercent: value => Number(value).toFixed(1) + '%',
+  formatPortfolioNumber: value => Number(value).toFixed(8),
+  portfolioQuantityUnit: mode => mode === 'usd' ? '盎司' : '克',
+  portfolioInvestmentDateTime: value => String(value),
+  portfolioPnlClass: value => Number(value) >= 0 ? 'positive' : 'negative',
+};
+context.globalThis = context;
+vm.createContext(context);
+vm.runInContext(__SOURCE__, context);
+vm.runInContext("setPortfolioInvestmentSimulationDays('plan-1', 90); requestPortfolioInvestmentSimulation('plan-1')", context);
+if (emits.length !== 1 || emits[0][0] !== 'simulate_portfolio_investment_plan') throw new Error('simulation must emit once');
+if (emits[0][1].days !== 90 || emits[0][1].request_id !== '1') throw new Error('simulation must send selected range and request id');
+vm.runInContext(`applyPortfolioInvestmentSimulation({id:'plan-1',request_id:'stale',result:{scheduled_count:99}})`, context);
+if (context.portfolioInvestmentSimulations['plan-1'].result) throw new Error('stale simulation response must be ignored');
+vm.runInContext(`applyPortfolioInvestmentSimulation({id:'plan-1',request_id:'1',result:{
+  days:90,usable:true,partial:true,mode:'rmb',scheduled_count:3,covered_count:2,missing_count:1,
+  actual_cost:2002,total_fees:2,quantity:4,average_price:500,latest_price:510,
+  latest_price_timestamp:'2026-08-12T10:00:00',market_value:2040,pnl:38,pnl_percent:1.898,
+  coverage:{point_count:44,first_timestamp:'2026-07-01T09:00:00',last_timestamp:'2026-08-12T10:00:00',interval_label:'约 1 天'},
+  executions:[
+    {scheduled_at:'2026-07-01T09:00:00',status:'estimated',sample_timestamp:'2026-07-01T09:00:00',price:500,quantity:2,total_cost:1001},
+    {scheduled_at:'2026-08-01T09:00:00',status:'missing'}
+  ]
+}})`, context);
+const html = vm.runInContext("portfolioInvestmentSimulationMarkup({id:'plan-1'})", context);
+if (!html.includes('近 90 天') || !html.includes('部分覆盖') || !html.includes('2/3 期 · 67%')) throw new Error('simulation must render selected range and partial coverage');
+if (!html.includes('44 个') || !html.includes('约 1 天') || !html.includes('附近没有可用行情样本')) throw new Error('simulation must render data coverage and missing run');
+if (!html.includes('基于本地历史样本估算') || !html.includes('不代表真实成交、滑点或历史真实收益') || !html.includes('不会写入持仓和流水')) throw new Error('simulation must explain estimation limits');
+vm.runInContext("setPortfolioInvestmentSimulationDays('plan-1', 7)", context);
+if (context.portfolioInvestmentSimulations['plan-1'].result !== null) throw new Error('changing range must clear the previous result');
+"""
+    script = script.replace("__SOURCE__", json.dumps(source))
+    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_investment_history_simulation_frontend_renders_loading_empty_and_error():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("需要 Node.js 执行定投前端行为测试")
+
+    source = (ROOT / "static" / "portfolio-investment-simulation.js").read_text(encoding="utf-8")
+    script = """
+const vm = require('vm');
+const context = {
+  console, portfolioInvestmentSimulations: {}, portfolioInvestmentSimulationSeq: 0,
+  activePortfolioInvestmentPlanId: 'plan-1', renderPortfolio: () => {}, socket: {emit: () => {}},
+  escapeHtml: value => String(value), formatPortfolioMoney: value => String(value),
+  formatPortfolioSignedMoney: value => String(value), formatPortfolioPercent: value => String(value),
+  formatPortfolioNumber: value => String(value), portfolioQuantityUnit: () => '克',
+  portfolioInvestmentDateTime: value => String(value), portfolioPnlClass: () => '',
+};
+context.globalThis = context;
+vm.createContext(context);
+vm.runInContext(__SOURCE__, context);
+context.portfolioInvestmentSimulations['plan-1'] = {days:7,request_id:'1',loading:true,result:null,message:''};
+let html = vm.runInContext("portfolioInvestmentSimulationMarkup({id:'plan-1'})", context);
+if (!html.includes('正在读取本地历史行情')) throw new Error('simulation must render loading state');
+context.portfolioInvestmentSimulations['plan-1'] = {days:7,request_id:'1',loading:false,result:{days:7,usable:false,partial:true,mode:'rmb',scheduled_count:2,covered_count:0,missing_count:2,coverage:{point_count:0,interval_label:'样本不足'},executions:[]},message:''};
+html = vm.runInContext("portfolioInvestmentSimulationMarkup({id:'plan-1'})", context);
+if (!html.includes('无可用行情') || !html.includes('无法对所选期次进行估算')) throw new Error('simulation must render unusable coverage');
+context.portfolioInvestmentSimulations['plan-1'] = {days:7,request_id:'2',loading:true,result:null,message:''};
+vm.runInContext("applyPortfolioInvestmentSimulationError({id:'plan-1',request_id:'2',message:'历史模拟范围无效'})", context);
+html = vm.runInContext("portfolioInvestmentSimulationMarkup({id:'plan-1'})", context);
+if (!html.includes('历史模拟范围无效')) throw new Error('simulation must render backend error');
+"""
+    script = script.replace("__SOURCE__", json.dumps(source))
+    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 def test_investment_plan_frontend_renders_plan_reliability_in_expanded_detail():
     node = shutil.which("node")
     if not node:
@@ -84,6 +173,8 @@ def test_investment_plan_frontend_renders_plan_reliability_in_expanded_detail():
 const vm = require('vm');
 const context = {
   console,
+  portfolioInvestmentSimulations: {},
+  portfolioInvestmentSimulationSeq: 0,
   escapeHtml: value => String(value),
   formatPortfolioMoney: (value, mode) => (mode === 'usd' ? '$' : '¥') + Number(value).toFixed(2),
   formatPortfolioSignedMoney: value => String(value),

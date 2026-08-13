@@ -64,6 +64,14 @@ function registerPortfolioSocketHandlers(socketClient) {
     applyPortfolioInvestmentSchedulePreview(data || {});
   });
 
+  socketClient.on('portfolio_investment_plan_simulation', data => {
+    applyPortfolioInvestmentSimulation(data || {});
+  });
+
+  socketClient.on('portfolio_investment_plan_simulation_error', data => {
+    applyPortfolioInvestmentSimulationError(data || {});
+  });
+
   socketClient.on('portfolio_investment_plan_error', data => {
     pendingPortfolioSave = null;
     setPortfolioStatus((data && data.message) || '定投计划操作失败。', 'fail');
