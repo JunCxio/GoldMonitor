@@ -95,3 +95,111 @@ def test_investment_plan_store_round_trips_versioned_payload(tmp_path):
     assert saved[0]["next_run_at"] == "2026-08-13T09:00:00"
     assert payload["schema_version"] == 1
     assert store.load() == saved
+
+
+def test_investment_plan_state_calculates_performance_from_sourced_transactions():
+    from goldmonitor.portfolio_investment import investment_plan_state
+
+    plans = [{
+        "id": "plan-1",
+        "name": "每月定投",
+        "mode": "rmb",
+        "enabled": True,
+        "next_run_at": "2026-09-15T09:00:00",
+        "last_result": "ok",
+    }]
+    transactions = [
+        {
+            "id": "execution-2",
+            "type": "buy",
+            "mode": "rmb",
+            "price": 600.0,
+            "quantity": 2.0,
+            "fee": 2.0,
+            "created_at": "2026-08-12T10:00:00",
+            "source": "investment_plan",
+            "source_id": "plan-1",
+            "execution_kind": "manual",
+            "planned_amount": 1200.0,
+        },
+        {
+            "id": "execution-1",
+            "type": "buy",
+            "mode": "rmb",
+            "price": 500.0,
+            "quantity": 2.0,
+            "fee": 1.0,
+            "created_at": "2026-07-15T09:00:00",
+            "source": "investment_plan",
+            "source_id": "plan-1",
+            "execution_kind": "scheduled",
+            "planned_amount": 1000.0,
+        },
+        {
+            "id": "other-source",
+            "type": "buy",
+            "mode": "rmb",
+            "price": 400.0,
+            "quantity": 10.0,
+            "fee": 0.0,
+            "source": "manual",
+            "source_id": "plan-1",
+        },
+    ]
+
+    state = investment_plan_state(
+        plans,
+        transactions=transactions,
+        prices={"rmb": 700.0},
+        now=datetime(2026, 8, 12, 12, 0),
+    )
+
+    performance = state["items"][0]["performance"]
+    assert performance["execution_count"] == 2
+    assert performance["total_quantity"] == 4.0
+    assert performance["gross_invested"] == 2200.0
+    assert performance["total_fees"] == 3.0
+    assert performance["total_invested"] == 2203.0
+    assert performance["average_price"] == 550.0
+    assert performance["average_cost"] == 550.75
+    assert performance["market_value"] == 2800.0
+    assert performance["pnl"] == 597.0
+    assert round(performance["pnl_percent"], 4) == 27.0994
+    assert [item["id"] for item in performance["recent_executions"]] == [
+        "execution-2",
+        "execution-1",
+    ]
+    assert state["summary"]["execution_count"] == 2
+    assert state["summary"]["rmb_invested"] == 2203.0
+    assert state["summary"]["usd_invested"] == 0.0
+
+
+def test_investment_plan_performance_waits_for_current_price_and_limits_history():
+    from goldmonitor.portfolio_investment import investment_plan_performance
+
+    transactions = [
+        {
+            "id": f"execution-{index:02d}",
+            "type": "buy",
+            "price": 500.0 + index,
+            "quantity": 1.0,
+            "fee": 0.0,
+            "created_at": f"2026-08-{index + 1:02d}T09:00:00",
+            "source": "investment_plan",
+            "source_id": "plan-1",
+        }
+        for index in range(12)
+    ]
+
+    performance = investment_plan_performance(
+        {"id": "plan-1"},
+        transactions,
+        current_price=None,
+    )
+
+    assert performance["execution_count"] == 12
+    assert performance["valuation_status"] == "waiting_price"
+    assert performance["market_value"] is None
+    assert performance["pnl"] is None
+    assert len(performance["recent_executions"]) == 10
+    assert performance["recent_executions"][0]["id"] == "execution-11"

@@ -97,6 +97,13 @@ def test_runtime_catches_up_latest_run_and_generates_sourced_transaction():
     assert state.portfolio_investment_plans[0]["next_run_at"] == "2026-09-15T09:00:00"
     assert events[-1][0] == "portfolio_updated"
 
+    state_payload = runtime.state_payload(now=datetime(2026, 8, 20, 10, 0))
+    performance = state_payload["items"][0]["performance"]
+    assert performance["execution_count"] == 1
+    assert performance["total_invested"] == 1002.0
+    assert performance["market_value"] == 1000.0
+    assert performance["pnl"] == -2.0
+
 
 def test_runtime_uses_usd_price_and_creates_position_on_first_execution():
     runtime, state, _events = _runtime(

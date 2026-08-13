@@ -23,11 +23,15 @@ class PortfolioInvestmentRuntime:
         self.now_factory = now_factory or datetime.now
 
     def state_payload(self, now=None):
-        with self.state.investment_plan_lock:
+        with self.state.lock, self.state.investment_plan_lock:
             plans = [dict(item) for item in self.state.portfolio_investment_plans]
+            transactions = [dict(item) for item in self.state.portfolio_transactions]
+            prices = {"rmb": self.state.price_rmb, "usd": self.state.price_usd}
         return investment_core.investment_plan_state(
             plans,
             now=now or self.now_factory(),
+            transactions=transactions,
+            prices=prices,
         )
 
     def _find_plan_index(self, plan_id):

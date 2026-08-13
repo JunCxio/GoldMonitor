@@ -11,6 +11,7 @@ from .data_contracts import unwrap_item_payload, wrap_item_payload
 INVESTMENT_PLAN_SCHEMA_VERSION = 1
 INVESTMENT_FREQUENCIES = {"daily", "monthly", "yearly"}
 INVESTMENT_EXECUTION_KINDS = {"scheduled", "catch_up", "manual"}
+INVESTMENT_EXECUTION_HISTORY_LIMIT = 10
 
 
 def generate_investment_plan_id():
@@ -266,10 +267,83 @@ def normalize_investment_plans(items, *, now_factory=None, id_factory=None):
     return normalized
 
 
-def investment_plan_state(items, *, now=None):
+def investment_plan_performance(plan, transactions, current_price=None, history_limit=INVESTMENT_EXECUTION_HISTORY_LIMIT):
+    plan_id = _clean_text((plan or {}).get("id"))
+    executions = []
+    for raw in list(transactions or []):
+        if not isinstance(raw, dict):
+            continue
+        if raw.get("source") != "investment_plan" or _clean_text(raw.get("source_id")) != plan_id:
+            continue
+        if raw.get("type") != "buy":
+            continue
+        price = _positive_float(raw.get("price"))
+        quantity = _positive_float(raw.get("quantity"))
+        fee = _nonnegative_float(raw.get("fee"))
+        if price is None or quantity is None or fee is None:
+            continue
+        gross_amount = price * quantity
+        total_cost = gross_amount + fee
+        executions.append({
+            "id": _clean_text(raw.get("id")),
+            "timestamp": _clean_text(raw.get("created_at") or raw.get("updated_at")),
+            "trade_date": _clean_text(raw.get("trade_date")),
+            "scheduled_at": _clean_text(raw.get("scheduled_at")),
+            "execution_kind": _clean_text(raw.get("execution_kind")),
+            "price": price,
+            "quantity": quantity,
+            "fee": fee,
+            "planned_amount": raw.get("planned_amount"),
+            "gross_amount": gross_amount,
+            "total_cost": total_cost,
+        })
+    executions.sort(
+        key=lambda item: (
+            item.get("timestamp") or item.get("scheduled_at") or item.get("trade_date") or "",
+            item.get("id") or "",
+        ),
+        reverse=True,
+    )
+    total_quantity = sum(item["quantity"] for item in executions)
+    gross_invested = sum(item["gross_amount"] for item in executions)
+    total_fees = sum(item["fee"] for item in executions)
+    total_invested = gross_invested + total_fees
+    average_price = gross_invested / total_quantity if total_quantity > 0 else None
+    average_cost = total_invested / total_quantity if total_quantity > 0 else None
+    price = _positive_float(current_price)
+    market_value = total_quantity * price if price is not None and total_quantity > 0 else None
+    pnl = market_value - total_invested if market_value is not None else None
+    pnl_percent = pnl / total_invested * 100 if pnl is not None and total_invested > 0 else None
+    return {
+        "execution_count": len(executions),
+        "total_quantity": total_quantity,
+        "gross_invested": gross_invested,
+        "total_fees": total_fees,
+        "total_invested": total_invested,
+        "average_price": average_price,
+        "average_cost": average_cost,
+        "current_price": price,
+        "market_value": market_value,
+        "pnl": pnl,
+        "pnl_percent": pnl_percent,
+        "valuation_status": "valued" if market_value is not None else "waiting_price" if executions else "empty",
+        "recent_executions": executions[:max(1, int(history_limit))],
+    }
+
+
+def investment_plan_state(items, *, now=None, transactions=None, prices=None):
     now = now or datetime.now()
+    prices = prices if isinstance(prices, dict) else {}
     plans = []
-    summary = {"total": 0, "enabled": 0, "due": 0, "attention": 0}
+    summary = {
+        "total": 0,
+        "enabled": 0,
+        "due": 0,
+        "attention": 0,
+        "execution_count": 0,
+        "rmb_invested": 0.0,
+        "usd_invested": 0.0,
+    }
     for raw in list(items or []):
         plan = dict(raw)
         next_run = parse_plan_datetime(plan.get("next_run_at"))
@@ -283,6 +357,15 @@ def investment_plan_state(items, *, now=None):
         if plan.get("last_result") in {"error", "waiting_price", "orphaned"}:
             summary["attention"] += 1
         plan["status"] = status
+        performance = investment_plan_performance(
+            plan,
+            transactions,
+            current_price=prices.get(plan.get("mode")),
+        )
+        plan["performance"] = performance
+        summary["execution_count"] += performance["execution_count"]
+        invested_key = "usd_invested" if plan.get("mode") == "usd" else "rmb_invested"
+        summary[invested_key] += performance["total_invested"]
         plans.append(plan)
     summary["total"] = len(plans)
     return {

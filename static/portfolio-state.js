@@ -140,6 +140,9 @@ function normalizePortfolioImportBackup(data) {
 
 function normalizePortfolioInvestmentPlan(item) {
   const source = item && typeof item === 'object' && !Array.isArray(item) ? item : {};
+  const performance = source.performance && typeof source.performance === 'object' && !Array.isArray(source.performance)
+    ? source.performance
+    : {};
   return {
     id: source.id || '',
     name: source.name || '',
@@ -164,6 +167,23 @@ function normalizePortfolioInvestmentPlan(item) {
     status: source.status || (source.enabled === false ? 'paused' : 'active'),
     created_at: source.created_at || '',
     updated_at: source.updated_at || '',
+    performance: {
+      execution_count: Number.isFinite(Number(performance.execution_count)) ? Number(performance.execution_count) : 0,
+      total_quantity: Number.isFinite(Number(performance.total_quantity)) ? Number(performance.total_quantity) : 0,
+      gross_invested: Number.isFinite(Number(performance.gross_invested)) ? Number(performance.gross_invested) : 0,
+      total_fees: Number.isFinite(Number(performance.total_fees)) ? Number(performance.total_fees) : 0,
+      total_invested: Number.isFinite(Number(performance.total_invested)) ? Number(performance.total_invested) : 0,
+      average_price: performance.average_price == null ? null : Number(performance.average_price),
+      average_cost: performance.average_cost == null ? null : Number(performance.average_cost),
+      current_price: performance.current_price == null ? null : Number(performance.current_price),
+      market_value: performance.market_value == null ? null : Number(performance.market_value),
+      pnl: performance.pnl == null ? null : Number(performance.pnl),
+      pnl_percent: performance.pnl_percent == null ? null : Number(performance.pnl_percent),
+      valuation_status: performance.valuation_status || 'empty',
+      recent_executions: Array.isArray(performance.recent_executions)
+        ? performance.recent_executions.map(item => Object.assign({}, item))
+        : [],
+    },
   };
 }
 
@@ -178,6 +198,9 @@ function normalizePortfolioInvestmentState(data) {
       enabled: Number.isFinite(Number(summary.enabled)) ? Number(summary.enabled) : items.filter(item => item.enabled).length,
       due: Number.isFinite(Number(summary.due)) ? Number(summary.due) : items.filter(item => item.status === 'due').length,
       attention: Number.isFinite(Number(summary.attention)) ? Number(summary.attention) : items.filter(item => ['waiting_price', 'orphaned', 'error'].includes(item.last_result)).length,
+      execution_count: Number.isFinite(Number(summary.execution_count)) ? Number(summary.execution_count) : items.reduce((total, item) => total + item.performance.execution_count, 0),
+      rmb_invested: Number.isFinite(Number(summary.rmb_invested)) ? Number(summary.rmb_invested) : 0,
+      usd_invested: Number.isFinite(Number(summary.usd_invested)) ? Number(summary.usd_invested) : 0,
     },
     updated_at: source.updated_at || '',
   };

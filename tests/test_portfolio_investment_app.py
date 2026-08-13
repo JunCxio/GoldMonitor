@@ -70,6 +70,16 @@ def test_app_portfolio_investment_socket_crud_and_manual_execution(monkeypatch, 
     assert executed["transaction"]["source"] == "investment_plan"
     assert portfolio["items"][0]["name"] == "积存金"
 
+    client.emit("get_portfolio_investment_plans")
+    events = client.get_received()
+    performance_state = next(
+        item["args"][0]
+        for item in events
+        if item["name"] == "portfolio_investment_plans_updated"
+    )
+    assert performance_state["items"][0]["performance"]["execution_count"] == 1
+    assert performance_state["items"][0]["performance"]["total_invested"] == 1000.0
+
     client.emit("toggle_portfolio_investment_plan", {"id": plan_id, "enabled": False})
     events = client.get_received()
     paused = next(

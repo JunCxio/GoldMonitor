@@ -128,6 +128,51 @@ function portfolioInvestmentStateClass(plan) {
   return plan.enabled ? 'on' : 'off';
 }
 
+function portfolioInvestmentExecutionKindLabel(kind) {
+  return ({
+    scheduled: '计划执行',
+    catch_up: '补执行',
+    manual: '手动执行',
+  })[kind] || '定投执行';
+}
+
+function portfolioInvestmentPerformance(plan) {
+  return plan.performance && typeof plan.performance === 'object' ? plan.performance : {};
+}
+
+function renderPortfolioInvestmentPerformance(plan) {
+  const performance = portfolioInvestmentPerformance(plan);
+  const mode = plan.mode || 'rmb';
+  const count = Number(performance.execution_count || 0);
+  if (count <= 0) {
+    return '<div class="portfolio-investment-performance-empty">首次执行后显示累计投入、定投均价和盈亏。</div>';
+  }
+  const pnl = performance.pnl;
+  const pnlText = pnl == null
+    ? '等待行情估值'
+    : formatPortfolioSignedMoney(pnl, mode) + ' · ' + formatPortfolioPercent(performance.pnl_percent);
+  const recentExecutions = Array.isArray(performance.recent_executions) ? performance.recent_executions : [];
+  return [
+    '<div class="portfolio-investment-performance">',
+    '<div class="portfolio-investment-performance-grid">',
+    '<div><span>累计投入</span><strong>' + escapeHtml(formatPortfolioMoney(performance.total_invested, mode)) + '</strong><small>含手续费 ' + escapeHtml(formatPortfolioMoney(performance.total_fees, mode)) + '</small></div>',
+    '<div><span>执行次数</span><strong>' + escapeHtml(String(count)) + ' 次</strong><small>累计 ' + escapeHtml(formatPortfolioNumber(performance.total_quantity, mode === 'usd' ? 6 : 4) + ' ' + portfolioQuantityUnit(mode)) + '</small></div>',
+    '<div><span>定投均价</span><strong>' + escapeHtml(formatPortfolioMoney(performance.average_cost, mode)) + '</strong><small>成交均价 ' + escapeHtml(formatPortfolioMoney(performance.average_price, mode)) + '</small></div>',
+    '<div><span>当前市值</span><strong>' + escapeHtml(performance.market_value == null ? '--' : formatPortfolioMoney(performance.market_value, mode)) + '</strong><small class="' + portfolioPnlClass(pnl) + '">' + escapeHtml(pnlText) + '</small></div>',
+    '</div>',
+    '<div class="portfolio-investment-execution-history">',
+    '<div class="portfolio-investment-execution-history-head"><span>最近执行</span><small>最多显示 10 条</small></div>',
+    recentExecutions.map(item => [
+      '<div class="portfolio-investment-execution-item">',
+      '<div><strong>' + escapeHtml(portfolioInvestmentExecutionKindLabel(item.execution_kind)) + '</strong><span>' + escapeHtml(portfolioInvestmentDateTime(item.timestamp || item.scheduled_at || item.trade_date)) + '</span></div>',
+      '<div><strong>' + escapeHtml(formatPortfolioMoney(item.total_cost, mode)) + '</strong><span>' + escapeHtml(formatPortfolioMoney(item.price, mode) + ' · ' + formatPortfolioNumber(item.quantity, mode === 'usd' ? 6 : 4) + ' ' + portfolioQuantityUnit(mode)) + '</span></div>',
+      '</div>',
+    ].join('')).join(''),
+    '</div>',
+    '</div>',
+  ].join('');
+}
+
 function renderPortfolioInvestmentSummary(box) {
   const state = portfolioState.investment_plans || {};
   const summary = state.summary || {};
@@ -147,6 +192,7 @@ function renderPortfolioInvestmentSummary(box) {
     '<div><span>待执行</span><strong>' + escapeHtml(String(summary.due || 0)) + '</strong></div>',
     '<div><span>需处理</span><strong>' + escapeHtml(String(summary.attention || 0)) + '</strong></div>',
     '</div>',
+    '<div class="portfolio-investment-overview-performance"><span>累计执行 ' + escapeHtml(String(summary.execution_count || 0)) + ' 次</span><strong>' + escapeHtml(formatPortfolioMoney(summary.rmb_invested || 0, 'rmb')) + ' · ' + escapeHtml(formatPortfolioMoney(summary.usd_invested || 0, 'usd')) + '</strong></div>',
     '</div>',
   ].join('');
 }
@@ -247,6 +293,7 @@ function renderPortfolioInvestments(box) {
       '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="setActivePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">' + (expanded ? '收起' : '编辑') + '</button>',
       '<button class="btn-clear-sm" type="button" onclick="deletePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">删除</button>',
       '</div>',
+      expanded ? renderPortfolioInvestmentPerformance(plan) : '',
       expanded ? buildPortfolioInvestmentEditor(plan) : '',
       '</div>',
     ].join('');
