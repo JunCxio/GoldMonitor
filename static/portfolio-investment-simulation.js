@@ -76,6 +76,66 @@ function portfolioInvestmentSimulationCoverageLabel(result) {
   return { text: '完整覆盖', tone: 'complete' };
 }
 
+function portfolioInvestmentSimulationDuration(seconds) {
+  const value = Math.max(0, Number(seconds) || 0);
+  if (!value) return '无明显缺口';
+  if (value < 3600) return Math.max(1, Math.round(value / 60)) + ' 分钟';
+  if (value < 86400) return Math.max(1, Math.round(value / 3600)) + ' 小时';
+  return Math.max(1, Math.round(value / 86400)) + ' 天';
+}
+
+function portfolioInvestmentSimulationConfidenceMarkup(result) {
+  const confidence = result && result.confidence && typeof result.confidence === 'object'
+    ? result.confidence
+    : {};
+  const quality = result && result.coverage && result.coverage.data_quality && typeof result.coverage.data_quality === 'object'
+    ? result.coverage.data_quality
+    : {};
+  const granularity = quality.granularity && typeof quality.granularity === 'object'
+    ? quality.granularity
+    : {};
+  const reasons = Array.isArray(confidence.reasons) ? confidence.reasons : [];
+  const score = Number.isFinite(Number(confidence.score)) ? Math.max(0, Math.min(100, Number(confidence.score))) : null;
+  const density = Number.isFinite(Number(quality.density_percent)) ? Number(quality.density_percent).toFixed(0) + '%' : '--';
+  const range = Number.isFinite(Number(quality.range_coverage_percent)) ? Number(quality.range_coverage_percent).toFixed(0) + '%' : '--';
+  const level = ['high', 'medium', 'low', 'unavailable'].includes(confidence.level) ? confidence.level : 'unavailable';
+  return [
+    '<section class="portfolio-investment-simulation-confidence ' + level + '">',
+    '<div class="portfolio-investment-simulation-confidence-score"><span>结果可信度</span><strong>' + escapeHtml(confidence.label || '无法评估') + '</strong><small>' + escapeHtml(score == null ? '暂无评分' : score.toFixed(0) + ' / 100') + '</small></div>',
+    '<div class="portfolio-investment-simulation-confidence-body"><strong>' + escapeHtml(confidence.summary || '历史数据质量信息不足。') + '</strong><div class="portfolio-investment-simulation-quality-facts">',
+    '<span>范围 ' + escapeHtml(range) + '</span>',
+    '<span>完整度 ' + escapeHtml(density) + '</span>',
+    '<span>' + escapeHtml(granularity.label || '无法判断粒度') + '</span>',
+    '<span>' + escapeHtml(String(Math.max(0, Number(quality.gap_count) || 0)) + ' 个缺口') + '</span>',
+    '</div>',
+    reasons.length ? '<ul>' + reasons.map(reason => '<li>' + escapeHtml(reason) + '</li>').join('') + '</ul>' : '',
+    '</div>',
+    '</section>',
+  ].join('');
+}
+
+function portfolioInvestmentSimulationGapMarkup(result) {
+  const quality = result && result.coverage && result.coverage.data_quality && typeof result.coverage.data_quality === 'object'
+    ? result.coverage.data_quality
+    : {};
+  const gaps = Array.isArray(quality.gaps) ? quality.gaps : [];
+  if (!gaps.length) return '';
+  const positionLabel = { leading: '窗口开头', internal: '窗口中段', trailing: '窗口末端' };
+  return [
+    '<details class="portfolio-investment-simulation-gaps">',
+    '<summary>查看 ' + escapeHtml(String(gaps.length)) + ' 个主要行情缺口</summary>',
+    '<div>',
+    gaps.map(item => [
+      '<div>',
+      '<span><strong>' + escapeHtml(positionLabel[item.position] || '时间区间') + '</strong><small>' + escapeHtml(portfolioInvestmentDateTime(item.start_timestamp) + ' 至 ' + portfolioInvestmentDateTime(item.end_timestamp)) + '</small></span>',
+      '<span><strong>' + escapeHtml(portfolioInvestmentSimulationDuration(item.duration_seconds)) + '</strong><small>估算缺失 ' + escapeHtml(String(Math.max(0, Number(item.estimated_missing_points) || 0))) + ' 个样本</small></span>',
+      '</div>',
+    ].join('')).join(''),
+    '</div>',
+    '</details>',
+  ].join('');
+}
+
 function portfolioInvestmentSimulationExecutionMarkup(result) {
   const executions = Array.isArray(result && result.executions) ? result.executions : [];
   if (!executions.length) return '<div class="portfolio-investment-simulation-empty">所选范围内没有计划期次。</div>';
@@ -111,13 +171,24 @@ function portfolioInvestmentSimulationResultMarkup(result) {
   const valuationText = result.latest_price == null
     ? '范围末端无邻近行情，未估算市值'
     : '末端样本 ' + portfolioInvestmentDateTime(result.latest_price_timestamp);
+  const qualityData = coverageData.data_quality && typeof coverageData.data_quality === 'object' ? coverageData.data_quality : {};
+  const qualityRangeText = qualityData.requested_start_timestamp
+    ? portfolioInvestmentDateTime(qualityData.requested_start_timestamp)
+    : '--';
+  const qualityRangeEndText = qualityData.requested_end_timestamp
+    ? '至 ' + portfolioInvestmentDateTime(qualityData.requested_end_timestamp)
+    : '没有请求范围';
   return [
     '<div class="portfolio-investment-simulation-result">',
+    portfolioInvestmentSimulationConfidenceMarkup(result),
     '<div class="portfolio-investment-simulation-coverage">',
     '<div><span>行情覆盖</span><strong class="' + coverage.tone + '">' + escapeHtml(coverage.text) + '</strong><small>' + escapeHtml(scheduled ? covered + '/' + scheduled + ' 期 · ' + (coveredPercent == null ? '--' : coveredPercent.toFixed(0) + '%') : '当前计划在窗口内未产生期次') + '</small></div>',
     '<div><span>本地样本</span><strong>' + escapeHtml(String(Number(coverageData.point_count) || 0) + ' 个') + '</strong><small>' + escapeHtml(coverageData.interval_label || '样本不足') + '</small></div>',
     '<div><span>数据区间</span><strong>' + escapeHtml(coverageData.first_timestamp ? portfolioInvestmentDateTime(coverageData.first_timestamp) : '--') + '</strong><small>' + escapeHtml(coverageData.last_timestamp ? '至 ' + portfolioInvestmentDateTime(coverageData.last_timestamp) : '没有可用历史行情') + '</small></div>',
+    '<div><span>请求范围</span><strong>' + escapeHtml(qualityRangeText) + '</strong><small>' + escapeHtml(qualityRangeEndText) + '</small></div>',
+    '<div><span>最大缺口</span><strong>' + escapeHtml(portfolioInvestmentSimulationDuration(qualityData.largest_gap_seconds)) + '</strong><small>' + escapeHtml((Number(qualityData.gap_count) || 0) ? String(Number(qualityData.gap_count) || 0) + ' 个明显缺口' : '当前粒度下未发现明显缺口') + '</small></div>',
     '</div>',
+    portfolioInvestmentSimulationGapMarkup(result),
     result.usable ? [
       '<div class="portfolio-investment-simulation-metrics">',
       '<div><span>计划买入</span><strong>' + escapeHtml(formatPortfolioMoney(result.planned_amount, result.mode)) + '</strong><small>已覆盖支出 ' + escapeHtml(formatPortfolioMoney(result.actual_cost, result.mode)) + '</small></div>',
