@@ -87,6 +87,29 @@ def test_app_portfolio_investment_socket_crud_and_manual_execution(monkeypatch, 
     assert performance_state["items"][0]["performance"]["execution_count"] == 1
     assert performance_state["items"][0]["performance"]["total_invested"] == 1000.0
 
+    pending_run_at = performance_state["items"][0]["pending_run_at"]
+    transaction_count = len(app.portfolio_transactions)
+    client.emit("skip_portfolio_investment_plan", {
+        "id": plan_id,
+        "scheduled_at": pending_run_at,
+    })
+    events = client.get_received()
+    skipped = next(
+        item["args"][0]
+        for item in events
+        if item["name"] == "portfolio_investment_plan_skipped"
+    )
+    skipped_state = next(
+        item["args"][0]
+        for item in events
+        if item["name"] == "portfolio_investment_plans_updated"
+    )
+    assert skipped["status"] == "skipped"
+    assert skipped_state["items"][0]["last_result"] == "skipped"
+    assert skipped_state["items"][0]["skip_count"] == 1
+    assert skipped_state["items"][0]["next_run_at"] != pending_run_at
+    assert len(app.portfolio_transactions) == transaction_count
+
     client.emit("toggle_portfolio_investment_plan", {"id": plan_id, "enabled": False})
     events = client.get_received()
     paused = next(

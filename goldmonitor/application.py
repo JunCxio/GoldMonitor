@@ -1141,6 +1141,10 @@ def toggle_portfolio_investment_plan(plan_id, enabled):
     return _get_portfolio_investment_runtime().toggle(plan_id, enabled)
 
 
+def skip_portfolio_investment_plan(plan_id, scheduled_at):
+    return _get_portfolio_investment_runtime().skip_next(plan_id, scheduled_at)
+
+
 def execute_portfolio_investment_plan(plan_id):
     return _get_portfolio_investment_runtime().execute(plan_id, force=True)
 

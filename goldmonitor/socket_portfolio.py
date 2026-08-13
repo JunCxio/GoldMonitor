@@ -24,6 +24,7 @@ def register_portfolio_handlers(
     upsert_portfolio_investment_plan,
     delete_portfolio_investment_plan,
     toggle_portfolio_investment_plan,
+    skip_portfolio_investment_plan,
     execute_portfolio_investment_plan,
     build_portfolio_investment_executions_csv,
     broadcast_alert_rule_views,
@@ -165,6 +166,25 @@ def register_portfolio_handlers(
             "portfolio_investment_plans_updated",
             get_portfolio_investment_plan_state(),
         )
+
+    @socketio.on("skip_portfolio_investment_plan")
+    def on_skip_portfolio_investment_plan(data=None):
+        payload = data if isinstance(data, dict) else {}
+        try:
+            result = skip_portfolio_investment_plan(
+                payload.get("id"),
+                payload.get("scheduled_at"),
+            )
+        except ValueError as exc:
+            emit("portfolio_investment_plan_error", {"message": str(exc)})
+            return
+        except OSError:
+            emit("portfolio_investment_plan_error", {
+                "message": "定投跳过状态保存失败，请检查配置目录权限。",
+            })
+            return
+        emit("portfolio_investment_plan_skipped", result)
+        socketio.emit("portfolio_investment_plans_updated", result["state"])
 
     @socketio.on("export_portfolio_investment_executions")
     def on_export_portfolio_investment_executions(data=None):

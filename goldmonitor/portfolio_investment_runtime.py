@@ -146,6 +146,42 @@ class PortfolioInvestmentRuntime:
             self.state.portfolio_investment_plans = self.save_plans(next_plans)
         return plan, self.state_payload()
 
+    def skip_next(self, plan_id, scheduled_at, *, now=None):
+        now = now or self.now_factory()
+        with self.state.investment_plan_lock:
+            index = self._find_plan_index(plan_id)
+            if index < 0:
+                raise ValueError("未找到定投计划")
+            plan = dict(self.state.portfolio_investment_plans[index])
+            if plan.get("enabled") is False:
+                raise ValueError("已暂停的计划不能跳过期次")
+            pending_run = investment_core.pending_plan_run_at(plan, now)
+            if pending_run is None:
+                raise ValueError("当前没有可跳过的定投期次")
+            expected_run = investment_core.parse_plan_datetime(scheduled_at)
+            if expected_run is None or expected_run != pending_run:
+                raise ValueError("计划执行时间已变化，请刷新后重试")
+            next_run = investment_core.next_plan_run_in_window(plan, pending_run)
+            message = "已跳过 " + pending_run.strftime("%Y-%m-%d %H:%M") + " 的计划执行"
+            updated = self._record_plan_result(
+                plan["id"],
+                plan,
+                next_run_at=next_run.isoformat(timespec="seconds") if next_run else "",
+                last_skipped_at=now.isoformat(timespec="seconds"),
+                last_skipped_scheduled_at=pending_run.isoformat(timespec="seconds"),
+                skip_count=int(plan.get("skip_count") or 0) + 1,
+                last_result="skipped",
+                last_message=message,
+            )
+        state = self.state_payload(now=now)
+        return {
+            "ok": True,
+            "status": "skipped",
+            "message": message,
+            "plan": updated,
+            "state": state,
+        }
+
     @staticmethod
     def _transaction_id(plan_id, scheduled_at, execution_kind):
         suffix = scheduled_at.strftime("%Y%m%d%H%M")

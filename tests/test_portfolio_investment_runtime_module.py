@@ -211,6 +211,42 @@ def test_runtime_executes_latest_due_weekly_plan_and_advances_one_week():
     assert state.portfolio_investment_plans[0]["next_run_at"] == "2026-08-19T09:00:00"
 
 
+def test_runtime_skips_one_pending_run_without_generating_transaction():
+    import pytest
+
+    runtime, state, _events = _runtime(_plan(
+        frequency="weekly",
+        weekday=3,
+        next_run_at="2026-07-01T09:00:00",
+    ))
+    transaction_count = len(state.portfolio_transactions)
+
+    result = runtime.skip_next(
+        "plan-1",
+        "2026-08-12T09:00:00",
+        now=datetime(2026, 8, 14, 10, 0),
+    )
+
+    plan = state.portfolio_investment_plans[0]
+    assert result["status"] == "skipped"
+    assert len(state.portfolio_transactions) == transaction_count
+    assert plan["enabled"] is True
+    assert plan["next_run_at"] == "2026-08-19T09:00:00"
+    assert plan["last_skipped_scheduled_at"] == "2026-08-12T09:00:00"
+    assert plan["last_skipped_at"] == "2026-08-14T10:00:00"
+    assert plan["skip_count"] == 1
+    assert plan["last_result"] == "skipped"
+
+    with pytest.raises(ValueError, match="执行时间已变化"):
+        runtime.skip_next(
+            "plan-1",
+            "2026-08-12T09:00:00",
+            now=datetime(2026, 8, 14, 10, 1),
+        )
+    assert state.portfolio_investment_plans[0]["next_run_at"] == "2026-08-19T09:00:00"
+    assert state.portfolio_investment_plans[0]["skip_count"] == 1
+
+
 def test_runtime_respects_start_date_and_completes_after_last_scheduled_run():
     import pytest
 

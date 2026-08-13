@@ -68,6 +68,14 @@ def _bounded_int(value, minimum, maximum, default):
     return min(maximum, max(minimum, number))
 
 
+def _nonnegative_int(value):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = 0
+    return max(0, number)
+
+
 def _parse_time(value):
     text = _clean_text(value)
     try:
@@ -258,6 +266,24 @@ def latest_due_run_at(plan, now):
     return candidate
 
 
+def pending_plan_run_at(plan, now):
+    if plan.get("enabled") is False:
+        return None
+    due_at = latest_due_run_at(plan, now)
+    if due_at is not None:
+        return due_at
+    next_run = parse_plan_datetime(plan.get("next_run_at"))
+    if next_run is None:
+        return None
+    start_date = parse_plan_date(plan.get("start_date"))
+    end_date = parse_plan_date(plan.get("end_date"))
+    if start_date and next_run.date() < start_date:
+        return None
+    if end_date and next_run.date() > end_date:
+        return None
+    return next_run
+
+
 def normalize_investment_plan(
     item,
     existing=None,
@@ -404,6 +430,18 @@ def normalize_investment_plan(
         ),
         "last_executed_at": _clean_text(
             item.get("last_executed_at", existing.get("last_executed_at", ""))
+        ),
+        "last_skipped_at": _clean_text(
+            item.get("last_skipped_at", existing.get("last_skipped_at", ""))
+        ),
+        "last_skipped_scheduled_at": _clean_text(
+            item.get(
+                "last_skipped_scheduled_at",
+                existing.get("last_skipped_scheduled_at", ""),
+            )
+        ),
+        "skip_count": _nonnegative_int(
+            item.get("skip_count", existing.get("skip_count", 0))
         ),
         "last_transaction_id": _clean_text(
             item.get("last_transaction_id", existing.get("last_transaction_id", ""))
@@ -569,6 +607,7 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
     for raw in list(items or []):
         plan = dict(raw)
         next_run = parse_plan_datetime(plan.get("next_run_at"))
+        pending_run = pending_plan_run_at(plan, now)
         if plan.get("enabled"):
             start_date = parse_plan_date(plan.get("start_date"))
             end_date = parse_plan_date(plan.get("end_date"))
@@ -587,6 +626,9 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
         if plan.get("last_result") in {"error", "waiting_price", "orphaned"}:
             summary["attention"] += 1
         plan["status"] = status
+        plan["pending_run_at"] = (
+            pending_run.isoformat(timespec="seconds") if pending_run else ""
+        )
         performance = investment_plan_performance(
             plan,
             transactions,

@@ -143,6 +143,7 @@ function portfolioInvestmentDateTime(value) {
 function portfolioInvestmentResultLabel(result) {
   return ({
     ok: '执行成功',
+    skipped: '已跳过一期',
     waiting: '等待首次执行',
     waiting_price: '等待行情',
     orphaned: '关联失效',
@@ -184,6 +185,20 @@ function portfolioInvestmentWindowLabel(plan) {
 
 function portfolioInvestmentCanExecute(plan) {
   return !['pending_start', 'completed'].includes(plan.status);
+}
+
+function portfolioInvestmentCanSkip(plan) {
+  return Boolean(plan.enabled && plan.pending_run_at && plan.status !== 'completed');
+}
+
+function portfolioInvestmentLastDetail(plan) {
+  if (plan.last_result === 'skipped' && plan.last_skipped_at) {
+    return portfolioInvestmentResultLabel(plan.last_result) + ' · ' + portfolioInvestmentDateTime(plan.last_skipped_at);
+  }
+  if (plan.last_executed_at) {
+    return portfolioInvestmentResultLabel(plan.last_result) + ' · ' + portfolioInvestmentDateTime(plan.last_executed_at);
+  }
+  return plan.last_message || '等待首次执行';
 }
 
 function portfolioInvestmentExecutionKindLabel(kind) {
@@ -332,10 +347,10 @@ function renderPortfolioInvestments(box) {
   parts.push(...items.map(plan => {
     const expanded = activePortfolioInvestmentPlanId === plan.id;
     const mode = plan.mode || 'rmb';
-    const lastDetail = plan.last_executed_at
-      ? portfolioInvestmentResultLabel(plan.last_result) + ' · ' + portfolioInvestmentDateTime(plan.last_executed_at)
-      : plan.last_message || '等待首次执行';
-    const resultMetrics = plan.last_price != null && plan.last_quantity != null && Number.isFinite(Number(plan.last_price)) && Number.isFinite(Number(plan.last_quantity))
+    const lastDetail = portfolioInvestmentLastDetail(plan);
+    const resultMetrics = plan.last_result === 'skipped'
+      ? '跳过 ' + portfolioInvestmentDateTime(plan.last_skipped_scheduled_at) + ' · 累计 ' + Number(plan.skip_count || 0) + ' 次'
+      : plan.last_price != null && plan.last_quantity != null && Number.isFinite(Number(plan.last_price)) && Number.isFinite(Number(plan.last_quantity))
       ? formatPortfolioMoney(plan.last_price, mode) + ' · ' + formatPortfolioNumber(plan.last_quantity, 6) + ' ' + portfolioQuantityUnit(mode)
       : plan.last_message || '尚无执行结果';
     return [
@@ -355,6 +370,9 @@ function renderPortfolioInvestments(box) {
       plan.status === 'completed'
         ? '<button class="btn-clear-sm btn-muted-sm" type="button" disabled>已结束</button>'
         : '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="togglePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\', ' + String(!plan.enabled) + ')">' + (plan.enabled ? '暂停' : '启用') + '</button>',
+      portfolioInvestmentCanSkip(plan)
+        ? '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="skipPortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\', \'' + escapeHtml(plan.pending_run_at) + '\')">跳过本期</button>'
+        : '<button class="btn-clear-sm btn-muted-sm" type="button" disabled>不可跳过</button>',
       '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="setActivePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">' + (expanded ? '收起' : '编辑') + '</button>',
       '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="duplicatePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">复制</button>',
       '<button class="btn-clear-sm" type="button" onclick="deletePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">删除</button>',
@@ -409,6 +427,15 @@ function togglePortfolioInvestmentPlan(id, enabled) {
 function executePortfolioInvestmentPlan(id) {
   setPortfolioStatus('正在按最新行情生成买入流水...', '');
   socket.emit('execute_portfolio_investment_plan', { id });
+}
+
+function skipPortfolioInvestmentPlan(id, scheduledAt) {
+  const plan = portfolioInvestmentItems().find(item => item.id === id);
+  if (!plan || !scheduledAt) return setPortfolioStatus('当前没有可跳过的定投期次。', 'fail');
+  const scheduledText = portfolioInvestmentDateTime(scheduledAt);
+  if (!window.confirm('确定跳过 ' + scheduledText + ' 的计划执行？\n本次不会生成买入流水，计划将继续运行。')) return;
+  setPortfolioStatus('正在跳过本期定投计划...', '');
+  socket.emit('skip_portfolio_investment_plan', { id, scheduled_at: scheduledAt });
 }
 
 function exportPortfolioInvestmentExecutions(id) {

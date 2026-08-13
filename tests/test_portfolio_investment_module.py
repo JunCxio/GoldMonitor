@@ -34,7 +34,7 @@ def test_investment_plan_calculates_daily_weekly_monthly_and_yearly_runs():
 
 
 def test_investment_plan_uses_latest_missed_run_only():
-    from goldmonitor.portfolio_investment import latest_due_run_at
+    from goldmonitor.portfolio_investment import latest_due_run_at, pending_plan_run_at
 
     monthly = {
         "frequency": "monthly",
@@ -61,6 +61,11 @@ def test_investment_plan_uses_latest_missed_run_only():
     assert latest_due_run_at(yearly, datetime(2027, 8, 12, 10, 0)) == datetime(2027, 2, 28, 9, 0)
     assert latest_due_run_at(weekly, datetime(2026, 8, 14, 10, 0)) == datetime(2026, 8, 12, 9, 0)
     assert latest_due_run_at(weekly, datetime(2026, 8, 12, 8, 0)) == datetime(2026, 8, 5, 9, 0)
+    assert pending_plan_run_at(monthly, datetime(2026, 3, 15, 10, 0)) == datetime(2026, 2, 28, 9, 0)
+    assert pending_plan_run_at(
+        {**weekly, "next_run_at": "2026-08-19T09:00:00"},
+        datetime(2026, 8, 14, 10, 0),
+    ) == datetime(2026, 8, 19, 9, 0)
 
 
 def test_investment_plan_applies_optional_start_and_end_dates():

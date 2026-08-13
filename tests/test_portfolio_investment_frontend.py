@@ -22,10 +22,15 @@ context.globalThis = context;
 vm.createContext(context);
 vm.runInContext(__SOURCE__, context);
 const plan = vm.runInContext(`normalizePortfolioInvestmentPlan({
-  id: 'plan-window', start_date: '2026-09-01', end_date: '2026-12-31'
+  id: 'plan-window', start_date: '2026-09-01', end_date: '2026-12-31',
+  pending_run_at: '2026-09-01T09:00:00', last_skipped_at: '2026-08-13T10:00:00',
+  last_skipped_scheduled_at: '2026-08-01T09:00:00', skip_count: 2
 })`, context);
 if (plan.start_date !== '2026-09-01' || plan.end_date !== '2026-12-31') {
   throw new Error('execution window must survive portfolio state normalization');
+}
+if (plan.pending_run_at !== '2026-09-01T09:00:00' || plan.skip_count !== 2) {
+  throw new Error('skip state must survive portfolio state normalization');
 }
 """
     script = script.replace("__SOURCE__", json.dumps(source))
@@ -153,6 +158,41 @@ vm.runInContext(__SOURCE__, context);
 vm.runInContext("savePortfolioInvestmentPlan('new')", context);
 if (emits.length !== 0) throw new Error('invalid execution window must not be saved');
 if (!statuses.at(-1).message.includes('结束日期不能早于开始日期')) throw new Error('invalid execution window must report a clear error');
+"""
+    script = script.replace("__SOURCE__", json.dumps(source))
+    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_investment_plan_frontend_confirms_skip_and_sends_expected_run():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("需要 Node.js 执行定投前端行为测试")
+
+    source = (ROOT / "static" / "portfolio-investment.js").read_text(encoding="utf-8")
+    script = """
+const vm = require('vm');
+const emits = [];
+const statuses = [];
+let confirmed = false;
+const plan = { id: 'plan-1', enabled: true, pending_run_at: '2026-08-15T09:00:00' };
+const context = {
+  console,
+  portfolioState: { investment_plans: { items: [plan] } },
+  socket: { emit: (...args) => emits.push(args) },
+  setPortfolioStatus: (message, state) => statuses.push({ message, state }),
+  window: { confirm: () => confirmed },
+};
+context.globalThis = context;
+vm.createContext(context);
+vm.runInContext(__SOURCE__, context);
+vm.runInContext("skipPortfolioInvestmentPlan('plan-1', '2026-08-15T09:00:00')", context);
+if (emits.length !== 0) throw new Error('cancelled skip must not emit');
+confirmed = true;
+vm.runInContext("skipPortfolioInvestmentPlan('plan-1', '2026-08-15T09:00:00')", context);
+if (emits.length !== 1 || emits[0][0] !== 'skip_portfolio_investment_plan') throw new Error('confirmed skip must emit once');
+if (emits[0][1].id !== 'plan-1' || emits[0][1].scheduled_at !== '2026-08-15T09:00:00') throw new Error('skip must send the expected run identity');
+if (!statuses.at(-1).message.includes('正在跳过')) throw new Error('skip must report progress');
 """
     script = script.replace("__SOURCE__", json.dumps(source))
     result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)

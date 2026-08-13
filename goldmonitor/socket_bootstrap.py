@@ -220,6 +220,10 @@ def register_socket_handlers(application):
             lambda plan_id, enabled:
             application.toggle_portfolio_investment_plan(plan_id, enabled)
         ),
+        skip_portfolio_investment_plan=(
+            lambda plan_id, scheduled_at:
+            application.skip_portfolio_investment_plan(plan_id, scheduled_at)
+        ),
         execute_portfolio_investment_plan=(
             lambda plan_id: application.execute_portfolio_investment_plan(plan_id)
         ),
