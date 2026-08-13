@@ -137,6 +137,9 @@ def test_runtime_previews_edited_schedule_without_persisting_plan():
         "frequency": "weekly",
         "weekday": 5,
         "time": "10:30",
+        "amount": 1200,
+        "fee": 3,
+        "target_count": 4,
         "start_date": "2026-08-14",
         "end_date": "2026-09-01",
     })
@@ -150,6 +153,18 @@ def test_runtime_previews_edited_schedule_without_persisting_plan():
             "2026-08-21T10:30:00",
             "2026-08-28T10:30:00",
         ],
+        "projection": {
+            "mode": "rmb",
+            "target_count": 4,
+            "completed_count": 0,
+            "remaining_count": 4,
+            "planned_cost_per_run": 1203.0,
+            "projected_total_cost": 4812.0,
+            "projected_remaining_cost": 4812.0,
+            "projected_completion_at": "",
+            "completion_limited_by_window": True,
+            "completion_out_of_range": False,
+        },
     }
     assert state.portfolio_investment_plans[0] == original
 

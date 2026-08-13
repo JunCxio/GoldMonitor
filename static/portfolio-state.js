@@ -154,6 +154,9 @@ function normalizePortfolioInvestmentPlan(item) {
     target_count: Number.isFinite(Number(source.target_count)) ? Math.max(0, Number(source.target_count)) : 0,
     completed_count: Number.isFinite(Number(source.completed_count)) ? Math.max(0, Number(source.completed_count)) : 0,
     remaining_count: source.remaining_count == null ? null : Math.max(0, Number(source.remaining_count) || 0),
+    projection: source.projection && typeof source.projection === 'object' && !Array.isArray(source.projection)
+      ? Object.assign({}, source.projection)
+      : null,
     frequency: ['daily', 'weekly', 'monthly', 'yearly'].includes(source.frequency) ? source.frequency : 'monthly',
     time: source.time || '09:00',
     month: Number.isFinite(Number(source.month)) ? Number(source.month) : 1,

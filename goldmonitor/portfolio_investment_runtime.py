@@ -64,6 +64,7 @@ class PortfolioInvestmentRuntime:
                 existing,
                 transactions,
             )
+        now = self.now_factory()
         return {
             "ok": True,
             "id": plan_id or "new",
@@ -71,7 +72,13 @@ class PortfolioInvestmentRuntime:
             "items": investment_core.investment_schedule_preview(
                 payload,
                 existing=existing,
-                now=self.now_factory(),
+                now=now,
+            ),
+            "projection": investment_core.investment_plan_projection(
+                payload,
+                existing=existing,
+                transactions=transactions if existing else None,
+                now=now,
             ),
         }
 

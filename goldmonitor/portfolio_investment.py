@@ -633,6 +633,87 @@ def investment_plan_execution_count(plan, transactions):
     return len(investment_plan_executions(plan, transactions))
 
 
+def investment_plan_projection(
+    item,
+    *,
+    existing=None,
+    transactions=None,
+    now=None,
+):
+    if not isinstance(item, dict):
+        raise ValueError("定投计划格式无效")
+    now = now or datetime.now()
+    existing = existing if isinstance(existing, dict) else {}
+    target_count = _target_count(
+        item.get("target_count", existing.get("target_count", 0))
+    )
+    if not target_count:
+        return None
+    amount = _positive_float(item.get("amount", existing.get("amount")))
+    fee = _nonnegative_float(item.get("fee", existing.get("fee", 0)))
+    if amount is None or fee is None:
+        return None
+    schedule = normalize_investment_schedule(item, existing)
+    if transactions is None:
+        completed_count = _nonnegative_int(
+            item.get("completed_count", existing.get("completed_count", 0))
+        )
+    else:
+        completed_count = investment_plan_execution_count(
+            existing or item,
+            transactions,
+        )
+    completed_count = min(target_count, completed_count)
+    remaining_count = max(0, target_count - completed_count)
+    planned_cost_per_run = amount + fee
+    completion_at = None
+    completion_limited_by_window = False
+    completion_out_of_range = False
+    if remaining_count:
+        existing_schedule = normalize_investment_schedule(existing) if existing else None
+        schedule_unchanged = bool(
+            existing_schedule
+            and _schedule_signature_from_plan(existing_schedule)
+            == _schedule_signature_from_plan(schedule)
+        )
+        plan = {**existing, **schedule}
+        candidate = pending_plan_run_at(plan, now) if schedule_unchanged else None
+        if candidate is None:
+            candidate = next_plan_run_in_window(schedule, now)
+        projected_count = 0
+        while candidate is not None and projected_count < remaining_count:
+            completion_at = candidate
+            projected_count += 1
+            if projected_count >= remaining_count:
+                break
+            try:
+                candidate = next_plan_run_in_window(schedule, candidate)
+            except (OverflowError, ValueError):
+                candidate = None
+                completion_out_of_range = True
+        if projected_count < remaining_count:
+            completion_at = None
+            completion_limited_by_window = bool(schedule.get("end_date"))
+
+    mode = _clean_text(item.get("mode", existing.get("mode", "rmb"))).lower()
+    if mode not in {"rmb", "usd"}:
+        mode = "rmb"
+    return {
+        "mode": mode,
+        "target_count": target_count,
+        "completed_count": completed_count,
+        "remaining_count": remaining_count,
+        "planned_cost_per_run": planned_cost_per_run,
+        "projected_total_cost": planned_cost_per_run * target_count,
+        "projected_remaining_cost": planned_cost_per_run * remaining_count,
+        "projected_completion_at": (
+            completion_at.isoformat(timespec="seconds") if completion_at else ""
+        ),
+        "completion_limited_by_window": completion_limited_by_window,
+        "completion_out_of_range": completion_out_of_range,
+    }
+
+
 def build_investment_plan_executions_csv(plan, transactions):
     plan_id = _clean_text((plan or {}).get("id"))
     if not plan_id:
@@ -763,6 +844,11 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
             )
             if plan.get("enabled") and not archived and not target_reached
             else []
+        )
+        plan["projection"] = investment_plan_projection(
+            {**plan, "completed_count": completed_count},
+            existing=plan,
+            now=now,
         )
         plan["performance"] = performance
         summary["execution_count"] += performance["execution_count"]

@@ -55,6 +55,7 @@ portfolio_render_js_path = root / "static" / "portfolio-render.js"
 portfolio_review_js_path = root / "static" / "portfolio-review.js"
 portfolio_detail_js_path = root / "static" / "portfolio-detail.js"
 portfolio_list_js_path = root / "static" / "portfolio-list.js"
+portfolio_investment_projection_js_path = root / "static" / "portfolio-investment-projection.js"
 portfolio_investment_js_path = root / "static" / "portfolio-investment.js"
 portfolio_investment_actions_js_path = root / "static" / "portfolio-investment-actions.js"
 portfolio_actions_js_path = root / "static" / "portfolio-actions.js"
@@ -181,6 +182,7 @@ portfolio_module_js = "\n".join((
     portfolio_review_js_path.read_text(encoding="utf-8"),
     portfolio_detail_js_path.read_text(encoding="utf-8"),
     portfolio_list_js_path.read_text(encoding="utf-8"),
+    portfolio_investment_projection_js_path.read_text(encoding="utf-8"),
     portfolio_investment_js_path.read_text(encoding="utf-8"),
     portfolio_investment_actions_js_path.read_text(encoding="utf-8"),
     portfolio_actions_js_path.read_text(encoding="utf-8"),
@@ -560,6 +562,7 @@ portfolio_scripts = tuple(
         "portfolio-review.js",
         "portfolio-detail.js",
         "portfolio-list.js",
+        "portfolio-investment-projection.js",
         "portfolio-investment.js",
         "portfolio-investment-actions.js",
         "portfolio-actions.js",

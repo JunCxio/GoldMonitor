@@ -12,7 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 def read_investment_source():
     return "\n".join(
         (ROOT / "static" / name).read_text(encoding="utf-8")
-        for name in ("portfolio-investment.js", "portfolio-investment-actions.js")
+        for name in (
+            "portfolio-investment-projection.js",
+            "portfolio-investment.js",
+            "portfolio-investment-actions.js",
+        )
     )
 
 
@@ -31,6 +35,7 @@ vm.runInContext(__SOURCE__, context);
 const plan = vm.runInContext(`normalizePortfolioInvestmentPlan({
   id: 'plan-window', start_date: '2026-09-01', end_date: '2026-12-31',
   target_count: 12, completed_count: 3, remaining_count: 9,
+  projection: {mode:'rmb',target_count:12,completed_count:3,remaining_count:9,projected_total_cost:12000,projected_remaining_cost:9000},
   archived_at: '2027-01-01T10:00:00',
   upcoming_run_ats: ['2026-09-01T09:00:00', '2026-10-01T09:00:00'],
   pending_run_at: '2026-09-01T09:00:00', last_skipped_at: '2026-08-13T10:00:00',
@@ -44,6 +49,9 @@ if (plan.archived_at !== '2027-01-01T10:00:00') {
 }
 if (plan.target_count !== 12 || plan.completed_count !== 3 || plan.remaining_count !== 9) {
   throw new Error('target progress must survive portfolio state normalization');
+}
+if (!plan.projection || plan.projection.projected_remaining_cost !== 9000) {
+  throw new Error('budget projection must survive portfolio state normalization');
 }
 if (plan.pending_run_at !== '2026-09-01T09:00:00' || plan.skip_count !== 2) {
   throw new Error('skip state must survive portfolio state normalization');
@@ -299,6 +307,7 @@ let renderCount = 0;
 const values = {
   Name: '月末定投', PositionId: '', PositionName: '积存金', Mode: 'rmb',
   Amount: '1000', Fee: '0', Frequency: 'monthly', Time: '09:00',
+  TargetCount: '12',
   Month: '1', Day: '31', Weekday: '1', StartDate: '2026-09-01',
   EndDate: '2026-12-31', Enabled: true,
 };
@@ -324,11 +333,14 @@ vm.runInContext("requestPortfolioInvestmentSchedulePreview('new')", context);
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 assert(emits.length === 1 && emits[0][0] === 'preview_portfolio_investment_schedule', 'preview request must emit once');
 assert(emits[0][1].id === '' && emits[0][1].day === 31, 'new preview must send current schedule without a persisted id');
+assert(emits[0][1].amount === 1000 && emits[0][1].fee === 0 && emits[0][1].mode === 'rmb', 'preview must send the fixed investment budget inputs');
+assert(emits[0][1].target_count === 12, 'preview must send the target count');
 assert(context.portfolioInvestmentSchedulePreviews.new.loading === true, 'preview must expose loading state');
-vm.runInContext("applyPortfolioInvestmentSchedulePreview({id:'new', request_id:'0', ok:true, items:['stale']})", context);
+vm.runInContext("applyPortfolioInvestmentSchedulePreview({id:'new', request_id:'0', ok:true, items:['stale'], projection:{target_count:99}})", context);
 assert(context.portfolioInvestmentSchedulePreviews.new.loading === true, 'stale response must be ignored');
-vm.runInContext("applyPortfolioInvestmentSchedulePreview({id:'new', request_id:'1', ok:true, items:['2026-09-30T09:00:00']})", context);
+vm.runInContext("applyPortfolioInvestmentSchedulePreview({id:'new', request_id:'1', ok:true, items:['2026-09-30T09:00:00'], projection:{mode:'rmb',target_count:12,completed_count:3,remaining_count:9,planned_cost_per_run:1000,projected_total_cost:12000,projected_remaining_cost:9000,projected_completion_at:'2027-08-31T09:00:00'}})", context);
 assert(context.portfolioInvestmentSchedulePreviews.new.items[0] === '2026-09-30T09:00:00', 'latest response must update preview');
+assert(context.portfolioInvestmentSchedulePreviews.new.projection.remaining_count === 9, 'latest response must update the budget projection');
 assert(renderCount === 2, 'request and accepted response must each render once');
 """
     script = script.replace("__SOURCE__", json.dumps(source))

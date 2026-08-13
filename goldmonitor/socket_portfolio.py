@@ -198,6 +198,7 @@ def register_portfolio_handlers(
                 "id": str(payload.get("id") or "new"),
                 "request_id": str(payload.get("request_id") or ""),
                 "items": [],
+                "projection": None,
                 "message": str(exc),
             }
         emit("portfolio_investment_schedule_preview", result)

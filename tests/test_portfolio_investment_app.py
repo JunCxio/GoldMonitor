@@ -36,6 +36,7 @@ def test_app_portfolio_investment_socket_crud_and_manual_execution(monkeypatch, 
         "mode": "rmb",
         "amount": 1000,
         "fee": 0,
+        "target_count": 6,
         "frequency": "weekly",
         "weekday": 4,
         "time": "09:00",
@@ -84,6 +85,9 @@ def test_app_portfolio_investment_socket_crud_and_manual_execution(monkeypatch, 
         "2026-10-31T08:30:00",
         "2026-11-30T08:30:00",
     ]
+    assert preview["projection"]["projected_total_cost"] == 6000.0
+    assert preview["projection"]["projected_remaining_cost"] == 6000.0
+    assert preview["projection"]["completion_limited_by_window"] is True
 
     client.emit("execute_portfolio_investment_plan", {"id": plan_id})
     events = client.get_received()

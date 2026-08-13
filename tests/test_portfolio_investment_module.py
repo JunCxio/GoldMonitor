@@ -121,6 +121,106 @@ def test_investment_schedule_preview_handles_month_end_leap_year_and_window():
         )
 
 
+def test_investment_plan_projection_calculates_budget_and_completion_dates():
+    from goldmonitor.portfolio_investment import investment_plan_projection
+
+    base = {
+        "mode": "rmb",
+        "amount": 1000,
+        "fee": 2,
+        "target_count": 3,
+        "time": "09:00",
+        "month": 1,
+        "day": 31,
+        "weekday": 1,
+        "start_date": "",
+        "end_date": "",
+    }
+    daily = investment_plan_projection(
+        {**base, "frequency": "daily"},
+        now=datetime(2026, 8, 12, 10, 0),
+    )
+    weekly = investment_plan_projection(
+        {**base, "frequency": "weekly"},
+        now=datetime(2026, 8, 12, 10, 0),
+    )
+    monthly = investment_plan_projection(
+        {**base, "frequency": "monthly", "target_count": 7},
+        now=datetime(2027, 8, 12, 10, 0),
+    )
+    yearly = investment_plan_projection(
+        {
+            **base,
+            "frequency": "yearly",
+            "month": 2,
+            "day": 29,
+            "target_count": 2,
+        },
+        now=datetime(2027, 1, 1, 10, 0),
+    )
+
+    assert daily["planned_cost_per_run"] == 1002.0
+    assert daily["projected_total_cost"] == 3006.0
+    assert daily["projected_remaining_cost"] == 3006.0
+    assert daily["projected_completion_at"] == "2026-08-15T09:00:00"
+    assert weekly["projected_completion_at"] == "2026-08-31T09:00:00"
+    assert monthly["projected_completion_at"] == "2028-02-29T09:00:00"
+    assert yearly["projected_completion_at"] == "2028-02-29T09:00:00"
+
+
+def test_investment_plan_projection_uses_execution_count_and_reports_short_window():
+    from goldmonitor.portfolio_investment import investment_plan_projection
+
+    plan = {
+        "id": "plan-budget",
+        "mode": "usd",
+        "amount": 500,
+        "fee": 1,
+        "target_count": 4,
+        "frequency": "monthly",
+        "time": "09:00",
+        "month": 1,
+        "day": 15,
+        "weekday": 1,
+        "start_date": "",
+        "end_date": "2026-10-31",
+        "enabled": True,
+        "next_run_at": "2026-09-15T09:00:00",
+    }
+    execution = {
+        "id": "execution-manual",
+        "type": "buy",
+        "mode": "usd",
+        "price": 2500,
+        "quantity": 0.2,
+        "fee": 1,
+        "source": "investment_plan",
+        "source_id": "plan-budget",
+        "execution_kind": "manual",
+    }
+    ignored = {**execution, "id": "execution-other", "source_id": "other-plan"}
+    projection = investment_plan_projection(
+        plan,
+        existing=plan,
+        transactions=[execution, ignored],
+        now=datetime(2026, 8, 12, 10, 0),
+    )
+
+    assert projection["mode"] == "usd"
+    assert projection["completed_count"] == 1
+    assert projection["remaining_count"] == 3
+    assert projection["projected_total_cost"] == 2004.0
+    assert projection["projected_remaining_cost"] == 1503.0
+    assert projection["projected_completion_at"] == ""
+    assert projection["completion_limited_by_window"] is True
+
+
+def test_investment_plan_projection_is_absent_without_target_count():
+    from goldmonitor.portfolio_investment import investment_plan_projection
+
+    assert investment_plan_projection({"target_count": 0}) is None
+
+
 def test_investment_plan_state_exposes_future_schedule_from_pending_run():
     from goldmonitor.portfolio_investment import investment_plan_state
 
@@ -371,6 +471,8 @@ def test_investment_plan_state_completes_at_target_count_and_limits_preview():
         "id": "plan-target",
         "name": "两期定投",
         "mode": "rmb",
+        "amount": 1000,
+        "fee": 0,
         "frequency": "monthly",
         "time": "09:00",
         "month": 1,
@@ -409,6 +511,9 @@ def test_investment_plan_state_completes_at_target_count_and_limits_preview():
     assert in_progress["completed_count"] == 1
     assert in_progress["remaining_count"] == 1
     assert in_progress["upcoming_run_ats"] == ["2026-09-15T09:00:00"]
+    assert in_progress["projection"]["projected_total_cost"] == 2000.0
+    assert in_progress["projection"]["projected_remaining_cost"] == 1000.0
+    assert in_progress["projection"]["projected_completion_at"] == "2026-09-15T09:00:00"
     assert completed["status"] == "completed"
     assert completed["completed_count"] == 2
     assert completed["remaining_count"] == 0
@@ -416,6 +521,8 @@ def test_investment_plan_state_completes_at_target_count_and_limits_preview():
     assert completed["next_run_at"] == ""
     assert completed["pending_run_at"] == ""
     assert completed["upcoming_run_ats"] == []
+    assert completed["projection"]["projected_remaining_cost"] == 0.0
+    assert completed["projection"]["projected_completion_at"] == ""
 
 
 def test_investment_plan_state_calculates_performance_from_sourced_transactions():
