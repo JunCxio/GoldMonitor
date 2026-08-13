@@ -127,6 +127,70 @@ def test_build_daily_digest_handles_empty_history_without_calling_a_model():
     assert digest["payload"]["generated_at"] == "2026-07-13T08:00:00"
 
 
+def test_daily_digest_summarizes_investment_plans_and_attention():
+    from goldmonitor.daily_digest import build_daily_digest
+
+    digest = build_daily_digest(
+        {"range": {}, "summary": {"by_type": {}}, "price_summary": {}, "events": []},
+        portfolio_state={
+            "investment_plans": {
+                "summary": {"total": 3, "enabled": 2, "due": 1, "attention": 1},
+                "items": [
+                    {
+                        "id": "plan-next",
+                        "name": "每月积存",
+                        "position_name": "积存金",
+                        "mode": "rmb",
+                        "amount": 1000.0,
+                        "enabled": True,
+                        "status": "active",
+                        "next_run_at": "2026-08-15T09:00:00",
+                        "last_result": "waiting",
+                    },
+                    {
+                        "id": "plan-recent",
+                        "name": "每日积累",
+                        "position_name": "积存金",
+                        "mode": "rmb",
+                        "amount": 500.0,
+                        "enabled": True,
+                        "status": "due",
+                        "next_run_at": "2026-08-13T09:00:00",
+                        "last_executed_at": "2026-08-13T08:30:00",
+                        "last_result": "ok",
+                        "last_price": 955.2,
+                        "last_quantity": 0.52345059,
+                    },
+                    {
+                        "id": "plan-attention",
+                        "name": "美元积累",
+                        "position_name": "国际金",
+                        "mode": "usd",
+                        "amount": 200.0,
+                        "enabled": False,
+                        "status": "paused",
+                        "last_result": "orphaned",
+                        "last_message": "关联持仓已删除，请重新选择",
+                        "updated_at": "2026-08-13T08:00:00",
+                    },
+                ],
+            }
+        },
+        now=datetime(2026, 8, 13, 20, 0),
+    )
+
+    assert "定投计划" in digest["message"]
+    assert "共 3 个，启用 2 个，待执行 1 个，需处理 1 个" in digest["message"]
+    assert "下一次：每日积累，2026-08-13 09:00，¥500.00" in digest["message"]
+    assert "最近执行：每日积累，2026-08-13 08:30，¥500.00，成交价 ¥955.20" in digest["message"]
+    assert "需处理：美元积累，关联持仓已删除，请重新选择" in digest["message"]
+    investment = digest["payload"]["investment_plan_summary"]
+    assert investment["summary"] == {"total": 3, "enabled": 2, "due": 1, "attention": 1}
+    assert investment["next_plan"]["id"] == "plan-recent"
+    assert investment["recent_plan"]["id"] == "plan-recent"
+    assert [item["id"] for item in investment["attention"]] == ["plan-attention"]
+
+
 def test_daily_digest_keeps_latest_event_from_each_summary_category():
     from goldmonitor.daily_digest import build_daily_digest
 

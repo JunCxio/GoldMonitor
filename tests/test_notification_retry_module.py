@@ -298,6 +298,7 @@ def test_manual_retry_socket_only_replies_to_requesting_client(monkeypatch):
 def test_manual_retry_only_sends_failed_channel_and_persists_result(monkeypatch, tmp_path):
     import app
 
+    now = datetime.now().replace(microsecond=0)
     monkeypatch.setattr(app, "APPDATA_DIR", str(tmp_path))
     monkeypatch.setattr(
         app,
@@ -327,7 +328,7 @@ def test_manual_retry_only_sends_failed_channel_and_persists_result(monkeypatch,
         "type": "warning",
         "message": "部分送达",
         "title": "部分送达测试",
-        "timestamp": "2026-08-12T10:00:00",
+        "timestamp": (now - timedelta(minutes=10)).isoformat(timespec="seconds"),
         "notifications": [
             {
                 "channel": "email",
@@ -343,7 +344,7 @@ def test_manual_retry_only_sends_failed_channel_and_persists_result(monkeypatch,
                 "message": "连接超时",
                 "attempts": 3,
                 "retryable": True,
-                "completed_at": "2026-08-12T10:05:00",
+                "completed_at": (now - timedelta(minutes=5)).isoformat(timespec="seconds"),
             },
         ],
     })

@@ -60,6 +60,125 @@ def _quality_line(market_quality):
     return headline, reasons
 
 
+def _investment_money(value, mode):
+    prefix = "$" if str(mode or "").lower() == "usd" else "¥"
+    return prefix + _number(value)
+
+
+def _investment_time(value):
+    text = str(value or "").strip()
+    if not text:
+        return "--"
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return "--"
+
+
+def _investment_plan_summary(portfolio_state):
+    state = portfolio_state.get("investment_plans") if isinstance(portfolio_state, dict) else None
+    state = state if isinstance(state, dict) else {}
+    plans = [dict(item) for item in list(state.get("items") or []) if isinstance(item, dict)]
+    supplied = state.get("summary") if isinstance(state.get("summary"), dict) else {}
+    attention_plans = [
+        item for item in plans
+        if item.get("last_result") in {"error", "orphaned"}
+        or (item.get("enabled") is True and item.get("last_result") == "waiting_price")
+    ]
+    summary = {
+        "total": int(supplied["total"] if "total" in supplied else len(plans)),
+        "enabled": int(supplied["enabled"] if "enabled" in supplied else sum(item.get("enabled") is True for item in plans)),
+        "due": int(supplied["due"] if "due" in supplied else sum(item.get("status") == "due" for item in plans)),
+        "attention": len(attention_plans),
+    }
+    next_plan = min(
+        (
+            item for item in plans
+            if item.get("enabled") is True and _investment_time(item.get("next_run_at")) != "--"
+        ),
+        key=lambda item: str(item.get("next_run_at") or ""),
+        default=None,
+    )
+    recent_plan = max(
+        (item for item in plans if _investment_time(item.get("last_executed_at")) != "--"),
+        key=lambda item: str(item.get("last_executed_at") or ""),
+        default=None,
+    )
+    attention = attention_plans
+    attention.sort(
+        key=lambda item: str(item.get("updated_at") or item.get("last_executed_at") or ""),
+        reverse=True,
+    )
+
+    def compact(item):
+        if not item:
+            return None
+        return {
+            key: item.get(key)
+            for key in (
+                "id",
+                "name",
+                "position_name",
+                "mode",
+                "amount",
+                "enabled",
+                "status",
+                "next_run_at",
+                "last_executed_at",
+                "last_result",
+                "last_message",
+                "last_price",
+                "last_quantity",
+                "last_transaction_id",
+            )
+            if key in item
+        }
+
+    return {
+        "summary": summary,
+        "next_plan": compact(next_plan),
+        "recent_plan": compact(recent_plan),
+        "attention": [compact(item) for item in attention[:3]],
+    }
+
+
+def _investment_lines(investment_summary):
+    summary = investment_summary["summary"]
+    if summary["total"] <= 0:
+        return ["- 暂无定投计划"]
+    lines = [
+        (
+            f"- 共 {summary['total']} 个，启用 {summary['enabled']} 个，"
+            f"待执行 {summary['due']} 个，需处理 {summary['attention']} 个"
+        )
+    ]
+    next_plan = investment_summary.get("next_plan")
+    if next_plan:
+        lines.append(
+            f"- 下一次：{next_plan.get('name') or '未命名计划'}，"
+            f"{_investment_time(next_plan.get('next_run_at'))}，"
+            f"{_investment_money(next_plan.get('amount'), next_plan.get('mode'))}"
+        )
+    recent_plan = investment_summary.get("recent_plan")
+    if recent_plan:
+        detail = (
+            f"- 最近执行：{recent_plan.get('name') or '未命名计划'}，"
+            f"{_investment_time(recent_plan.get('last_executed_at'))}，"
+            f"{_investment_money(recent_plan.get('amount'), recent_plan.get('mode'))}"
+        )
+        if recent_plan.get("last_price") is not None:
+            detail += "，成交价 " + _investment_money(
+                recent_plan.get("last_price"), recent_plan.get("mode")
+            )
+        lines.append(detail)
+    for item in investment_summary.get("attention") or []:
+        lines.append(
+            f"- 需处理：{item.get('name') or '未命名计划'}，"
+            f"{item.get('last_message') or '请检查计划状态'}"
+        )
+    return lines
+
+
 def _recent_events(events, limit=5):
     items = [
         dict(item)
@@ -98,6 +217,7 @@ def build_daily_digest(timeline_state, portfolio_state=None, market_quality=None
     counts = _event_counts(summary)
     quality_headline, quality_reasons = _quality_line(market_quality)
     recent_events = _recent_events(timeline_state.get("events"))
+    investment_summary = _investment_plan_summary(portfolio_state)
 
     lines = [
         "GoldMonitor 每日摘要",
@@ -127,6 +247,9 @@ def build_daily_digest(timeline_state, portfolio_state=None, market_quality=None
         _portfolio_line(portfolio_state, "rmb_summary", "人民币持仓"),
         _portfolio_line(portfolio_state, "usd_summary", "美元持仓"),
         "",
+        "定投计划",
+        *_investment_lines(investment_summary),
+        "",
         "关键事件",
     ])
     if recent_events:
@@ -149,6 +272,7 @@ def build_daily_digest(timeline_state, portfolio_state=None, market_quality=None
             "rmb": dict(portfolio_state.get("rmb_summary") or {}),
             "usd": dict(portfolio_state.get("usd_summary") or {}),
         },
+        "investment_plan_summary": investment_summary,
         "recent_events": recent_events,
         "message": message,
     }
