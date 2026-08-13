@@ -912,6 +912,7 @@
   .portfolio-investment-timeline span, .portfolio-investment-timeline small { display:block; color:var(--text-dim); font-size:0.58rem; line-height:1.3; }
   .portfolio-investment-timeline strong { display:block; margin:2px 0; color:#f0f0f4; font-size:0.66rem; font-weight:850; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .portfolio-investment-actions { display:grid; grid-template-columns:repeat(2, minmax(64px, 1fr)); gap:5px; width:146px; }
+  .portfolio-investment-actions button:last-child { grid-column:1 / -1; }
   .portfolio-investment-actions .btn-clear-sm { width:100%; min-width:0; justify-content:center; }
   .portfolio-investment-performance { grid-column:1 / -1; display:grid; gap:8px; min-width:0; padding-top:10px; border-top:1px solid rgba(255,255,255,0.055); }
   .portfolio-investment-performance-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:6px; min-width:0; }
@@ -1339,7 +1340,8 @@
     .portfolio-investment-next { border-right:0; }
     .portfolio-investment-overview-flags { grid-column:1 / -1; border-top:1px solid rgba(255,255,255,0.055); }
     .portfolio-investment-card { grid-template-columns:1fr; }
-    .portfolio-investment-actions { width:100%; grid-template-columns:repeat(4, minmax(0, 1fr)); }
+    .portfolio-investment-actions { width:100%; grid-template-columns:repeat(5, minmax(0, 1fr)); }
+    .portfolio-investment-actions button:last-child { grid-column:auto; }
     .portfolio-investment-performance-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
   }
 
@@ -1490,6 +1492,7 @@
     .portfolio-investment-timeline { grid-template-columns:minmax(4px, 4px) minmax(0, 1fr); }
     .portfolio-investment-timeline > div:last-child { grid-column:2; }
     .portfolio-investment-actions { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+    .portfolio-investment-actions button:last-child { grid-column:1 / -1; }
     .portfolio-investment-overview-performance { align-items:flex-start; flex-direction:column; }
     .portfolio-investment-performance-grid, .portfolio-investment-execution-item { grid-template-columns:1fr; }
     .portfolio-investment-execution-item > div:last-child { text-align:left; }

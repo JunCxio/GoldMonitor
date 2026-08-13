@@ -68,12 +68,37 @@ function clearPortfolioInvestmentDraft(id) {
   delete portfolioInvestmentDrafts[portfolioInvestmentDraftKey(id)];
 }
 
+function duplicatePortfolioInvestmentPlan(id) {
+  const plan = portfolioInvestmentItems().find(item => item.id === id);
+  if (!plan) {
+    setPortfolioStatus('未找到可复制的定投计划。', 'fail');
+    return;
+  }
+  if (activePortfolioInvestmentPlanId === 'new' && portfolioInvestmentDrafts.new && !window.confirm('当前新计划草稿将被替换，是否继续复制？')) {
+    return;
+  }
+  captureActivePortfolioInvestmentDraft();
+  const draft = portfolioInvestmentBaseDraft(plan);
+  portfolioInvestmentDrafts.new = Object.assign({}, draft, {
+    id: 'new',
+    name: String(plan.name || '定投计划').trim().slice(0, 57) + ' 副本',
+    enabled: false,
+  });
+  activePortfolioInvestmentPlanId = 'new';
+  portfolioView = 'investment';
+  portfolioInvestmentDraftNotice = '已复制为新计划草稿，确认后再保存。';
+  setPortfolioStatus(portfolioInvestmentDraftNotice, 'ok');
+  renderPortfolio();
+}
+
 function setActivePortfolioInvestmentPlan(id) {
   captureActivePortfolioInvestmentDraft();
   if (activePortfolioInvestmentPlanId === id) {
     clearPortfolioInvestmentDraft(id);
     activePortfolioInvestmentPlanId = null;
+    if (id === 'new') portfolioInvestmentDraftNotice = '';
   } else {
+    if (activePortfolioInvestmentPlanId === 'new' || id !== 'new') portfolioInvestmentDraftNotice = '';
     activePortfolioInvestmentPlanId = id;
   }
   portfolioView = 'investment';
@@ -299,6 +324,7 @@ function renderPortfolioInvestments(box) {
       '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="executePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">立即执行</button>',
       '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="togglePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\', ' + String(!plan.enabled) + ')">' + (plan.enabled ? '暂停' : '启用') + '</button>',
       '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="setActivePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">' + (expanded ? '收起' : '编辑') + '</button>',
+      '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="duplicatePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">复制</button>',
       '<button class="btn-clear-sm" type="button" onclick="deletePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">删除</button>',
       '</div>',
       expanded ? renderPortfolioInvestmentPerformance(plan) : '',
@@ -334,6 +360,7 @@ function savePortfolioInvestmentPlan(id) {
   if (!Number.isFinite(payload.amount) || payload.amount <= 0) return setPortfolioStatus('请输入有效的定投金额。', 'fail');
   if (!Number.isFinite(payload.fee) || payload.fee < 0) return setPortfolioStatus('手续费不能为负数。', 'fail');
   if (id !== 'new') payload.id = id;
+  portfolioInvestmentDraftNotice = '';
   pendingPortfolioSave = { kind: 'investment', id };
   setPortfolioStatus('正在保存定投计划...', '');
   socket.emit('save_portfolio_investment_plan', payload);

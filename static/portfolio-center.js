@@ -8,6 +8,8 @@ function registerPortfolioSocketHandlers(socketClient) {
     } else if (pendingPortfolioUndoMessage) {
       setPortfolioStatus(pendingPortfolioUndoMessage, 'ok');
       pendingPortfolioUndoMessage = '';
+    } else if (portfolioInvestmentDraftNotice) {
+      setPortfolioStatus(portfolioInvestmentDraftNotice, 'ok');
     } else {
       setPortfolioStatus('持仓已更新。', 'ok');
     }
@@ -28,6 +30,7 @@ function registerPortfolioSocketHandlers(socketClient) {
     if (pendingPortfolioSave && pendingPortfolioSave.kind === 'investment') {
       clearPortfolioInvestmentDraft(pendingPortfolioSave.id);
       activePortfolioInvestmentPlanId = null;
+      portfolioInvestmentDraftNotice = '';
       pendingPortfolioSave = null;
     }
     renderPortfolio();

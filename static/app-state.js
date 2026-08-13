@@ -26,6 +26,7 @@ let activePortfolioTransactionId = null;
 let portfolioTransactionDrafts = {};
 let activePortfolioInvestmentPlanId = null;
 let portfolioInvestmentDrafts = {};
+let portfolioInvestmentDraftNotice = '';
 let portfolioAlertDrafts = {};
 let pendingPortfolioSave = null;
 let pendingPortfolioImportMessage = '';
