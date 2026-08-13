@@ -69,7 +69,68 @@ function captureActivePortfolioInvestmentDraft() {
 }
 
 function clearPortfolioInvestmentDraft(id) {
-  delete portfolioInvestmentDrafts[portfolioInvestmentDraftKey(id)];
+  const key = portfolioInvestmentDraftKey(id);
+  delete portfolioInvestmentDrafts[key];
+  delete portfolioInvestmentSchedulePreviews[key];
+}
+
+function portfolioInvestmentSchedulePayload(item) {
+  const source = item && typeof item === 'object' ? item : {};
+  return {
+    frequency: source.frequency || 'monthly',
+    time: source.time || '09:00',
+    month: Number(source.month || 1),
+    day: Number(source.day || 1),
+    weekday: Number(source.weekday || 1),
+    start_date: String(source.start_date || '').trim(),
+    end_date: String(source.end_date || '').trim(),
+  };
+}
+
+function requestPortfolioInvestmentSchedulePreview(id) {
+  capturePortfolioInvestmentDraft(id);
+  const key = portfolioInvestmentDraftKey(id);
+  const target = portfolioInvestmentDraftFor({ id: key });
+  const requestId = String(++portfolioInvestmentSchedulePreviewSeq);
+  portfolioInvestmentSchedulePreviews[key] = { request_id: requestId, loading: true, items: [], message: '' };
+  socket.emit('preview_portfolio_investment_schedule', Object.assign(
+    { id: key === 'new' ? '' : key, request_id: requestId },
+    portfolioInvestmentSchedulePayload(target),
+  ));
+  renderPortfolio();
+}
+
+function applyPortfolioInvestmentSchedulePreview(data) {
+  const key = portfolioInvestmentDraftKey(data && data.id);
+  const current = portfolioInvestmentSchedulePreviews[key];
+  if (!current || String(current.request_id) !== String((data && data.request_id) || '')) return;
+  portfolioInvestmentSchedulePreviews[key] = {
+    request_id: current.request_id,
+    loading: false,
+    items: Array.isArray(data.items) ? data.items : [],
+    message: data.ok === false ? String(data.message || '无法生成期次预览。') : '',
+  };
+  renderPortfolio();
+}
+
+function portfolioInvestmentSchedulePreviewMarkup(id, fallbackItems) {
+  const key = portfolioInvestmentDraftKey(id);
+  const preview = portfolioInvestmentSchedulePreviews[key];
+  const items = preview ? preview.items : Array.isArray(fallbackItems) ? fallbackItems : [];
+  const stateClass = preview && preview.message ? ' error' : preview && preview.loading ? ' loading' : '';
+  const content = preview && preview.loading
+    ? '<span class="portfolio-investment-schedule-preview-empty">正在计算未来期次...</span>'
+    : preview && preview.message
+      ? '<span class="portfolio-investment-schedule-preview-empty">' + escapeHtml(preview.message) + '</span>'
+      : items.length
+        ? '<div class="portfolio-investment-schedule-preview-list">' + items.map((value, index) => '<span><b>' + String(index + 1).padStart(2, '0') + '</b>' + escapeHtml(portfolioInvestmentDateTime(value)) + '</span>').join('') + '</div>'
+        : '<span class="portfolio-investment-schedule-preview-empty">当前设置范围内没有可执行期次。</span>';
+  return [
+    '<div class="portfolio-investment-schedule-preview' + stateClass + '">',
+    '<div class="portfolio-investment-schedule-preview-head"><div><strong>未来 5 期</strong><small>按当前周期和执行区间计算</small></div><button class="btn-clear-sm btn-muted-sm" type="button" onclick="requestPortfolioInvestmentSchedulePreview(\'' + escapeHtml(key) + '\')">重新计算</button></div>',
+    content,
+    '</div>',
+  ].join('');
 }
 
 function duplicatePortfolioInvestmentPlan(id) {
@@ -97,6 +158,7 @@ function duplicatePortfolioInvestmentPlan(id) {
 
 function setActivePortfolioInvestmentPlan(id) {
   captureActivePortfolioInvestmentDraft();
+  const opening = activePortfolioInvestmentPlanId !== id;
   if (activePortfolioInvestmentPlanId === id) {
     clearPortfolioInvestmentDraft(id);
     activePortfolioInvestmentPlanId = null;
@@ -107,11 +169,13 @@ function setActivePortfolioInvestmentPlan(id) {
   }
   portfolioView = 'investment';
   renderPortfolio();
+  if (opening) requestPortfolioInvestmentSchedulePreview(id);
 }
 
 function refreshPortfolioInvestmentEditor(id) {
   capturePortfolioInvestmentDraft(id);
   renderPortfolio();
+  requestPortfolioInvestmentSchedulePreview(id);
 }
 
 function portfolioInvestmentFrequencyLabel(plan) {
@@ -304,6 +368,7 @@ function buildPortfolioInvestmentEditor(item) {
   });
   const fieldInput = ' oninput="capturePortfolioInvestmentDraft(\'' + escapedId + '\')"';
   const fieldChange = ' onchange="capturePortfolioInvestmentDraft(\'' + escapedId + '\')"';
+  const scheduleChange = ' onchange="requestPortfolioInvestmentSchedulePreview(\'' + escapedId + '\')"';
   const rerenderChange = ' onchange="refreshPortfolioInvestmentEditor(\'' + escapedId + '\')"';
   return [
     '<div class="portfolio-editor portfolio-investment-editor">',
@@ -315,14 +380,15 @@ function buildPortfolioInvestmentEditor(item) {
     '<div class="portfolio-field"><label for="portfolioInvestmentAmount_' + escapedId + '">每次金额</label><input id="portfolioInvestmentAmount_' + escapedId + '" type="number" min="0.01" step="0.01" value="' + escapeHtml(target.amount) + '" placeholder="输入固定金额"' + fieldInput + '></div>',
     '<div class="portfolio-field"><label for="portfolioInvestmentFee_' + escapedId + '">固定手续费</label><input id="portfolioInvestmentFee_' + escapedId + '" type="number" min="0" step="0.01" value="' + escapeHtml(target.fee) + '"' + fieldInput + '></div>',
     '<div class="portfolio-field"><label for="portfolioInvestmentFrequency_' + escapedId + '">周期</label><select id="portfolioInvestmentFrequency_' + escapedId + '"' + rerenderChange + '><option value="daily"' + (target.frequency === 'daily' ? ' selected' : '') + '>每天</option><option value="weekly"' + (target.frequency === 'weekly' ? ' selected' : '') + '>每周</option><option value="monthly"' + (target.frequency === 'monthly' ? ' selected' : '') + '>每月</option><option value="yearly"' + (target.frequency === 'yearly' ? ' selected' : '') + '>每年</option></select></div>',
-    target.frequency === 'weekly' ? '<div class="portfolio-field"><label for="portfolioInvestmentWeekday_' + escapedId + '">星期</label><select id="portfolioInvestmentWeekday_' + escapedId + '"' + fieldChange + '><option value="1"' + (target.weekday === '1' ? ' selected' : '') + '>星期一</option><option value="2"' + (target.weekday === '2' ? ' selected' : '') + '>星期二</option><option value="3"' + (target.weekday === '3' ? ' selected' : '') + '>星期三</option><option value="4"' + (target.weekday === '4' ? ' selected' : '') + '>星期四</option><option value="5"' + (target.weekday === '5' ? ' selected' : '') + '>星期五</option><option value="6"' + (target.weekday === '6' ? ' selected' : '') + '>星期六</option><option value="7"' + (target.weekday === '7' ? ' selected' : '') + '>星期日</option></select></div>' : '<input id="portfolioInvestmentWeekday_' + escapedId + '" type="hidden" value="' + escapeHtml(target.weekday) + '">',
-    target.frequency === 'yearly' ? '<div class="portfolio-field"><label for="portfolioInvestmentMonth_' + escapedId + '">月份</label><input id="portfolioInvestmentMonth_' + escapedId + '" type="number" min="1" max="12" value="' + escapeHtml(target.month) + '"' + fieldInput + '></div>' : '<input id="portfolioInvestmentMonth_' + escapedId + '" type="hidden" value="' + escapeHtml(target.month) + '">',
-    ['monthly', 'yearly'].includes(target.frequency) ? '<div class="portfolio-field"><label for="portfolioInvestmentDay_' + escapedId + '">日期</label><input id="portfolioInvestmentDay_' + escapedId + '" type="number" min="1" max="31" value="' + escapeHtml(target.day) + '"' + fieldInput + '></div>' : '<input id="portfolioInvestmentDay_' + escapedId + '" type="hidden" value="' + escapeHtml(target.day) + '">',
-    '<div class="portfolio-field"><label for="portfolioInvestmentTime_' + escapedId + '">执行时间</label><input id="portfolioInvestmentTime_' + escapedId + '" type="time" value="' + escapeHtml(target.time) + '"' + fieldChange + '></div>',
-    '<div class="portfolio-field"><label for="portfolioInvestmentStartDate_' + escapedId + '">开始日期（可选）</label><input id="portfolioInvestmentStartDate_' + escapedId + '" type="date" value="' + escapeHtml(target.start_date) + '"' + fieldChange + '></div>',
-    '<div class="portfolio-field"><label for="portfolioInvestmentEndDate_' + escapedId + '">结束日期（可选）</label><input id="portfolioInvestmentEndDate_' + escapedId + '" type="date" value="' + escapeHtml(target.end_date) + '"' + fieldChange + '></div>',
+    target.frequency === 'weekly' ? '<div class="portfolio-field"><label for="portfolioInvestmentWeekday_' + escapedId + '">星期</label><select id="portfolioInvestmentWeekday_' + escapedId + '"' + scheduleChange + '><option value="1"' + (target.weekday === '1' ? ' selected' : '') + '>星期一</option><option value="2"' + (target.weekday === '2' ? ' selected' : '') + '>星期二</option><option value="3"' + (target.weekday === '3' ? ' selected' : '') + '>星期三</option><option value="4"' + (target.weekday === '4' ? ' selected' : '') + '>星期四</option><option value="5"' + (target.weekday === '5' ? ' selected' : '') + '>星期五</option><option value="6"' + (target.weekday === '6' ? ' selected' : '') + '>星期六</option><option value="7"' + (target.weekday === '7' ? ' selected' : '') + '>星期日</option></select></div>' : '<input id="portfolioInvestmentWeekday_' + escapedId + '" type="hidden" value="' + escapeHtml(target.weekday) + '">',
+    target.frequency === 'yearly' ? '<div class="portfolio-field"><label for="portfolioInvestmentMonth_' + escapedId + '">月份</label><input id="portfolioInvestmentMonth_' + escapedId + '" type="number" min="1" max="12" value="' + escapeHtml(target.month) + '"' + scheduleChange + '></div>' : '<input id="portfolioInvestmentMonth_' + escapedId + '" type="hidden" value="' + escapeHtml(target.month) + '">',
+    ['monthly', 'yearly'].includes(target.frequency) ? '<div class="portfolio-field"><label for="portfolioInvestmentDay_' + escapedId + '">日期</label><input id="portfolioInvestmentDay_' + escapedId + '" type="number" min="1" max="31" value="' + escapeHtml(target.day) + '"' + scheduleChange + '></div>' : '<input id="portfolioInvestmentDay_' + escapedId + '" type="hidden" value="' + escapeHtml(target.day) + '">',
+    '<div class="portfolio-field"><label for="portfolioInvestmentTime_' + escapedId + '">执行时间</label><input id="portfolioInvestmentTime_' + escapedId + '" type="time" value="' + escapeHtml(target.time) + '"' + scheduleChange + '></div>',
+    '<div class="portfolio-field"><label for="portfolioInvestmentStartDate_' + escapedId + '">开始日期（可选）</label><input id="portfolioInvestmentStartDate_' + escapedId + '" type="date" value="' + escapeHtml(target.start_date) + '"' + scheduleChange + '></div>',
+    '<div class="portfolio-field"><label for="portfolioInvestmentEndDate_' + escapedId + '">结束日期（可选）</label><input id="portfolioInvestmentEndDate_' + escapedId + '" type="date" value="' + escapeHtml(target.end_date) + '"' + scheduleChange + '></div>',
     '<label class="portfolio-investment-enabled"><input id="portfolioInvestmentEnabled_' + escapedId + '" type="checkbox"' + (target.enabled ? ' checked' : '') + fieldChange + '><span>保存后启用计划</span></label>',
     '</div>',
+    portfolioInvestmentSchedulePreviewMarkup(id, item && item.upcoming_run_ats),
     '<div class="portfolio-editor-actions"><button class="btn-set" type="button" onclick="savePortfolioInvestmentPlan(\'' + escapedId + '\')">保存计划</button><button class="btn-clear-sm btn-muted-sm" type="button" onclick="setActivePortfolioInvestmentPlan(\'' + escapedId + '\')">取消</button></div>',
     '</div>',
   ].join('');
@@ -361,6 +427,7 @@ function renderPortfolioInvestments(box) {
       '<div class="portfolio-investment-timeline-marker"></div>',
       '<div><span>下一次执行</span><strong>' + escapeHtml(portfolioInvestmentNextRunLabel(plan)) + '</strong><small>' + escapeHtml(portfolioInvestmentWindowLabel(plan) + ' · ' + plan.position_name + ' · ' + portfolioModeLabel(mode)) + '</small></div>',
       '<div><span>最近结果</span><strong>' + escapeHtml(lastDetail) + '</strong><small>' + escapeHtml(resultMetrics) + '</small></div>',
+      '<div class="portfolio-investment-upcoming"><span>后续安排</span><strong>' + escapeHtml((plan.upcoming_run_ats || []).slice(1, 4).map(portfolioInvestmentDateTime).join(' · ') || '暂无后续期次') + '</strong><small>显示下一期之后的 3 个日期</small></div>',
       '</div>',
       '</div>',
       '<div class="portfolio-investment-actions">',

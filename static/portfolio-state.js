@@ -160,6 +160,7 @@ function normalizePortfolioInvestmentPlan(item) {
     end_date: source.end_date || '',
     enabled: source.enabled !== false,
     next_run_at: source.next_run_at || '',
+    upcoming_run_ats: Array.isArray(source.upcoming_run_ats) ? source.upcoming_run_ats.map(value => String(value || '')).filter(Boolean) : [],
     pending_run_at: source.pending_run_at || '',
     last_scheduled_at: source.last_scheduled_at || '',
     last_executed_at: source.last_executed_at || '',

@@ -14,6 +14,7 @@ INVESTMENT_PLAN_SCHEMA_VERSION = 1
 INVESTMENT_FREQUENCIES = {"daily", "weekly", "monthly", "yearly"}
 INVESTMENT_EXECUTION_KINDS = {"scheduled", "catch_up", "manual"}
 INVESTMENT_EXECUTION_HISTORY_LIMIT = 10
+INVESTMENT_SCHEDULE_PREVIEW_LIMIT = 5
 INVESTMENT_EXECUTION_CSV_FIELDS = [
     "plan_id",
     "plan_name",
@@ -95,6 +96,45 @@ def _parse_date(value, field_name):
         raise ValueError(f"定投{field_name}无效") from exc
 
 
+def normalize_investment_schedule(item, existing=None):
+    if not isinstance(item, dict):
+        raise ValueError("定投计划格式无效")
+    existing = existing if isinstance(existing, dict) else {}
+    frequency = _clean_text(
+        item.get("frequency", existing.get("frequency", "monthly"))
+    ).lower()
+    if frequency not in INVESTMENT_FREQUENCIES:
+        raise ValueError("定投周期无效")
+    time_text = _parse_time(item.get("time", existing.get("time", "09:00")))
+    month = _bounded_int(item.get("month", existing.get("month", 1)), 1, 12, 1)
+    day = _bounded_int(item.get("day", existing.get("day", 1)), 1, 31, 1)
+    weekday = _bounded_int(
+        item.get("weekday", existing.get("weekday", 1)),
+        1,
+        7,
+        1,
+    )
+    start_date = _parse_date(
+        item.get("start_date", existing.get("start_date", "")),
+        "开始日期",
+    )
+    end_date = _parse_date(
+        item.get("end_date", existing.get("end_date", "")),
+        "结束日期",
+    )
+    if start_date and end_date and start_date > end_date:
+        raise ValueError("定投结束日期不能早于开始日期")
+    return {
+        "frequency": frequency,
+        "time": time_text,
+        "month": month,
+        "day": day,
+        "weekday": weekday,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+
+
 def _schedule_signature(
     frequency,
     time_text,
@@ -113,6 +153,18 @@ def _schedule_signature(
         signature.extend([month, day])
     signature.extend([start_date, end_date])
     return tuple(signature)
+
+
+def _schedule_signature_from_plan(plan):
+    return _schedule_signature(
+        plan["frequency"],
+        plan["time"],
+        plan["month"],
+        plan["day"],
+        plan["weekday"],
+        plan.get("start_date", ""),
+        plan.get("end_date", ""),
+    )
 
 
 def parse_plan_datetime(value):
@@ -284,6 +336,39 @@ def pending_plan_run_at(plan, now):
     return next_run
 
 
+def investment_schedule_preview(
+    item,
+    *,
+    existing=None,
+    now=None,
+    limit=INVESTMENT_SCHEDULE_PREVIEW_LIMIT,
+):
+    now = now or datetime.now()
+    existing = existing if isinstance(existing, dict) else {}
+    schedule = normalize_investment_schedule(item, existing)
+    preview_limit = _bounded_int(
+        limit,
+        1,
+        12,
+        INVESTMENT_SCHEDULE_PREVIEW_LIMIT,
+    )
+    existing_schedule = normalize_investment_schedule(existing) if existing else None
+    schedule_unchanged = bool(
+        existing_schedule
+        and _schedule_signature_from_plan(existing_schedule)
+        == _schedule_signature_from_plan(schedule)
+    )
+    plan = {**existing, **schedule}
+    candidate = pending_plan_run_at(plan, now) if schedule_unchanged else None
+    if candidate is None:
+        candidate = next_plan_run_in_window(schedule, now)
+    run_ats = []
+    while candidate is not None and len(run_ats) < preview_limit:
+        run_ats.append(candidate.isoformat(timespec="seconds"))
+        candidate = next_plan_run_in_window(schedule, candidate)
+    return run_ats
+
+
 def normalize_investment_plan(
     item,
     existing=None,
@@ -324,30 +409,14 @@ def normalize_investment_plan(
     fee = _nonnegative_float(item.get("fee", existing.get("fee", 0)))
     if fee is None:
         raise ValueError("定投手续费不能为负数")
-    frequency = _clean_text(
-        item.get("frequency", existing.get("frequency", "monthly"))
-    ).lower()
-    if frequency not in INVESTMENT_FREQUENCIES:
-        raise ValueError("定投周期无效")
-    time_text = _parse_time(item.get("time", existing.get("time", "09:00")))
-    month = _bounded_int(item.get("month", existing.get("month", 1)), 1, 12, 1)
-    day = _bounded_int(item.get("day", existing.get("day", 1)), 1, 31, 1)
-    weekday = _bounded_int(
-        item.get("weekday", existing.get("weekday", 1)),
-        1,
-        7,
-        1,
-    )
-    start_date = _parse_date(
-        item.get("start_date", existing.get("start_date", "")),
-        "开始日期",
-    )
-    end_date = _parse_date(
-        item.get("end_date", existing.get("end_date", "")),
-        "结束日期",
-    )
-    if start_date and end_date and start_date > end_date:
-        raise ValueError("定投结束日期不能早于开始日期")
+    schedule = normalize_investment_schedule(item, existing)
+    frequency = schedule["frequency"]
+    time_text = schedule["time"]
+    month = schedule["month"]
+    day = schedule["day"]
+    weekday = schedule["weekday"]
+    start_date = schedule["start_date"]
+    end_date = schedule["end_date"]
     enabled = item.get("enabled", existing.get("enabled", True)) is not False
 
     existing_frequency = _clean_text(existing.get("frequency", "monthly")).lower()
@@ -628,6 +697,15 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
         plan["status"] = status
         plan["pending_run_at"] = (
             pending_run.isoformat(timespec="seconds") if pending_run else ""
+        )
+        plan["upcoming_run_ats"] = (
+            investment_schedule_preview(
+                plan,
+                existing=plan,
+                now=now,
+            )
+            if plan.get("enabled")
+            else []
         )
         performance = investment_plan_performance(
             plan,

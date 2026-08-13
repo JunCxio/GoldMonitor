@@ -61,6 +61,30 @@ def test_app_portfolio_investment_socket_crud_and_manual_execution(monkeypatch, 
     assert saved["plan"]["end_date"] == "2026-12-31"
     assert state["summary"]["total"] == 1
 
+    client.emit("preview_portfolio_investment_schedule", {
+        "id": plan_id,
+        "request_id": "preview-1",
+        "frequency": "monthly",
+        "day": 31,
+        "time": "08:30",
+        "start_date": "2026-09-01",
+        "end_date": "2026-11-30",
+    })
+    events = client.get_received()
+    preview = next(
+        item["args"][0]
+        for item in events
+        if item["name"] == "portfolio_investment_schedule_preview"
+    )
+    assert preview["ok"] is True
+    assert preview["id"] == plan_id
+    assert preview["request_id"] == "preview-1"
+    assert preview["items"] == [
+        "2026-09-30T08:30:00",
+        "2026-10-31T08:30:00",
+        "2026-11-30T08:30:00",
+    ]
+
     client.emit("execute_portfolio_investment_plan", {"id": plan_id})
     events = client.get_received()
     executed = next(

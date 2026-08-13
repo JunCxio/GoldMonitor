@@ -23,6 +23,7 @@ vm.createContext(context);
 vm.runInContext(__SOURCE__, context);
 const plan = vm.runInContext(`normalizePortfolioInvestmentPlan({
   id: 'plan-window', start_date: '2026-09-01', end_date: '2026-12-31',
+  upcoming_run_ats: ['2026-09-01T09:00:00', '2026-10-01T09:00:00'],
   pending_run_at: '2026-09-01T09:00:00', last_skipped_at: '2026-08-13T10:00:00',
   last_skipped_scheduled_at: '2026-08-01T09:00:00', skip_count: 2
 })`, context);
@@ -31,6 +32,9 @@ if (plan.start_date !== '2026-09-01' || plan.end_date !== '2026-12-31') {
 }
 if (plan.pending_run_at !== '2026-09-01T09:00:00' || plan.skip_count !== 2) {
   throw new Error('skip state must survive portfolio state normalization');
+}
+if (plan.upcoming_run_ats.length !== 2 || plan.upcoming_run_ats[1] !== '2026-10-01T09:00:00') {
+  throw new Error('future schedule must survive portfolio state normalization');
 }
 """
     script = script.replace("__SOURCE__", json.dumps(source))
@@ -193,6 +197,56 @@ vm.runInContext("skipPortfolioInvestmentPlan('plan-1', '2026-08-15T09:00:00')", 
 if (emits.length !== 1 || emits[0][0] !== 'skip_portfolio_investment_plan') throw new Error('confirmed skip must emit once');
 if (emits[0][1].id !== 'plan-1' || emits[0][1].scheduled_at !== '2026-08-15T09:00:00') throw new Error('skip must send the expected run identity');
 if (!statuses.at(-1).message.includes('正在跳过')) throw new Error('skip must report progress');
+"""
+    script = script.replace("__SOURCE__", json.dumps(source))
+    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_investment_plan_frontend_requests_preview_and_ignores_stale_response():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("需要 Node.js 执行定投前端行为测试")
+
+    source = (ROOT / "static" / "portfolio-investment.js").read_text(encoding="utf-8")
+    script = """
+const vm = require('vm');
+const emits = [];
+let renderCount = 0;
+const values = {
+  Name: '月末定投', PositionId: '', PositionName: '积存金', Mode: 'rmb',
+  Amount: '1000', Fee: '0', Frequency: 'monthly', Time: '09:00',
+  Month: '1', Day: '31', Weekday: '1', StartDate: '2026-09-01',
+  EndDate: '2026-12-31', Enabled: true,
+};
+const context = {
+  console,
+  currentMode: 'rmb',
+  portfolioState: { items: [], investment_plans: { items: [] } },
+  portfolioInvestmentDrafts: {},
+  portfolioInvestmentSchedulePreviews: {},
+  portfolioInvestmentSchedulePreviewSeq: 0,
+  socket: { emit: (...args) => emits.push(args) },
+  renderPortfolio: () => { renderCount += 1; },
+  document: { getElementById: id => {
+    const field = id.match(/^portfolioInvestment(.+)_new$/)?.[1];
+    if (!field || !(field in values)) return null;
+    return { type: field === 'Enabled' ? 'checkbox' : 'text', value: values[field], checked: values[field] };
+  } },
+};
+context.globalThis = context;
+vm.createContext(context);
+vm.runInContext(__SOURCE__, context);
+vm.runInContext("requestPortfolioInvestmentSchedulePreview('new')", context);
+const assert = (condition, message) => { if (!condition) throw new Error(message); };
+assert(emits.length === 1 && emits[0][0] === 'preview_portfolio_investment_schedule', 'preview request must emit once');
+assert(emits[0][1].id === '' && emits[0][1].day === 31, 'new preview must send current schedule without a persisted id');
+assert(context.portfolioInvestmentSchedulePreviews.new.loading === true, 'preview must expose loading state');
+vm.runInContext("applyPortfolioInvestmentSchedulePreview({id:'new', request_id:'0', ok:true, items:['stale']})", context);
+assert(context.portfolioInvestmentSchedulePreviews.new.loading === true, 'stale response must be ignored');
+vm.runInContext("applyPortfolioInvestmentSchedulePreview({id:'new', request_id:'1', ok:true, items:['2026-09-30T09:00:00']})", context);
+assert(context.portfolioInvestmentSchedulePreviews.new.items[0] === '2026-09-30T09:00:00', 'latest response must update preview');
+assert(renderCount === 2, 'request and accepted response must each render once');
 """
     script = script.replace("__SOURCE__", json.dumps(source))
     result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)

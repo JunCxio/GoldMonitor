@@ -21,6 +21,7 @@ def register_portfolio_handlers(
     reset_portfolio_alert,
     delete_portfolio_alert,
     get_portfolio_investment_plan_state,
+    preview_portfolio_investment_schedule,
     upsert_portfolio_investment_plan,
     delete_portfolio_investment_plan,
     toggle_portfolio_investment_plan,
@@ -147,6 +148,21 @@ def register_portfolio_handlers(
             })
             return
         socketio.emit("portfolio_investment_plans_updated", state)
+
+    @socketio.on("preview_portfolio_investment_schedule")
+    def on_preview_portfolio_investment_schedule(data=None):
+        payload = data if isinstance(data, dict) else {}
+        try:
+            result = preview_portfolio_investment_schedule(payload)
+        except ValueError as exc:
+            result = {
+                "ok": False,
+                "id": str(payload.get("id") or "new"),
+                "request_id": str(payload.get("request_id") or ""),
+                "items": [],
+                "message": str(exc),
+            }
+        emit("portfolio_investment_schedule_preview", result)
 
     @socketio.on("execute_portfolio_investment_plan")
     def on_execute_portfolio_investment_plan(data=None):

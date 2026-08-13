@@ -48,6 +48,10 @@ function registerPortfolioSocketHandlers(socketClient) {
     setPortfolioStatus((data && data.message) || '已跳过本期定投计划。', data && data.ok === false ? 'fail' : 'ok');
   });
 
+  socketClient.on('portfolio_investment_schedule_preview', data => {
+    applyPortfolioInvestmentSchedulePreview(data || {});
+  });
+
   socketClient.on('portfolio_investment_plan_error', data => {
     pendingPortfolioSave = null;
     setPortfolioStatus((data && data.message) || '定投计划操作失败。', 'fail');

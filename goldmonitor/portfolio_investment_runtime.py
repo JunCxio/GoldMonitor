@@ -48,6 +48,27 @@ class PortfolioInvestmentRuntime:
         )
         return content, count, plan
 
+    def preview_schedule(self, data):
+        payload = dict(data or {})
+        plan_id = str(payload.get("id") or "").strip()
+        with self.state.investment_plan_lock:
+            index = self._find_plan_index(plan_id)
+            existing = (
+                dict(self.state.portfolio_investment_plans[index])
+                if index >= 0
+                else None
+            )
+        return {
+            "ok": True,
+            "id": plan_id or "new",
+            "request_id": str(payload.get("request_id") or "").strip(),
+            "items": investment_core.investment_schedule_preview(
+                payload,
+                existing=existing,
+                now=self.now_factory(),
+            ),
+        }
+
     def _find_plan_index(self, plan_id):
         plan_id = str(plan_id or "").strip()
         for index, item in enumerate(self.state.portfolio_investment_plans):

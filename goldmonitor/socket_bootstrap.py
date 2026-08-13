@@ -210,6 +210,9 @@ def register_socket_handlers(application):
         get_portfolio_investment_plan_state=(
             lambda: application.get_portfolio_investment_plan_state()
         ),
+        preview_portfolio_investment_schedule=(
+            lambda data: application.preview_portfolio_investment_schedule(data)
+        ),
         upsert_portfolio_investment_plan=(
             lambda data: application.upsert_portfolio_investment_plan(data)
         ),

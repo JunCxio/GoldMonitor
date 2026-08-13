@@ -68,6 +68,87 @@ def test_investment_plan_uses_latest_missed_run_only():
     ) == datetime(2026, 8, 19, 9, 0)
 
 
+def test_investment_schedule_preview_handles_month_end_leap_year_and_window():
+    import pytest
+
+    from goldmonitor.portfolio_investment import investment_schedule_preview
+
+    monthly = investment_schedule_preview(
+        {
+            "frequency": "monthly",
+            "time": "09:00",
+            "month": 1,
+            "day": 31,
+            "weekday": 1,
+            "start_date": "",
+            "end_date": "2026-04-30",
+        },
+        now=datetime(2026, 1, 30, 10, 0),
+    )
+    yearly = investment_schedule_preview(
+        {
+            "frequency": "yearly",
+            "time": "09:00",
+            "month": 2,
+            "day": 29,
+            "weekday": 1,
+            "start_date": "",
+            "end_date": "",
+        },
+        now=datetime(2026, 1, 1, 10, 0),
+    )
+
+    assert monthly == [
+        "2026-01-31T09:00:00",
+        "2026-02-28T09:00:00",
+        "2026-03-31T09:00:00",
+        "2026-04-30T09:00:00",
+    ]
+    assert yearly[:3] == [
+        "2026-02-28T09:00:00",
+        "2027-02-28T09:00:00",
+        "2028-02-29T09:00:00",
+    ]
+    with pytest.raises(ValueError, match="结束日期不能早于开始日期"):
+        investment_schedule_preview(
+            {
+                "frequency": "daily",
+                "time": "09:00",
+                "start_date": "2026-09-02",
+                "end_date": "2026-09-01",
+            },
+            now=datetime(2026, 8, 1, 10, 0),
+        )
+
+
+def test_investment_plan_state_exposes_future_schedule_from_pending_run():
+    from goldmonitor.portfolio_investment import investment_plan_state
+
+    state = investment_plan_state(
+        [{
+            "id": "plan-preview",
+            "name": "每周积存",
+            "mode": "rmb",
+            "frequency": "weekly",
+            "weekday": 3,
+            "time": "09:00",
+            "month": 1,
+            "day": 1,
+            "enabled": True,
+            "next_run_at": "2026-08-12T09:00:00",
+        }],
+        now=datetime(2026, 8, 14, 10, 0),
+    )
+
+    assert state["items"][0]["upcoming_run_ats"] == [
+        "2026-08-12T09:00:00",
+        "2026-08-19T09:00:00",
+        "2026-08-26T09:00:00",
+        "2026-09-02T09:00:00",
+        "2026-09-09T09:00:00",
+    ]
+
+
 def test_investment_plan_applies_optional_start_and_end_dates():
     import pytest
 

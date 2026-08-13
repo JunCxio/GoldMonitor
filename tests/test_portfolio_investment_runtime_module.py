@@ -127,6 +127,33 @@ def test_runtime_uses_usd_price_and_creates_position_on_first_execution():
     assert state.portfolio_investment_plans[0]["position_id"] == result["transaction"]["position_id"]
 
 
+def test_runtime_previews_edited_schedule_without_persisting_plan():
+    runtime, state, _events = _runtime(_plan())
+    original = dict(state.portfolio_investment_plans[0])
+
+    result = runtime.preview_schedule({
+        "id": "plan-1",
+        "request_id": "preview-3",
+        "frequency": "weekly",
+        "weekday": 5,
+        "time": "10:30",
+        "start_date": "2026-08-14",
+        "end_date": "2026-09-01",
+    })
+
+    assert result == {
+        "ok": True,
+        "id": "plan-1",
+        "request_id": "preview-3",
+        "items": [
+            "2026-08-14T10:30:00",
+            "2026-08-21T10:30:00",
+            "2026-08-28T10:30:00",
+        ],
+    }
+    assert state.portfolio_investment_plans[0] == original
+
+
 def test_runtime_waits_for_price_without_advancing_schedule():
     runtime, state, _events = _runtime(_plan(), price_rmb=None)
 

@@ -1129,6 +1129,10 @@ def build_portfolio_investment_executions_csv(plan_id):
     return _get_portfolio_investment_runtime().build_executions_csv(plan_id)
 
 
+def preview_portfolio_investment_schedule(data):
+    return _get_portfolio_investment_runtime().preview_schedule(data)
+
+
 def upsert_portfolio_investment_plan(data):
     return _get_portfolio_investment_runtime().upsert(data)
 
