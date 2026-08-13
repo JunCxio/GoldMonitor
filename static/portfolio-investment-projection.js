@@ -64,3 +64,25 @@ function portfolioInvestmentProjectionSummary(plan) {
   if (projection.completion_out_of_range) return remaining + ' · 完成日期超出可计算范围';
   return remaining + ' · 预计完成 ' + portfolioInvestmentProjectionDateTime(projection.projected_completion_at);
 }
+
+function portfolioInvestmentCommitmentRange(item) {
+  const first = portfolioInvestmentProjectionDateTime(item && item.first_run_at);
+  const last = portfolioInvestmentProjectionDateTime(item && item.last_run_at);
+  return first === last ? first : first + ' 至 ' + last;
+}
+
+function portfolioInvestmentCommitmentItemsMarkup(items) {
+  const source = Array.isArray(items) ? items : [];
+  if (!source.length) {
+    return '<div class="portfolio-investment-commitment-empty">未来 30 天暂无计划投入。</div>';
+  }
+  return '<div class="portfolio-investment-commitment-list">' + source.map(item => {
+    const mode = item.mode === 'usd' ? 'usd' : 'rmb';
+    return [
+      '<div class="portfolio-investment-commitment-item">',
+      '<div><strong>' + escapeHtml(item.name || '未命名计划') + '</strong><small>' + escapeHtml(portfolioInvestmentCommitmentRange(item)) + '</small></div>',
+      '<div><strong>' + escapeHtml(formatPortfolioMoney(item.projected_cost, mode)) + '</strong><small>' + escapeHtml(String(Number(item.run_count) || 0) + ' 期 · 每期 ' + formatPortfolioMoney(item.planned_cost_per_run, mode)) + '</small></div>',
+      '</div>',
+    ].join('');
+  }).join('') + '</div>';
+}

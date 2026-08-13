@@ -358,6 +358,7 @@ function renderPortfolioInvestmentSummary(box) {
     '<div><span>计划投入</span><small>含当前待执行期次，按固定金额估算</small></div>',
     '<div class="portfolio-investment-overview-commitment-values"><strong>' + escapeHtml(formatPortfolioMoney(summary.rmb_commitment || 0, 'rmb')) + ' · ' + escapeHtml(formatPortfolioMoney(summary.usd_commitment || 0, 'usd')) + '</strong><small>预计 ' + escapeHtml(String(summary.commitment_run_count || 0)) + ' 期 · 涉及 ' + escapeHtml(String(summary.commitment_plan_count || 0)) + ' 个计划</small></div>',
     '</div>',
+    portfolioInvestmentCommitmentItemsMarkup(summary.commitment_items),
     '</div>',
   ].join('');
 }

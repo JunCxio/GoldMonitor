@@ -906,6 +906,15 @@
   .portfolio-investment-overview-commitment-values { text-align:right; }
   .portfolio-investment-overview-commitment-values strong { display:block; color:#ececf2; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.7rem; white-space:nowrap; }
   .portfolio-investment-overview-commitment-values small { margin-top:2px; }
+  .portfolio-investment-commitment-list { grid-column:1 / -1; display:grid; max-height:168px; min-width:0; overflow-y:auto; border-top:1px solid rgba(255,255,255,0.055); background:rgba(0,0,0,0.09); }
+  .portfolio-investment-commitment-item { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:10px; align-items:center; min-width:0; padding:8px 10px; border-top:1px dashed rgba(255,255,255,0.05); }
+  .portfolio-investment-commitment-item:first-child { border-top:0; }
+  .portfolio-investment-commitment-item > div { min-width:0; }
+  .portfolio-investment-commitment-item > div:last-child { text-align:right; }
+  .portfolio-investment-commitment-item strong, .portfolio-investment-commitment-item small { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-investment-commitment-item strong { color:#dcdce4; font-size:0.63rem; }
+  .portfolio-investment-commitment-item small { margin-top:2px; color:var(--text-dim); font-size:0.55rem; }
+  .portfolio-investment-commitment-empty { grid-column:1 / -1; padding:8px 10px; border-top:1px solid rgba(255,255,255,0.055); color:var(--text-dim); background:rgba(0,0,0,0.09); font-size:0.58rem; }
   .portfolio-investment-note { grid-column:span 2; white-space:normal; }
   .portfolio-investment-card { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:10px; align-items:center; min-width:0; padding:10px; border:1px solid rgba(255,255,255,0.055); border-radius:9px; background:rgba(255,255,255,0.022); }
   .portfolio-investment-card.expanded { border-color:rgba(232,184,48,0.24); background:rgba(232,184,48,0.04); }
@@ -1536,6 +1545,8 @@
     .portfolio-investment-overview-performance { align-items:flex-start; flex-direction:column; }
     .portfolio-investment-overview-commitment { grid-template-columns:auto minmax(0, 1fr); }
     .portfolio-investment-overview-commitment-values { grid-column:2; text-align:left; }
+    .portfolio-investment-commitment-item { grid-template-columns:1fr; }
+    .portfolio-investment-commitment-item > div:last-child { text-align:left; }
     .portfolio-investment-performance-grid, .portfolio-investment-execution-item { grid-template-columns:1fr; }
     .portfolio-investment-execution-item > div:last-child { text-align:left; }
     .portfolio-investment-execution-history-head { align-items:flex-start; flex-direction:column; }

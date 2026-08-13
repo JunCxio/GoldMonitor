@@ -223,6 +223,9 @@ function normalizePortfolioInvestmentState(data) {
       commitment_run_count: Number.isFinite(Number(summary.commitment_run_count)) ? Number(summary.commitment_run_count) : 0,
       rmb_commitment: Number.isFinite(Number(summary.rmb_commitment)) ? Number(summary.rmb_commitment) : 0,
       usd_commitment: Number.isFinite(Number(summary.usd_commitment)) ? Number(summary.usd_commitment) : 0,
+      commitment_items: Array.isArray(summary.commitment_items)
+        ? summary.commitment_items.map(item => Object.assign({}, item)).filter(item => Number(item.run_count) > 0)
+        : [],
     },
     updated_at: source.updated_at || '',
   };

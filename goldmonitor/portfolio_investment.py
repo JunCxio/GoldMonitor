@@ -734,9 +734,12 @@ def investment_plan_window_projection(
     if mode not in {"rmb", "usd"}:
         mode = "rmb"
     result = {
+        "id": _clean_text(item.get("id")),
+        "name": _clean_text(item.get("name")),
         "mode": mode,
         "days": window_days,
         "run_count": 0,
+        "planned_cost_per_run": 0.0,
         "projected_cost": 0.0,
         "first_run_at": "",
         "last_run_at": "",
@@ -747,6 +750,7 @@ def investment_plan_window_projection(
     fee = _nonnegative_float(item.get("fee", 0))
     if amount is None or fee is None:
         return result
+    result["planned_cost_per_run"] = amount + fee
     target_count = _target_count(item.get("target_count", 0))
     completed_count = _nonnegative_int(item.get("completed_count", 0))
     remaining_count = max(0, target_count - completed_count) if target_count else None
@@ -775,7 +779,7 @@ def investment_plan_window_projection(
         return result
     result.update({
         "run_count": len(run_ats),
-        "projected_cost": (amount + fee) * len(run_ats),
+        "projected_cost": result["planned_cost_per_run"] * len(run_ats),
         "first_run_at": run_ats[0].isoformat(timespec="seconds"),
         "last_run_at": run_ats[-1].isoformat(timespec="seconds"),
     })
@@ -865,6 +869,7 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
         "commitment_run_count": 0,
         "rmb_commitment": 0.0,
         "usd_commitment": 0.0,
+        "commitment_items": [],
     }
     for raw in list(items or []):
         plan = dict(raw)
@@ -936,6 +941,7 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
                 else "rmb_commitment"
             )
             summary[commitment_key] += commitment["projected_cost"]
+            summary["commitment_items"].append(commitment)
         plan["performance"] = performance
         summary["execution_count"] += performance["execution_count"]
         invested_key = "usd_invested" if plan.get("mode") == "usd" else "rmb_invested"
@@ -943,6 +949,12 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
         plans.append(plan)
     summary["all_total"] = len(plans)
     summary["total"] = len(plans) - summary["archived"]
+    summary["commitment_items"].sort(
+        key=lambda item: (
+            item.get("first_run_at") or "9999",
+            item.get("name") or "",
+        )
+    )
     return {
         "items": plans,
         "summary": summary,

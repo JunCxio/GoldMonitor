@@ -252,6 +252,7 @@ def test_investment_plan_window_projection_respects_target_and_schedule_window()
     )
 
     assert limited["run_count"] == 2
+    assert limited["planned_cost_per_run"] == 102.0
     assert limited["projected_cost"] == 204.0
     assert limited["first_run_at"] == "2026-08-12T09:00:00"
     assert limited["last_run_at"] == "2026-08-13T09:00:00"
@@ -316,6 +317,21 @@ def test_investment_plan_state_summarizes_next_30_day_commitments_by_currency():
     assert summary["commitment_run_count"] == 5
     assert summary["rmb_commitment"] == 102.0
     assert summary["usd_commitment"] == 2004.0
+    assert [item["id"] for item in summary["commitment_items"]] == [
+        "plan-rmb",
+        "plan-usd",
+    ]
+    assert summary["commitment_items"][0] == {
+        "id": "plan-rmb",
+        "name": "人民币定投",
+        "mode": "rmb",
+        "days": 30,
+        "run_count": 1,
+        "planned_cost_per_run": 102.0,
+        "projected_cost": 102.0,
+        "first_run_at": "2026-08-12T09:00:00",
+        "last_run_at": "2026-08-12T09:00:00",
+    }
 
 
 def test_investment_plan_state_exposes_future_schedule_from_pending_run():
