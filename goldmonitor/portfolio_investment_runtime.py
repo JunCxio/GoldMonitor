@@ -51,12 +51,18 @@ class PortfolioInvestmentRuntime:
     def preview_schedule(self, data):
         payload = dict(data or {})
         plan_id = str(payload.get("id") or "").strip()
-        with self.state.investment_plan_lock:
+        with self.state.lock, self.state.investment_plan_lock:
             index = self._find_plan_index(plan_id)
             existing = (
                 dict(self.state.portfolio_investment_plans[index])
                 if index >= 0
                 else None
+            )
+            transactions = [dict(item) for item in self.state.portfolio_transactions]
+        if existing:
+            payload["completed_count"] = investment_core.investment_plan_execution_count(
+                existing,
+                transactions,
             )
         return {
             "ok": True,
@@ -85,6 +91,16 @@ class PortfolioInvestmentRuntime:
             None,
         )
 
+    def _execution_count(self, plan):
+        return investment_core.investment_plan_execution_count(
+            plan,
+            self.state.portfolio_transactions,
+        )
+
+    def _target_reached(self, plan):
+        target_count = int(plan.get("target_count") or 0)
+        return bool(target_count and self._execution_count(plan) >= target_count)
+
     def upsert(self, data):
         payload = dict(data or {})
         plan_id = str(payload.get("id") or "").strip()
@@ -105,6 +121,8 @@ class PortfolioInvestmentRuntime:
                 existing=existing,
                 now_factory=self.now_factory,
             )
+            if self._target_reached(plan):
+                plan.update({"enabled": False, "next_run_at": ""})
             next_plans = list(self.state.portfolio_investment_plans)
             if index >= 0:
                 next_plans[index] = plan
@@ -193,7 +211,7 @@ class PortfolioInvestmentRuntime:
         return plan, self.state_payload()
 
     def toggle(self, plan_id, enabled):
-        with self.state.investment_plan_lock:
+        with self.state.lock, self.state.investment_plan_lock:
             index = self._find_plan_index(plan_id)
             if index < 0:
                 raise ValueError("未找到定投计划")
@@ -201,6 +219,8 @@ class PortfolioInvestmentRuntime:
             if existing.get("archived_at"):
                 raise ValueError("已归档计划需先恢复")
             if enabled:
+                if self._target_reached(existing):
+                    raise ValueError("计划已达到目标期数，请先增加目标期数")
                 end_date = investment_core.parse_plan_date(existing.get("end_date"))
                 if end_date and end_date < self.now_factory().date():
                     raise ValueError("计划结束日期已过，请先调整结束日期")
@@ -218,7 +238,7 @@ class PortfolioInvestmentRuntime:
 
     def skip_next(self, plan_id, scheduled_at, *, now=None):
         now = now or self.now_factory()
-        with self.state.investment_plan_lock:
+        with self.state.lock, self.state.investment_plan_lock:
             index = self._find_plan_index(plan_id)
             if index < 0:
                 raise ValueError("未找到定投计划")
@@ -227,6 +247,8 @@ class PortfolioInvestmentRuntime:
                 raise ValueError("已归档计划不能跳过期次")
             if plan.get("enabled") is False:
                 raise ValueError("已暂停的计划不能跳过期次")
+            if self._target_reached(plan):
+                raise ValueError("定投计划已达到目标期数")
             pending_run = investment_core.pending_plan_run_at(plan, now)
             if pending_run is None:
                 raise ValueError("当前没有可跳过的定投期次")
@@ -287,6 +309,15 @@ class PortfolioInvestmentRuntime:
             plan = dict(self.state.portfolio_investment_plans[index])
             if plan.get("archived_at"):
                 raise ValueError("已归档计划不能执行")
+            if self._target_reached(plan):
+                if plan.get("enabled") or plan.get("next_run_at"):
+                    plan = self._record_plan_result(
+                        plan["id"],
+                        plan,
+                        enabled=False,
+                        next_run_at="",
+                    )
+                return {"ok": True, "status": "plan_completed", "message": "定投计划已达到目标期数", "plan": plan}
             start_date = investment_core.parse_plan_date(plan.get("start_date"))
             end_date = investment_core.parse_plan_date(plan.get("end_date"))
             if start_date and now.date() < start_date:
@@ -379,17 +410,24 @@ class PortfolioInvestmentRuntime:
                 quantity = float(transaction["quantity"])
 
             next_run_at = plan.get("next_run_at", "")
-            if due_at is not None:
+            target_reached = self._target_reached(plan)
+            if target_reached:
+                next_run_at = ""
+            elif due_at is not None:
                 next_run = investment_core.next_plan_run_in_window(plan, now)
                 next_run_at = next_run.isoformat(timespec="seconds") if next_run else ""
-            result_message = (
-                "已按最新行情补执行定投"
-                if execution_kind == "catch_up"
-                else "定投买入流水已生成"
-            )
+            if target_reached:
+                result_message = f"已完成 {self._execution_count(plan)}/{int(plan.get('target_count') or 0)} 期定投"
+            else:
+                result_message = (
+                    "已按最新行情补执行定投"
+                    if execution_kind == "catch_up"
+                    else "定投买入流水已生成"
+                )
             updated = self._record_plan_result(
                 plan["id"],
                 plan,
+                enabled=False if target_reached else plan.get("enabled", False),
                 next_run_at=next_run_at,
                 last_scheduled_at=scheduled_at.isoformat(timespec="seconds"),
                 last_executed_at=now.isoformat(timespec="seconds"),
@@ -412,14 +450,15 @@ class PortfolioInvestmentRuntime:
 
     def run_due(self, now=None):
         now = now or self.now_factory()
-        with self.state.investment_plan_lock:
+        with self.state.lock, self.state.investment_plan_lock:
             enabled = [dict(item) for item in self.state.portfolio_investment_plans if item.get("enabled")]
         if not enabled:
             return {"ok": True, "status": "disabled", "message": "没有启用的定投计划", "executed_count": 0}
         due_ids = [
             plan["id"]
             for plan in enabled
-            if investment_core.latest_due_run_at(plan, now) is not None
+            if not self._target_reached(plan)
+            and investment_core.latest_due_run_at(plan, now) is not None
         ]
         if not due_ids:
             return {"ok": True, "status": "not_due", "message": "定投计划尚未到执行时间", "executed_count": 0}

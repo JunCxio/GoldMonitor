@@ -125,6 +125,9 @@ def _investment_plan_summary(portfolio_state):
                 "position_name",
                 "mode",
                 "amount",
+                "target_count",
+                "completed_count",
+                "remaining_count",
                 "archived_at",
                 "enabled",
                 "status",
@@ -171,6 +174,12 @@ def _investment_lines(investment_summary):
             f"{_investment_time(recent_plan.get('last_executed_at'))}，"
             f"{_investment_money(recent_plan.get('amount'), recent_plan.get('mode'))}"
         )
+        target_count = int(recent_plan.get("target_count") or 0)
+        if target_count:
+            detail += (
+                f"，进度 {int(recent_plan.get('completed_count') or 0)}/"
+                f"{target_count} 期"
+            )
         if recent_plan.get("last_price") is not None:
             detail += "，成交价 " + _investment_money(
                 recent_plan.get("last_price"), recent_plan.get("mode")

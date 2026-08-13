@@ -30,6 +30,7 @@ vm.createContext(context);
 vm.runInContext(__SOURCE__, context);
 const plan = vm.runInContext(`normalizePortfolioInvestmentPlan({
   id: 'plan-window', start_date: '2026-09-01', end_date: '2026-12-31',
+  target_count: 12, completed_count: 3, remaining_count: 9,
   archived_at: '2027-01-01T10:00:00',
   upcoming_run_ats: ['2026-09-01T09:00:00', '2026-10-01T09:00:00'],
   pending_run_at: '2026-09-01T09:00:00', last_skipped_at: '2026-08-13T10:00:00',
@@ -40,6 +41,9 @@ if (plan.start_date !== '2026-09-01' || plan.end_date !== '2026-12-31') {
 }
 if (plan.archived_at !== '2027-01-01T10:00:00') {
   throw new Error('archive state must survive portfolio state normalization');
+}
+if (plan.target_count !== 12 || plan.completed_count !== 3 || plan.remaining_count !== 9) {
+  throw new Error('target progress must survive portfolio state normalization');
 }
 if (plan.pending_run_at !== '2026-09-01T09:00:00' || plan.skip_count !== 2) {
   throw new Error('skip state must survive portfolio state normalization');
@@ -152,6 +156,7 @@ const statuses = [];
 const values = {
   Name: '阶段定投', PositionId: '', PositionName: '积存金', Mode: 'rmb',
   Amount: '1000', Fee: '0', Frequency: 'monthly', Time: '09:00',
+  TargetCount: '12',
   Month: '1', Day: '15', Weekday: '1', StartDate: '2026-12-01',
   EndDate: '2026-11-30', Enabled: true,
 };
@@ -173,6 +178,73 @@ vm.runInContext(__SOURCE__, context);
 vm.runInContext("savePortfolioInvestmentPlan('new')", context);
 if (emits.length !== 0) throw new Error('invalid execution window must not be saved');
 if (!statuses.at(-1).message.includes('结束日期不能早于开始日期')) throw new Error('invalid execution window must report a clear error');
+"""
+    script = script.replace("__SOURCE__", json.dumps(source))
+    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_investment_plan_frontend_validates_and_sends_target_count():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("需要 Node.js 执行定投前端行为测试")
+
+    source = read_investment_source()
+    script = """
+const vm = require('vm');
+const emits = [];
+const statuses = [];
+const values = {
+  Name: '十二期定投', PositionId: '', PositionName: '积存金', Mode: 'rmb',
+  Amount: '1000', Fee: '0', TargetCount: '12', Frequency: 'monthly', Time: '09:00',
+  Month: '1', Day: '15', Weekday: '1', StartDate: '', EndDate: '', Enabled: true,
+};
+const context = {
+  console, portfolioState: { items: [], investment_plans: { items: [] } },
+  portfolioInvestmentDrafts: {}, portfolioInvestmentDraftNotice: '',
+  pendingPortfolioSave: null, currentMode: 'rmb',
+  document: { getElementById: id => {
+    const field = id.match(/^portfolioInvestment(.+)_new$/)?.[1];
+    if (!field || !(field in values)) return null;
+    return { type: field === 'Enabled' ? 'checkbox' : 'text', value: values[field], checked: values[field] };
+  } },
+  socket: { emit: (...args) => emits.push(args) },
+  setPortfolioStatus: (message, state) => statuses.push({ message, state }),
+};
+context.globalThis = context;
+vm.createContext(context);
+vm.runInContext(__SOURCE__, context);
+vm.runInContext("savePortfolioInvestmentPlan('new')", context);
+if (emits.length !== 1 || emits[0][1].target_count !== 12) throw new Error('valid target count must be saved');
+values.TargetCount = '1.5';
+vm.runInContext("savePortfolioInvestmentPlan('new')", context);
+if (emits.length !== 1) throw new Error('fractional target count must not be saved');
+if (!statuses.at(-1).message.includes('目标期数')) throw new Error('invalid target count must report a clear error');
+"""
+    script = script.replace("__SOURCE__", json.dumps(source))
+    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_investment_plan_frontend_prioritizes_completed_state_over_paused_state():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("需要 Node.js 执行定投前端行为测试")
+
+    source = read_investment_source()
+    script = """
+const vm = require('vm');
+const context = { console };
+context.globalThis = context;
+vm.createContext(context);
+vm.runInContext(__SOURCE__, context);
+const plan = { enabled: false, status: 'completed', archived_at: '' };
+if (vm.runInContext("portfolioInvestmentStateLabel", context)(plan) !== '已完成') {
+  throw new Error('completed plan must not be labeled as paused');
+}
+if (vm.runInContext("portfolioInvestmentNextRunLabel", context)(plan) !== '计划已完成') {
+  throw new Error('completed plan must expose a completed next-run label');
+}
 """
     script = script.replace("__SOURCE__", json.dumps(source))
     result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)

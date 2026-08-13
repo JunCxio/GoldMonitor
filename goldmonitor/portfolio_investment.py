@@ -77,6 +77,18 @@ def _nonnegative_int(value):
     return max(0, number)
 
 
+def _target_count(value):
+    if value in (None, "", 0, "0"):
+        return 0
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("定投目标期数必须为 1 至 10000 的整数") from exc
+    if not math.isfinite(number) or not number.is_integer() or not 1 <= number <= 10000:
+        raise ValueError("定投目标期数必须为 1 至 10000 的整数")
+    return int(number)
+
+
 def _parse_time(value):
     text = _clean_text(value)
     try:
@@ -352,6 +364,16 @@ def investment_schedule_preview(
         12,
         INVESTMENT_SCHEDULE_PREVIEW_LIMIT,
     )
+    target_count = _target_count(
+        item.get("target_count", existing.get("target_count", 0))
+    )
+    completed_count = _nonnegative_int(
+        item.get("completed_count", existing.get("completed_count", 0))
+    )
+    if target_count:
+        preview_limit = min(preview_limit, max(0, target_count - completed_count))
+    if preview_limit <= 0:
+        return []
     existing_schedule = normalize_investment_schedule(existing) if existing else None
     schedule_unchanged = bool(
         existing_schedule
@@ -409,6 +431,9 @@ def normalize_investment_plan(
     fee = _nonnegative_float(item.get("fee", existing.get("fee", 0)))
     if fee is None:
         raise ValueError("定投手续费不能为负数")
+    target_count = _target_count(
+        item.get("target_count", existing.get("target_count", 0))
+    )
     schedule = normalize_investment_schedule(item, existing)
     frequency = schedule["frequency"]
     time_text = schedule["time"]
@@ -491,6 +516,7 @@ def normalize_investment_plan(
         "mode": mode,
         "amount": amount,
         "fee": fee,
+        "target_count": target_count,
         "frequency": frequency,
         "time": time_text,
         "month": month,
@@ -603,6 +629,10 @@ def investment_plan_executions(plan, transactions):
     return executions
 
 
+def investment_plan_execution_count(plan, transactions):
+    return len(investment_plan_executions(plan, transactions))
+
+
 def build_investment_plan_executions_csv(plan, transactions):
     plan_id = _clean_text((plan or {}).get("id"))
     if not plan_id:
@@ -686,10 +716,22 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
         plan = dict(raw)
         archived = bool(_clean_text(plan.get("archived_at")))
         next_run = parse_plan_datetime(plan.get("next_run_at"))
-        pending_run = None if archived else pending_plan_run_at(plan, now)
+        performance = investment_plan_performance(
+            plan,
+            transactions,
+            current_price=prices.get(plan.get("mode")),
+        )
+        target_count = _target_count(plan.get("target_count", 0))
+        completed_count = performance["execution_count"]
+        target_reached = bool(target_count and completed_count >= target_count)
+        pending_run = None if archived or target_reached else pending_plan_run_at(plan, now)
         if archived:
             status = "archived"
             summary["archived"] += 1
+        elif target_reached:
+            status = "completed"
+            plan["enabled"] = False
+            plan["next_run_at"] = ""
         elif plan.get("enabled"):
             start_date = parse_plan_date(plan.get("start_date"))
             end_date = parse_plan_date(plan.get("end_date"))
@@ -705,9 +747,11 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
                     summary["due"] += 1
         else:
             status = "paused"
-        if not archived and plan.get("last_result") in {"error", "waiting_price", "orphaned"}:
+        if not archived and not target_reached and plan.get("last_result") in {"error", "waiting_price", "orphaned"}:
             summary["attention"] += 1
         plan["status"] = status
+        plan["completed_count"] = completed_count
+        plan["remaining_count"] = max(0, target_count - completed_count) if target_count else None
         plan["pending_run_at"] = (
             pending_run.isoformat(timespec="seconds") if pending_run else ""
         )
@@ -717,13 +761,8 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
                 existing=plan,
                 now=now,
             )
-            if plan.get("enabled") and not archived
+            if plan.get("enabled") and not archived and not target_reached
             else []
-        )
-        performance = investment_plan_performance(
-            plan,
-            transactions,
-            current_price=prices.get(plan.get("mode")),
         )
         plan["performance"] = performance
         summary["execution_count"] += performance["execution_count"]

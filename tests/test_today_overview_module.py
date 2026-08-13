@@ -202,6 +202,9 @@ def test_today_overview_includes_investment_attention_and_execution_once():
                         "position_name": "国际金",
                         "mode": "usd",
                         "amount": 200.0,
+                        "target_count": 12,
+                        "completed_count": 3,
+                        "remaining_count": 9,
                         "status": "active",
                         "last_result": "waiting_price",
                         "next_run_at": "2026-08-13T09:00:00",
@@ -247,6 +250,13 @@ def test_today_overview_includes_investment_attention_and_execution_once():
         "plan-due",
         "plan-waiting",
     }
+    waiting = next(
+        item for item in result["attention"]["items"]
+        if item["source_id"] == "plan-waiting"
+    )
+    assert waiting["target_count"] == 12
+    assert waiting["completed_count"] == 3
+    assert waiting["remaining_count"] == 9
     activity = result["activity"]["items"][0]
     assert activity["kind"] == "portfolio_investment"
     assert activity["source_id"] == "plan-executed"

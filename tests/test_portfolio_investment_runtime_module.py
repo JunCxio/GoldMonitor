@@ -358,6 +358,72 @@ def test_runtime_respects_start_date_and_completes_after_last_scheduled_run():
         final_runtime.toggle("plan-1", True)
 
 
+def test_runtime_stops_after_target_count_and_can_continue_after_target_increase():
+    import pytest
+
+    existing_execution = {
+        "id": "investment-plan-1-scheduled-202607150900",
+        "position_id": "position-1",
+        "name": "金条",
+        "type": "buy",
+        "mode": "rmb",
+        "price": 500.0,
+        "quantity": 2.0,
+        "fee": 2.0,
+        "trade_date": "2026-07-15",
+        "source": "investment_plan",
+        "source_id": "plan-1",
+        "scheduled_at": "2026-07-15T09:00:00",
+        "execution_kind": "scheduled",
+        "planned_amount": 1000.0,
+        "created_at": "2026-07-15T09:00:00",
+        "updated_at": "2026-07-15T09:00:00",
+    }
+    runtime, state, _events = _runtime(
+        _plan(target_count=2, next_run_at="2026-08-15T09:00:00"),
+        transactions=[existing_execution],
+    )
+
+    completed = runtime.execute("plan-1", now=datetime(2026, 8, 20, 10, 0))
+    plan = state.portfolio_investment_plans[0]
+    assert completed["status"] == "completed"
+    assert completed["message"] == "已完成 2/2 期定投"
+    assert plan["enabled"] is False
+    assert plan["next_run_at"] == ""
+    assert runtime.state_payload(now=datetime(2026, 8, 20, 10, 1))["items"][0]["status"] == "completed"
+
+    blocked = runtime.execute("plan-1", force=True, now=datetime(2026, 8, 20, 10, 2))
+    assert blocked["status"] == "plan_completed"
+    assert len(state.portfolio_transactions) == 2
+    with pytest.raises(ValueError, match="达到目标期数"):
+        runtime.toggle("plan-1", True)
+
+    runtime.now_factory = lambda: datetime(2026, 8, 20, 10, 3)
+    updated, _payload = runtime.upsert({**plan, "target_count": 3, "enabled": True})
+    assert updated["enabled"] is True
+    assert updated["next_run_at"] == "2026-09-15T09:00:00"
+
+
+def test_runtime_skip_does_not_consume_target_count():
+    runtime, state, _events = _runtime(_plan(
+        target_count=1,
+        frequency="weekly",
+        weekday=3,
+        next_run_at="2026-07-01T09:00:00",
+    ))
+
+    result = runtime.skip_next(
+        "plan-1",
+        "2026-08-12T09:00:00",
+        now=datetime(2026, 8, 14, 10, 0),
+    )
+    plan = result["state"]["items"][0]
+    assert plan["completed_count"] == 0
+    assert plan["remaining_count"] == 1
+    assert plan["status"] == "active"
+    assert state.portfolio_investment_plans[0]["enabled"] is True
+
+
 def test_runtime_builds_execution_csv_for_existing_plan():
     transactions = [{
         "id": "investment-plan-1-manual-202608121000",

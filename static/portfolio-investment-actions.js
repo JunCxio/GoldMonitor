@@ -7,6 +7,7 @@ function savePortfolioInvestmentPlan(id) {
     mode: portfolioInvestmentInputValue(id, 'Mode') || currentMode,
     amount: Number(portfolioInvestmentInputValue(id, 'Amount')),
     fee: Number(portfolioInvestmentInputValue(id, 'Fee') || 0),
+    target_count: Number(portfolioInvestmentInputValue(id, 'TargetCount') || 0),
     frequency: portfolioInvestmentInputValue(id, 'Frequency') || 'monthly',
     time: portfolioInvestmentInputValue(id, 'Time') || '09:00',
     month: Number(portfolioInvestmentInputValue(id, 'Month') || 1),
@@ -25,6 +26,7 @@ function savePortfolioInvestmentPlan(id) {
   if (!payload.position_name) return setPortfolioStatus('请输入或选择定投持仓。', 'fail');
   if (!Number.isFinite(payload.amount) || payload.amount <= 0) return setPortfolioStatus('请输入有效的定投金额。', 'fail');
   if (!Number.isFinite(payload.fee) || payload.fee < 0) return setPortfolioStatus('手续费不能为负数。', 'fail');
+  if (!Number.isInteger(payload.target_count) || payload.target_count < 0 || payload.target_count > 10000) return setPortfolioStatus('目标期数必须为 1 至 10000 的整数，或留空不限制。', 'fail');
   if (payload.start_date && payload.end_date && payload.start_date > payload.end_date) return setPortfolioStatus('结束日期不能早于开始日期。', 'fail');
   if (id !== 'new') payload.id = id;
   portfolioInvestmentDraftNotice = '';

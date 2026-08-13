@@ -159,6 +159,9 @@ def test_daily_digest_summarizes_investment_plans_and_attention():
                         "last_executed_at": "2026-08-13T08:30:00",
                         "last_result": "ok",
                         "last_price": 955.2,
+                        "target_count": 12,
+                        "completed_count": 3,
+                        "remaining_count": 9,
                         "last_quantity": 0.52345059,
                     },
                     {
@@ -191,12 +194,14 @@ def test_daily_digest_summarizes_investment_plans_and_attention():
     assert "定投计划" in digest["message"]
     assert "共 3 个，启用 2 个，待执行 1 个，需处理 1 个" in digest["message"]
     assert "下一次：每日积累，2026-08-13 09:00，¥500.00" in digest["message"]
-    assert "最近执行：每日积累，2026-08-13 08:30，¥500.00，成交价 ¥955.20" in digest["message"]
+    assert "最近执行：每日积累，2026-08-13 08:30，¥500.00，进度 3/12 期，成交价 ¥955.20" in digest["message"]
     assert "需处理：美元积累，关联持仓已删除，请重新选择" in digest["message"]
     investment = digest["payload"]["investment_plan_summary"]
     assert investment["summary"] == {"total": 3, "enabled": 2, "due": 1, "attention": 1}
     assert investment["next_plan"]["id"] == "plan-recent"
     assert investment["recent_plan"]["id"] == "plan-recent"
+    assert investment["recent_plan"]["completed_count"] == 3
+    assert investment["recent_plan"]["remaining_count"] == 9
     assert [item["id"] for item in investment["attention"]] == ["plan-attention"]
 
 

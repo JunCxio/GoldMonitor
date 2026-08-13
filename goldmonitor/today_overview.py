@@ -454,6 +454,9 @@ def _investment_attention(portfolio_state, start, end):
             last_result=last_result,
             mode=str(plan.get("mode") or ""),
             amount=plan.get("amount"),
+            target_count=plan.get("target_count"),
+            completed_count=plan.get("completed_count"),
+            remaining_count=plan.get("remaining_count"),
             position_name=str(plan.get("position_name") or ""),
             next_run_at=_timestamp_text(plan.get("next_run_at")),
         ))

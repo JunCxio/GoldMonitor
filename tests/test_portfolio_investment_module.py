@@ -329,6 +329,95 @@ def test_investment_plan_store_round_trips_versioned_payload(tmp_path):
     assert store.load() == saved
 
 
+def test_investment_plan_target_count_is_optional_and_validated():
+    import pytest
+
+    from goldmonitor.portfolio_investment import normalize_investment_plan
+
+    base = {
+        "name": "十二期定投",
+        "position_name": "积存金",
+        "mode": "rmb",
+        "amount": 1000,
+        "fee": 0,
+        "frequency": "monthly",
+        "time": "09:00",
+        "day": 15,
+        "enabled": True,
+    }
+    unlimited = normalize_investment_plan(
+        base,
+        now_factory=lambda: datetime(2026, 8, 12, 10, 0),
+        id_factory=lambda: "plan-unlimited",
+    )
+    limited = normalize_investment_plan(
+        {**base, "target_count": "12"},
+        now_factory=lambda: datetime(2026, 8, 12, 10, 0),
+        id_factory=lambda: "plan-limited",
+    )
+
+    assert unlimited["target_count"] == 0
+    assert limited["target_count"] == 12
+    with pytest.raises(ValueError, match="目标期数"):
+        normalize_investment_plan({**base, "target_count": 1.5})
+    with pytest.raises(ValueError, match="目标期数"):
+        normalize_investment_plan({**base, "target_count": 10001})
+
+
+def test_investment_plan_state_completes_at_target_count_and_limits_preview():
+    from goldmonitor.portfolio_investment import investment_plan_state
+
+    plan = {
+        "id": "plan-target",
+        "name": "两期定投",
+        "mode": "rmb",
+        "frequency": "monthly",
+        "time": "09:00",
+        "month": 1,
+        "day": 15,
+        "weekday": 1,
+        "target_count": 2,
+        "enabled": True,
+        "next_run_at": "2026-09-15T09:00:00",
+        "last_result": "ok",
+    }
+    transaction = {
+        "type": "buy",
+        "mode": "rmb",
+        "price": 500.0,
+        "quantity": 2.0,
+        "fee": 0.0,
+        "source": "investment_plan",
+        "source_id": "plan-target",
+        "execution_kind": "scheduled",
+    }
+    in_progress = investment_plan_state(
+        [plan],
+        transactions=[{**transaction, "id": "execution-1", "created_at": "2026-08-15T09:00:00"}],
+        now=datetime(2026, 8, 20, 10, 0),
+    )["items"][0]
+    completed = investment_plan_state(
+        [plan],
+        transactions=[
+            {**transaction, "id": "execution-1", "created_at": "2026-07-15T09:00:00"},
+            {**transaction, "id": "execution-2", "created_at": "2026-08-15T09:00:00"},
+        ],
+        now=datetime(2026, 8, 20, 10, 0),
+    )["items"][0]
+
+    assert in_progress["status"] == "active"
+    assert in_progress["completed_count"] == 1
+    assert in_progress["remaining_count"] == 1
+    assert in_progress["upcoming_run_ats"] == ["2026-09-15T09:00:00"]
+    assert completed["status"] == "completed"
+    assert completed["completed_count"] == 2
+    assert completed["remaining_count"] == 0
+    assert completed["enabled"] is False
+    assert completed["next_run_at"] == ""
+    assert completed["pending_run_at"] == ""
+    assert completed["upcoming_run_ats"] == []
+
+
 def test_investment_plan_state_calculates_performance_from_sourced_transactions():
     from goldmonitor.portfolio_investment import investment_plan_state
 

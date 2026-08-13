@@ -19,6 +19,7 @@ function portfolioInvestmentBaseDraft(item) {
     mode: source.mode === 'usd' ? 'usd' : source.mode === 'rmb' ? 'rmb' : currentMode,
     amount: source.amount == null || isNew ? '' : String(source.amount),
     fee: source.fee == null ? '0' : String(source.fee),
+    target_count: Number(source.target_count) > 0 ? String(source.target_count) : '',
     frequency: ['daily', 'weekly', 'monthly', 'yearly'].includes(source.frequency) ? source.frequency : 'monthly',
     time: source.time || '09:00',
     month: source.month == null ? '1' : String(source.month),
@@ -52,6 +53,7 @@ function capturePortfolioInvestmentDraft(id) {
     mode: portfolioInvestmentInputValue(key, 'Mode') || currentMode,
     amount: portfolioInvestmentInputValue(key, 'Amount'),
     fee: portfolioInvestmentInputValue(key, 'Fee'),
+    target_count: portfolioInvestmentInputValue(key, 'TargetCount'),
     frequency: portfolioInvestmentInputValue(key, 'Frequency') || 'monthly',
     time: portfolioInvestmentInputValue(key, 'Time') || '09:00',
     month: portfolioInvestmentInputValue(key, 'Month') || '1',
@@ -84,6 +86,7 @@ function portfolioInvestmentSchedulePayload(item) {
     weekday: Number(source.weekday || 1),
     start_date: String(source.start_date || '').trim(),
     end_date: String(source.end_date || '').trim(),
+    target_count: Number(source.target_count || 0),
   };
 }
 
@@ -225,9 +228,9 @@ function portfolioInvestmentResultLabel(result) {
 
 function portfolioInvestmentStateLabel(plan) {
   if (plan.archived_at) return '已归档';
-  if (!plan.enabled) return '已暂停';
   if (plan.status === 'pending_start') return '待开始';
   if (plan.status === 'completed') return '已完成';
+  if (!plan.enabled) return '已暂停';
   if (plan.status === 'due') return '待执行';
   if (plan.last_result === 'waiting_price') return '等待行情';
   if (plan.last_result === 'orphaned') return '关联失效';
@@ -244,18 +247,18 @@ function portfolioInvestmentStateClass(plan) {
 
 function portfolioInvestmentNextRunLabel(plan) {
   if (plan.archived_at) return '计划已归档';
-  if (!plan.enabled) return '计划已暂停';
   if (plan.status === 'completed') return '计划已完成';
+  if (!plan.enabled) return '计划已暂停';
   return portfolioInvestmentDateTime(plan.next_run_at);
 }
 
 function portfolioInvestmentWindowLabel(plan) {
   const start = plan.start_date || '';
   const end = plan.end_date || '';
-  if (start && end) return start + ' 至 ' + end;
-  if (start) return start + ' 起';
-  if (end) return end + ' 前';
-  return '长期有效';
+  const windowLabel = start && end ? start + ' 至 ' + end : start ? start + ' 起' : end ? end + ' 前' : '长期有效';
+  const targetCount = Number(plan.target_count || 0);
+  if (!targetCount) return windowLabel;
+  return windowLabel + ' · 已完成 ' + Number(plan.completed_count || 0) + '/' + targetCount + ' 期';
 }
 
 function portfolioInvestmentCanExecute(plan) {
@@ -293,7 +296,8 @@ function renderPortfolioInvestmentPerformance(plan) {
   const mode = plan.mode || 'rmb';
   const count = Number(performance.execution_count || 0);
   if (count <= 0) {
-    return '<div class="portfolio-investment-performance-empty">首次执行后显示累计投入、定投均价和盈亏。</div>';
+    const progress = Number(plan.target_count || 0) > 0 ? '当前进度 0/' + Number(plan.target_count) + ' 期。' : '';
+    return '<div class="portfolio-investment-performance-empty">' + progress + '首次执行后显示累计投入、定投均价和盈亏。</div>';
   }
   const pnl = performance.pnl;
   const pnlText = pnl == null
@@ -304,7 +308,7 @@ function renderPortfolioInvestmentPerformance(plan) {
     '<div class="portfolio-investment-performance">',
     '<div class="portfolio-investment-performance-grid">',
     '<div><span>累计投入</span><strong>' + escapeHtml(formatPortfolioMoney(performance.total_invested, mode)) + '</strong><small>含手续费 ' + escapeHtml(formatPortfolioMoney(performance.total_fees, mode)) + '</small></div>',
-    '<div><span>执行次数</span><strong>' + escapeHtml(String(count)) + ' 次</strong><small>累计 ' + escapeHtml(formatPortfolioNumber(performance.total_quantity, mode === 'usd' ? 6 : 4) + ' ' + portfolioQuantityUnit(mode)) + '</small></div>',
+    '<div><span>执行进度</span><strong>' + escapeHtml(Number(plan.target_count || 0) > 0 ? count + '/' + Number(plan.target_count) + ' 期' : count + ' 次') + '</strong><small>累计 ' + escapeHtml(formatPortfolioNumber(performance.total_quantity, mode === 'usd' ? 6 : 4) + ' ' + portfolioQuantityUnit(mode)) + '</small></div>',
     '<div><span>定投均价</span><strong>' + escapeHtml(formatPortfolioMoney(performance.average_cost, mode)) + '</strong><small>成交均价 ' + escapeHtml(formatPortfolioMoney(performance.average_price, mode)) + '</small></div>',
     '<div><span>当前市值</span><strong>' + escapeHtml(performance.market_value == null ? '--' : formatPortfolioMoney(performance.market_value, mode)) + '</strong><small class="' + portfolioPnlClass(pnl) + '">' + escapeHtml(pnlText) + '</small></div>',
     '</div>',
@@ -391,6 +395,7 @@ function buildPortfolioInvestmentEditor(item) {
     '<div class="portfolio-field"><label for="portfolioInvestmentMode_' + escapedId + '">单位</label><select id="portfolioInvestmentMode_' + escapedId + '"' + (existingPosition ? ' disabled' : fieldChange) + '><option value="rmb"' + (selectedMode === 'rmb' ? ' selected' : '') + '>RMB/克</option><option value="usd"' + (selectedMode === 'usd' ? ' selected' : '') + '>USD/oz</option></select></div>',
     '<div class="portfolio-field"><label for="portfolioInvestmentAmount_' + escapedId + '">每次金额</label><input id="portfolioInvestmentAmount_' + escapedId + '" type="number" min="0.01" step="0.01" value="' + escapeHtml(target.amount) + '" placeholder="输入固定金额"' + fieldInput + '></div>',
     '<div class="portfolio-field"><label for="portfolioInvestmentFee_' + escapedId + '">固定手续费</label><input id="portfolioInvestmentFee_' + escapedId + '" type="number" min="0" step="0.01" value="' + escapeHtml(target.fee) + '"' + fieldInput + '></div>',
+    '<div class="portfolio-field"><label for="portfolioInvestmentTargetCount_' + escapedId + '">目标期数（可选）</label><input id="portfolioInvestmentTargetCount_' + escapedId + '" type="number" min="1" max="10000" step="1" value="' + escapeHtml(target.target_count) + '" placeholder="留空则不限期数"' + scheduleChange + '></div>',
     '<div class="portfolio-field"><label for="portfolioInvestmentFrequency_' + escapedId + '">周期</label><select id="portfolioInvestmentFrequency_' + escapedId + '"' + rerenderChange + '><option value="daily"' + (target.frequency === 'daily' ? ' selected' : '') + '>每天</option><option value="weekly"' + (target.frequency === 'weekly' ? ' selected' : '') + '>每周</option><option value="monthly"' + (target.frequency === 'monthly' ? ' selected' : '') + '>每月</option><option value="yearly"' + (target.frequency === 'yearly' ? ' selected' : '') + '>每年</option></select></div>',
     target.frequency === 'weekly' ? '<div class="portfolio-field"><label for="portfolioInvestmentWeekday_' + escapedId + '">星期</label><select id="portfolioInvestmentWeekday_' + escapedId + '"' + scheduleChange + '><option value="1"' + (target.weekday === '1' ? ' selected' : '') + '>星期一</option><option value="2"' + (target.weekday === '2' ? ' selected' : '') + '>星期二</option><option value="3"' + (target.weekday === '3' ? ' selected' : '') + '>星期三</option><option value="4"' + (target.weekday === '4' ? ' selected' : '') + '>星期四</option><option value="5"' + (target.weekday === '5' ? ' selected' : '') + '>星期五</option><option value="6"' + (target.weekday === '6' ? ' selected' : '') + '>星期六</option><option value="7"' + (target.weekday === '7' ? ' selected' : '') + '>星期日</option></select></div>' : '<input id="portfolioInvestmentWeekday_' + escapedId + '" type="hidden" value="' + escapeHtml(target.weekday) + '">',
     target.frequency === 'yearly' ? '<div class="portfolio-field"><label for="portfolioInvestmentMonth_' + escapedId + '">月份</label><input id="portfolioInvestmentMonth_' + escapedId + '" type="number" min="1" max="12" value="' + escapeHtml(target.month) + '"' + scheduleChange + '></div>' : '<input id="portfolioInvestmentMonth_' + escapedId + '" type="hidden" value="' + escapeHtml(target.month) + '">',
@@ -450,7 +455,7 @@ function renderPortfolioInvestments(box) {
       '<div class="portfolio-investment-timeline-marker"></div>',
       '<div><span>下一次执行</span><strong>' + escapeHtml(portfolioInvestmentNextRunLabel(plan)) + '</strong><small>' + escapeHtml(portfolioInvestmentWindowLabel(plan) + ' · ' + plan.position_name + ' · ' + portfolioModeLabel(mode)) + '</small></div>',
       '<div><span>最近结果</span><strong>' + escapeHtml(lastDetail) + '</strong><small>' + escapeHtml(resultMetrics) + '</small></div>',
-      '<div class="portfolio-investment-upcoming"><span>' + (plan.archived_at ? '归档时间' : '后续安排') + '</span><strong>' + escapeHtml(plan.archived_at ? portfolioInvestmentDateTime(plan.archived_at) : (plan.upcoming_run_ats || []).slice(1, 4).map(portfolioInvestmentDateTime).join(' · ') || '暂无后续期次') + '</strong><small>' + (plan.archived_at ? '执行记录和绩效仍可查看及导出' : '显示下一期之后的 3 个日期') + '</small></div>',
+      '<div class="portfolio-investment-upcoming"><span>' + (plan.archived_at ? '归档时间' : '后续安排') + '</span><strong>' + escapeHtml(plan.archived_at ? portfolioInvestmentDateTime(plan.archived_at) : (plan.upcoming_run_ats || []).slice(1, 4).map(portfolioInvestmentDateTime).join(' · ') || '暂无后续期次') + '</strong><small>' + (plan.archived_at ? '执行记录和绩效仍可查看及导出' : Number(plan.target_count || 0) > 0 ? '剩余 ' + Number(plan.remaining_count || 0) + ' 期，达到目标后自动完成' : '显示下一期之后的 3 个日期') + '</small></div>',
       '</div>',
       '</div>',
       '<div class="portfolio-investment-actions">',
