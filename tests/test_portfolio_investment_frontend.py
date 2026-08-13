@@ -22,6 +22,17 @@ def read_investment_source():
     )
 
 
+def run_node_script(node, script):
+    return subprocess.run(
+        [node],
+        input=script,
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_investment_plan_state_preserves_execution_window():
     node = shutil.which("node")
     if not node:
@@ -71,7 +82,7 @@ if (plan.variance.planned_amount !== 2200 || plan.variance.latest.id !== 'execut
 }
 """
     script = script.replace("__SOURCE__", json.dumps(source))
-    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    result = run_node_script(node, script)
     assert result.returncode == 0, result.stderr
 
 
@@ -124,7 +135,7 @@ vm.runInContext("setPortfolioInvestmentSimulationDays('plan-1', 7)", context);
 if (context.portfolioInvestmentSimulations['plan-1'].result !== null) throw new Error('changing range must clear the previous result');
 """
     script = script.replace("__SOURCE__", json.dumps(source))
-    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    result = run_node_script(node, script)
     assert result.returncode == 0, result.stderr
 
 
@@ -159,7 +170,7 @@ html = vm.runInContext("portfolioInvestmentSimulationMarkup({id:'plan-1'})", con
 if (!html.includes('历史模拟范围无效')) throw new Error('simulation must render backend error');
 """
     script = script.replace("__SOURCE__", json.dumps(source))
-    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    result = run_node_script(node, script)
     assert result.returncode == 0, result.stderr
 
 
@@ -213,7 +224,7 @@ if (!html.includes('差额比例 0.1363636') || !html.includes('数量舍入差�
 }
 """
     script = script.replace("__SOURCE__", json.dumps(source))
-    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    result = run_node_script(node, script)
     assert result.returncode == 0, result.stderr
 
 
@@ -249,7 +260,7 @@ if (!html.includes('含手续费 --') || !html.includes('数量舍入差额 --')
 }
 """
     script = script.replace("__SOURCE__", json.dumps(source))
-    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    result = run_node_script(node, script)
     assert result.returncode == 0, result.stderr
 
 
@@ -315,7 +326,7 @@ assert(context.portfolioInvestmentSort === 'priority', 'archived list must reset
 assert(ids().join(',') === 'plan-archived', 'archived list must contain archived plans only');
 """
     script = script.replace("__SOURCE__", json.dumps(source))
-    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    result = run_node_script(node, script)
     assert result.returncode == 0, result.stderr
 
 
@@ -356,7 +367,7 @@ if (!box.innerHTML.includes('最近归档') || box.innerHTML.includes('下次执
 """
     script = script.replace("__INVESTMENT_SOURCE__", json.dumps(investment_source))
     script = script.replace("__RENDER_SOURCE__", json.dumps(render_source))
-    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    result = run_node_script(node, script)
     assert result.returncode == 0, result.stderr
 
 
@@ -448,7 +459,7 @@ if (!box.innerHTML.includes('<details') || !box.innerHTML.includes('点击日期
 """
     script = script.replace("__STATE_SOURCE__", json.dumps(state_source))
     script = script.replace("__INVESTMENT_SOURCE__", json.dumps(investment_source))
-    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    result = run_node_script(node, script)
     assert result.returncode == 0, result.stderr
 
 
@@ -527,13 +538,7 @@ assert(emits.length === 0, 'cancelled replacement must not write to backend');
 """
     script = script.replace("__SOURCE__", json.dumps(source))
 
-    result = subprocess.run(
-        [node, "-e", script],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    result = run_node_script(node, script)
 
     assert result.returncode == 0, result.stderr
 
@@ -575,7 +580,7 @@ if (emits.length !== 0) throw new Error('invalid execution window must not be sa
 if (!statuses.at(-1).message.includes('结束日期不能早于开始日期')) throw new Error('invalid execution window must report a clear error');
 """
     script = script.replace("__SOURCE__", json.dumps(source))
-    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    result = run_node_script(node, script)
     assert result.returncode == 0, result.stderr
 
 
@@ -617,7 +622,7 @@ if (emits.length !== 1) throw new Error('fractional target count must not be sav
 if (!statuses.at(-1).message.includes('目标期数')) throw new Error('invalid target count must report a clear error');
 """
     script = script.replace("__SOURCE__", json.dumps(source))
-    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    result = run_node_script(node, script)
     assert result.returncode == 0, result.stderr
 
 
@@ -642,7 +647,7 @@ if (vm.runInContext("portfolioInvestmentNextRunLabel", context)(plan) !== '计�
 }
 """
     script = script.replace("__SOURCE__", json.dumps(source))
-    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    result = run_node_script(node, script)
     assert result.returncode == 0, result.stderr
 
 
@@ -677,7 +682,7 @@ if (emits[0][1].id !== 'plan-1' || emits[0][1].scheduled_at !== '2026-08-15T09:0
 if (!statuses.at(-1).message.includes('正在跳过')) throw new Error('skip must report progress');
 """
     script = script.replace("__SOURCE__", json.dumps(source))
-    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    result = run_node_script(node, script)
     assert result.returncode == 0, result.stderr
 
 
@@ -731,7 +736,7 @@ assert(context.portfolioInvestmentSchedulePreviews.new.projection.remaining_coun
 assert(renderCount === 2, 'request and accepted response must each render once');
 """
     script = script.replace("__SOURCE__", json.dumps(source))
-    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    result = run_node_script(node, script)
     assert result.returncode == 0, result.stderr
 
 
@@ -772,5 +777,5 @@ vm.runInContext("archivePortfolioInvestmentPlan('active-plan')", context);
 assert(emits.length === 3, 'cancelled archive must not emit');
 """
     script = script.replace("__SOURCE__", json.dumps(source))
-    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    result = run_node_script(node, script)
     assert result.returncode == 0, result.stderr
