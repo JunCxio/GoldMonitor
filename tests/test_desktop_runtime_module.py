@@ -385,18 +385,18 @@ def test_app_wrappers_keep_runtime_state_and_bridge_callbacks_patchable(monkeypa
 
     CapturedThread.created = []
     monkeypatch.setattr(app, "_background_fetch_started", False)
-    monkeypatch.setattr(app, "_news_fetch_started", False)
+    monkeypatch.setattr(app, "_task_scheduler_started", False)
     monkeypatch.setattr(app.threading, "Thread", CapturedThread)
     background = object()
-    news = object()
+    scheduler = object()
     monkeypatch.setattr(app, "background_loop", background)
-    monkeypatch.setattr(app, "news_loop", news)
+    monkeypatch.setattr(app, "task_scheduler_loop", scheduler)
 
     assert app.start_background_fetching() is True
     assert app.start_background_fetching() is False
-    assert app.start_news_fetching() is True
-    assert app.start_news_fetching() is False
-    assert [thread.target for thread in CapturedThread.created] == [background, news]
+    assert app.start_task_scheduler() is True
+    assert app.start_task_scheduler() is False
+    assert [thread.target for thread in CapturedThread.created] == [background, scheduler]
 
     bridge = app.DesktopBridge()
     monkeypatch.setattr(app, "choose_export_dir_for_desktop", lambda: {"ok": True, "path": "/tmp"})

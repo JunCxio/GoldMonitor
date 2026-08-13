@@ -17,6 +17,7 @@ const TODAY_OVERVIEW_REFRESH_EVENTS = [
   'alert_notification_resent',
   'alert_rules_updated',
   'portfolio_updated',
+  'portfolio_investment_plans_updated',
   'risk_analysis_result',
   'risk_analysis_history_updated',
   'review_notes_updated',
@@ -101,6 +102,9 @@ function todayOverviewReasonLabel(reason) {
     market_anomaly: '行情异常',
     market_stale: '行情过期',
     market_degraded: '行情降级',
+    waiting_price: '等待行情',
+    investment_error: '执行失败',
+    investment_due: '等待执行',
   })[reason] || String(reason || '');
 }
 
@@ -108,6 +112,7 @@ function todayOverviewActivityLabel(kind) {
   return ({
     alert: '警报',
     portfolio_transaction: '持仓流水',
+    portfolio_investment: '持仓定投',
     risk_analysis: '风险分析',
     review_note: '复盘笔记',
   })[kind] || '活动';
@@ -119,6 +124,7 @@ function todayOverviewActionLabel(action) {
     open_rule: '编辑规则',
     open_market_status: '查看详情',
     open_portfolio_transaction: '查看流水',
+    open_portfolio_investment: '查看计划',
     open_risk_analysis: '查看分析',
     open_review_note: '查看笔记',
   })[action && action.kind] || '查看';
@@ -131,6 +137,7 @@ function todayOverviewFilterLabel(filter) {
     notification: '通知异常',
     rule: '规则',
     market: '行情',
+    portfolio: '持仓',
   })[filter] || '全部';
 }
 
@@ -139,6 +146,7 @@ function todayOverviewFilterMatches(item, filter) {
   if (filter === 'notification') {
     return Array.isArray(item.reason_codes) && item.reason_codes.includes('notification_issue');
   }
+  if (filter === 'portfolio') return item.kind === 'portfolio_investment';
   return item.kind === filter;
 }
 
@@ -214,7 +222,7 @@ function renderTodayOverviewFilters(attention) {
   const counts = attention && attention.filter_counts && typeof attention.filter_counts === 'object'
     ? attention.filter_counts
     : {};
-  const filters = ['all', 'alert', 'notification', 'rule', 'market'];
+  const filters = ['all', 'alert', 'notification', 'rule', 'market', 'portfolio'];
   if (!filters.includes(todayOverviewAttentionFilter)) todayOverviewAttentionFilter = 'all';
   box.innerHTML = filters.map(filter => {
     const count = Math.max(0, Math.trunc(todayOverviewNumber(counts[filter])));
@@ -231,7 +239,7 @@ function renderTodayOverviewFilters(attention) {
 }
 
 function setTodayOverviewAttentionFilter(filter) {
-  todayOverviewAttentionFilter = ['all', 'alert', 'notification', 'rule', 'market'].includes(filter) ? filter : 'all';
+  todayOverviewAttentionFilter = ['all', 'alert', 'notification', 'rule', 'market', 'portfolio'].includes(filter) ? filter : 'all';
   if (todayOverviewState) renderTodayOverview(todayOverviewState);
 }
 
@@ -267,7 +275,7 @@ function renderTodayOverviewAttention(items, total, truncated) {
     list.innerHTML = [
       '<div class="today-overview-empty clear">',
       '<strong>' + (filtered ? '当前分类没有待处理事项' : '当前没有待处理事项') + '</strong>',
-      '<span>' + (filtered ? '可切换到其他分类继续检查。' : '警报、规则和行情状态均无需人工介入。') + '</span>',
+      '<span>' + (filtered ? '可切换到其他分类继续检查。' : '警报、规则、行情和持仓计划均无需人工介入。') + '</span>',
       '</div>',
     ].join('');
     return;
@@ -309,6 +317,15 @@ function todayOverviewTransactionSummary(item) {
 
 function todayOverviewActivitySummary(item) {
   if (item.kind === 'portfolio_transaction') return todayOverviewTransactionSummary(item);
+  if (item.kind === 'portfolio_investment') {
+    const parts = [item.summary || '定投计划已执行'];
+    if (item.position_name) parts.push(item.position_name);
+    const amount = Number(item.amount);
+    if (Number.isFinite(amount)) parts.push('计划金额 ' + todayOverviewMoney(amount, item.mode));
+    const price = Number(item.price);
+    if (Number.isFinite(price)) parts.push('成交价 ' + todayOverviewMoney(price, item.mode));
+    return parts.join(' · ');
+  }
   return item.summary || '已记录一项活动。';
 }
 
@@ -321,7 +338,7 @@ function renderTodayOverviewActivity(items, total, truncated) {
     list.innerHTML = [
       '<div class="today-overview-empty">',
       '<strong>今日暂无活动</strong>',
-      '<span>警报、持仓流水、风险分析和复盘笔记会显示在这里。</span>',
+      '<span>警报、持仓流水、定投执行、风险分析和复盘笔记会显示在这里。</span>',
       '</div>',
     ].join('');
     return;
@@ -626,6 +643,13 @@ function openTodayOverviewPortfolioTransaction(targetId) {
   document.querySelector('.portfolio-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+function openTodayOverviewPortfolioInvestment(targetId) {
+  closeTodayOverview({ markViewed: true, restoreFocus: false });
+  activePortfolioInvestmentPlanId = targetId || null;
+  setPortfolioView('investment');
+  document.querySelector('.portfolio-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 function openTodayOverviewRiskAnalysis(targetId) {
   closeTodayOverview({ markViewed: true, restoreFocus: false });
   if (!openRiskAnalysis()) return;
@@ -645,6 +669,7 @@ function activateTodayOverviewAction(kind, targetId, timestamp) {
   else if (kind === 'open_rule') openTodayOverviewRule(targetId);
   else if (kind === 'open_market_status') openTodayOverviewMarketStatus();
   else if (kind === 'open_portfolio_transaction') openTodayOverviewPortfolioTransaction(targetId);
+  else if (kind === 'open_portfolio_investment') openTodayOverviewPortfolioInvestment(targetId);
   else if (kind === 'open_risk_analysis') openTodayOverviewRiskAnalysis(targetId);
   else if (kind === 'open_review_note') openTodayOverviewReviewNote(targetId, timestamp);
 }

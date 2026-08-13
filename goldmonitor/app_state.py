@@ -51,6 +51,7 @@ def build_socket_init_state(
     daily=None,
     news=None,
     risk_analysis_history=None,
+    notification_retry_status=None,
 ):
     market = market if isinstance(market, dict) else {}
     state = build_price_api_state(market)
@@ -72,6 +73,8 @@ def build_socket_init_state(
         state["news"] = news
     if risk_analysis_history is not None:
         state["risk_analysis_history"] = risk_analysis_history
+    if notification_retry_status is not None:
+        state["notification_retry_status"] = notification_retry_status
     return state
 
 
@@ -91,6 +94,8 @@ def build_runtime_socket_init_state(
     get_daily_digest_status,
     get_news,
     get_risk_history,
+    get_notification_retry_status,
+    get_background_task_status,
 ):
     with runtime.lock:
         state = build_socket_init_state(
@@ -117,6 +122,8 @@ def build_runtime_socket_init_state(
         state["alert_rules"] = get_alert_rules()
         state["alert_profiles"] = get_alert_profiles()
         state["daily_digest_status"] = get_daily_digest_status()
+        state["notification_retry_status"] = get_notification_retry_status()
+        state["background_task_status"] = get_background_task_status()
     state["news"] = get_news()
     state["risk_analysis_history"] = get_risk_history()
     return state

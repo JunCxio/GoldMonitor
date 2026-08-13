@@ -37,6 +37,8 @@ socket.on('init_state', data => {
   applyPortfolio(data.portfolio || {});
   if (data.settings) applySettings(data.settings);
   if (data.daily_digest_status) applyDailyDigestStatus(data.daily_digest_status);
+  if (data.notification_retry_status) applyNotificationRetryStatus(data.notification_retry_status);
+  if (data.background_task_status) applyBackgroundTaskStatus(data.background_task_status);
   if (data.risk_analysis_history) applyRiskHistory(data.risk_analysis_history);
   if (data.source_comparison) renderSourceComparison(data.source_comparison);
   if (data.source_health) renderSourceHealth(data.source_health);

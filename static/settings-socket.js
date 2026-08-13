@@ -59,6 +59,25 @@ function registerSettingsSocketHandlers(socket) {
     applyDailyDigestStatus(data || {});
   });
 
+  socket.on('notification_retry_status', data => {
+    applyNotificationRetryStatus(data || {});
+  });
+
+  socket.on('notification_retry_result', data => {
+    const button = document.getElementById('btnRetryFailedNotifications');
+    const pending = Number(data && data.pending_count) || 0;
+    if (button) button.disabled = pending <= 0;
+    const attempted = Number(data && data.attempted_count) || 0;
+    const success = Number(data && data.success_count) || 0;
+    const failure = Number(data && data.failure_count) || 0;
+    setNotificationRetryStatus(
+      attempted
+        ? '本次重试 ' + attempted + ' 条：成功 ' + success + ' 条，仍失败 ' + failure + ' 条。'
+        : '当前没有符合条件的待重试通知。',
+      failure ? false : true,
+    );
+  });
+
   socket.on('daily_digest_previewed', data => {
     const button = document.getElementById('btnPreviewDailyDigest');
     if (button) button.disabled = false;

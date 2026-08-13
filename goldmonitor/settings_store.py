@@ -157,6 +157,9 @@ def normalize_settings(raw, defaults, options=None):
     )
     data["daily_digest_email_enabled"] = bool(data.get("daily_digest_email_enabled", True))
     data["daily_digest_webhook_enabled"] = bool(data.get("daily_digest_webhook_enabled", False))
+    data["notification_auto_retry_enabled"] = bool(
+        data.get("notification_auto_retry_enabled", False)
+    )
 
     data["risk_assistant_enabled"] = bool(data.get("risk_assistant_enabled", True))
     if data.get("risk_assistant_provider") not in options.get("valid_risk_assistant_providers", set()):

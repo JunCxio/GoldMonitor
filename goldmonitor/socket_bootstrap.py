@@ -207,6 +207,43 @@ def register_socket_handlers(application):
         delete_portfolio_alert=(
             lambda alert_id: application.delete_portfolio_alert(alert_id)
         ),
+        get_portfolio_investment_plan_state=(
+            lambda: application.get_portfolio_investment_plan_state()
+        ),
+        preview_portfolio_investment_schedule=(
+            lambda data: application.preview_portfolio_investment_schedule(data)
+        ),
+        upsert_portfolio_investment_plan=(
+            lambda data: application.upsert_portfolio_investment_plan(data)
+        ),
+        delete_portfolio_investment_plan=(
+            lambda plan_id: application.delete_portfolio_investment_plan(plan_id)
+        ),
+        archive_portfolio_investment_plan=(
+            lambda plan_id: application.archive_portfolio_investment_plan(plan_id)
+        ),
+        restore_portfolio_investment_plan=(
+            lambda plan_id: application.restore_portfolio_investment_plan(plan_id)
+        ),
+        toggle_portfolio_investment_plan=(
+            lambda plan_id, enabled:
+            application.toggle_portfolio_investment_plan(plan_id, enabled)
+        ),
+        skip_portfolio_investment_plan=(
+            lambda plan_id, scheduled_at:
+            application.skip_portfolio_investment_plan(plan_id, scheduled_at)
+        ),
+        execute_portfolio_investment_plan=(
+            lambda plan_id: application.execute_portfolio_investment_plan(plan_id)
+        ),
+        build_portfolio_investment_executions_csv=(
+            lambda plan_id:
+            application.build_portfolio_investment_executions_csv(plan_id)
+        ),
+        build_portfolio_investment_simulation=(
+            lambda plan_id, days:
+            application.build_portfolio_investment_simulation(plan_id, days)
+        ),
         broadcast_alert_rule_views=(
             lambda: application._broadcast_alert_rule_views()
         ),
@@ -255,6 +292,10 @@ def register_socket_handlers(application):
         ),
         run_daily_digest_once=lambda **kwargs: application.run_daily_digest_once(
             **kwargs
+        ),
+        notification_retry_status=lambda: application.notification_retry_status(),
+        run_notification_retry_once=(
+            lambda **kwargs: application.run_notification_retry_once(**kwargs)
         ),
     )
 
@@ -401,6 +442,13 @@ def register_socket_handlers(application):
             lambda installer_path:
             application.launch_update_installer(installer_path)
         ),
+        get_background_task_status=(
+            lambda: application.get_background_task_status()
+        ),
+        run_background_task_now=(
+            lambda task_name: application.run_background_task_now(task_name)
+        ),
+        thread_factory=lambda **kwargs: threading.Thread(**kwargs),
     )
 
     socket_history_review_core.register_history_review_handlers(

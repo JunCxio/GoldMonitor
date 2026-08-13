@@ -119,3 +119,26 @@ def test_alert_notification_batch_resend_starts_each_success(monkeypatch):
         ("batch-alert-2", "第二条警报"),
     ]
     client.disconnect()
+
+
+def test_alert_notification_resend_reports_when_no_failed_channel(monkeypatch):
+    import app
+
+    monkeypatch.setattr(
+        app,
+        "resend_alert_notification",
+        lambda alert_id, **kwargs: (False, {"id": alert_id}),
+    )
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+    client.emit("resend_alert_notification", {"id": "alert-sent"})
+    events = client.get_received()
+    result = next(
+        event["args"][0]
+        for event in events
+        if event["name"] == "alert_notification_resend_error"
+    )
+
+    assert result["message"] == "当前告警没有需要重试的失败通知"
+    client.disconnect()

@@ -1,4 +1,22 @@
 function registerOperationsSocketHandlers(socket) {
+  socket.on('background_task_status', data => {
+    applyBackgroundTaskStatus(data || {});
+  });
+
+  socket.on('background_task_run_result', data => {
+    const taskName = data && data.name ? String(data.name) : '';
+    if (data && data.pending) {
+      if (taskName) pendingBackgroundTaskRuns[taskName] = true;
+    } else if (taskName) {
+      delete pendingBackgroundTaskRuns[taskName];
+    }
+    const message = data && data.message
+      ? data.message
+      : (data && data.pending ? '正在检查后台任务...' : '后台任务检查完成。');
+    setOpsStatus(message, data && data.pending ? true : !!(data && data.ok));
+    renderBackgroundTaskStatus();
+  });
+
   socket.on('update_status', data => {
     applyUpdateStatus(data || {});
   });

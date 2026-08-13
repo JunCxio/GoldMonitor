@@ -331,6 +331,11 @@ def _portfolio_summary(summary):
 
 def _today_transactions(portfolio_state, start, end):
     state = portfolio_state if isinstance(portfolio_state, dict) else {}
+    plans = {
+        str(item.get("id") or ""): item
+        for item in _items(_investment_plan_state(state))
+        if str(item.get("id") or "")
+    }
     result = []
     for transaction in _items(state.get("transactions")):
         trade_date = str(transaction.get("trade_date") or "")[:10]
@@ -347,17 +352,113 @@ def _today_transactions(portfolio_state, start, end):
             else f"{start.date().isoformat()}T00:00:00"
         )
         transaction_type = str(transaction.get("type") or "")
+        source = str(transaction.get("source") or "")
+        source_id = str(transaction.get("source_id") or "")
+        is_investment = source == "investment_plan"
+        plan = plans.get(source_id, {}) if is_investment else {}
+        activity_kind = "portfolio_investment" if is_investment else "portfolio_transaction"
+        activity_id = (
+            source_id or transaction.get("id") or timestamp
+            if is_investment
+            else transaction.get("id") or timestamp
+        )
+        execution_kind = str(transaction.get("execution_kind") or "")
+        if is_investment:
+            summary = {
+                "catch_up": "补执行定投",
+                "manual": "手动执行定投",
+            }.get(execution_kind, "计划执行定投")
+            action = {"kind": "open_portfolio_investment", "target_id": source_id}
+        else:
+            summary = "买入" if transaction_type == "buy" else "卖出" if transaction_type == "sell" else "持仓变动"
+            action = {
+                "kind": "open_portfolio_transaction",
+                "target_id": str(transaction.get("id") or ""),
+            }
         result.append(_activity_item(
-            "portfolio_transaction",
-            transaction.get("id") or timestamp,
+            activity_kind,
+            activity_id,
             timestamp,
-            str(transaction.get("name") or "持仓流水"),
-            "买入" if transaction_type == "buy" else "卖出" if transaction_type == "sell" else "持仓变动",
-            {"kind": "open_portfolio_transaction", "target_id": str(transaction.get("id") or "")},
+            str(plan.get("name") or transaction.get("name") or "持仓流水"),
+            summary,
+            action,
             transaction_type=transaction_type,
             mode=str(transaction.get("mode") or ""),
             price=transaction.get("price"),
             quantity=transaction.get("quantity"),
+            amount=transaction.get("planned_amount"),
+            position_name=str(transaction.get("name") or ""),
+            execution_kind=execution_kind,
+            transaction_id=str(transaction.get("id") or ""),
+        ))
+    return result
+
+
+def _investment_plan_state(portfolio_state):
+    state = portfolio_state if isinstance(portfolio_state, dict) else {}
+    investment_state = state.get("investment_plans")
+    return investment_state if isinstance(investment_state, dict) else {}
+
+
+def _investment_attention(portfolio_state, start, end):
+    result = []
+    plans = _items(_investment_plan_state(portfolio_state))
+    priorities = {
+        "error": 85,
+        "orphaned": 75,
+        "waiting_price": 60,
+        "due": 55,
+    }
+    labels = {
+        "error": "执行失败",
+        "orphaned": "关联持仓失效",
+        "waiting_price": "等待有效行情",
+        "due": "计划已到执行时间",
+    }
+    reason_codes = {
+        "error": "investment_error",
+        "orphaned": "orphaned",
+        "waiting_price": "waiting_price",
+        "due": "investment_due",
+    }
+    for plan in plans:
+        if plan.get("archived_at"):
+            continue
+        status = str(plan.get("status") or "")
+        last_result = str(plan.get("last_result") or "")
+        if status == "paused" and last_result == "waiting_price":
+            continue
+        issue = last_result if last_result in priorities else "due" if status == "due" else ""
+        if not issue:
+            continue
+        reasons = [reason_codes[issue]]
+        if status == "due" and issue != "due":
+            reasons.append(reason_codes["due"])
+        timestamp = (
+            plan.get("next_run_at")
+            if status == "due"
+            else plan.get("updated_at") or plan.get("last_executed_at") or plan.get("next_run_at")
+        )
+        summary = str(plan.get("last_message") or labels[issue])
+        result.append(_attention_item(
+            "portfolio_investment",
+            plan.get("id") or plan.get("name") or issue,
+            priorities[issue],
+            str(plan.get("name") or "持仓定投计划"),
+            summary,
+            timestamp,
+            reasons,
+            {"kind": "open_portfolio_investment", "target_id": str(plan.get("id") or "")},
+            occurred_today=_in_range(timestamp, start, end),
+            plan_status=status,
+            last_result=last_result,
+            mode=str(plan.get("mode") or ""),
+            amount=plan.get("amount"),
+            target_count=plan.get("target_count"),
+            completed_count=plan.get("completed_count"),
+            remaining_count=plan.get("remaining_count"),
+            position_name=str(plan.get("position_name") or ""),
+            next_run_at=_timestamp_text(plan.get("next_run_at")),
         ))
     return result
 
@@ -450,11 +551,14 @@ def _attention_filter_counts(items):
         "notification": 0,
         "rule": 0,
         "market": 0,
+        "portfolio": 0,
     }
     for item in items:
         kind = str(item.get("kind") or "")
         if kind in counts:
             counts[kind] += 1
+        if kind == "portfolio_investment":
+            counts["portfolio"] += 1
         if "notification_issue" in list(item.get("reason_codes") or []):
             counts["notification"] += 1
     return counts
@@ -502,7 +606,8 @@ def build_today_overview(
     alert_attention, alert_counts = _alert_attention(alerts, start, end)
     rule_attention, rule_counts = _rule_attention(alert_rules)
     market_item = _market_attention(market_quality, fetch_status, generated_at)
-    attention = alert_attention + rule_attention + ([market_item] if market_item else [])
+    investment_attention = _investment_attention(portfolio, start, end)
+    attention = alert_attention + rule_attention + investment_attention + ([market_item] if market_item else [])
     attention = _sort_attention(attention)
     attention_total = len(attention)
     attention_filter_counts = _attention_filter_counts(attention)
@@ -510,9 +615,14 @@ def build_today_overview(
 
     alert_activity = _alert_activity(alerts, start, end)
     transaction_activity = _today_transactions(portfolio, start, end)
+    investment_activity = [
+        item for item in transaction_activity if item.get("kind") == "portfolio_investment"
+    ]
     risk_activity = _risk_activity(risks, start, end)
     note_activity = _review_activity(notes, start, end)
-    activity = _sort_activity(alert_activity + transaction_activity + risk_activity + note_activity)
+    activity = _sort_activity(
+        alert_activity + transaction_activity + risk_activity + note_activity
+    )
     activity_total = len(activity)
     activity = activity[:_bounded_limit(activity_limit, TODAY_OVERVIEW_ACTIVITY_LIMIT)]
 
@@ -549,6 +659,8 @@ def build_today_overview(
             "rules_expired": rule_counts["expired"],
             "portfolio_positions": int(portfolio.get("total") or len(_items(portfolio.get("items")))),
             "portfolio_transactions_today": len(transaction_activity),
+            "portfolio_investment_issues": len(investment_attention),
+            "portfolio_investments_today": len(investment_activity),
             "risk_analyses_today": len(risk_activity),
             "review_notes_today": len(note_activity),
         },
@@ -573,6 +685,10 @@ def build_today_overview(
                 "usd": _portfolio_summary(portfolio.get("usd_summary")),
             },
             "transactions_today": transaction_activity,
+            "investment_plans": {
+                "summary": dict(_investment_plan_state(portfolio).get("summary") or {}),
+                "executions_today": investment_activity,
+            },
         },
         "recent": {
             "risk_analysis": _latest_summary(latest_risk, ("analysis_time",), _risk_summary),

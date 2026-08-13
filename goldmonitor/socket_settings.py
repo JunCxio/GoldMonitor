@@ -21,6 +21,8 @@ def register_settings_handlers(
     build_daily_digest_snapshot,
     daily_digest_status_payload,
     run_daily_digest_once,
+    notification_retry_status,
+    run_notification_retry_once,
 ):
     @socketio.on("get_settings")
     def on_get_settings():
@@ -110,6 +112,35 @@ def register_settings_handlers(
                 socketio.emit("test_email_result", {"ok": True, "message": "测试邮件发送成功！请检查收件箱（如未收到请查看垃圾邮件文件夹）。"})
 
         threading.Thread(target=_test, daemon=True).start()
+
+
+    @socketio.on("get_notification_retry_status")
+    def on_get_notification_retry_status():
+        emit("notification_retry_status", notification_retry_status())
+
+
+    @socketio.on("retry_failed_notifications")
+    def on_retry_failed_notifications():
+        sid = request.sid
+
+        def _retry():
+            try:
+                result = run_notification_retry_once(manual=True)
+            except Exception as exc:
+                logging.exception("手动重试失败通知失败")
+                result = {
+                    "ok": False,
+                    "status": "error",
+                    "message": f"重试失败通知失败: {exc}",
+                }
+            socketio.emit(
+                "notification_retry_status",
+                notification_retry_status(),
+                room=sid,
+            )
+            socketio.emit("notification_retry_result", result, room=sid)
+
+        threading.Thread(target=_retry, daemon=True).start()
 
     @socketio.on("test_webhook")
     def on_test_webhook():

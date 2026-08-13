@@ -48,8 +48,7 @@ def test_run_application_web_mode_starts_services_before_server():
         wait_for_server_ready=lambda: calls.append("wait"),
         update_floating_price=lambda: calls.append("floating"),
         start_background_fetching=lambda: calls.append("market"),
-        start_news_fetching=lambda: calls.append("news"),
-        start_daily_digest_scheduler=lambda: calls.append("digest"),
+        start_task_scheduler=lambda: calls.append("tasks"),
         get_settings=lambda: {},
         start_desktop_window=lambda **kwargs: calls.append("window"),
         thread_factory=lambda **kwargs: None,
@@ -62,8 +61,7 @@ def test_run_application_web_mode_starts_services_before_server():
     assert runtime.desktop_runtime_active is False
     assert calls[-1] == ("server", "127.0.0.1", 5001)
     assert calls.index("market") < len(calls) - 1
-    assert calls.index("news") < len(calls) - 1
-    assert calls.index("digest") < len(calls) - 1
+    assert calls.index("tasks") < len(calls) - 1
 
 
 def test_run_application_reuses_existing_instance_without_starting_services():
@@ -90,8 +88,7 @@ def test_run_application_reuses_existing_instance_without_starting_services():
         wait_for_server_ready=lambda: calls.append("wait"),
         update_floating_price=lambda: calls.append("floating"),
         start_background_fetching=lambda: calls.append("market"),
-        start_news_fetching=lambda: calls.append("news"),
-        start_daily_digest_scheduler=lambda: calls.append("digest"),
+        start_task_scheduler=lambda: calls.append("tasks"),
         get_settings=lambda: {},
         start_desktop_window=lambda **kwargs: calls.append("window"),
         thread_factory=lambda **kwargs: None,

@@ -8,6 +8,8 @@ function registerPortfolioSocketHandlers(socketClient) {
     } else if (pendingPortfolioUndoMessage) {
       setPortfolioStatus(pendingPortfolioUndoMessage, 'ok');
       pendingPortfolioUndoMessage = '';
+    } else if (portfolioInvestmentDraftNotice) {
+      setPortfolioStatus(portfolioInvestmentDraftNotice, 'ok');
     } else {
       setPortfolioStatus('持仓已更新。', 'ok');
     }
@@ -16,6 +18,75 @@ function registerPortfolioSocketHandlers(socketClient) {
   socketClient.on('portfolio_error', data => {
     pendingPortfolioSave = null;
     setPortfolioStatus((data && data.message) || '持仓更新失败。', 'fail');
+  });
+
+  socketClient.on('portfolio_investment_plans_updated', data => {
+    captureActivePortfolioInvestmentDraft();
+    portfolioState.investment_plans = normalizePortfolioInvestmentState(data);
+    if (activePortfolioInvestmentPlanId && activePortfolioInvestmentPlanId !== 'new' && !portfolioState.investment_plans.items.some(item => item.id === activePortfolioInvestmentPlanId)) {
+      clearPortfolioInvestmentDraft(activePortfolioInvestmentPlanId);
+      activePortfolioInvestmentPlanId = null;
+    }
+    if (pendingPortfolioSave && pendingPortfolioSave.kind === 'investment') {
+      clearPortfolioInvestmentDraft(pendingPortfolioSave.id);
+      activePortfolioInvestmentPlanId = null;
+      portfolioInvestmentDraftNotice = '';
+      pendingPortfolioSave = null;
+    }
+    renderPortfolio();
+  });
+
+  socketClient.on('portfolio_investment_plan_saved', data => {
+    setPortfolioStatus(data && data.plan ? '定投计划已保存。' : '定投计划保存完成。', 'ok');
+  });
+
+  socketClient.on('portfolio_investment_plan_executed', data => {
+    setPortfolioStatus((data && data.message) || '定投计划已执行。', data && data.ok === false ? 'fail' : 'ok');
+  });
+
+  socketClient.on('portfolio_investment_plan_skipped', data => {
+    setPortfolioStatus((data && data.message) || '已跳过本期定投计划。', data && data.ok === false ? 'fail' : 'ok');
+  });
+
+  socketClient.on('portfolio_investment_plan_archived', data => {
+    setPortfolioStatus(data && data.plan ? '定投计划已归档。' : '定投计划归档完成。', 'ok');
+  });
+
+  socketClient.on('portfolio_investment_plan_restored', data => {
+    setPortfolioStatus(data && data.plan ? '定投计划已恢复，当前保持暂停。' : '定投计划恢复完成。', 'ok');
+  });
+
+  socketClient.on('portfolio_investment_plan_deleted', () => {
+    setPortfolioStatus('已永久删除归档计划，相关持仓流水仍保留。', 'ok');
+  });
+
+  socketClient.on('portfolio_investment_schedule_preview', data => {
+    applyPortfolioInvestmentSchedulePreview(data || {});
+  });
+
+  socketClient.on('portfolio_investment_plan_simulation', data => {
+    applyPortfolioInvestmentSimulation(data || {});
+  });
+
+  socketClient.on('portfolio_investment_plan_simulation_error', data => {
+    applyPortfolioInvestmentSimulationError(data || {});
+  });
+
+  socketClient.on('portfolio_investment_plan_error', data => {
+    pendingPortfolioSave = null;
+    setPortfolioStatus((data && data.message) || '定投计划操作失败。', 'fail');
+  });
+
+  socketClient.on('portfolio_investment_executions_exported', data => {
+    const count = data && Number.isFinite(Number(data.count)) ? Number(data.count) : 0;
+    const planName = data && data.plan_name ? String(data.plan_name) : '定投计划';
+    setPortfolioStatus(data && data.saved_path
+      ? planName + '的执行记录已导出 ' + count + ' 条，保存至 ' + data.saved_path
+      : '定投执行记录已导出。', 'ok');
+  });
+
+  socketClient.on('portfolio_investment_executions_export_error', data => {
+    setPortfolioStatus((data && data.message) || '定投执行记录导出失败。', 'fail');
   });
 
   socketClient.on('portfolio_exported', data => {

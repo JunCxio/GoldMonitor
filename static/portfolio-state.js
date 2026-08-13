@@ -138,6 +138,181 @@ function normalizePortfolioImportBackup(data) {
   };
 }
 
+function normalizePortfolioInvestmentReliability(value, fallbackDays) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return {
+    days: Number.isFinite(Number(source.days)) ? Number(source.days) : fallbackDays,
+    automatic_execution_count: Number.isFinite(Number(source.automatic_execution_count)) ? Number(source.automatic_execution_count) : 0,
+    on_time_execution_count: Number.isFinite(Number(source.on_time_execution_count)) ? Number(source.on_time_execution_count) : 0,
+    catch_up_execution_count: Number.isFinite(Number(source.catch_up_execution_count)) ? Number(source.catch_up_execution_count) : 0,
+    manual_execution_count: Number.isFinite(Number(source.manual_execution_count)) ? Number(source.manual_execution_count) : 0,
+    unclassified_execution_count: Number.isFinite(Number(source.unclassified_execution_count)) ? Number(source.unclassified_execution_count) : 0,
+    on_time_rate: source.on_time_rate == null || !Number.isFinite(Number(source.on_time_rate)) ? null : Number(source.on_time_rate),
+  };
+}
+
+function normalizePortfolioInvestmentVariance(value, fallbackDays) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const latest = source.latest && typeof source.latest === 'object' && !Array.isArray(source.latest)
+    ? source.latest
+    : null;
+  return {
+    days: Number.isFinite(Number(source.days)) ? Number(source.days) : fallbackDays,
+    execution_count: Number.isFinite(Number(source.execution_count)) ? Number(source.execution_count) : 0,
+    covered_execution_count: Number.isFinite(Number(source.covered_execution_count)) ? Number(source.covered_execution_count) : 0,
+    uncovered_execution_count: Number.isFinite(Number(source.uncovered_execution_count)) ? Number(source.uncovered_execution_count) : 0,
+    planned_amount: Number.isFinite(Number(source.planned_amount)) ? Number(source.planned_amount) : 0,
+    actual_cost: Number.isFinite(Number(source.actual_cost)) ? Number(source.actual_cost) : 0,
+    difference: Number.isFinite(Number(source.difference)) ? Number(source.difference) : 0,
+    difference_percent: source.difference_percent == null || !Number.isFinite(Number(source.difference_percent)) ? null : Number(source.difference_percent),
+    fee: Number.isFinite(Number(source.fee)) ? Number(source.fee) : 0,
+    rounding_difference: Number.isFinite(Number(source.rounding_difference)) ? Number(source.rounding_difference) : 0,
+    latest: latest ? {
+      id: String(latest.id || ''),
+      timestamp: String(latest.timestamp || ''),
+      execution_kind: String(latest.execution_kind || ''),
+      planned_amount: Number.isFinite(Number(latest.planned_amount)) ? Number(latest.planned_amount) : 0,
+      actual_cost: Number.isFinite(Number(latest.actual_cost)) ? Number(latest.actual_cost) : 0,
+      difference: Number.isFinite(Number(latest.difference)) ? Number(latest.difference) : 0,
+      difference_percent: latest.difference_percent == null || !Number.isFinite(Number(latest.difference_percent)) ? null : Number(latest.difference_percent),
+      fee: Number.isFinite(Number(latest.fee)) ? Number(latest.fee) : 0,
+    } : null,
+  };
+}
+
+function normalizePortfolioInvestmentPlan(item) {
+  const source = item && typeof item === 'object' && !Array.isArray(item) ? item : {};
+  const performance = source.performance && typeof source.performance === 'object' && !Array.isArray(source.performance)
+    ? source.performance
+    : {};
+  return {
+    id: source.id || '',
+    name: source.name || '',
+    position_id: source.position_id || '',
+    position_name: source.position_name || '',
+    mode: source.mode === 'usd' ? 'usd' : 'rmb',
+    amount: Number.isFinite(Number(source.amount)) ? Number(source.amount) : 0,
+    fee: Number.isFinite(Number(source.fee)) ? Number(source.fee) : 0,
+    target_count: Number.isFinite(Number(source.target_count)) ? Math.max(0, Number(source.target_count)) : 0,
+    completed_count: Number.isFinite(Number(source.completed_count)) ? Math.max(0, Number(source.completed_count)) : 0,
+    remaining_count: source.remaining_count == null ? null : Math.max(0, Number(source.remaining_count) || 0),
+    projection: source.projection && typeof source.projection === 'object' && !Array.isArray(source.projection)
+      ? Object.assign({}, source.projection)
+      : null,
+    frequency: ['daily', 'weekly', 'monthly', 'yearly'].includes(source.frequency) ? source.frequency : 'monthly',
+    time: source.time || '09:00',
+    month: Number.isFinite(Number(source.month)) ? Number(source.month) : 1,
+    day: Number.isFinite(Number(source.day)) ? Number(source.day) : 1,
+    weekday: Number.isFinite(Number(source.weekday)) ? Number(source.weekday) : 1,
+    start_date: source.start_date || '',
+    end_date: source.end_date || '',
+    archived_at: source.archived_at || '',
+    enabled: source.enabled !== false,
+    next_run_at: source.next_run_at || '',
+    upcoming_run_ats: Array.isArray(source.upcoming_run_ats) ? source.upcoming_run_ats.map(value => String(value || '')).filter(Boolean) : [],
+    pending_run_at: source.pending_run_at || '',
+    last_scheduled_at: source.last_scheduled_at || '',
+    last_executed_at: source.last_executed_at || '',
+    last_skipped_at: source.last_skipped_at || '',
+    last_skipped_scheduled_at: source.last_skipped_scheduled_at || '',
+    skip_count: Number.isFinite(Number(source.skip_count)) ? Number(source.skip_count) : 0,
+    last_transaction_id: source.last_transaction_id || '',
+    last_price: source.last_price == null ? null : Number(source.last_price),
+    last_quantity: source.last_quantity == null ? null : Number(source.last_quantity),
+    last_result: source.last_result || 'waiting',
+    last_message: source.last_message || '等待首次执行',
+    status: source.status || (source.enabled === false ? 'paused' : 'active'),
+    created_at: source.created_at || '',
+    updated_at: source.updated_at || '',
+    reliability: normalizePortfolioInvestmentReliability(source.reliability, 90),
+    variance: normalizePortfolioInvestmentVariance(source.variance, 90),
+    performance: {
+      execution_count: Number.isFinite(Number(performance.execution_count)) ? Number(performance.execution_count) : 0,
+      total_quantity: Number.isFinite(Number(performance.total_quantity)) ? Number(performance.total_quantity) : 0,
+      gross_invested: Number.isFinite(Number(performance.gross_invested)) ? Number(performance.gross_invested) : 0,
+      total_fees: Number.isFinite(Number(performance.total_fees)) ? Number(performance.total_fees) : 0,
+      total_invested: Number.isFinite(Number(performance.total_invested)) ? Number(performance.total_invested) : 0,
+      average_price: performance.average_price == null ? null : Number(performance.average_price),
+      average_cost: performance.average_cost == null ? null : Number(performance.average_cost),
+      current_price: performance.current_price == null ? null : Number(performance.current_price),
+      market_value: performance.market_value == null ? null : Number(performance.market_value),
+      pnl: performance.pnl == null ? null : Number(performance.pnl),
+      pnl_percent: performance.pnl_percent == null ? null : Number(performance.pnl_percent),
+      valuation_status: performance.valuation_status || 'empty',
+      recent_executions: Array.isArray(performance.recent_executions)
+        ? performance.recent_executions.map(item => Object.assign({}, item))
+        : [],
+    },
+  };
+}
+
+function normalizePortfolioInvestmentState(data) {
+  const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  const items = Array.isArray(source.items) ? source.items.map(normalizePortfolioInvestmentPlan).filter(item => item.id) : [];
+  const summary = source.summary && typeof source.summary === 'object' ? source.summary : {};
+  return {
+    items,
+    summary: {
+      total: Number.isFinite(Number(summary.total)) ? Number(summary.total) : items.length,
+      all_total: Number.isFinite(Number(summary.all_total)) ? Number(summary.all_total) : items.length,
+      archived: Number.isFinite(Number(summary.archived)) ? Number(summary.archived) : items.filter(item => item.archived_at).length,
+      enabled: Number.isFinite(Number(summary.enabled)) ? Number(summary.enabled) : items.filter(item => item.enabled).length,
+      due: Number.isFinite(Number(summary.due)) ? Number(summary.due) : items.filter(item => item.status === 'due').length,
+      attention: Number.isFinite(Number(summary.attention)) ? Number(summary.attention) : items.filter(item => ['waiting_price', 'orphaned', 'error'].includes(item.last_result)).length,
+      execution_count: Number.isFinite(Number(summary.execution_count)) ? Number(summary.execution_count) : items.reduce((total, item) => total + item.performance.execution_count, 0),
+      rmb_invested: Number.isFinite(Number(summary.rmb_invested)) ? Number(summary.rmb_invested) : 0,
+      usd_invested: Number.isFinite(Number(summary.usd_invested)) ? Number(summary.usd_invested) : 0,
+      actual_days: Number.isFinite(Number(summary.actual_days)) ? Number(summary.actual_days) : 30,
+      actual_execution_count: Number.isFinite(Number(summary.actual_execution_count)) ? Number(summary.actual_execution_count) : 0,
+      rmb_actual_invested: Number.isFinite(Number(summary.rmb_actual_invested)) ? Number(summary.rmb_actual_invested) : 0,
+      usd_actual_invested: Number.isFinite(Number(summary.usd_actual_invested)) ? Number(summary.usd_actual_invested) : 0,
+      actual_trend_months: Number.isFinite(Number(summary.actual_trend_months)) ? Number(summary.actual_trend_months) : 6,
+      actual_trend: Array.isArray(summary.actual_trend)
+        ? summary.actual_trend.map(item => ({
+          month: String((item && item.month) || ''),
+          execution_count: Number.isFinite(Number(item && item.execution_count)) ? Number(item.execution_count) : 0,
+          rmb_invested: Number.isFinite(Number(item && item.rmb_invested)) ? Number(item.rmb_invested) : 0,
+          usd_invested: Number.isFinite(Number(item && item.usd_invested)) ? Number(item.usd_invested) : 0,
+        })).filter(item => item.month)
+        : [],
+      reliability_days: Number.isFinite(Number(summary.reliability_days)) ? Number(summary.reliability_days) : 90,
+      automatic_execution_count: Number.isFinite(Number(summary.automatic_execution_count)) ? Number(summary.automatic_execution_count) : 0,
+      on_time_execution_count: Number.isFinite(Number(summary.on_time_execution_count)) ? Number(summary.on_time_execution_count) : 0,
+      catch_up_execution_count: Number.isFinite(Number(summary.catch_up_execution_count)) ? Number(summary.catch_up_execution_count) : 0,
+      manual_execution_count: Number.isFinite(Number(summary.manual_execution_count)) ? Number(summary.manual_execution_count) : 0,
+      unclassified_execution_count: Number.isFinite(Number(summary.unclassified_execution_count)) ? Number(summary.unclassified_execution_count) : 0,
+      on_time_rate: summary.on_time_rate == null || !Number.isFinite(Number(summary.on_time_rate)) ? null : Number(summary.on_time_rate),
+      commitment_days: Number.isFinite(Number(summary.commitment_days)) ? Number(summary.commitment_days) : 30,
+      commitment_plan_count: Number.isFinite(Number(summary.commitment_plan_count)) ? Number(summary.commitment_plan_count) : 0,
+      commitment_run_count: Number.isFinite(Number(summary.commitment_run_count)) ? Number(summary.commitment_run_count) : 0,
+      rmb_commitment: Number.isFinite(Number(summary.rmb_commitment)) ? Number(summary.rmb_commitment) : 0,
+      usd_commitment: Number.isFinite(Number(summary.usd_commitment)) ? Number(summary.usd_commitment) : 0,
+      commitment_items: Array.isArray(summary.commitment_items)
+        ? summary.commitment_items.map(item => Object.assign({}, item)).filter(item => Number(item.run_count) > 0)
+        : [],
+      commitment_calendar: Array.isArray(summary.commitment_calendar)
+        ? summary.commitment_calendar.map(item => ({
+          date: String((item && item.date) || ''),
+          run_count: Number.isFinite(Number(item && item.run_count)) ? Number(item.run_count) : 0,
+          plan_count: Number.isFinite(Number(item && item.plan_count)) ? Number(item.plan_count) : 0,
+          rmb_commitment: Number.isFinite(Number(item && item.rmb_commitment)) ? Number(item.rmb_commitment) : 0,
+          usd_commitment: Number.isFinite(Number(item && item.usd_commitment)) ? Number(item.usd_commitment) : 0,
+          items: Array.isArray(item && item.items)
+            ? item.items.map(entry => ({
+              id: String((entry && entry.id) || ''),
+              name: String((entry && entry.name) || ''),
+              mode: entry && entry.mode === 'usd' ? 'usd' : 'rmb',
+              scheduled_at: String((entry && entry.scheduled_at) || ''),
+              planned_cost: Number.isFinite(Number(entry && entry.planned_cost)) ? Number(entry.planned_cost) : 0,
+            })).filter(entry => entry.id && entry.scheduled_at)
+            : [],
+        })).filter(item => item.date && item.run_count > 0)
+        : [],
+    },
+    updated_at: source.updated_at || '',
+  };
+}
+
 function normalizePortfolioState(data) {
   const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
   const items = Array.isArray(source.items)
@@ -146,6 +321,9 @@ function normalizePortfolioState(data) {
   const transactions = Array.isArray(source.transactions)
     ? source.transactions.map(item => (item && typeof item === 'object') ? Object.assign({}, item) : null).filter(Boolean)
     : [];
+  const investmentPlans = source.investment_plans == null
+    ? normalizePortfolioInvestmentState(portfolioState && portfolioState.investment_plans)
+    : normalizePortfolioInvestmentState(source.investment_plans);
   return {
     items,
     transactions,
@@ -155,6 +333,7 @@ function normalizePortfolioState(data) {
     prices: source.prices && typeof source.prices === 'object' && !Array.isArray(source.prices) ? Object.assign({}, source.prices) : {},
     review: normalizePortfolioReview(source.review),
     alerts: normalizePortfolioAlertsState(source.alerts),
+    investment_plans: investmentPlans,
     import_backup: normalizePortfolioImportBackup(source.import_backup),
   };
 }
@@ -163,6 +342,7 @@ function applyPortfolio(data) {
   captureActivePortfolioDraft();
   captureActivePortfolioTransactionDraft();
   captureActivePortfolioAlertDraft();
+  captureActivePortfolioInvestmentDraft();
   portfolioState = normalizePortfolioState(data);
   if (activePortfolioPositionId && activePortfolioPositionId !== 'new' && !portfolioState.items.some(item => item.id === activePortfolioPositionId)) {
     clearPortfolioDraft(activePortfolioPositionId);
@@ -178,12 +358,19 @@ function applyPortfolio(data) {
     clearPortfolioTransactionDraft(activePortfolioTransactionId);
     activePortfolioTransactionId = null;
   }
+  if (activePortfolioInvestmentPlanId && activePortfolioInvestmentPlanId !== 'new' && !portfolioState.investment_plans.items.some(item => item.id === activePortfolioInvestmentPlanId)) {
+    clearPortfolioInvestmentDraft(activePortfolioInvestmentPlanId);
+    activePortfolioInvestmentPlanId = null;
+  }
   if (pendingPortfolioSave) {
     if (pendingPortfolioSave.kind === 'transaction') {
       clearPortfolioTransactionDraft(pendingPortfolioSave.id);
       if (activePortfolioTransactionId === pendingPortfolioSave.id) activePortfolioTransactionId = null;
     } else if (pendingPortfolioSave.kind === 'alert') {
       clearPortfolioAlertDraft(pendingPortfolioSave.id);
+    } else if (pendingPortfolioSave.kind === 'investment') {
+      clearPortfolioInvestmentDraft(pendingPortfolioSave.id);
+      if (activePortfolioInvestmentPlanId === pendingPortfolioSave.id) activePortfolioInvestmentPlanId = null;
     } else if (pendingPortfolioSave.kind === 'position') {
       clearPortfolioDraft(pendingPortfolioSave.id);
       if (activePortfolioPositionId === pendingPortfolioSave.id) activePortfolioPositionId = null;

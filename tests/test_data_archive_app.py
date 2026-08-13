@@ -14,6 +14,7 @@ def test_data_archive_paths_cover_all_restorable_state():
         "watch_targets",
         "portfolio_positions",
         "portfolio_transactions",
+        "portfolio_investment_plans",
         "portfolio_import_backup",
         "portfolio_alerts",
         "market_cache",

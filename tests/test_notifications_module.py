@@ -251,6 +251,16 @@ def test_delivery_failure_log_does_not_include_raw_error_details():
     assert "private-token" not in repr(warnings)
 
 
+def test_delivery_marks_only_clear_transient_errors_as_retryable():
+    from goldmonitor.notification_delivery import notification_error_retryable
+
+    assert notification_error_retryable("连接超时") is True
+    assert notification_error_retryable("503 Server Error: Service Unavailable") is True
+    assert notification_error_retryable("SMTP authentication failed") is False
+    assert notification_error_retryable("Webhook 地址未配置") is False
+    assert notification_error_retryable("unexpected protocol response") is False
+
+
 def test_dispatch_alert_async_returns_pending_then_reports_retried_result():
     from goldmonitor.notification_delivery import dispatch_alert
 

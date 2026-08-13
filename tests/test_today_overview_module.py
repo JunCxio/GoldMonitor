@@ -129,6 +129,8 @@ def test_today_overview_separates_today_activity_from_cross_day_attention():
         "rules_expired": 1,
         "portfolio_positions": 2,
         "portfolio_transactions_today": 1,
+        "portfolio_investment_issues": 0,
+        "portfolio_investments_today": 0,
         "risk_analyses_today": 1,
         "review_notes_today": 1,
     }
@@ -148,6 +150,7 @@ def test_today_overview_separates_today_activity_from_cross_day_attention():
         "notification": 2,
         "rule": 3,
         "market": 1,
+        "portfolio": 0,
     }
     assert "rule:rule-disabled" not in attention_ids
     assert result["portfolio"]["current"]["rmb"]["total_pnl"] == 650.0
@@ -156,6 +159,115 @@ def test_today_overview_separates_today_activity_from_cross_day_attention():
     ]
     assert result["recent"]["risk_analysis"]["id"] == "risk-today"
     assert result["recent"]["review_note"]["id"] == "note-today"
+
+
+def test_today_overview_includes_investment_attention_and_execution_once():
+    from goldmonitor.today_overview import build_today_overview
+
+    result = build_today_overview(
+        portfolio_state={
+            "transactions": [
+                {
+                    "id": "investment-plan-executed-manual-202608120930",
+                    "name": "积存金",
+                    "type": "buy",
+                    "mode": "rmb",
+                    "price": 720.0,
+                    "quantity": 1.38888889,
+                    "planned_amount": 1000.0,
+                    "trade_date": "2026-08-12",
+                    "created_at": "2026-08-12T09:30:00",
+                    "source": "investment_plan",
+                    "source_id": "plan-executed",
+                    "execution_kind": "manual",
+                }
+            ],
+            "investment_plans": {
+                "summary": {"total": 3, "enabled": 3, "due": 1, "attention": 1},
+                "items": [
+                    {
+                        "id": "plan-due",
+                        "name": "月度积累",
+                        "position_name": "积存金",
+                        "mode": "rmb",
+                        "amount": 800.0,
+                        "status": "due",
+                        "last_result": "ok",
+                        "next_run_at": "2026-08-12T09:00:00",
+                        "last_message": "等待计划执行",
+                    },
+                    {
+                        "id": "plan-waiting",
+                        "name": "美元定投",
+                        "position_name": "国际金",
+                        "mode": "usd",
+                        "amount": 200.0,
+                        "target_count": 12,
+                        "completed_count": 3,
+                        "remaining_count": 9,
+                        "status": "active",
+                        "last_result": "waiting_price",
+                        "next_run_at": "2026-08-13T09:00:00",
+                        "updated_at": "2026-08-12T08:00:00",
+                        "last_message": "等待有效行情后执行",
+                    },
+                    {
+                        "id": "plan-executed",
+                        "name": "每日积累",
+                        "position_name": "积存金",
+                        "mode": "rmb",
+                        "amount": 1000.0,
+                        "status": "active",
+                        "last_result": "ok",
+                        "last_executed_at": "2026-08-12T09:30:00",
+                        "last_transaction_id": "investment-plan-executed-manual-202608120930",
+                        "last_price": 720.0,
+                        "last_quantity": 1.38888889,
+                    },
+                    {
+                        "id": "plan-archived",
+                        "name": "已归档异常计划",
+                        "status": "archived",
+                        "last_result": "orphaned",
+                        "last_message": "不应进入待处理",
+                        "archived_at": "2026-08-12T08:30:00",
+                    },
+                ],
+            },
+        },
+        last_viewed_at="2026-08-12T09:00:00",
+        now=datetime(2026, 8, 12, 10, 0),
+    )
+
+    assert result["summary"]["attention_total"] == 2
+    assert result["summary"]["portfolio_investment_issues"] == 2
+    assert result["summary"]["portfolio_investments_today"] == 1
+    assert result["summary"]["portfolio_transactions_today"] == 1
+    assert result["summary"]["activity_total"] == 1
+    assert result["summary"]["new_since_last_view"] == 1
+    assert result["attention"]["filter_counts"]["portfolio"] == 2
+    assert {item["source_id"] for item in result["attention"]["items"]} == {
+        "plan-due",
+        "plan-waiting",
+    }
+    waiting = next(
+        item for item in result["attention"]["items"]
+        if item["source_id"] == "plan-waiting"
+    )
+    assert waiting["target_count"] == 12
+    assert waiting["completed_count"] == 3
+    assert waiting["remaining_count"] == 9
+    activity = result["activity"]["items"][0]
+    assert activity["kind"] == "portfolio_investment"
+    assert activity["source_id"] == "plan-executed"
+    assert activity["summary"] == "手动执行定投"
+    assert activity["amount"] == 1000.0
+    assert activity["action"] == {
+        "kind": "open_portfolio_investment",
+        "target_id": "plan-executed",
+    }
+    assert result["portfolio"]["investment_plans"]["summary"]["enabled"] == 3
+    assert len(result["portfolio"]["investment_plans"]["executions_today"]) == 1
 
 
 def test_today_overview_does_not_drop_old_unresolved_items_at_midnight():

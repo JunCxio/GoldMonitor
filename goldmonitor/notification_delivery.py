@@ -1,5 +1,6 @@
 import inspect
 import logging
+import re
 import time
 from datetime import datetime
 
@@ -40,8 +41,10 @@ def _invoke_blocking_sender(sender, args):
     return sender(*args)
 
 
-def _delivery_error_retryable(error):
-    text = str(error or "")
+def notification_error_retryable(error):
+    text = str(error or "").strip().lower()
+    if not text:
+        return False
     non_retryable_fragments = (
         "配置不完整",
         "未配置",
@@ -49,8 +52,51 @@ def _delivery_error_retryable(error):
         "格式无效",
         "必须使用 HTTPS",
         "构建邮件失败",
+        "认证失败",
+        "鉴权失败",
+        "登录失败",
+        "authentication failed",
+        "authentication required",
+        "invalid credentials",
+        "unauthorized",
+        "forbidden",
+        "permission denied",
     )
-    return not any(fragment in text for fragment in non_retryable_fragments)
+    if any(fragment.lower() in text for fragment in non_retryable_fragments):
+        return False
+    if re.search(r"\b(?:400|401|403|404|405|409|410|422)\b", text):
+        return False
+    retryable_fragments = (
+        "超时",
+        "timeout",
+        "timed out",
+        "临时",
+        "temporary",
+        "temporarily",
+        "稍后重试",
+        "try again",
+        "连接中断",
+        "连接重置",
+        "连接被拒绝",
+        "connection aborted",
+        "connection reset",
+        "connection refused",
+        "server disconnected",
+        "网络不可达",
+        "network is unreachable",
+        "name resolution",
+        "name or service not known",
+        "服务不可用",
+        "bad gateway",
+        "too many requests",
+        "rate limit",
+    )
+    return any(fragment in text for fragment in retryable_fragments) or bool(
+        re.search(r"\b(?:421|425|429|450|451|452|500|502|503|504)\b", text)
+    )
+
+
+_delivery_error_retryable = notification_error_retryable
 
 
 def deliver_notification(
@@ -85,9 +131,11 @@ def deliver_notification(
             item["status"] = "sent"
             item["message"] = "发送成功"
             break
-        if attempt >= attempts_limit or not _delivery_error_retryable(error):
+        retryable = notification_error_retryable(error)
+        if attempt >= attempts_limit or not retryable:
             item["status"] = "failed"
             item["message"] = error
+            item["retryable"] = retryable
             logger.warning(
                 "%s通知发送失败（尝试 %s 次）",
                 item.get("label") or item.get("channel") or "",
@@ -215,6 +263,7 @@ def deliver_alert_notifications(
                 "failed",
                 "通知发送器不可用",
                 attempts=0,
+                retryable=False,
                 started_at=_notification_timestamp(now_factory),
                 completed_at=_notification_timestamp(now_factory),
             )

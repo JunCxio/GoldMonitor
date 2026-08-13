@@ -11,8 +11,10 @@ class ApplicationRuntimeState:
     last_update_status_lock: Any = field(default_factory=threading.RLock)
     last_export_status_lock: Any = field(default_factory=threading.RLock)
     daily_digest_lock: Any = field(default_factory=threading.Lock)
+    notification_retry_lock: Any = field(default_factory=threading.Lock)
     today_overview_lock: Any = field(default_factory=threading.RLock)
     review_notes_lock: Any = field(default_factory=threading.RLock)
+    investment_plan_lock: Any = field(default_factory=threading.RLock)
     data_archive_lock: Any = field(default_factory=threading.Lock)
     data_archive_upload_lock: Any = field(default_factory=threading.Lock)
     price_refresh_lock: Any = field(default_factory=threading.Lock)
@@ -66,6 +68,7 @@ class ApplicationRuntimeState:
     review_notes: List[Dict[str, Any]] = field(default_factory=list)
     portfolio_positions: List[Dict[str, Any]] = field(default_factory=list)
     portfolio_transactions: List[Dict[str, Any]] = field(default_factory=list)
+    portfolio_investment_plans: List[Dict[str, Any]] = field(default_factory=list)
     portfolio_import_backup: Dict[str, Any] = field(default_factory=dict)
     portfolio_alerts: List[Dict[str, Any]] = field(default_factory=list)
     alerted_flags: Dict[str, bool] = field(default_factory=dict)
@@ -88,10 +91,11 @@ class ApplicationRuntimeState:
     last_export_status: Dict[str, Any] = field(default_factory=dict)
     credential_test_store: Any = None
     alert_dialog_active: bool = False
-    daily_digest_scheduler_started: bool = False
+    task_scheduler_started: bool = False
     data_archive_uploads: Dict[str, Any] = field(default_factory=dict)
     market_runtime_instance: Any = None
     portfolio_runtime_instance: Any = None
+    portfolio_investment_runtime_instance: Any = None
     alert_runtime_instance: Any = None
     config_restore_service: Any = None
     data_archive_runtime_instance: Any = None
@@ -99,6 +103,8 @@ class ApplicationRuntimeState:
     diagnostics_runtime_instance: Any = None
     alert_notification_runtime_instance: Any = None
     daily_digest_runtime_instance: Any = None
+    notification_retry_runtime_instance: Any = None
+    task_scheduler_runtime_instance: Any = None
     today_overview_runtime_instance: Any = None
     notification_adapters_instance: Any = None
     platform_integration_runtime_instance: Any = None
@@ -139,7 +145,6 @@ class ApplicationRuntimeState:
     taskbar_restart_count: int = 0
     taskbar_layout_state: Dict[str, Any] = field(default_factory=dict)
     background_fetch_started: bool = False
-    news_fetch_started: bool = False
 
 
 def create_runtime_state(

@@ -36,7 +36,78 @@ def register_operations_handlers(
     record_update_status,
     download_update_installer,
     launch_update_installer,
+    get_background_task_status,
+    run_background_task_now,
+    thread_factory=threading.Thread,
 ):
+    @socketio.on("get_background_task_status")
+    def on_get_background_task_status():
+        emit("background_task_status", get_background_task_status())
+
+
+    @socketio.on("run_background_task")
+    def on_run_background_task(data=None):
+        task_name = (
+            str(data.get("name") or "").strip()
+            if isinstance(data, dict)
+            else ""
+        )
+        sid = request.sid
+        emit("background_task_run_result", {
+            "ok": None,
+            "pending": True,
+            "name": task_name,
+            "message": "正在检查后台任务...",
+        })
+
+        def run_task():
+            try:
+                result = run_background_task_now(task_name)
+                task = result.get("task") if isinstance(result, dict) else None
+                task = task if isinstance(task, dict) else {}
+                reason = (
+                    str(result.get("reason") or "")
+                    if isinstance(result, dict)
+                    else ""
+                )
+                if reason == "running":
+                    payload = {
+                        "ok": False,
+                        "name": task_name,
+                        "reason": reason,
+                        "task": task,
+                        "message": "该任务正在运行，请稍后再试。",
+                    }
+                else:
+                    payload = {
+                        "ok": task.get("state") != "error",
+                        "name": task_name,
+                        "task": task,
+                        "message": str(task.get("last_message") or "后台任务检查完成。"),
+                    }
+            except ValueError as exc:
+                payload = {
+                    "ok": False,
+                    "name": task_name,
+                    "message": f"{exc}。",
+                }
+            except Exception:
+                logging.exception("立即检查后台任务失败: %s", task_name or "<empty>")
+                payload = {
+                    "ok": False,
+                    "name": task_name,
+                    "message": "后台任务检查失败，请稍后重试。",
+                }
+            socketio.emit("background_task_run_result", payload, room=sid)
+            socketio.emit(
+                "background_task_status",
+                get_background_task_status(),
+                room=sid,
+            )
+
+        thread_factory(target=run_task, daemon=True).start()
+
+
     @socketio.on("get_source_health")
     def on_get_source_health():
         emit("source_health_updated", get_source_health_state())

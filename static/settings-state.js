@@ -23,6 +23,7 @@ const SETTINGS_FIELD_IDS = [
   'setSmtpRecipient', 'setEmailSubjectTemplate', 'setEmailBodyTemplate', 'setWebhookEnabled',
   'setWebhookUrl', 'setWebhookWarning', 'setWebhookCritical', 'setWebhookVolatility',
   'setDailyDigestEnabled', 'setDailyDigestTime', 'setDailyDigestEmail', 'setDailyDigestWebhook',
+  'setNotificationAutoRetry',
   'setRiskAssistantEnabled', 'setRiskAssistantProvider', 'setRiskAssistantDepth',
   'setDeepseekBaseUrl', 'setDeepseekModel', 'setDeepseekApiKey', 'clearDeepseekApiKey',
   'setOpenaiCompatibleBaseUrl', 'setOpenaiCompatibleModel', 'setOpenaiCompatibleApiKey',
@@ -38,3 +39,4 @@ let onboardingManual = false;
 let onboardingAutoChecked = false;
 let deepseekModelOptions = ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'];
 let dailyDigestStatusState = {};
+let notificationRetryStatusState = {};

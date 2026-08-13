@@ -47,12 +47,15 @@ from goldmonitor import news as news_core
 from goldmonitor import notification_adapters as notification_adapters_core
 from goldmonitor import notification_delivery as notification_delivery_core
 from goldmonitor import notification_policy as notification_policy_core
+from goldmonitor import notification_retry_runtime as notification_retry_runtime_core
 from goldmonitor import notification_transport as notification_transport_core
 from goldmonitor import operations_runtime as operations_runtime_core
 from goldmonitor import platform as platform_core
 from goldmonitor import platform_integration_runtime as platform_integration_runtime_core
 from goldmonitor import portfolio as portfolio_core
 from goldmonitor import portfolio_alerts as portfolio_alerts_core
+from goldmonitor import portfolio_investment as portfolio_investment_core
+from goldmonitor import portfolio_investment_runtime as portfolio_investment_runtime_core
 from goldmonitor import portfolio_runtime as portfolio_runtime_core
 from goldmonitor import review_notes as review_notes_core
 from goldmonitor import risk_analysis as risk_analysis_core
@@ -63,6 +66,7 @@ from goldmonitor import settings_runtime as settings_runtime_core
 from goldmonitor import socket_bootstrap as socket_bootstrap_core
 from goldmonitor import storage_manifest as storage_manifest_core
 from goldmonitor import support_files as support_files_core
+from goldmonitor import task_scheduler as task_scheduler_core
 from goldmonitor import targets as targets_core
 from goldmonitor import update_runtime as update_runtime_core
 from goldmonitor.alert_log import AlertLogStore
@@ -167,6 +171,7 @@ ALERT_PROFILES_PATH = os.path.join(APPDATA_DIR, "alert_profiles.json")
 WATCH_TARGETS_PATH = os.path.join(APPDATA_DIR, "watch_targets.json")
 PORTFOLIO_POSITIONS_PATH = os.path.join(APPDATA_DIR, "portfolio_positions.json")
 PORTFOLIO_TRANSACTIONS_PATH = os.path.join(APPDATA_DIR, "portfolio_transactions.json")
+PORTFOLIO_INVESTMENT_PLANS_PATH = os.path.join(APPDATA_DIR, "portfolio_investment_plans.json")
 PORTFOLIO_IMPORT_BACKUP_PATH = os.path.join(APPDATA_DIR, "portfolio_import_backup.json")
 PORTFOLIO_ALERTS_PATH = os.path.join(APPDATA_DIR, "portfolio_alerts.json")
 MARKET_CACHE_PATH = os.path.join(APPDATA_DIR, "market_cache.json")
@@ -195,6 +200,26 @@ SETTINGS_ONBOARDING_MARKER_PRESENT_AT_STARTUP = bool(
     )
 )
 NEWS_REFRESH_INTERVAL = 15 * 60
+BACKGROUND_TASK_FAILURE_ALERT_THRESHOLD = 3
+BACKGROUND_TASK_SCHEDULE_DELAY_GRACE_SECONDS = 60
+BACKGROUND_TASK_NAMES = frozenset({
+    "news",
+    "daily_digest",
+    "notification_retry",
+    "portfolio_investment",
+})
+NOTIFICATION_RETRY_QUEUE_STATUS_KEYS = (
+    "enabled",
+    "pending_count",
+    "eligible_count",
+    "exhausted_count",
+    "expired_count",
+    "non_retryable_count",
+    "next_retry_at",
+    "interval_minutes",
+    "window_hours",
+    "max_rounds",
+)
 NEWS_LIMIT = 20
 RISK_ANALYSIS_HISTORY_LIMIT = 20
 PRICE_HISTORY_ARCHIVE_LIMIT = 20000
@@ -333,6 +358,7 @@ DEFAULT_SETTINGS = {
     "daily_digest_time": "20:00",
     "daily_digest_email_enabled": True,
     "daily_digest_webhook_enabled": False,
+    "notification_auto_retry_enabled": False,
     # 风险分析助手
     "risk_assistant_enabled": True,
     "risk_assistant_provider": "deepseek",
@@ -403,7 +429,7 @@ _RUNTIME_STATE_ALIASES.update({
     "_credential_test_store": "credential_test_store",
     "_alert_dialog_lock": "alert_dialog_lock",
     "_alert_dialog_active": "alert_dialog_active",
-    "_daily_digest_scheduler_started": "daily_digest_scheduler_started",
+    "_task_scheduler_started": "task_scheduler_started",
     "_market_runtime_instance": "market_runtime_instance",
     "_portfolio_runtime_instance": "portfolio_runtime_instance",
     "_alert_runtime_instance": "alert_runtime_instance",
@@ -443,7 +469,6 @@ _RUNTIME_STATE_ALIASES.update({
     "_taskbar_restart_count": "taskbar_restart_count",
     "_taskbar_layout_state": "taskbar_layout_state",
     "_background_fetch_started": "background_fetch_started",
-    "_news_fetch_started": "news_fetch_started",
 })
 
 
@@ -984,12 +1009,24 @@ def _portfolio_alert_store():
     )
 
 
+def _portfolio_investment_plan_store():
+    return portfolio_investment_core.InvestmentPlanStore(
+        PORTFOLIO_INVESTMENT_PLANS_PATH,
+        now_factory=datetime.now,
+        id_factory=portfolio_investment_core.generate_investment_plan_id,
+    )
+
+
 def load_portfolio_positions():
     return _portfolio_store().load()
 
 
 def load_portfolio_transactions():
     return _portfolio_transaction_store().load()
+
+
+def load_portfolio_investment_plans():
+    return _portfolio_investment_plan_store().load()
 
 
 def load_portfolio_alerts():
@@ -1004,6 +1041,11 @@ def save_portfolio_positions(items=None):
 def save_portfolio_transactions(items=None):
     items = runtime.portfolio_transactions if items is None else items
     return _portfolio_transaction_store().save(items)
+
+
+def save_portfolio_investment_plans(items=None):
+    items = runtime.portfolio_investment_plans if items is None else items
+    return _portfolio_investment_plan_store().save(items)
 
 
 def empty_portfolio_import_backup():
@@ -1059,7 +1101,88 @@ def _build_portfolio_state_from_snapshots(transactions, positions, prices, alert
 
 
 def build_portfolio_state():
-        return _get_portfolio_runtime().build_state()
+    state = _get_portfolio_runtime().build_state()
+    state["investment_plans"] = get_portfolio_investment_plan_state()
+    return state
+
+
+def _get_portfolio_investment_runtime():
+    if runtime.portfolio_investment_runtime_instance is None:
+        runtime.portfolio_investment_runtime_instance = (
+            portfolio_investment_runtime_core.PortfolioInvestmentRuntime(
+                runtime,
+                save_plans=lambda items=None: save_portfolio_investment_plans(items),
+                save_transactions=lambda items=None: save_portfolio_transactions(items),
+                build_portfolio_state=lambda: build_portfolio_state(),
+                emit_event=lambda event, payload: socketio.emit(event, payload),
+                now_factory=datetime.now,
+            )
+        )
+    return runtime.portfolio_investment_runtime_instance
+
+
+def get_portfolio_investment_plan_state():
+    return _get_portfolio_investment_runtime().state_payload()
+
+
+def build_portfolio_investment_executions_csv(plan_id):
+    return _get_portfolio_investment_runtime().build_executions_csv(plan_id)
+
+
+def build_portfolio_investment_simulation(plan_id, days):
+    try:
+        window_days = int(days)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("历史模拟范围无效") from exc
+    if window_days not in portfolio_investment_core.INVESTMENT_SIMULATION_WINDOWS:
+        raise ValueError("历史模拟仅支持 7、30 或 90 天")
+    history = _analytics_price_history(window_days, limit=1000)
+    return _get_portfolio_investment_runtime().simulate(
+        plan_id,
+        history,
+        window_days,
+    )
+
+
+def preview_portfolio_investment_schedule(data):
+    return _get_portfolio_investment_runtime().preview_schedule(data)
+
+
+def upsert_portfolio_investment_plan(data):
+    return _get_portfolio_investment_runtime().upsert(data)
+
+
+def delete_portfolio_investment_plan(plan_id):
+    return _get_portfolio_investment_runtime().delete(plan_id)
+
+
+def archive_portfolio_investment_plan(plan_id):
+    return _get_portfolio_investment_runtime().archive(plan_id)
+
+
+def restore_portfolio_investment_plan(plan_id):
+    return _get_portfolio_investment_runtime().restore(plan_id)
+
+
+def toggle_portfolio_investment_plan(plan_id, enabled):
+    return _get_portfolio_investment_runtime().toggle(plan_id, enabled)
+
+
+def skip_portfolio_investment_plan(plan_id, scheduled_at):
+    return _get_portfolio_investment_runtime().skip_next(plan_id, scheduled_at)
+
+
+def execute_portfolio_investment_plan(plan_id):
+    return _get_portfolio_investment_runtime().execute(plan_id, force=True)
+
+
+def run_portfolio_investment_plans():
+    result = _get_portfolio_investment_runtime().run_due()
+    socketio.emit(
+        "portfolio_investment_plans_updated",
+        get_portfolio_investment_plan_state(),
+    )
+    return result
 
 
 def _portfolio_analytics_days(value):
@@ -1171,8 +1294,10 @@ def upsert_portfolio_position(data):
 
 
 def delete_portfolio_position(position_id):
-
-        return _get_portfolio_runtime().delete_position(position_id)
+    ok, _state = _get_portfolio_runtime().delete_position(position_id)
+    if ok:
+        _get_portfolio_investment_runtime().pause_for_position(position_id)
+    return ok, build_portfolio_state()
 
 
 def upsert_portfolio_transaction(data):
@@ -1577,6 +1702,7 @@ def _data_archive_paths():
         "watch_targets": {"path": WATCH_TARGETS_PATH, "kind": "json", "label": "目标价观察清单"},
         "portfolio_positions": {"path": PORTFOLIO_POSITIONS_PATH, "kind": "json", "label": "持仓记录"},
         "portfolio_transactions": {"path": PORTFOLIO_TRANSACTIONS_PATH, "kind": "json", "label": "持仓流水"},
+        "portfolio_investment_plans": {"path": PORTFOLIO_INVESTMENT_PLANS_PATH, "kind": "json", "label": "持仓定投计划"},
         "portfolio_import_backup": {"path": PORTFOLIO_IMPORT_BACKUP_PATH, "kind": "json", "label": "持仓导入备份"},
         "portfolio_alerts": {"path": PORTFOLIO_ALERTS_PATH, "kind": "json", "label": "持仓提醒"},
         "market_cache": {"path": MARKET_CACHE_PATH, "kind": "json", "label": "行情缓存"},
@@ -1639,6 +1765,7 @@ def _get_data_archive_runtime():
                 "settings": lambda: load_settings(),
                 "portfolio_positions": lambda: load_portfolio_positions(),
                 "portfolio_transactions": lambda: load_portfolio_transactions(),
+                "portfolio_investment_plans": lambda: load_portfolio_investment_plans(),
                 "portfolio_import_backup": lambda: load_portfolio_import_backup(),
                 "alert_rules": lambda: load_alert_rules(),
                 "sync_legacy_alert_rule_views": lambda: _sync_legacy_alert_rule_views(),
@@ -1894,6 +2021,7 @@ def _get_diagnostics_runtime():
                 "watch_targets": WATCH_TARGETS_PATH,
                 "portfolio_positions": PORTFOLIO_POSITIONS_PATH,
                 "portfolio_transactions": PORTFOLIO_TRANSACTIONS_PATH,
+                "portfolio_investment_plans": PORTFOLIO_INVESTMENT_PLANS_PATH,
                 "portfolio_import_backup": PORTFOLIO_IMPORT_BACKUP_PATH,
                 "portfolio_alerts": PORTFOLIO_ALERTS_PATH,
                 "market_cache": MARKET_CACHE_PATH,
@@ -1922,6 +2050,7 @@ def _get_diagnostics_runtime():
             read_logs=lambda: read_log_tail(),
             health_summary_builder=build_health_summary,
             get_export_status=lambda: build_export_status_snapshot(),
+            get_background_tasks=lambda: get_background_task_status(),
             default_settings=DEFAULT_SETTINGS,
             platform_name=sys.platform,
             now_factory=datetime.now,
@@ -2169,6 +2298,36 @@ def _get_daily_digest_runtime():
             logger=logging,
         )
     return runtime.daily_digest_runtime_instance
+
+
+def _get_notification_retry_runtime():
+    if runtime.notification_retry_runtime_instance is None:
+        runtime.notification_retry_runtime_instance = (
+            notification_retry_runtime_core.NotificationRetryRuntime(
+                get_settings=lambda: get_settings_snapshot(),
+                get_entries=lambda: alert_log_export_entries(
+                    limit=ALERT_LOG_EXPORT_LIMIT
+                ),
+                resend=lambda alert_id, **kwargs: resend_alert_notification(
+                    alert_id,
+                    retryable_only=bool(kwargs.get("automatic")),
+                    **kwargs,
+                ),
+                emit=lambda event, payload: socketio.emit(event, payload),
+                now_factory=datetime.now,
+                lock=runtime.notification_retry_lock,
+                logger=logging,
+            )
+        )
+    return runtime.notification_retry_runtime_instance
+
+
+def notification_retry_status():
+    return _get_notification_retry_runtime().status()
+
+
+def run_notification_retry_once(manual=False):
+    return _get_notification_retry_runtime().run_once(manual=manual)
 
 
 def _get_today_overview_runtime():
@@ -3271,7 +3430,13 @@ def _alert_resend_title(entry):
     return _get_alert_log_runtime().resend_title(entry)
 
 
-def resend_alert_notification(alert_id, blocking=False, start_delivery=True):
+def resend_alert_notification(
+    alert_id,
+    blocking=False,
+    start_delivery=True,
+    automatic=False,
+    retryable_only=False,
+):
     return _get_alert_log_runtime().resend_notification(
         alert_id,
         settings=get_settings_snapshot(),
@@ -3284,6 +3449,8 @@ def resend_alert_notification(alert_id, blocking=False, start_delivery=True):
         persist_update=_persist_alert_notification_update,
         start_notification_delivery=_start_alert_notification_delivery,
         title_builder=_alert_resend_title,
+        automatic=automatic,
+        retryable_only=retryable_only,
     )
 
 
@@ -3334,6 +3501,7 @@ def _application_state_bootstrap():
             "review_notes": lambda: load_review_notes(),
             "portfolio_positions": lambda: load_portfolio_positions(),
             "portfolio_transactions": lambda: load_portfolio_transactions(),
+            "portfolio_investment_plans": lambda: load_portfolio_investment_plans(),
             "portfolio_import_backup": lambda: load_portfolio_import_backup(),
             "news": lambda: load_news_cache(),
             "risk_analysis_history": lambda: load_risk_analysis_history(),
@@ -3358,13 +3526,6 @@ def _application_state_bootstrap():
 
 def initialize_application_state():
     return _application_state_bootstrap().initialize()
-
-
-def news_loop():
-    return _get_news_runtime().run_loop(
-        interval=NEWS_REFRESH_INTERVAL,
-        sleep=time.sleep,
-    )
 
 
 def _format_number(value, digits=2):
@@ -3681,6 +3842,8 @@ def _build_socket_init_state():
         get_alert_rules=get_alert_rules_state,
         get_alert_profiles=get_alert_profiles_state,
         get_daily_digest_status=daily_digest_status_payload,
+        get_notification_retry_status=notification_retry_status,
+        get_background_task_status=get_background_task_status,
         get_news=get_news_state,
         get_risk_history=get_risk_analysis_history_state,
     )
@@ -3792,14 +3955,9 @@ def _set_background_fetch_started(value):
     runtime.background_fetch_started = bool(value)
 
 
-def _set_news_fetch_started(value):
+def _set_task_scheduler_started(value):
 
-    runtime.news_fetch_started = bool(value)
-
-
-def _set_daily_digest_scheduler_started(value):
-
-    runtime.daily_digest_scheduler_started = bool(value)
+    runtime.task_scheduler_started = bool(value)
 
 
 def _set_floating_hwnd(value):
@@ -4158,30 +4316,187 @@ def start_background_fetching():
     )
 
 
-def start_news_fetching():
-    return desktop_runtime_core.start_thread_once(
-        is_started=lambda: runtime.news_fetch_started,
-        mark_started=_set_news_fetch_started,
-        target=news_loop,
-        thread_factory=threading.Thread,
+def _news_task_result(result):
+    if result:
+        state = get_news_state()
+        count = len(state.get("items") or [])
+        return {
+            "state": "ok",
+            "result": "completed",
+            "message": f"资讯已刷新，共 {count} 条",
+        }
+    state = get_news_state()
+    return {
+        "state": "error",
+        "result": "failed",
+        "message": state.get("error") or "资讯刷新失败",
+    }
+
+
+def _notification_retry_task_result(result):
+    payload = result if isinstance(result, dict) else {}
+    status = str(payload.get("status") or "completed")
+    if status == "disabled":
+        return {
+            "state": "disabled",
+            "result": status,
+            "message": "自动重试未开启",
+        }
+    if status == "running":
+        return {
+            "state": "idle",
+            "result": status,
+            "message": "已有通知重试任务正在运行",
+        }
+    attempted = int(payload.get("attempted_count") or 0)
+    succeeded = int(payload.get("success_count") or 0)
+    failed = int(payload.get("failure_count") or 0)
+    if failed or payload.get("ok") is False:
+        return {
+            "state": "error",
+            "result": status,
+            "message": f"重试完成，{succeeded} 项成功，{failed} 项失败",
+        }
+    message = (
+        f"重试完成，{succeeded} 项成功"
+        if attempted
+        else "本轮没有待重试通知"
+    )
+    return {
+        "state": "ok",
+        "result": status,
+        "message": message,
+    }
+
+
+def _handle_background_task_event(event):
+    notification = task_scheduler_core.build_task_event_notification(event)
+    if notification:
+        try:
+            send_desktop_notification(
+                notification["title"],
+                notification["body"],
+            )
+        except Exception:
+            logging.exception("发送后台任务运维通知失败")
+    try:
+        socketio.emit(
+            "background_task_status",
+            get_background_task_status(),
+        )
+    except Exception:
+        logging.exception("广播后台任务状态失败")
+
+
+def _get_task_scheduler_runtime():
+    with runtime.lock:
+        if runtime.task_scheduler_runtime_instance is None:
+            scheduler = task_scheduler_core.TaskSchedulerRuntime(
+                now_factory=datetime.now,
+                monotonic_factory=time.monotonic,
+                logger=logging,
+                failure_alert_threshold=BACKGROUND_TASK_FAILURE_ALERT_THRESHOLD,
+                schedule_delay_grace_seconds=(
+                    BACKGROUND_TASK_SCHEDULE_DELAY_GRACE_SECONDS
+                ),
+                event_handler=_handle_background_task_event,
+            )
+            scheduler.register(
+                "news",
+                "资讯刷新",
+                NEWS_REFRESH_INTERVAL,
+                lambda: refresh_gold_news(emit_update=True),
+                result_handler=_news_task_result,
+            )
+            scheduler.register(
+                "daily_digest",
+                "每日摘要",
+                30,
+                lambda: run_daily_digest_once(),
+            )
+            scheduler.register(
+                "notification_retry",
+                "通知重试",
+                30,
+                lambda: run_notification_retry_once(),
+                result_handler=_notification_retry_task_result,
+            )
+            scheduler.register(
+                "portfolio_investment",
+                "持仓定投",
+                30,
+                lambda: run_portfolio_investment_plans(),
+            )
+            runtime.task_scheduler_runtime_instance = scheduler
+    return runtime.task_scheduler_runtime_instance
+
+
+def _notification_retry_queue_summary():
+    try:
+        status = notification_retry_status()
+    except Exception:
+        logging.exception("读取通知重试队列状态失败")
+        return {
+            "available": False,
+            "attention_required": True,
+            "message": "通知重试队列状态读取失败",
+        }
+    summary = {
+        key: status.get(key)
+        for key in NOTIFICATION_RETRY_QUEUE_STATUS_KEYS
+    }
+    stopped_count = sum(
+        int(summary.get(key) or 0)
+        for key in (
+            "exhausted_count",
+            "expired_count",
+            "non_retryable_count",
+        )
+    )
+    summary.update({
+        "available": True,
+        "stopped_count": stopped_count,
+        "attention_required": bool(
+            int(summary.get("pending_count") or 0)
+            and not summary.get("enabled")
+        ),
+    })
+    return summary
+
+
+def get_background_task_status():
+    payload = _get_task_scheduler_runtime().status()
+    queue = _notification_retry_queue_summary()
+    for task in payload.get("tasks", []):
+        if task.get("name") == "notification_retry":
+            task["queue"] = queue
+            break
+    summary = payload.get("summary")
+    if isinstance(summary, dict):
+        summary["queue_attention"] = int(bool(queue.get("attention_required")))
+        summary["queue_stopped"] = int(queue.get("stopped_count") or 0)
+    return payload
+
+
+def run_background_task_now(name):
+    task_name = str(name or "").strip()
+    if task_name not in BACKGROUND_TASK_NAMES:
+        raise ValueError("不支持的后台任务")
+    return _get_task_scheduler_runtime().run_task(task_name, force=True)
+
+
+def task_scheduler_loop():
+    return _get_task_scheduler_runtime().run_loop(
+        sleep=time.sleep,
+        tick_interval=30,
     )
 
 
-def daily_digest_loop():
-    return desktop_runtime_core.run_periodic_task(
-        lambda: run_daily_digest_once(),
-        interval=30,
-        sleep=lambda seconds: time.sleep(seconds),
-        logger=logging,
-        error_message="执行每日摘要任务失败",
-    )
-
-
-def start_daily_digest_scheduler():
+def start_task_scheduler():
     return desktop_runtime_core.start_thread_once(
-        is_started=lambda: runtime.daily_digest_scheduler_started,
-        mark_started=_set_daily_digest_scheduler_started,
-        target=daily_digest_loop,
+        is_started=lambda: runtime.task_scheduler_started,
+        mark_started=_set_task_scheduler_started,
+        target=task_scheduler_loop,
         thread_factory=threading.Thread,
     )
 
@@ -4263,8 +4578,7 @@ def main():
         wait_for_server_ready=wait_for_server_ready,
         update_floating_price=update_floating_price,
         start_background_fetching=start_background_fetching,
-        start_news_fetching=start_news_fetching,
-        start_daily_digest_scheduler=start_daily_digest_scheduler,
+        start_task_scheduler=start_task_scheduler,
         get_settings=get_settings_snapshot,
         start_desktop_window=start_desktop_window,
         thread_factory=threading.Thread,

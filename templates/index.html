@@ -183,6 +183,7 @@
             <div class="portfolio-tabs" id="portfolioViewTabs">
               <button class="portfolio-tab active" type="button" onclick="setPortfolioView('positions')">持仓</button>
               <button class="portfolio-tab" type="button" onclick="setPortfolioView('transactions')">流水</button>
+              <button class="portfolio-tab" type="button" onclick="setPortfolioView('investment')">定投</button>
               <button class="portfolio-tab" type="button" onclick="setPortfolioView('review')">复盘</button>
             </div>
             <div class="portfolio-controls" id="portfolioControls"></div>
@@ -371,6 +372,7 @@
             <div class="setting-row"><div><div class="setting-label">测试提醒</div><div class="setting-desc">触发一条手动测试提醒，用于检查弹窗、声音和通知链路。</div></div><div class="settings-stack setting-action-status"><button class="settings-cancel btn-form" id="btnTestAlert" type="button" onclick="testAlert()">触发测试</button><span class="test-email-status" id="testAlertStatus"></span></div></div>
             <div class="setting-row"><div><div class="setting-label">提醒冷却时间</div><div class="setting-desc">同一类型提醒在冷却期内只记录，不重复弹窗或发送通知。</div></div><input class="settings-input smtp-port" id="setAlertCooldownMinutes" type="number" min="0" max="240" step="1" placeholder="30"></div>
             <div class="setting-row"><div><div class="setting-label">静默时段</div><div class="setting-desc">该时间段内只记录提醒，不弹窗、不响铃、不发送通知。</div></div><div class="settings-stack"><input class="settings-input smtp-port" id="setAlertQuietStart" type="time" aria-label="静默开始时间"><span class="settings-time-separator">至</span><input class="settings-input smtp-port" id="setAlertQuietEnd" type="time" aria-label="静默结束时间"></div></div>
+            <div class="setting-row setting-row-top"><div><div class="setting-label">自动重试失败通知</div><div class="setting-desc">仅重试发送失败的邮件或 Webhook，不重复已成功渠道；失败后每 10 分钟重试，最多 3 轮并限于 24 小时内。</div></div><div class="notification-retry-control"><label class="switch"><input type="checkbox" id="setNotificationAutoRetry" aria-label="自动重试失败通知"><span class="slider"></span></label><div class="notification-retry-status" id="notificationRetryStatus" aria-live="polite">正在读取重试队列。</div><button class="settings-cancel btn-form" id="btnRetryFailedNotifications" type="button" onclick="retryFailedNotifications()">立即重试</button></div></div>
           </section>
         </div>
         <div class="settings-panel" id="settingsPanelEmail" role="tabpanel" aria-labelledby="settingsTabEmail" data-settings-panel="email">
@@ -405,7 +407,7 @@
           </section>
         </div>
         <div class="settings-panel" id="settingsPanelDigest" role="tabpanel" aria-labelledby="settingsTabDigest" data-settings-panel="digest">
-          <div class="settings-panel-head"><span>摘要通知</span><h3>定时汇总最近 24 小时的重要信息</h3><p>摘要包含行情、预警、风险分析、新闻、数据质量和持仓概况。</p></div>
+          <div class="settings-panel-head"><span>摘要通知</span><h3>定时汇总最近 24 小时的重要信息</h3><p>摘要包含行情、预警、风险分析、新闻、数据质量、持仓和定投计划。</p></div>
           <section class="setting-section">
             <header class="setting-section-head"><h4>发送计划</h4><p>设置每日运行时间和发送渠道。</p></header>
             <div class="setting-row"><div><div class="setting-label">启用每日摘要</div><div class="setting-desc">按本地时间执行每日摘要任务。</div></div><label class="switch"><input type="checkbox" id="setDailyDigestEnabled" aria-label="启用每日摘要"><span class="slider"></span></label></div>
@@ -455,6 +457,7 @@
           </section>
           <section class="setting-section">
             <header class="setting-section-head"><h4>应用维护</h4><p>检查更新、生成诊断并管理导出目录。</p></header>
+            <div class="setting-row setting-row-top"><div><div class="setting-label">后台任务</div><div class="setting-desc">统一查看资讯刷新、每日摘要和通知重试的运行状态，并按任务立即检查。</div></div><div class="ops-task-card" aria-busy="false"><div class="ops-task-card-head"><div class="ops-task-summary" id="backgroundTaskSummary" role="status" aria-live="polite">等待调度服务状态</div><button class="settings-cancel btn-form" id="btnRefreshBackgroundTasks" type="button" aria-busy="false" onclick="refreshBackgroundTaskStatus()">刷新状态</button></div><div class="ops-task-list" id="backgroundTaskStatus"><div class="ops-task-empty">后台任务尚未初始化。</div></div></div></div>
             <div class="setting-row"><div><div class="setting-label">首次使用向导</div><div class="setting-desc">重新检查桌面显示、启动行为和本机预警偏好。</div></div><button class="settings-cancel btn-form" type="button" onclick="reopenOnboarding()">重新打开</button></div>
             <div class="setting-row setting-row-top"><div><div class="setting-label">更新状态</div><div class="setting-desc">查看当前版本、最近检查结果和失败原因。</div></div><div class="settings-stack settings-stack-column ops-update-card"><div class="ops-update-copy"><div class="ops-update-status" id="opsUpdateStatus">尚未检查更新。</div><div class="ops-update-meta" id="opsUpdateMeta">当前版本 {{ app_version }}</div></div><div class="settings-stack"><button class="settings-cancel btn-form" type="button" onclick="checkUpdateFromOps()">检查更新</button><button class="settings-cancel btn-form" type="button" onclick="openUpdateFromOps()">打开更新</button></div></div></div>
             <div class="setting-row setting-row-top"><div><div class="setting-label">诊断报告</div><div class="setting-desc">导出版本、数据源状态、最近日志和配置摘要。</div></div><div class="settings-stack settings-stack-column"><div class="settings-stack"><button class="btn-set btn-form" type="button" onclick="copyDiagnostics()">复制诊断</button><button class="settings-cancel btn-form" type="button" onclick="exportDiagnostics()">生成诊断</button></div><textarea class="settings-textarea diagnostics-copy-fallback" id="diagnosticsCopyFallback" aria-label="诊断摘要内容" readonly hidden></textarea></div></div>
@@ -765,6 +768,7 @@
 <script src="/static/settings-center.js?v={{ app_version }}"></script>
 <script src="/static/operations-state.js?v={{ app_version }}"></script>
 <script src="/static/operations-socket.js?v={{ app_version }}"></script>
+<script src="/static/operations-tasks.js?v={{ app_version }}"></script>
 <script src="/static/operations-sources.js?v={{ app_version }}"></script>
 <script src="/static/operations-records.js?v={{ app_version }}"></script>
 <script src="/static/operations-archive.js?v={{ app_version }}"></script>
@@ -792,6 +796,11 @@
 <script src="/static/portfolio-review.js?v={{ app_version }}"></script>
 <script src="/static/portfolio-detail.js?v={{ app_version }}"></script>
 <script src="/static/portfolio-list.js?v={{ app_version }}"></script>
+<script src="/static/portfolio-investment-list.js?v={{ app_version }}"></script>
+<script src="/static/portfolio-investment-projection.js?v={{ app_version }}"></script>
+<script src="/static/portfolio-investment-simulation.js?v={{ app_version }}"></script>
+<script src="/static/portfolio-investment.js?v={{ app_version }}"></script>
+<script src="/static/portfolio-investment-actions.js?v={{ app_version }}"></script>
 <script src="/static/portfolio-actions.js?v={{ app_version }}"></script>
 <script src="/static/portfolio-import.js?v={{ app_version }}"></script>
 <script src="/static/portfolio-center.js?v={{ app_version }}"></script>

@@ -123,6 +123,8 @@ class AlertLogRuntime:
         persist_update,
         start_notification_delivery,
         title_builder,
+        automatic=False,
+        retryable_only=False,
     ):
         return self.notification_resender(
             alert_id,
@@ -136,6 +138,8 @@ class AlertLogRuntime:
             persist_update=persist_update,
             start_notification_delivery=start_notification_delivery,
             title_builder=title_builder,
+            automatic=automatic,
+            retryable_only=retryable_only,
             now_factory=self.now_factory,
         )
 

@@ -25,6 +25,11 @@ function renderPortfolioSummaryCard(title, mode, summary) {
 function renderPortfolioSummary() {
   const box = document.getElementById('portfolioSummary');
   if (!box) return;
+  box.classList.remove('portfolio-investment-summary');
+  if (portfolioView === 'investment') {
+    renderPortfolioInvestmentSummary(box);
+    return;
+  }
   box.innerHTML = [
     renderPortfolioSummaryCard('人民币持仓', 'rmb', portfolioState.rmb_summary),
     renderPortfolioSummaryCard('美元持仓', 'usd', portfolioState.usd_summary),
@@ -209,6 +214,8 @@ function setPortfolioControlSelection(action, value) {
     transactionType: setPortfolioTransactionTypeFilter,
     transactionMode: setPortfolioTransactionModeFilter,
     transactionSort: setPortfolioTransactionSort,
+    investmentStatus: setPortfolioInvestmentStatusFilter,
+    investmentSort: setPortfolioInvestmentSort,
   };
   if (handlers[action]) handlers[action](value);
 }
@@ -250,6 +257,23 @@ function renderPortfolioControls() {
       '<button class="btn-clear-sm" type="button" onclick="requestPortfolioAnalytics(true)">刷新</button>',
       '</div>',
     ].join('');
+    return;
+  }
+  if (portfolioView === 'investment') {
+    const controls = [
+      '<label class="portfolio-control portfolio-search">',
+      '<span>搜索</span>',
+      '<input type="search" value="' + escapeHtml(portfolioSearch) + '" placeholder="计划或持仓名称" oninput="setPortfolioSearch(this.value)">',
+      '</label>',
+    ];
+    if (portfolioInvestmentListMode === 'active') {
+      controls.push(renderPortfolioDropdownControl('portfolio-filter', '状态', portfolioInvestmentStatusFilter, PORTFOLIO_INVESTMENT_STATUS_FILTER_OPTIONS, 'investmentStatus'));
+    }
+    controls.push(
+      renderPortfolioDropdownControl('portfolio-sort', '排序', portfolioInvestmentSort, portfolioInvestmentSortOptions(), 'investmentSort'),
+      '<div class="portfolio-controls-note portfolio-investment-note">应用关闭期间只补最近一期，并按恢复后的最新行情生成买入流水。</div>',
+    );
+    box.innerHTML = controls.join('');
     return;
   }
   const search = [
@@ -453,6 +477,10 @@ function renderPortfolio() {
     renderPortfolioTransactions(box);
     return;
   }
+  if (portfolioView === 'investment') {
+    renderPortfolioInvestments(box);
+    return;
+  }
   renderPortfolioPositions(box);
 }
 
@@ -481,7 +509,11 @@ function renderPortfolioHeaderChrome(detailItem) {
     primary.textContent = '返回列表';
     primary.onclick = closePortfolioDetail;
   } else {
-    primary.textContent = '新增流水';
-    primary.onclick = () => setActivePortfolioTransaction('new');
+    primary.textContent = portfolioView === 'investment' && portfolioInvestmentListMode === 'archived' ? '返回进行中' : portfolioView === 'investment' ? '新增计划' : '新增流水';
+    primary.onclick = portfolioView === 'investment'
+      ? portfolioInvestmentListMode === 'archived'
+        ? () => setPortfolioInvestmentListMode('active')
+        : () => setActivePortfolioInvestmentPlan('new')
+      : () => setActivePortfolioTransaction('new');
   }
 }

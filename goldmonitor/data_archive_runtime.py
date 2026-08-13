@@ -30,6 +30,9 @@ class DataArchiveRuntime:
         runtime.app_settings = self.loaders["settings"]()
         runtime.portfolio_positions = self.loaders["portfolio_positions"]()
         runtime.portfolio_transactions = self.loaders["portfolio_transactions"]()
+        runtime.portfolio_investment_plans = self.loaders[
+            "portfolio_investment_plans"
+        ]()
         runtime.portfolio_import_backup = self.loaders["portfolio_import_backup"]()
         runtime.alert_rules = self.loaders["alert_rules"]()
         self.loaders["sync_legacy_alert_rule_views"]()
@@ -93,6 +96,7 @@ class DataArchiveRuntime:
                 runtime.settings_lock,
                 runtime.risk_history_lock,
                 runtime.review_notes_lock,
+                runtime.investment_plan_lock,
             ):
                 stack.enter_context(state_lock)
             result = self.archive_manager().restore(

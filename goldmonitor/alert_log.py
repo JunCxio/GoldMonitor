@@ -78,6 +78,17 @@ class AlertLogStore:
             normalized["read"] = True
         normalized["handled_at"] = str(normalized.get("handled_at") or "")
         normalized["handling_note"] = str(normalized.get("handling_note") or "").strip()[:HANDLING_NOTE_LIMIT]
+        try:
+            retry_count = int(normalized.get("notification_auto_retry_count") or 0)
+        except (TypeError, ValueError):
+            retry_count = 0
+        normalized["notification_auto_retry_count"] = max(0, min(3, retry_count))
+        normalized["notification_retry_next_at"] = str(
+            normalized.get("notification_retry_next_at") or ""
+        )
+        normalized["last_notification_auto_retry_at"] = str(
+            normalized.get("last_notification_auto_retry_at") or ""
+        )
         return normalized
 
     def connect_db(self):

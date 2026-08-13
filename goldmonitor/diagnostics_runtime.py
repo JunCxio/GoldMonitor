@@ -31,6 +31,7 @@ def build_diagnostics_report(
     last_update_status,
     logs,
     health_summary_builder,
+    background_tasks=None,
     now_factory=datetime.now,
 ):
     data_schemas = {
@@ -52,6 +53,7 @@ def build_diagnostics_report(
             recent_alerts=recent_alerts,
             paths=paths,
             storage_manifest=storage_manifest,
+            background_tasks=background_tasks,
         ),
         "storage_manifest": storage_manifest,
         "data_schemas": data_schemas,
@@ -61,6 +63,7 @@ def build_diagnostics_report(
         "price_history": price_history,
         "watch_targets": watch_targets,
         "alert_rules": alert_rules_diagnostics(alert_rules),
+        "background_tasks": background_tasks or {},
         "risk_history_count": risk_history_count,
         "last_update_status": last_update_status,
         "recent_alerts": recent_alerts,
@@ -111,6 +114,17 @@ def diagnostics_source_label(source):
     return text
 
 
+def diagnostics_task_state_label(state):
+    return {
+        "waiting": "等待首次运行",
+        "running": "运行中",
+        "ok": "正常",
+        "error": "失败",
+        "disabled": "停用",
+        "idle": "已检查",
+    }.get(str(state or ""), diagnostics_value(state, "未知"))
+
+
 def build_diagnostics_clipboard_text(
     report,
     *,
@@ -135,6 +149,9 @@ def build_diagnostics_clipboard_text(
     last_export = export_status.get("last_export") if isinstance(export_status.get("last_export"), dict) else {}
     update_status = payload.get("last_update_status") if isinstance(payload.get("last_update_status"), dict) else fallback_update_status
     rules_state = payload.get("alert_rules") if isinstance(payload.get("alert_rules"), dict) else {}
+    background_tasks = payload.get("background_tasks") if isinstance(payload.get("background_tasks"), dict) else {}
+    scheduled_tasks = background_tasks.get("tasks") if isinstance(background_tasks.get("tasks"), list) else []
+    task_summary = background_tasks.get("summary") if isinstance(background_tasks.get("summary"), dict) else {}
     update_message = update_status.get("message") or ("尚未检查更新" if not update_status else "更新状态未知")
     logs = payload.get("logs")
     log_count = len(logs) if isinstance(logs, list) else len(str(logs or "").splitlines()) if logs else 0
@@ -211,6 +228,46 @@ def build_diagnostics_clipboard_text(
         f"- 迁移状态: {'已完成' if (rules_state.get('migration') or {}).get('completed') else '未完成'}",
         f"- 加载错误: {value(rules_state.get('load_error'), '无')}",
         "",
+        "后台任务",
+        f"- 任务数量: {task_summary.get('total', len(scheduled_tasks))}",
+        f"- 最近失败: {task_summary.get('error', 0)}",
+        f"- 需要处理: {task_summary.get('attention', 0)}",
+        f"- 调度延迟: {task_summary.get('delayed', 0)}",
+        f"- 提醒阈值: 连续失败 {background_tasks.get('failure_alert_threshold', 3)} 次",
+        f"- 延迟阈值: 超过计划时间 {background_tasks.get('schedule_delay_grace_seconds', 60)} 秒",
+    ]
+    for task in scheduled_tasks:
+        if not isinstance(task, dict):
+            continue
+        label = value(task.get("label") or task.get("name"), "未命名任务")
+        task_state = diagnostics_task_state_label(task.get("state"))
+        failures = int(task.get("consecutive_failures") or 0)
+        delay_seconds = int(task.get("schedule_delay_seconds") or 0)
+        message = value(task.get("last_message"), "等待首次运行")
+        schedule_note = (
+            f"，调度延迟 {delay_seconds} 秒"
+            if task.get("schedule_delayed")
+            else ""
+        )
+        lines.append(
+            f"- {label}: {task_state}，连续失败 {failures} 次{schedule_note}，最近结果：{message}"
+        )
+        queue = task.get("queue") if isinstance(task.get("queue"), dict) else {}
+        if task.get("name") == "notification_retry" and queue:
+            if queue.get("available") is False:
+                lines.append("- 通知重试队列: 状态读取失败")
+            else:
+                lines.append(
+                    "- 通知重试队列: "
+                    f"待重试 {int(queue.get('pending_count') or 0)} 条，"
+                    f"可立即处理 {int(queue.get('eligible_count') or 0)} 条，"
+                    f"达到上限 {int(queue.get('exhausted_count') or 0)} 条，"
+                    f"已过期 {int(queue.get('expired_count') or 0)} 条，"
+                    f"不可重试 {int(queue.get('non_retryable_count') or 0)} 条，"
+                    f"自动重试{'开启' if queue.get('enabled') else '关闭'}"
+                )
+    lines.extend([
+        "",
         "更新状态",
         f"- 当前版本: {value(update_status.get('current_version') or payload.get('version'))}",
         f"- 最新版本: {value(update_status.get('latest_version'))}",
@@ -241,13 +298,23 @@ def build_diagnostics_clipboard_text(
         f"- 导出目录: {value(export_dir_status.get('path') or paths.get('exports'))}",
         f"- 目录状态: {export_dir_state}",
         f"- 最近导出: {last_export_state}",
-    ]
+    ])
     if last_export_ok is True:
         lines.append(f"- 最近保存路径: {value(last_export.get('saved_path'))}")
     elif last_export_ok is False:
         lines.append(f"- 最近失败原因: {value(last_export.get('message'))}")
     if quality_reasons:
         lines.extend(["", "数据质量提示", *[f"- {item}" for item in quality_reasons[:5]]])
+    if (
+        int(task_summary.get("attention") or 0)
+        or int(task_summary.get("delayed") or 0)
+        or int(task_summary.get("queue_attention") or 0)
+    ):
+        lines.extend([
+            "",
+            "后台任务提示",
+            "- 打开设置中的“运维与数据”，查看异常任务的最近结果、下次运行时间并执行立即检查。",
+        ])
     lines.extend([
         "",
         "排查建议",
@@ -278,6 +345,7 @@ class DiagnosticsRuntime:
         read_logs,
         health_summary_builder,
         get_export_status,
+        get_background_tasks,
         default_settings,
         platform_name,
         now_factory=datetime.now,
@@ -298,6 +366,7 @@ class DiagnosticsRuntime:
         self.read_logs = read_logs
         self.health_summary_builder = health_summary_builder
         self.get_export_status = get_export_status
+        self.get_background_tasks = get_background_tasks
         self.default_settings = default_settings
         self.platform_name = platform_name
         self.now_factory = now_factory
@@ -321,6 +390,7 @@ class DiagnosticsRuntime:
             last_update_status=self.get_update_status(),
             logs=self.read_logs(),
             health_summary_builder=self.health_summary_builder,
+            background_tasks=self.get_background_tasks(),
             now_factory=self.now_factory,
         )
         payload = json.loads(report)

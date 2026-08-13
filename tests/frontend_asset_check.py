@@ -27,6 +27,7 @@ settings_actions_js_path = root / "static" / "settings-actions.js"
 operations_js_path = root / "static" / "operations-center.js"
 operations_state_js_path = root / "static" / "operations-state.js"
 operations_socket_js_path = root / "static" / "operations-socket.js"
+operations_tasks_js_path = root / "static" / "operations-tasks.js"
 operations_sources_js_path = root / "static" / "operations-sources.js"
 operations_records_js_path = root / "static" / "operations-records.js"
 operations_archive_js_path = root / "static" / "operations-archive.js"
@@ -54,6 +55,11 @@ portfolio_render_js_path = root / "static" / "portfolio-render.js"
 portfolio_review_js_path = root / "static" / "portfolio-review.js"
 portfolio_detail_js_path = root / "static" / "portfolio-detail.js"
 portfolio_list_js_path = root / "static" / "portfolio-list.js"
+portfolio_investment_list_js_path = root / "static" / "portfolio-investment-list.js"
+portfolio_investment_projection_js_path = root / "static" / "portfolio-investment-projection.js"
+portfolio_investment_simulation_js_path = root / "static" / "portfolio-investment-simulation.js"
+portfolio_investment_js_path = root / "static" / "portfolio-investment.js"
+portfolio_investment_actions_js_path = root / "static" / "portfolio-investment-actions.js"
 portfolio_actions_js_path = root / "static" / "portfolio-actions.js"
 portfolio_import_js_path = root / "static" / "portfolio-import.js"
 alert_log_js_path = root / "static" / "alert-log-center.js"
@@ -94,6 +100,7 @@ for settings_path in (
 for operations_path in (
     operations_state_js_path,
     operations_socket_js_path,
+    operations_tasks_js_path,
     operations_sources_js_path,
     operations_records_js_path,
     operations_archive_js_path,
@@ -177,6 +184,10 @@ portfolio_module_js = "\n".join((
     portfolio_review_js_path.read_text(encoding="utf-8"),
     portfolio_detail_js_path.read_text(encoding="utf-8"),
     portfolio_list_js_path.read_text(encoding="utf-8"),
+    portfolio_investment_list_js_path.read_text(encoding="utf-8"),
+    portfolio_investment_projection_js_path.read_text(encoding="utf-8"),
+    portfolio_investment_js_path.read_text(encoding="utf-8"),
+    portfolio_investment_actions_js_path.read_text(encoding="utf-8"),
     portfolio_actions_js_path.read_text(encoding="utf-8"),
     portfolio_import_js_path.read_text(encoding="utf-8"),
     portfolio_js,
@@ -194,6 +205,7 @@ settings_module_js = "\n".join((
 operations_module_js = "\n".join((
     operations_state_js_path.read_text(encoding="utf-8"),
     operations_socket_js_path.read_text(encoding="utf-8"),
+    operations_tasks_js_path.read_text(encoding="utf-8"),
     operations_sources_js_path.read_text(encoding="utf-8"),
     operations_records_js_path.read_text(encoding="utf-8"),
     operations_archive_js_path.read_text(encoding="utf-8"),
@@ -391,6 +403,7 @@ operations_scripts = tuple(
     for name in (
         "operations-state.js",
         "operations-socket.js",
+        "operations-tasks.js",
         "operations-sources.js",
         "operations-records.js",
         "operations-archive.js",
@@ -411,6 +424,27 @@ if operations_positions[-1] > template.find('<script src="/static/app.js?v={{ ap
 
 for required in (
     "function registerOperationsSocketHandlers",
+    "function applyBackgroundTaskStatus",
+    "function refreshBackgroundTaskStatus",
+    "function backgroundTaskAutoRefreshActive",
+    "function requestBackgroundTaskStatus",
+    "function startBackgroundTaskAutoRefresh",
+    "function stopBackgroundTaskAutoRefresh",
+    "function syncBackgroundTaskAutoRefresh",
+    "BACKGROUND_TASK_REFRESH_INTERVAL_MS",
+    "BACKGROUND_TASK_REFRESH_TIMEOUT_MS",
+    "visibilitychange",
+    "pagehide",
+    "attention_required",
+    "consecutive_failures",
+    "schedule_delayed",
+    "schedule_delay_seconds",
+    "function backgroundTaskDelayLabel",
+    "function backgroundTaskQueueMeta",
+    "queue_attention",
+    "exhausted_count",
+    "expired_count",
+    "non_retryable_count",
     "function renderSourceHealth",
     "function renderRecentOpsRecords",
     "function previewDataArchive",
@@ -419,6 +453,36 @@ for required in (
 ):
     if required not in operations_module_js:
         raise SystemExit(f"operations modules missing contract: {required}")
+
+for required in (
+    'id="backgroundTaskStatus"',
+    'id="btnRefreshBackgroundTasks"',
+    "socket.on('background_task_status'",
+    "socket.emit('get_background_task_status')",
+    "socket.emit('run_background_task'",
+    "socket.on('background_task_run_result'",
+    "function runBackgroundTaskNow",
+    'data-task-name="',
+    "if (data.background_task_status) applyBackgroundTaskStatus(data.background_task_status)",
+    "syncBackgroundTaskAutoRefresh();",
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing background task status contract: {required}")
+
+if "window.setTimeout(() => { button.disabled = false; }, 600)" in operations_tasks_js_path.read_text(encoding="utf-8"):
+    raise SystemExit("background task refresh button must follow the real request lifecycle")
+
+for required in (
+    ".ops-task-card",
+    ".ops-task-item",
+    ".ops-task-timing",
+    ".ops-task-run",
+    '.ops-task-item[data-attention="true"]',
+    '.ops-task-item[data-state="delayed"]',
+    ".ops-task-queue",
+):
+    if required not in css_path.read_text(encoding="utf-8"):
+        raise SystemExit(f"static/app.css missing background task selector: {required}")
 
 for moved in (
     "function registerOperationsSocketHandlers",
@@ -501,6 +565,11 @@ portfolio_scripts = tuple(
         "portfolio-review.js",
         "portfolio-detail.js",
         "portfolio-list.js",
+        "portfolio-investment-list.js",
+        "portfolio-investment-projection.js",
+        "portfolio-investment-simulation.js",
+        "portfolio-investment.js",
+        "portfolio-investment-actions.js",
         "portfolio-actions.js",
         "portfolio-import.js",
         "portfolio-center.js",
@@ -633,6 +702,9 @@ for required in (
     "function renderPortfolioPositionDetail",
     "function renderPortfolioPositions",
     "function savePortfolioTransaction",
+    "function renderPortfolioInvestments",
+    "function savePortfolioInvestmentPlan",
+    "portfolioView === 'investment'",
     "function previewPortfolioImport",
 ):
     if required not in portfolio_module_js:
@@ -1185,6 +1257,8 @@ for required in (
     "function setPortfolioTransactionTypeFilter",
     "function setPortfolioTransactionModeFilter",
     "function setPortfolioTransactionSort",
+    "function setPortfolioInvestmentStatusFilter",
+    "function setPortfolioInvestmentSort",
     "function filteredPortfolioPositions",
     "function filteredPortfolioTransactions",
     "function importPortfolioTransactions",
@@ -1219,6 +1293,12 @@ for required in (
     "function setActivePortfolioDetail",
     "function setActivePortfolioPosition",
     "function setActivePortfolioTransaction",
+    "function renderPortfolioInvestmentPerformance",
+    "function portfolioInvestmentExecutionKindLabel",
+    "function portfolioInvestmentWeekdayLabel",
+    "function duplicatePortfolioInvestmentPlan",
+    "portfolioInvestmentDraftNotice",
+    "function exportPortfolioInvestmentExecutions",
     "function savePortfolioPosition",
     "function savePortfolioTransaction",
     "function savePortfolioAlert",
@@ -1262,6 +1342,38 @@ for required in (
     "get_portfolio",
     "save_portfolio_position",
     "save_portfolio_transaction",
+    "save_portfolio_investment_plan",
+    "execute_portfolio_investment_plan",
+    "skip_portfolio_investment_plan",
+    "portfolio_investment_plan_skipped",
+    "preview_portfolio_investment_schedule",
+    "portfolio_investment_schedule_preview",
+    "archive_portfolio_investment_plan",
+    "restore_portfolio_investment_plan",
+    "portfolio_investment_plan_archived",
+    "portfolio_investment_plan_restored",
+    "export_portfolio_investment_executions",
+    "portfolio_investment_executions_exported",
+    "导出全部记录",
+    "星期一",
+    "value=\"weekly\"",
+    "已复制为新计划草稿，确认后再保存。",
+    "enabled: false",
+    "开始日期（可选）",
+    "结束日期（可选）",
+    "start_date: source.start_date || ''",
+    "end_date: source.end_date || ''",
+    "结束日期不能早于开始日期。",
+    "pending_start",
+    "计划已完成",
+    "跳过本期",
+    "本次不会生成买入流水，计划将继续运行。",
+    "未来 5 期",
+    "后续安排",
+    "已归档",
+    "永久删除",
+    "累计投入",
+    "最近执行",
     "save_portfolio_alert",
     "reset_portfolio_alert",
     "delete_portfolio_alert",
@@ -1280,6 +1392,8 @@ for required in (
     "'transactionType'",
     "'transactionMode'",
     "'transactionSort'",
+    "'investmentStatus'",
+    "'investmentSort'",
 ):
     if required not in js:
         raise SystemExit(f"static/app.js missing portfolio frontend contract: {required}")
@@ -1591,6 +1705,30 @@ for required in (
 ):
     if required not in template + js:
         raise SystemExit(f"frontend missing daily digest contract: {required}")
+
+for required in (
+    'id="setNotificationAutoRetry"',
+    'id="notificationRetryStatus"',
+    'id="btnRetryFailedNotifications"',
+    "notificationRetryStatusState",
+    "function applyNotificationRetryStatus",
+    "function retryFailedNotifications",
+    "socket.emit('get_notification_retry_status')",
+    "socket.emit('retry_failed_notifications')",
+    "socket.on('notification_retry_status'",
+    "socket.on('notification_retry_result'",
+    "notification_auto_retry_enabled: document.getElementById('setNotificationAutoRetry').checked",
+    "if (data.notification_retry_status) applyNotificationRetryStatus(data.notification_retry_status)",
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing notification retry contract: {required}")
+
+for required in (
+    ".notification-retry-control",
+    ".notification-retry-status",
+):
+    if required not in css:
+        raise SystemExit(f"static/app.css missing notification retry selector: {required}")
 
 for required in (
     'id="createReviewNoteButton"',
