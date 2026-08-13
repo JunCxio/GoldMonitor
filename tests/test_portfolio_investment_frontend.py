@@ -30,6 +30,7 @@ def run_node_script(node, script):
         check=False,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
 
 
