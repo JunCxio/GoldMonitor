@@ -214,6 +214,8 @@ function setPortfolioControlSelection(action, value) {
     transactionType: setPortfolioTransactionTypeFilter,
     transactionMode: setPortfolioTransactionModeFilter,
     transactionSort: setPortfolioTransactionSort,
+    investmentStatus: setPortfolioInvestmentStatusFilter,
+    investmentSort: setPortfolioInvestmentSort,
   };
   if (handlers[action]) handlers[action](value);
 }
@@ -258,13 +260,20 @@ function renderPortfolioControls() {
     return;
   }
   if (portfolioView === 'investment') {
-    box.innerHTML = [
+    const controls = [
       '<label class="portfolio-control portfolio-search">',
       '<span>搜索</span>',
       '<input type="search" value="' + escapeHtml(portfolioSearch) + '" placeholder="计划或持仓名称" oninput="setPortfolioSearch(this.value)">',
       '</label>',
+    ];
+    if (portfolioInvestmentListMode === 'active') {
+      controls.push(renderPortfolioDropdownControl('portfolio-filter', '状态', portfolioInvestmentStatusFilter, PORTFOLIO_INVESTMENT_STATUS_FILTER_OPTIONS, 'investmentStatus'));
+    }
+    controls.push(
+      renderPortfolioDropdownControl('portfolio-sort', '排序', portfolioInvestmentSort, portfolioInvestmentSortOptions(), 'investmentSort'),
       '<div class="portfolio-controls-note portfolio-investment-note">应用关闭期间只补最近一期，并按恢复后的最新行情生成买入流水。</div>',
-    ].join('');
+    );
+    box.innerHTML = controls.join('');
     return;
   }
   const search = [

@@ -184,13 +184,6 @@ function setActivePortfolioInvestmentPlan(id) {
   if (opening) requestPortfolioInvestmentSchedulePreview(id);
 }
 
-function setPortfolioInvestmentListMode(mode) {
-  captureActivePortfolioInvestmentDraft();
-  activePortfolioInvestmentPlanId = null;
-  portfolioInvestmentListMode = mode === 'archived' ? 'archived' : 'active';
-  renderPortfolio();
-}
-
 function refreshPortfolioInvestmentEditor(id) {
   capturePortfolioInvestmentDraft(id);
   renderPortfolio();
@@ -242,6 +235,7 @@ function portfolioInvestmentStateLabel(plan) {
   if (plan.status === 'due') return '待执行';
   if (plan.last_result === 'waiting_price') return '等待行情';
   if (plan.last_result === 'orphaned') return '关联失效';
+  if (plan.last_result === 'error') return '执行失败';
   return '运行中';
 }
 
@@ -370,24 +364,6 @@ function renderPortfolioInvestmentSummary(box) {
     portfolioInvestmentCommitmentItemsMarkup(summary.commitment_items),
     '</div>',
   ].join('');
-}
-
-function filteredPortfolioInvestments() {
-  return portfolioInvestmentItems()
-    .filter(item => portfolioInvestmentListMode === 'archived' ? Boolean(item.archived_at) : !item.archived_at)
-    .filter(item => portfolioSearchMatches([
-      item.name,
-      item.position_name,
-      item.mode,
-      portfolioInvestmentFrequencyLabel(item),
-      item.last_message,
-    ]))
-    .sort((left, right) => {
-      if (left.enabled !== right.enabled) return left.enabled ? -1 : 1;
-      const leftRun = left.next_run_at || '9999';
-      const rightRun = right.next_run_at || '9999';
-      return leftRun.localeCompare(rightRun) || String(left.name).localeCompare(String(right.name), 'zh-CN');
-    });
 }
 
 function buildPortfolioInvestmentEditor(item) {

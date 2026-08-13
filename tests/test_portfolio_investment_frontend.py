@@ -13,6 +13,7 @@ def read_investment_source():
     return "\n".join(
         (ROOT / "static" / name).read_text(encoding="utf-8")
         for name in (
+            "portfolio-investment-list.js",
             "portfolio-investment-projection.js",
             "portfolio-investment.js",
             "portfolio-investment-actions.js",
@@ -104,6 +105,113 @@ if (!html.includes('补执行') || !html.includes('手动执行') || !html.inclu
 }
 """
     script = script.replace("__SOURCE__", json.dumps(source))
+    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_investment_plan_frontend_filters_and_sorts_plan_list():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("需要 Node.js 执行定投前端行为测试")
+
+    source = read_investment_source()
+    script = """
+const vm = require('vm');
+let portfolioInvestmentStatusFilter = 'all';
+let portfolioInvestmentSort = 'priority';
+let portfolioInvestmentListMode = 'active';
+let portfolioSearch = '';
+let activePortfolioInvestmentPlanId = 'plan-running';
+let renderCount = 0;
+const plans = [
+  {id:'plan-paused',name:'已暂停计划',status:'paused',enabled:false,next_run_at:'',updated_at:'2026-08-10T09:00:00',performance:{total_invested:2000}},
+  {id:'plan-running',name:'运行计划',status:'active',enabled:true,next_run_at:'2026-08-20T09:00:00',updated_at:'2026-08-11T09:00:00',performance:{total_invested:1000}},
+  {id:'plan-due',name:'待执行计划',status:'due',enabled:true,next_run_at:'2026-08-12T09:00:00',updated_at:'2026-08-12T09:00:00',performance:{total_invested:500}},
+  {id:'plan-attention',name:'异常计划',status:'active',enabled:true,last_result:'waiting_price',next_run_at:'2026-08-18T09:00:00',updated_at:'2026-08-13T09:00:00',performance:{total_invested:3000}},
+  {id:'plan-completed',name:'已完成计划',status:'completed',enabled:false,next_run_at:'',updated_at:'2026-08-09T09:00:00',performance:{total_invested:4000}},
+  {id:'plan-archived',name:'归档计划',status:'archived',enabled:false,archived_at:'2026-08-08T09:00:00',performance:{total_invested:6000}},
+];
+const context = {
+  console,
+  portfolioState: {investment_plans:{items:plans}},
+  portfolioInvestmentStatusFilter,
+  portfolioInvestmentSort,
+  portfolioInvestmentListMode,
+  portfolioSearch,
+  activePortfolioInvestmentPlanId,
+  portfolioInvestmentItems: () => plans,
+  portfolioInvestmentFrequencyLabel: () => '每月',
+  portfolioInvestmentStateLabel: plan => plan.name,
+  portfolioSearchMatches: () => true,
+  portfolioOptionValue: (options, value, fallback) => options.some(option => option.value === value) ? value : fallback,
+  document: {getElementById: () => null},
+  renderPortfolio: () => { renderCount += 1; },
+};
+context.globalThis = context;
+vm.createContext(context);
+vm.runInContext(__SOURCE__, context);
+const ids = () => vm.runInContext('filteredPortfolioInvestments()', context).map(item => item.id);
+const assert = (condition, message) => { if (!condition) throw new Error(message); };
+
+assert(ids().join(',') === 'plan-attention,plan-due,plan-running,plan-paused,plan-completed', 'priority sort must put attention and due plans first');
+vm.runInContext("setPortfolioInvestmentStatusFilter('attention')", context);
+assert(ids().join(',') === 'plan-attention', 'attention filter must isolate actionable plans');
+assert(context.activePortfolioInvestmentPlanId === null, 'changing status filter must close expanded plan');
+vm.runInContext("setPortfolioInvestmentStatusFilter('running')", context);
+assert(ids().join(',') === 'plan-running', 'running filter must isolate active and pending-start plans');
+vm.runInContext("setPortfolioInvestmentStatusFilter('all')", context);
+vm.runInContext("setPortfolioInvestmentSort('invested')", context);
+assert(ids().join(',') === 'plan-completed,plan-attention,plan-paused,plan-running,plan-due', 'invested sort must use plan performance totals');
+vm.runInContext("setPortfolioInvestmentSort('invalid')", context);
+assert(context.portfolioInvestmentSort === 'priority', 'invalid sort values must fall back safely');
+assert(renderCount === 5, 'each filter or sort change must render once');
+context.portfolioInvestmentSort = 'next_run';
+vm.runInContext("setPortfolioInvestmentListMode('archived')", context);
+assert(context.portfolioInvestmentSort === 'priority', 'archived list must reset unsupported next-run sorting');
+assert(ids().join(',') === 'plan-archived', 'archived list must contain archived plans only');
+"""
+    script = script.replace("__SOURCE__", json.dumps(source))
+    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_investment_plan_controls_render_status_and_sort_dropdowns():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("需要 Node.js 执行定投前端行为测试")
+
+    render_source = (ROOT / "static" / "portfolio-render.js").read_text(encoding="utf-8")
+    investment_source = read_investment_source()
+    script = """
+const vm = require('vm');
+const box = {innerHTML:''};
+const context = {
+  console,
+  portfolioView:'investment', portfolioSearch:'', portfolioInvestmentListMode:'active',
+  portfolioInvestmentStatusFilter:'attention', portfolioInvestmentSort:'updated',
+  portfolioAnalyticsRange:90, portfolioAnalyticsLoading:false, portfolioAnalyticsState:null,
+  document:{getElementById:id => id === 'portfolioControls' ? box : null, addEventListener:() => {}, querySelectorAll:() => []},
+  escapeHtml:value => String(value),
+};
+context.globalThis = context;
+vm.createContext(context);
+vm.runInContext(__INVESTMENT_SOURCE__, context);
+vm.runInContext(__RENDER_SOURCE__, context);
+vm.runInContext('renderPortfolioControls()', context);
+if (!box.innerHTML.includes('状态') || !box.innerHTML.includes('需处理') || !box.innerHTML.includes("'investmentStatus'")) {
+  throw new Error('active investment controls must render status filter');
+}
+if (!box.innerHTML.includes('排序') || !box.innerHTML.includes('最近更新') || !box.innerHTML.includes("'investmentSort'")) {
+  throw new Error('investment controls must render sort selector');
+}
+vm.runInContext("portfolioInvestmentListMode = 'archived'; portfolioInvestmentSort = 'priority';", context);
+vm.runInContext('renderPortfolioControls()', context);
+if (box.innerHTML.includes("'investmentStatus'")) throw new Error('archived plans must not show active status filter');
+if (!box.innerHTML.includes("'investmentSort'")) throw new Error('archived plans must preserve sorting');
+if (!box.innerHTML.includes('最近归档') || box.innerHTML.includes('下次执行')) throw new Error('archived plans must use archived-specific sorting');
+"""
+    script = script.replace("__INVESTMENT_SOURCE__", json.dumps(investment_source))
+    script = script.replace("__RENDER_SOURCE__", json.dumps(render_source))
     result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 
