@@ -900,8 +900,14 @@
   .portfolio-investment-overview-flags strong { display:block; margin-top:2px; color:#f0f0f4; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.82rem; }
   .portfolio-investment-overview-performance { grid-column:1 / -1; display:flex; align-items:center; justify-content:space-between; gap:10px; border-top:1px solid rgba(255,255,255,0.055); }
   .portfolio-investment-overview-performance strong { color:#d9d9e2; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.68rem; font-weight:800; white-space:nowrap; }
+  .portfolio-investment-overview-actual { grid-column:1 / -1; display:grid; grid-template-columns:auto minmax(0, 1fr) auto; gap:9px; align-items:center; min-width:0; padding:9px 10px; border-top:1px solid rgba(255,255,255,0.055); background:rgba(255,255,255,0.012); }
+  .portfolio-investment-overview-actual > b { display:inline-flex; align-items:center; justify-content:center; min-width:48px; min-height:24px; border:1px solid rgba(255,255,255,0.12); border-radius:6px; color:#d9d9e2; background:rgba(255,255,255,0.035); font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.56rem; letter-spacing:0.02em; }
+  .portfolio-investment-overview-actual > div { min-width:0; }
+  .portfolio-investment-overview-actual-values { text-align:right; }
+  .portfolio-investment-overview-actual-values strong { display:block; color:#ececf2; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.7rem; white-space:nowrap; }
+  .portfolio-investment-overview-actual-values small { margin-top:2px; }
   .portfolio-investment-overview-commitment { grid-column:1 / -1; display:grid; grid-template-columns:auto minmax(0, 1fr) auto; gap:9px; align-items:center; min-width:0; padding:9px 10px; border-top:1px solid rgba(232,184,48,0.13); background:rgba(232,184,48,0.025); }
-  .portfolio-investment-overview-commitment > b { display:inline-flex; align-items:center; justify-content:center; min-width:34px; min-height:24px; border:1px solid rgba(232,184,48,0.24); border-radius:6px; color:var(--gold); background:rgba(232,184,48,0.06); font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.58rem; letter-spacing:0.04em; }
+  .portfolio-investment-overview-commitment > b { display:inline-flex; align-items:center; justify-content:center; min-width:58px; min-height:24px; border:1px solid rgba(232,184,48,0.24); border-radius:6px; color:var(--gold); background:rgba(232,184,48,0.06); font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.56rem; letter-spacing:0.02em; }
   .portfolio-investment-overview-commitment > div { min-width:0; }
   .portfolio-investment-overview-commitment-values { text-align:right; }
   .portfolio-investment-overview-commitment-values strong { display:block; color:#ececf2; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.7rem; white-space:nowrap; }
@@ -1543,8 +1549,8 @@
     .portfolio-investment-schedule-preview-list span { border-right:0; border-top:1px solid rgba(255,255,255,0.05); }
     .portfolio-investment-schedule-preview-list span:first-child { border-top:0; }
     .portfolio-investment-overview-performance { align-items:flex-start; flex-direction:column; }
-    .portfolio-investment-overview-commitment { grid-template-columns:auto minmax(0, 1fr); }
-    .portfolio-investment-overview-commitment-values { grid-column:2; text-align:left; }
+    .portfolio-investment-overview-actual, .portfolio-investment-overview-commitment { grid-template-columns:auto minmax(0, 1fr); }
+    .portfolio-investment-overview-actual-values, .portfolio-investment-overview-commitment-values { grid-column:2; text-align:left; }
     .portfolio-investment-commitment-item { grid-template-columns:1fr; }
     .portfolio-investment-commitment-item > div:last-child { text-align:left; }
     .portfolio-investment-performance-grid, .portfolio-investment-execution-item { grid-template-columns:1fr; }

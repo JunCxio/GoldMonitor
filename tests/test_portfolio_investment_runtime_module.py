@@ -105,6 +105,8 @@ def test_runtime_catches_up_latest_run_and_generates_sourced_transaction():
     assert performance["total_invested"] == 1002.0
     assert performance["market_value"] == 1000.0
     assert performance["pnl"] == -2.0
+    assert state_payload["summary"]["actual_execution_count"] == 1
+    assert state_payload["summary"]["rmb_actual_invested"] == 1002.0
 
 
 def test_runtime_uses_usd_price_and_creates_position_on_first_execution():
@@ -214,6 +216,10 @@ def test_runtime_archives_restores_and_permanently_deletes_plan():
         "execution_count": 0,
         "rmb_invested": 0.0,
         "usd_invested": 0.0,
+        "actual_days": 30,
+        "actual_execution_count": 0,
+        "rmb_actual_invested": 0.0,
+        "usd_actual_invested": 0.0,
         "commitment_days": 30,
         "commitment_plan_count": 0,
         "commitment_run_count": 0,

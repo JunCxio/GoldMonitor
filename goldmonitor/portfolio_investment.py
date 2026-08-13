@@ -16,6 +16,7 @@ INVESTMENT_EXECUTION_KINDS = {"scheduled", "catch_up", "manual"}
 INVESTMENT_EXECUTION_HISTORY_LIMIT = 10
 INVESTMENT_SCHEDULE_PREVIEW_LIMIT = 5
 INVESTMENT_COMMITMENT_WINDOW_DAYS = 30
+INVESTMENT_ACTUAL_WINDOW_DAYS = 30
 INVESTMENT_EXECUTION_CSV_FIELDS = [
     "plan_id",
     "plan_name",
@@ -634,6 +635,52 @@ def investment_plan_execution_count(plan, transactions):
     return len(investment_plan_executions(plan, transactions))
 
 
+def investment_execution_window_summary(
+    transactions,
+    *,
+    now=None,
+    days=INVESTMENT_ACTUAL_WINDOW_DAYS,
+):
+    now = now or datetime.now()
+    window_days = _bounded_int(
+        days,
+        1,
+        366,
+        INVESTMENT_ACTUAL_WINDOW_DAYS,
+    )
+    start_date = now.date() - timedelta(days=window_days - 1)
+    result = {
+        "days": window_days,
+        "execution_count": 0,
+        "rmb_invested": 0.0,
+        "usd_invested": 0.0,
+    }
+    for raw in list(transactions or []):
+        if not isinstance(raw, dict):
+            continue
+        if raw.get("source") != "investment_plan" or raw.get("type") != "buy":
+            continue
+        executed_on = parse_plan_date(raw.get("trade_date"))
+        if executed_on is None:
+            executed_at = parse_plan_datetime(
+                raw.get("created_at") or raw.get("updated_at")
+            )
+            executed_on = executed_at.date() if executed_at else None
+        if executed_on is None or not start_date <= executed_on <= now.date():
+            continue
+        price = _positive_float(raw.get("price"))
+        quantity = _positive_float(raw.get("quantity"))
+        fee = _nonnegative_float(raw.get("fee"))
+        if price is None or quantity is None or fee is None:
+            continue
+        mode = _clean_text(raw.get("mode")).lower()
+        if mode not in {"rmb", "usd"}:
+            continue
+        result[mode + "_invested"] += price * quantity + fee
+        result["execution_count"] += 1
+    return result
+
+
 def investment_plan_projection(
     item,
     *,
@@ -853,6 +900,7 @@ def investment_plan_performance(plan, transactions, current_price=None, history_
 def investment_plan_state(items, *, now=None, transactions=None, prices=None):
     now = now or datetime.now()
     prices = prices if isinstance(prices, dict) else {}
+    actual = investment_execution_window_summary(transactions, now=now)
     plans = []
     summary = {
         "total": 0,
@@ -864,6 +912,10 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
         "execution_count": 0,
         "rmb_invested": 0.0,
         "usd_invested": 0.0,
+        "actual_days": actual["days"],
+        "actual_execution_count": actual["execution_count"],
+        "rmb_actual_invested": actual["rmb_invested"],
+        "usd_actual_invested": actual["usd_invested"],
         "commitment_days": INVESTMENT_COMMITMENT_WINDOW_DAYS,
         "commitment_plan_count": 0,
         "commitment_run_count": 0,

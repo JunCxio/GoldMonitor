@@ -86,6 +86,8 @@ vm.createContext(context);
 vm.runInContext(__STATE_SOURCE__, context);
 vm.runInContext(__INVESTMENT_SOURCE__, context);
 context.portfolioState.investment_plans = vm.runInContext(`normalizePortfolioInvestmentState({summary:{
+  actual_days:30, actual_execution_count:3,
+  rmb_actual_invested:306, usd_actual_invested:501,
   commitment_days:30, commitment_plan_count:2, commitment_run_count:5,
   rmb_commitment:102, usd_commitment:2004,
   commitment_items:[
@@ -94,8 +96,14 @@ context.portfolioState.investment_plans = vm.runInContext(`normalizePortfolioInv
   ]
 }})`, context);
 vm.runInContext('renderPortfolioInvestmentSummary', context)(box);
-if (!box.innerHTML.includes('30天') || !box.innerHTML.includes('计划投入')) {
+if (!box.innerHTML.includes('未来30天') || !box.innerHTML.includes('计划投入')) {
   throw new Error('commitment window must render with a clear label');
+}
+if (!box.innerHTML.includes('近30天') || !box.innerHTML.includes('实际投入')) {
+  throw new Error('actual investment window must render with a clear label');
+}
+if (!box.innerHTML.includes('¥306.00 · $501.00') || !box.innerHTML.includes('实际执行 3 次')) {
+  throw new Error('actual investment totals and count must render by currency');
 }
 if (!box.innerHTML.includes('¥102.00 · $2,004.00') || !box.innerHTML.includes('预计 5 期 · 涉及 2 个计划')) {
   throw new Error('commitment totals and counts must render by currency');

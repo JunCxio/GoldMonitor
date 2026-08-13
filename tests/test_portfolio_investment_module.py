@@ -221,6 +221,60 @@ def test_investment_plan_projection_is_absent_without_target_count():
     assert investment_plan_projection({"target_count": 0}) is None
 
 
+def test_investment_execution_window_summary_uses_actual_execution_dates_and_costs():
+    from goldmonitor.portfolio_investment import investment_execution_window_summary
+
+    base = {
+        "type": "buy",
+        "price": 100,
+        "quantity": 2,
+        "fee": 1,
+        "source": "investment_plan",
+    }
+    summary = investment_execution_window_summary(
+        [
+            {**base, "id": "today", "mode": "rmb", "created_at": "2026-08-12T09:00:00"},
+            {**base, "id": "boundary", "mode": "usd", "price": 500, "quantity": 1, "trade_date": "2026-07-14"},
+            {**base, "id": "expired", "mode": "rmb", "created_at": "2026-07-13T23:59:59"},
+            {**base, "id": "future", "mode": "rmb", "created_at": "2026-08-13T09:00:00"},
+            {**base, "id": "manual", "mode": "rmb", "source": "", "created_at": "2026-08-12T09:00:00"},
+            {**base, "id": "invalid", "mode": "rmb", "price": 0, "created_at": "2026-08-12T09:00:00"},
+        ],
+        now=datetime(2026, 8, 12, 10, 0),
+    )
+
+    assert summary == {
+        "days": 30,
+        "execution_count": 2,
+        "rmb_invested": 201.0,
+        "usd_invested": 501.0,
+    }
+
+
+def test_investment_plan_state_keeps_recent_actuals_after_plan_deletion():
+    from goldmonitor.portfolio_investment import investment_plan_state
+
+    state = investment_plan_state(
+        [],
+        transactions=[{
+            "id": "execution-deleted-plan",
+            "type": "buy",
+            "mode": "usd",
+            "price": 2500,
+            "quantity": 0.2,
+            "fee": 1,
+            "trade_date": "2026-08-01",
+            "source": "investment_plan",
+            "source_id": "deleted-plan",
+        }],
+        now=datetime(2026, 8, 12, 10, 0),
+    )
+
+    assert state["items"] == []
+    assert state["summary"]["actual_execution_count"] == 1
+    assert state["summary"]["usd_actual_invested"] == 501.0
+
+
 def test_investment_plan_window_projection_respects_target_and_schedule_window():
     from goldmonitor.portfolio_investment import investment_plan_window_projection
 
@@ -305,6 +359,7 @@ def test_investment_plan_state_summarizes_next_30_day_commitments_by_currency():
         "source": "investment_plan",
         "source_id": "plan-rmb",
         "execution_kind": "scheduled",
+        "trade_date": "2026-08-12",
     }
     summary = investment_plan_state(
         [rmb_plan, usd_plan, paused_plan],
@@ -317,6 +372,10 @@ def test_investment_plan_state_summarizes_next_30_day_commitments_by_currency():
     assert summary["commitment_run_count"] == 5
     assert summary["rmb_commitment"] == 102.0
     assert summary["usd_commitment"] == 2004.0
+    assert summary["actual_days"] == 30
+    assert summary["actual_execution_count"] == 1
+    assert summary["rmb_actual_invested"] == 102.0
+    assert summary["usd_actual_invested"] == 0.0
     assert [item["id"] for item in summary["commitment_items"]] == [
         "plan-rmb",
         "plan-usd",
