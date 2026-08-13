@@ -221,6 +221,103 @@ def test_investment_plan_projection_is_absent_without_target_count():
     assert investment_plan_projection({"target_count": 0}) is None
 
 
+def test_investment_plan_window_projection_respects_target_and_schedule_window():
+    from goldmonitor.portfolio_investment import investment_plan_window_projection
+
+    base = {
+        "mode": "rmb",
+        "amount": 100,
+        "fee": 2,
+        "frequency": "daily",
+        "time": "09:00",
+        "month": 1,
+        "day": 1,
+        "weekday": 1,
+        "start_date": "",
+        "end_date": "",
+        "enabled": True,
+        "next_run_at": "2026-08-01T09:00:00",
+    }
+    limited = investment_plan_window_projection(
+        {**base, "target_count": 3, "completed_count": 1},
+        now=datetime(2026, 8, 12, 10, 0),
+    )
+    ended = investment_plan_window_projection(
+        {**base, "end_date": "2026-08-13"},
+        now=datetime(2026, 8, 12, 10, 0),
+    )
+    paused = investment_plan_window_projection(
+        {**base, "enabled": False},
+        now=datetime(2026, 8, 12, 10, 0),
+    )
+
+    assert limited["run_count"] == 2
+    assert limited["projected_cost"] == 204.0
+    assert limited["first_run_at"] == "2026-08-12T09:00:00"
+    assert limited["last_run_at"] == "2026-08-13T09:00:00"
+    assert ended["run_count"] == 2
+    assert ended["projected_cost"] == 204.0
+    assert paused["run_count"] == 0
+    assert paused["projected_cost"] == 0.0
+
+
+def test_investment_plan_state_summarizes_next_30_day_commitments_by_currency():
+    from goldmonitor.portfolio_investment import investment_plan_state
+
+    rmb_plan = {
+        "id": "plan-rmb",
+        "name": "人民币定投",
+        "mode": "rmb",
+        "amount": 100,
+        "fee": 2,
+        "target_count": 2,
+        "frequency": "daily",
+        "time": "09:00",
+        "month": 1,
+        "day": 1,
+        "weekday": 1,
+        "enabled": True,
+        "next_run_at": "2026-08-12T09:00:00",
+    }
+    usd_plan = {
+        "id": "plan-usd",
+        "name": "美元定投",
+        "mode": "usd",
+        "amount": 500,
+        "fee": 1,
+        "frequency": "weekly",
+        "time": "09:00",
+        "month": 1,
+        "day": 1,
+        "weekday": 1,
+        "enabled": True,
+        "next_run_at": "2026-08-17T09:00:00",
+    }
+    paused_plan = {**rmb_plan, "id": "plan-paused", "enabled": False}
+    execution = {
+        "id": "execution-rmb",
+        "type": "buy",
+        "mode": "rmb",
+        "price": 50,
+        "quantity": 2,
+        "fee": 2,
+        "source": "investment_plan",
+        "source_id": "plan-rmb",
+        "execution_kind": "scheduled",
+    }
+    summary = investment_plan_state(
+        [rmb_plan, usd_plan, paused_plan],
+        transactions=[execution],
+        now=datetime(2026, 8, 12, 10, 0),
+    )["summary"]
+
+    assert summary["commitment_days"] == 30
+    assert summary["commitment_plan_count"] == 2
+    assert summary["commitment_run_count"] == 5
+    assert summary["rmb_commitment"] == 102.0
+    assert summary["usd_commitment"] == 2004.0
+
+
 def test_investment_plan_state_exposes_future_schedule_from_pending_run():
     from goldmonitor.portfolio_investment import investment_plan_state
 

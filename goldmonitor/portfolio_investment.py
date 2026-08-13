@@ -15,6 +15,7 @@ INVESTMENT_FREQUENCIES = {"daily", "weekly", "monthly", "yearly"}
 INVESTMENT_EXECUTION_KINDS = {"scheduled", "catch_up", "manual"}
 INVESTMENT_EXECUTION_HISTORY_LIMIT = 10
 INVESTMENT_SCHEDULE_PREVIEW_LIMIT = 5
+INVESTMENT_COMMITMENT_WINDOW_DAYS = 30
 INVESTMENT_EXECUTION_CSV_FIELDS = [
     "plan_id",
     "plan_name",
@@ -714,6 +715,73 @@ def investment_plan_projection(
     }
 
 
+def investment_plan_window_projection(
+    item,
+    *,
+    now=None,
+    days=INVESTMENT_COMMITMENT_WINDOW_DAYS,
+):
+    if not isinstance(item, dict):
+        raise ValueError("定投计划格式无效")
+    now = now or datetime.now()
+    window_days = _bounded_int(
+        days,
+        1,
+        366,
+        INVESTMENT_COMMITMENT_WINDOW_DAYS,
+    )
+    mode = _clean_text(item.get("mode", "rmb")).lower()
+    if mode not in {"rmb", "usd"}:
+        mode = "rmb"
+    result = {
+        "mode": mode,
+        "days": window_days,
+        "run_count": 0,
+        "projected_cost": 0.0,
+        "first_run_at": "",
+        "last_run_at": "",
+    }
+    if item.get("enabled") is False or _clean_text(item.get("archived_at")):
+        return result
+    amount = _positive_float(item.get("amount"))
+    fee = _nonnegative_float(item.get("fee", 0))
+    if amount is None or fee is None:
+        return result
+    target_count = _target_count(item.get("target_count", 0))
+    completed_count = _nonnegative_int(item.get("completed_count", 0))
+    remaining_count = max(0, target_count - completed_count) if target_count else None
+    if remaining_count == 0:
+        return result
+    schedule = normalize_investment_schedule(item)
+    candidate = pending_plan_run_at(item, now)
+    if candidate is None:
+        candidate = next_plan_run_in_window(schedule, now)
+    cutoff = datetime.combine(
+        now.date() + timedelta(days=window_days - 1),
+        datetime.max.time(),
+    )
+    run_ats = []
+    while (
+        candidate is not None
+        and candidate <= cutoff
+        and (remaining_count is None or len(run_ats) < remaining_count)
+    ):
+        run_ats.append(candidate)
+        try:
+            candidate = next_plan_run_in_window(schedule, candidate)
+        except (OverflowError, ValueError):
+            candidate = None
+    if not run_ats:
+        return result
+    result.update({
+        "run_count": len(run_ats),
+        "projected_cost": (amount + fee) * len(run_ats),
+        "first_run_at": run_ats[0].isoformat(timespec="seconds"),
+        "last_run_at": run_ats[-1].isoformat(timespec="seconds"),
+    })
+    return result
+
+
 def build_investment_plan_executions_csv(plan, transactions):
     plan_id = _clean_text((plan or {}).get("id"))
     if not plan_id:
@@ -792,6 +860,11 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
         "execution_count": 0,
         "rmb_invested": 0.0,
         "usd_invested": 0.0,
+        "commitment_days": INVESTMENT_COMMITMENT_WINDOW_DAYS,
+        "commitment_plan_count": 0,
+        "commitment_run_count": 0,
+        "rmb_commitment": 0.0,
+        "usd_commitment": 0.0,
     }
     for raw in list(items or []):
         plan = dict(raw)
@@ -850,6 +923,19 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
             existing=plan,
             now=now,
         )
+        commitment = investment_plan_window_projection(
+            {**plan, "completed_count": completed_count},
+            now=now,
+        )
+        if commitment["run_count"]:
+            summary["commitment_plan_count"] += 1
+            summary["commitment_run_count"] += commitment["run_count"]
+            commitment_key = (
+                "usd_commitment"
+                if commitment["mode"] == "usd"
+                else "rmb_commitment"
+            )
+            summary[commitment_key] += commitment["projected_cost"]
         plan["performance"] = performance
         summary["execution_count"] += performance["execution_count"]
         invested_key = "usd_invested" if plan.get("mode") == "usd" else "rmb_invested"

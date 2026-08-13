@@ -218,6 +218,11 @@ function normalizePortfolioInvestmentState(data) {
       execution_count: Number.isFinite(Number(summary.execution_count)) ? Number(summary.execution_count) : items.reduce((total, item) => total + item.performance.execution_count, 0),
       rmb_invested: Number.isFinite(Number(summary.rmb_invested)) ? Number(summary.rmb_invested) : 0,
       usd_invested: Number.isFinite(Number(summary.usd_invested)) ? Number(summary.usd_invested) : 0,
+      commitment_days: Number.isFinite(Number(summary.commitment_days)) ? Number(summary.commitment_days) : 30,
+      commitment_plan_count: Number.isFinite(Number(summary.commitment_plan_count)) ? Number(summary.commitment_plan_count) : 0,
+      commitment_run_count: Number.isFinite(Number(summary.commitment_run_count)) ? Number(summary.commitment_run_count) : 0,
+      rmb_commitment: Number.isFinite(Number(summary.rmb_commitment)) ? Number(summary.rmb_commitment) : 0,
+      usd_commitment: Number.isFinite(Number(summary.usd_commitment)) ? Number(summary.usd_commitment) : 0,
     },
     updated_at: source.updated_at || '',
   };

@@ -214,6 +214,11 @@ def test_runtime_archives_restores_and_permanently_deletes_plan():
         "execution_count": 0,
         "rmb_invested": 0.0,
         "usd_invested": 0.0,
+        "commitment_days": 30,
+        "commitment_plan_count": 0,
+        "commitment_run_count": 0,
+        "rmb_commitment": 0.0,
+        "usd_commitment": 0.0,
     }
     assert len(state.portfolio_transactions) == transaction_count
 

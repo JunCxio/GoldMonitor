@@ -65,6 +65,44 @@ if (plan.upcoming_run_ats.length !== 2 || plan.upcoming_run_ats[1] !== '2026-10-
     assert result.returncode == 0, result.stderr
 
 
+def test_investment_plan_frontend_normalizes_and_renders_commitment_summary():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("需要 Node.js 执行定投前端行为测试")
+
+    state_source = (ROOT / "static" / "portfolio-state.js").read_text(encoding="utf-8")
+    investment_source = read_investment_source()
+    script = """
+const vm = require('vm');
+const box = { classList: { add: () => {} }, innerHTML: '' };
+const context = {
+  console,
+  portfolioState: { investment_plans: { items: [], summary: {} } },
+  escapeHtml: value => String(value),
+  formatPortfolioMoney: (value, mode) => (mode === 'usd' ? '$' : '¥') + Number(value).toFixed(2),
+};
+context.globalThis = context;
+vm.createContext(context);
+vm.runInContext(__STATE_SOURCE__, context);
+vm.runInContext(__INVESTMENT_SOURCE__, context);
+context.portfolioState.investment_plans = vm.runInContext(`normalizePortfolioInvestmentState({summary:{
+  commitment_days:30, commitment_plan_count:2, commitment_run_count:5,
+  rmb_commitment:102, usd_commitment:2004
+}})`, context);
+vm.runInContext('renderPortfolioInvestmentSummary', context)(box);
+if (!box.innerHTML.includes('30天') || !box.innerHTML.includes('计划投入')) {
+  throw new Error('commitment window must render with a clear label');
+}
+if (!box.innerHTML.includes('¥102.00 · $2,004.00') || !box.innerHTML.includes('预计 5 期 · 涉及 2 个计划')) {
+  throw new Error('commitment totals and counts must render by currency');
+}
+"""
+    script = script.replace("__STATE_SOURCE__", json.dumps(state_source))
+    script = script.replace("__INVESTMENT_SOURCE__", json.dumps(investment_source))
+    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 def test_duplicate_investment_plan_creates_paused_new_draft_without_socket_write():
     node = shutil.which("node")
     if not node:

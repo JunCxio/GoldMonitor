@@ -353,6 +353,11 @@ function renderPortfolioInvestmentSummary(box) {
     '<div><span>需处理</span><strong>' + escapeHtml(String(summary.attention || 0)) + '</strong></div>',
     '</div>',
     '<div class="portfolio-investment-overview-performance"><span>累计执行 ' + escapeHtml(String(summary.execution_count || 0)) + ' 次</span><strong>' + escapeHtml(formatPortfolioMoney(summary.rmb_invested || 0, 'rmb')) + ' · ' + escapeHtml(formatPortfolioMoney(summary.usd_invested || 0, 'usd')) + '</strong></div>',
+    '<div class="portfolio-investment-overview-commitment">',
+    '<b>' + escapeHtml(String(summary.commitment_days || 30) + '天') + '</b>',
+    '<div><span>计划投入</span><small>含当前待执行期次，按固定金额估算</small></div>',
+    '<div class="portfolio-investment-overview-commitment-values"><strong>' + escapeHtml(formatPortfolioMoney(summary.rmb_commitment || 0, 'rmb')) + ' · ' + escapeHtml(formatPortfolioMoney(summary.usd_commitment || 0, 'usd')) + '</strong><small>预计 ' + escapeHtml(String(summary.commitment_run_count || 0)) + ' 期 · 涉及 ' + escapeHtml(String(summary.commitment_plan_count || 0)) + ' 个计划</small></div>',
+    '</div>',
     '</div>',
   ].join('');
 }
