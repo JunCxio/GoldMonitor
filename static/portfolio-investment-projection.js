@@ -167,12 +167,52 @@ function portfolioInvestmentCommitmentRange(item) {
   return first === last ? first : first + ' 至 ' + last;
 }
 
+function portfolioInvestmentCalendarDateLabel(value) {
+  const text = String(value || '').trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!match) return text || '--';
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][date.getDay()] || '';
+  return match[2] + '月' + match[3] + '日' + (weekday ? ' · ' + weekday : '');
+}
+
+function portfolioInvestmentCommitmentCalendarMarkup(items, days) {
+  const source = Array.isArray(items) ? items : [];
+  const windowDays = Number(days) || 30;
+  if (!source.length) {
+    return [
+      '<div class="portfolio-investment-commitment-section-head"><span>资金日历</span><small>按日期汇总未来期次</small></div>',
+      '<div class="portfolio-investment-commitment-empty">未来 ' + escapeHtml(String(windowDays)) + ' 天暂无计划投入。</div>',
+    ].join('');
+  }
+  return [
+    '<div class="portfolio-investment-commitment-section-head"><span>资金日历</span><small>点击日期查看当天计划</small></div>',
+    '<div class="portfolio-investment-calendar-list">',
+    source.map(item => {
+      const entries = Array.isArray(item.items) ? item.items : [];
+      const totals = [];
+      if (Number(item.rmb_commitment) > 0) totals.push(formatPortfolioMoney(item.rmb_commitment, 'rmb'));
+      if (Number(item.usd_commitment) > 0) totals.push(formatPortfolioMoney(item.usd_commitment, 'usd'));
+      return [
+        '<details class="portfolio-investment-calendar-day">',
+        '<summary><div><strong>' + escapeHtml(portfolioInvestmentCalendarDateLabel(item.date)) + '</strong><small>' + escapeHtml(String(Number(item.run_count) || 0) + ' 期 · ' + String(Number(item.plan_count) || 0) + ' 个计划') + '</small></div><div><strong>' + escapeHtml(totals.join(' · ') || '--') + '</strong><small class="portfolio-investment-calendar-toggle"><span class="closed">展开</span><span class="open">收起</span></small></div></summary>',
+        '<div class="portfolio-investment-calendar-entries">',
+        entries.map(entry => {
+          const mode = entry.mode === 'usd' ? 'usd' : 'rmb';
+          return '<div><span><strong>' + escapeHtml(entry.name || '未命名计划') + '</strong><small>' + escapeHtml(portfolioInvestmentProjectionDateTime(entry.scheduled_at)) + '</small></span><strong>' + escapeHtml(formatPortfolioMoney(entry.planned_cost, mode)) + '</strong></div>';
+        }).join(''),
+        '</div>',
+        '</details>',
+      ].join('');
+    }).join(''),
+    '</div>',
+  ].join('');
+}
+
 function portfolioInvestmentCommitmentItemsMarkup(items) {
   const source = Array.isArray(items) ? items : [];
-  if (!source.length) {
-    return '<div class="portfolio-investment-commitment-empty">未来 30 天暂无计划投入。</div>';
-  }
-  return '<div class="portfolio-investment-commitment-list">' + source.map(item => {
+  if (!source.length) return '';
+  return '<div class="portfolio-investment-commitment-section-head"><span>按计划汇总</span><small>查看各计划的未来投入区间</small></div><div class="portfolio-investment-commitment-list">' + source.map(item => {
     const mode = item.mode === 'usd' ? 'usd' : 'rmb';
     return [
       '<div class="portfolio-investment-commitment-item">',

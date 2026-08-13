@@ -308,6 +308,10 @@ context.portfolioState.investment_plans = vm.runInContext(`normalizePortfolioInv
   commitment_items:[
     {id:'plan-rmb',name:'人民币定投',mode:'rmb',run_count:1,planned_cost_per_run:102,projected_cost:102,first_run_at:'2026-08-12T09:00:00',last_run_at:'2026-08-12T09:00:00'},
     {id:'plan-usd',name:'美元定投',mode:'usd',run_count:4,planned_cost_per_run:501,projected_cost:2004,first_run_at:'2026-08-17T09:00:00',last_run_at:'2026-09-07T09:00:00'}
+  ],
+  commitment_calendar:[
+    {date:'2026-08-12',run_count:1,plan_count:1,rmb_commitment:102,usd_commitment:0,items:[{id:'plan-rmb',name:'人民币定投',mode:'rmb',scheduled_at:'2026-08-12T09:00:00',planned_cost:102}]},
+    {date:'2026-08-17',run_count:2,plan_count:2,rmb_commitment:102,usd_commitment:501,items:[{id:'plan-rmb',name:'人民币定投',mode:'rmb',scheduled_at:'2026-08-17T09:00:00',planned_cost:102},{id:'plan-usd',name:'美元定投',mode:'usd',scheduled_at:'2026-08-17T09:00:00',planned_cost:501}]}
   ]
 }})`, context);
 vm.runInContext('renderPortfolioInvestmentSummary', context)(box);
@@ -340,6 +344,15 @@ if (!box.innerHTML.includes('人民币定投') || !box.innerHTML.includes('1 期
 }
 if (!box.innerHTML.includes('美元定投') || !box.innerHTML.includes('4 期 · 每期 $501.00')) {
   throw new Error('usd commitment item must explain its amount and run count');
+}
+if (!box.innerHTML.includes('资金日历') || !box.innerHTML.includes('08月12日') || !box.innerHTML.includes('08月17日')) {
+  throw new Error('commitment calendar must render future investment dates');
+}
+if (!box.innerHTML.includes('¥102.00 · $501.00') || !box.innerHTML.includes('2 期 · 2 个计划')) {
+  throw new Error('commitment calendar must aggregate currencies and plans by date');
+}
+if (!box.innerHTML.includes('<details') || !box.innerHTML.includes('点击日期查看当天计划')) {
+  throw new Error('commitment calendar dates must expose expandable plan details');
 }
 """
     script = script.replace("__STATE_SOURCE__", json.dumps(state_source))

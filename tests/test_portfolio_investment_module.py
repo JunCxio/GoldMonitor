@@ -504,10 +504,19 @@ def test_investment_plan_window_projection_respects_target_and_schedule_window()
     assert limited["projected_cost"] == 204.0
     assert limited["first_run_at"] == "2026-08-12T09:00:00"
     assert limited["last_run_at"] == "2026-08-13T09:00:00"
+    assert limited["run_ats"] == [
+        "2026-08-12T09:00:00",
+        "2026-08-13T09:00:00",
+    ]
     assert ended["run_count"] == 2
     assert ended["projected_cost"] == 204.0
+    assert ended["run_ats"] == [
+        "2026-08-12T09:00:00",
+        "2026-08-13T09:00:00",
+    ]
     assert paused["run_count"] == 0
     assert paused["projected_cost"] == 0.0
+    assert paused["run_ats"] == []
 
 
 def test_investment_plan_state_summarizes_next_30_day_commitments_by_currency():
@@ -566,6 +575,34 @@ def test_investment_plan_state_summarizes_next_30_day_commitments_by_currency():
     assert summary["commitment_run_count"] == 5
     assert summary["rmb_commitment"] == 102.0
     assert summary["usd_commitment"] == 2004.0
+    assert summary["commitment_calendar"][0] == {
+        "date": "2026-08-12",
+        "run_count": 1,
+        "plan_count": 1,
+        "rmb_commitment": 102.0,
+        "usd_commitment": 0.0,
+        "items": [{
+            "id": "plan-rmb",
+            "name": "人民币定投",
+            "mode": "rmb",
+            "scheduled_at": "2026-08-12T09:00:00",
+            "planned_cost": 102.0,
+        }],
+    }
+    assert summary["commitment_calendar"][-1] == {
+        "date": "2026-09-07",
+        "run_count": 1,
+        "plan_count": 1,
+        "rmb_commitment": 0.0,
+        "usd_commitment": 501.0,
+        "items": [{
+            "id": "plan-usd",
+            "name": "美元定投",
+            "mode": "usd",
+            "scheduled_at": "2026-09-07T09:00:00",
+            "planned_cost": 501.0,
+        }],
+    }
     assert summary["actual_days"] == 30
     assert summary["actual_execution_count"] == 1
     assert summary["rmb_actual_invested"] == 102.0
@@ -619,6 +656,61 @@ def test_investment_plan_state_summarizes_next_30_day_commitments_by_currency():
         "first_run_at": "2026-08-12T09:00:00",
         "last_run_at": "2026-08-12T09:00:00",
     }
+
+
+def test_investment_commitment_calendar_groups_plans_and_currencies_by_date():
+    from goldmonitor.portfolio_investment import investment_commitment_calendar
+
+    calendar = investment_commitment_calendar([
+        {
+            "id": "plan-rmb",
+            "name": "人民币定投",
+            "mode": "rmb",
+            "planned_cost_per_run": 102.0,
+            "run_ats": ["2026-08-17T09:00:00", "2026-08-18T09:00:00"],
+        },
+        {
+            "id": "plan-usd",
+            "name": "美元定投",
+            "mode": "usd",
+            "planned_cost_per_run": 501.0,
+            "run_ats": ["2026-08-17T10:00:00"],
+        },
+        {
+            "id": "invalid-plan",
+            "name": "无效计划",
+            "mode": "rmb",
+            "planned_cost_per_run": 100.0,
+            "run_ats": ["invalid"],
+        },
+    ])
+
+    assert calendar[0] == {
+        "date": "2026-08-17",
+        "run_count": 2,
+        "plan_count": 2,
+        "rmb_commitment": 102.0,
+        "usd_commitment": 501.0,
+        "items": [
+            {
+                "id": "plan-rmb",
+                "name": "人民币定投",
+                "mode": "rmb",
+                "scheduled_at": "2026-08-17T09:00:00",
+                "planned_cost": 102.0,
+            },
+            {
+                "id": "plan-usd",
+                "name": "美元定投",
+                "mode": "usd",
+                "scheduled_at": "2026-08-17T10:00:00",
+                "planned_cost": 501.0,
+            },
+        ],
+    }
+    assert calendar[1]["date"] == "2026-08-18"
+    assert calendar[1]["run_count"] == 1
+    assert calendar[1]["plan_count"] == 1
 
 
 def test_investment_plan_state_exposes_future_schedule_from_pending_run():

@@ -976,6 +976,7 @@ def investment_plan_window_projection(
         "projected_cost": 0.0,
         "first_run_at": "",
         "last_run_at": "",
+        "run_ats": [],
     }
     if item.get("enabled") is False or _clean_text(item.get("archived_at")):
         return result
@@ -1015,7 +1016,57 @@ def investment_plan_window_projection(
         "projected_cost": result["planned_cost_per_run"] * len(run_ats),
         "first_run_at": run_ats[0].isoformat(timespec="seconds"),
         "last_run_at": run_ats[-1].isoformat(timespec="seconds"),
+        "run_ats": [item.isoformat(timespec="seconds") for item in run_ats],
     })
+    return result
+
+
+def investment_commitment_calendar(items):
+    buckets = {}
+    for item in list(items or []):
+        if not isinstance(item, dict):
+            continue
+        plan_id = _clean_text(item.get("id"))
+        plan_name = _clean_text(item.get("name")) or "未命名计划"
+        mode = _clean_text(item.get("mode")).lower()
+        planned_cost = _nonnegative_float(item.get("planned_cost_per_run"))
+        if not plan_id or mode not in {"rmb", "usd"} or planned_cost is None:
+            continue
+        for raw_scheduled_at in list(item.get("run_ats") or []):
+            scheduled_at = parse_plan_datetime(raw_scheduled_at)
+            if scheduled_at is None:
+                continue
+            date_key = scheduled_at.date().isoformat()
+            bucket = buckets.setdefault(date_key, {
+                "date": date_key,
+                "run_count": 0,
+                "plan_count": 0,
+                "rmb_commitment": 0.0,
+                "usd_commitment": 0.0,
+                "items": [],
+                "_plan_ids": set(),
+            })
+            bucket[mode + "_commitment"] += planned_cost
+            bucket["run_count"] += 1
+            bucket["_plan_ids"].add(plan_id)
+            bucket["items"].append({
+                "id": plan_id,
+                "name": plan_name,
+                "mode": mode,
+                "scheduled_at": scheduled_at.isoformat(timespec="seconds"),
+                "planned_cost": planned_cost,
+            })
+    result = []
+    for date_key in sorted(buckets):
+        bucket = buckets[date_key]
+        bucket["plan_count"] = len(bucket.pop("_plan_ids"))
+        bucket["items"].sort(
+            key=lambda item: (
+                item.get("scheduled_at") or "",
+                item.get("name") or "",
+            )
+        )
+        result.append(bucket)
     return result
 
 
@@ -1119,7 +1170,9 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
         "rmb_commitment": 0.0,
         "usd_commitment": 0.0,
         "commitment_items": [],
+        "commitment_calendar": [],
     }
+    commitment_calendar_sources = []
     for raw in list(items or []):
         plan = dict(raw)
         archived = bool(_clean_text(plan.get("archived_at")))
@@ -1200,7 +1253,12 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
                 else "rmb_commitment"
             )
             summary[commitment_key] += commitment["projected_cost"]
-            summary["commitment_items"].append(commitment)
+            commitment_calendar_sources.append(commitment)
+            summary["commitment_items"].append({
+                key: value
+                for key, value in commitment.items()
+                if key != "run_ats"
+            })
         plan["performance"] = performance
         plan["reliability"] = plan_reliability
         plan["variance"] = plan_variance
@@ -1215,6 +1273,9 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
             item.get("first_run_at") or "9999",
             item.get("name") or "",
         )
+    )
+    summary["commitment_calendar"] = investment_commitment_calendar(
+        commitment_calendar_sources
     )
     return {
         "items": plans,

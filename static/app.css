@@ -947,6 +947,29 @@
   .portfolio-investment-overview-commitment-values { text-align:right; }
   .portfolio-investment-overview-commitment-values strong { display:block; color:#ececf2; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.7rem; white-space:nowrap; }
   .portfolio-investment-overview-commitment-values small { margin-top:2px; }
+  .portfolio-investment-commitment-section-head { grid-column:1 / -1; display:flex; align-items:flex-start; justify-content:space-between; gap:10px; min-width:0; padding:8px 10px; border-top:1px solid rgba(255,255,255,0.055); background:rgba(0,0,0,0.065); }
+  .portfolio-investment-commitment-section-head span { color:#dcdce4; font-weight:800; }
+  .portfolio-investment-commitment-section-head small { color:var(--text-dim); font-size:0.54rem; text-align:right; }
+  .portfolio-investment-calendar-list { grid-column:1 / -1; display:grid; max-height:220px; min-width:0; overflow-y:auto; border-top:1px solid rgba(255,255,255,0.055); background:rgba(0,0,0,0.09); }
+  .portfolio-investment-calendar-day { min-width:0; border-top:1px dashed rgba(255,255,255,0.05); }
+  .portfolio-investment-calendar-day:first-child { border-top:0; }
+  .portfolio-investment-calendar-day summary { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:10px; align-items:center; min-width:0; padding:8px 10px; cursor:pointer; list-style:none; }
+  .portfolio-investment-calendar-day summary::-webkit-details-marker { display:none; }
+  .portfolio-investment-calendar-day summary > div { min-width:0; }
+  .portfolio-investment-calendar-day summary > div:last-child { text-align:right; }
+  .portfolio-investment-calendar-day summary strong, .portfolio-investment-calendar-day summary small { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-investment-calendar-day summary strong { color:#dcdce4; font-size:0.63rem; }
+  .portfolio-investment-calendar-day summary small { margin-top:2px; color:var(--text-dim); font-size:0.53rem; }
+  .portfolio-investment-calendar-day[open] summary { background:rgba(232,184,48,0.035); }
+  .portfolio-investment-calendar-toggle .open { display:none; }
+  .portfolio-investment-calendar-day[open] .portfolio-investment-calendar-toggle .closed { display:none; }
+  .portfolio-investment-calendar-day[open] .portfolio-investment-calendar-toggle .open { display:inline; }
+  .portfolio-investment-calendar-entries { display:grid; min-width:0; padding:0 10px 7px; }
+  .portfolio-investment-calendar-entries > div { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:10px; align-items:center; min-width:0; padding:6px 7px; border-top:1px solid rgba(255,255,255,0.045); background:rgba(255,255,255,0.014); }
+  .portfolio-investment-calendar-entries > div > span { min-width:0; }
+  .portfolio-investment-calendar-entries strong, .portfolio-investment-calendar-entries small { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-investment-calendar-entries strong { color:#d7d7df; font-size:0.58rem; }
+  .portfolio-investment-calendar-entries small { margin-top:2px; color:var(--text-dim); font-size:0.51rem; }
   .portfolio-investment-commitment-list { grid-column:1 / -1; display:grid; max-height:168px; min-width:0; overflow-y:auto; border-top:1px solid rgba(255,255,255,0.055); background:rgba(0,0,0,0.09); }
   .portfolio-investment-commitment-item { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:10px; align-items:center; min-width:0; padding:8px 10px; border-top:1px dashed rgba(255,255,255,0.05); }
   .portfolio-investment-commitment-item:first-child { border-top:0; }
@@ -1608,6 +1631,10 @@
     .portfolio-investment-variance-grid { grid-template-columns:1fr; }
     .portfolio-investment-variance-grid > div { border-left:0; border-top:1px solid rgba(255,255,255,0.055); }
     .portfolio-investment-variance-grid > div:first-child { border-top:0; }
+    .portfolio-investment-commitment-section-head { align-items:flex-start; flex-direction:column; }
+    .portfolio-investment-commitment-section-head small { text-align:left; }
+    .portfolio-investment-calendar-day summary, .portfolio-investment-calendar-entries > div { grid-template-columns:1fr; }
+    .portfolio-investment-calendar-day summary > div:last-child { text-align:left; }
     .portfolio-investment-commitment-item { grid-template-columns:1fr; }
     .portfolio-investment-commitment-item > div:last-child { text-align:left; }
     .portfolio-investment-performance-grid, .portfolio-investment-execution-item { grid-template-columns:1fr; }

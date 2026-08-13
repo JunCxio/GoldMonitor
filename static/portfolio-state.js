@@ -290,6 +290,24 @@ function normalizePortfolioInvestmentState(data) {
       commitment_items: Array.isArray(summary.commitment_items)
         ? summary.commitment_items.map(item => Object.assign({}, item)).filter(item => Number(item.run_count) > 0)
         : [],
+      commitment_calendar: Array.isArray(summary.commitment_calendar)
+        ? summary.commitment_calendar.map(item => ({
+          date: String((item && item.date) || ''),
+          run_count: Number.isFinite(Number(item && item.run_count)) ? Number(item.run_count) : 0,
+          plan_count: Number.isFinite(Number(item && item.plan_count)) ? Number(item.plan_count) : 0,
+          rmb_commitment: Number.isFinite(Number(item && item.rmb_commitment)) ? Number(item.rmb_commitment) : 0,
+          usd_commitment: Number.isFinite(Number(item && item.usd_commitment)) ? Number(item.usd_commitment) : 0,
+          items: Array.isArray(item && item.items)
+            ? item.items.map(entry => ({
+              id: String((entry && entry.id) || ''),
+              name: String((entry && entry.name) || ''),
+              mode: entry && entry.mode === 'usd' ? 'usd' : 'rmb',
+              scheduled_at: String((entry && entry.scheduled_at) || ''),
+              planned_cost: Number.isFinite(Number(entry && entry.planned_cost)) ? Number(entry.planned_cost) : 0,
+            })).filter(entry => entry.id && entry.scheduled_at)
+            : [],
+        })).filter(item => item.date && item.run_count > 0)
+        : [],
     },
     updated_at: source.updated_at || '',
   };

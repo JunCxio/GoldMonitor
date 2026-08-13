@@ -278,6 +278,7 @@ def test_runtime_archives_restores_and_permanently_deletes_plan():
         "rmb_commitment": 0.0,
         "usd_commitment": 0.0,
         "commitment_items": [],
+        "commitment_calendar": [],
     }
     assert len(state.portfolio_transactions) == transaction_count
 
