@@ -983,6 +983,7 @@
   .portfolio-investment-performance-grid strong { display:block; margin:3px 0; color:#f0f0f4; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.7rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .portfolio-investment-performance-grid small.up { color:var(--up); }
   .portfolio-investment-performance-grid small.down { color:var(--down); }
+  .portfolio-investment-performance > .portfolio-investment-reliability { padding:9px 10px 10px; border:1px solid rgba(255,255,255,0.055); border-radius:7px; background:rgba(0,0,0,0.08); }
   .portfolio-investment-performance-empty { grid-column:1 / -1; padding:9px 10px; border:1px dashed rgba(255,255,255,0.08); border-radius:7px; color:var(--text-dim); font-size:0.64rem; text-align:center; }
   .portfolio-investment-execution-history { display:grid; gap:5px; min-width:0; }
   .portfolio-investment-execution-history-head { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--text-dim); font-size:0.58rem; }

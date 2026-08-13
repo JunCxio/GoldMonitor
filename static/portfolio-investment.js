@@ -303,9 +303,10 @@ function renderPortfolioInvestmentPerformance(plan) {
   const performance = portfolioInvestmentPerformance(plan);
   const mode = plan.mode || 'rmb';
   const count = Number(performance.execution_count || 0);
+  const reliability = portfolioInvestmentReliabilityMarkup(plan.reliability, '本计划');
   if (count <= 0) {
     const progress = Number(plan.target_count || 0) > 0 ? '当前进度 0/' + Number(plan.target_count) + ' 期。' : '';
-    return '<div class="portfolio-investment-performance-empty">' + progress + '首次执行后显示累计投入、定投均价和盈亏。</div>';
+    return '<div class="portfolio-investment-performance">' + reliability + '<div class="portfolio-investment-performance-empty">' + progress + '首次执行后显示累计投入、定投均价和盈亏。</div></div>';
   }
   const pnl = performance.pnl;
   const pnlText = pnl == null
@@ -320,6 +321,7 @@ function renderPortfolioInvestmentPerformance(plan) {
     '<div><span>定投均价</span><strong>' + escapeHtml(formatPortfolioMoney(performance.average_cost, mode)) + '</strong><small>成交均价 ' + escapeHtml(formatPortfolioMoney(performance.average_price, mode)) + '</small></div>',
     '<div><span>当前市值</span><strong>' + escapeHtml(performance.market_value == null ? '--' : formatPortfolioMoney(performance.market_value, mode)) + '</strong><small class="' + portfolioPnlClass(pnl) + '">' + escapeHtml(pnlText) + '</small></div>',
     '</div>',
+    reliability,
     '<div class="portfolio-investment-execution-history">',
     '<div class="portfolio-investment-execution-history-head"><div><span>最近执行</span><small>页面最多显示 10 条</small></div><button class="btn-clear-sm btn-muted-sm" type="button" onclick="exportPortfolioInvestmentExecutions(\'' + escapeHtml(plan.id) + '\')">导出全部记录</button></div>',
     recentExecutions.map(item => [

@@ -346,6 +346,41 @@ def test_investment_execution_reliability_separates_automatic_and_manual_runs():
     }
 
 
+def test_investment_execution_reliability_can_filter_a_single_plan():
+    from goldmonitor.portfolio_investment import investment_execution_reliability_summary
+
+    base = {
+        "type": "buy",
+        "mode": "rmb",
+        "price": 100,
+        "quantity": 2,
+        "fee": 1,
+        "source": "investment_plan",
+        "trade_date": "2026-08-12",
+    }
+    reliability = investment_execution_reliability_summary(
+        [
+            {**base, "source_id": "plan-1", "execution_kind": "scheduled"},
+            {**base, "source_id": "plan-1", "execution_kind": "catch_up"},
+            {**base, "source_id": "plan-1", "execution_kind": "manual"},
+            {**base, "source_id": "plan-2", "execution_kind": "scheduled"},
+            "invalid record",
+        ],
+        now=datetime(2026, 8, 12, 10, 0),
+        source_id="plan-1",
+    )
+
+    assert reliability == {
+        "days": 90,
+        "automatic_execution_count": 2,
+        "on_time_execution_count": 1,
+        "catch_up_execution_count": 1,
+        "manual_execution_count": 1,
+        "unclassified_execution_count": 0,
+        "on_time_rate": 50.0,
+    }
+
+
 def test_investment_plan_window_projection_respects_target_and_schedule_window():
     from goldmonitor.portfolio_investment import investment_plan_window_projection
 
@@ -461,6 +496,26 @@ def test_investment_plan_state_summarizes_next_30_day_commitments_by_currency():
     assert summary["manual_execution_count"] == 0
     assert summary["unclassified_execution_count"] == 0
     assert summary["on_time_rate"] == 100.0
+    plans = investment_plan_state(
+        [rmb_plan, usd_plan, paused_plan],
+        transactions=[
+            execution,
+            {
+                **execution,
+                "id": "execution-usd",
+                "source_id": "plan-usd",
+                "mode": "usd",
+                "execution_kind": "catch_up",
+            },
+        ],
+        now=datetime(2026, 8, 12, 10, 0),
+    )["items"]
+    assert plans[0]["reliability"]["on_time_rate"] == 100.0
+    assert plans[0]["reliability"]["catch_up_execution_count"] == 0
+    assert plans[1]["reliability"]["on_time_rate"] == 0.0
+    assert plans[1]["reliability"]["catch_up_execution_count"] == 1
+    assert plans[2]["reliability"]["automatic_execution_count"] == 0
+    assert plans[2]["reliability"]["on_time_rate"] is None
     assert [item["id"] for item in summary["commitment_items"]] == [
         "plan-rmb",
         "plan-usd",

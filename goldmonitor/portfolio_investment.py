@@ -744,8 +744,10 @@ def investment_execution_reliability_summary(
     *,
     now=None,
     days=INVESTMENT_RELIABILITY_WINDOW_DAYS,
+    source_id=None,
 ):
     now = now or datetime.now()
+    plan_id = _clean_text(source_id)
     window_days = _bounded_int(
         days,
         1,
@@ -763,6 +765,11 @@ def investment_execution_reliability_summary(
         "on_time_rate": None,
     }
     for raw in list(transactions or []):
+        if plan_id and (
+            not isinstance(raw, dict)
+            or _clean_text(raw.get("source_id")) != plan_id
+        ):
+            continue
         execution = _investment_execution_record(raw)
         if execution is None or not start_date <= execution["date"] <= now.date():
             continue
@@ -1048,6 +1055,11 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
             transactions,
             current_price=prices.get(plan.get("mode")),
         )
+        plan_reliability = investment_execution_reliability_summary(
+            transactions,
+            now=now,
+            source_id=plan.get("id"),
+        )
         target_count = _target_count(plan.get("target_count", 0))
         completed_count = performance["execution_count"]
         target_reached = bool(target_count and completed_count >= target_count)
@@ -1111,6 +1123,7 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
             summary[commitment_key] += commitment["projected_cost"]
             summary["commitment_items"].append(commitment)
         plan["performance"] = performance
+        plan["reliability"] = plan_reliability
         summary["execution_count"] += performance["execution_count"]
         invested_key = "usd_invested" if plan.get("mode") == "usd" else "rmb_invested"
         summary[invested_key] += performance["total_invested"]

@@ -138,6 +138,19 @@ function normalizePortfolioImportBackup(data) {
   };
 }
 
+function normalizePortfolioInvestmentReliability(value, fallbackDays) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return {
+    days: Number.isFinite(Number(source.days)) ? Number(source.days) : fallbackDays,
+    automatic_execution_count: Number.isFinite(Number(source.automatic_execution_count)) ? Number(source.automatic_execution_count) : 0,
+    on_time_execution_count: Number.isFinite(Number(source.on_time_execution_count)) ? Number(source.on_time_execution_count) : 0,
+    catch_up_execution_count: Number.isFinite(Number(source.catch_up_execution_count)) ? Number(source.catch_up_execution_count) : 0,
+    manual_execution_count: Number.isFinite(Number(source.manual_execution_count)) ? Number(source.manual_execution_count) : 0,
+    unclassified_execution_count: Number.isFinite(Number(source.unclassified_execution_count)) ? Number(source.unclassified_execution_count) : 0,
+    on_time_rate: source.on_time_rate == null || !Number.isFinite(Number(source.on_time_rate)) ? null : Number(source.on_time_rate),
+  };
+}
+
 function normalizePortfolioInvestmentPlan(item) {
   const source = item && typeof item === 'object' && !Array.isArray(item) ? item : {};
   const performance = source.performance && typeof source.performance === 'object' && !Array.isArray(source.performance)
@@ -182,6 +195,7 @@ function normalizePortfolioInvestmentPlan(item) {
     status: source.status || (source.enabled === false ? 'paused' : 'active'),
     created_at: source.created_at || '',
     updated_at: source.updated_at || '',
+    reliability: normalizePortfolioInvestmentReliability(source.reliability, 90),
     performance: {
       execution_count: Number.isFinite(Number(performance.execution_count)) ? Number(performance.execution_count) : 0,
       total_quantity: Number.isFinite(Number(performance.total_quantity)) ? Number(performance.total_quantity) : 0,

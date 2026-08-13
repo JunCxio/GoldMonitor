@@ -99,8 +99,9 @@ function portfolioInvestmentActualTrendMarkup(items, months) {
   ].join('');
 }
 
-function portfolioInvestmentReliabilityMarkup(summary) {
+function portfolioInvestmentReliabilityMarkup(summary, titlePrefix) {
   const source = summary && typeof summary === 'object' ? summary : {};
+  const windowDays = Number(source.days || source.reliability_days) || 90;
   const automaticCount = Math.max(0, Number(source.automatic_execution_count) || 0);
   const onTimeCount = Math.max(0, Number(source.on_time_execution_count) || 0);
   const catchUpCount = Math.max(0, Number(source.catch_up_execution_count) || 0);
@@ -114,7 +115,7 @@ function portfolioInvestmentReliabilityMarkup(summary) {
     : '';
   return [
     '<div class="portfolio-investment-reliability">',
-    '<div class="portfolio-investment-reliability-head"><div><span>近' + escapeHtml(String(Number(source.reliability_days) || 90)) + '天执行稳定性</span><small>按时率只计算计划执行与补执行，手动执行单独列出</small></div></div>',
+    '<div class="portfolio-investment-reliability-head"><div><span>' + escapeHtml((titlePrefix ? String(titlePrefix) + ' · ' : '') + '近' + String(windowDays) + '天执行稳定性') + '</span><small>按时率只计算计划执行与补执行，手动执行单独列出</small></div></div>',
     '<div class="portfolio-investment-reliability-grid">',
     '<div class="on-time"><span>按时率</span><strong>' + escapeHtml(rate == null ? '--' : rate.toFixed(1) + '%') + '</strong><small>' + escapeHtml(automaticCount ? onTimeCount + '/' + automaticCount + ' 次自动执行' : '暂无自动执行记录') + '</small></div>',
     '<div class="catch-up"><span>补执行</span><strong>' + escapeHtml(String(catchUpCount)) + '</strong><small>应用恢复后执行</small></div>',
