@@ -126,6 +126,41 @@ function portfolioInvestmentReliabilityMarkup(summary, titlePrefix) {
   ].join('');
 }
 
+function portfolioInvestmentVarianceMarkup(value, mode) {
+  const source = value && typeof value === 'object' ? value : {};
+  const coveredCount = Math.max(0, Number(source.covered_execution_count) || 0);
+  const uncoveredCount = Math.max(0, Number(source.uncovered_execution_count) || 0);
+  const difference = Number(source.difference) || 0;
+  const differencePercent = source.difference_percent == null || !Number.isFinite(Number(source.difference_percent))
+    ? null
+    : Number(source.difference_percent);
+  const latest = source.latest && typeof source.latest === 'object' ? source.latest : null;
+  const differenceClass = difference > 0.005 ? 'over' : difference < -0.005 ? 'under' : 'even';
+  const differenceText = coveredCount ? formatPortfolioSignedMoney(difference, mode) : '--';
+  const differencePercentText = coveredCount && differencePercent != null ? formatPortfolioPercent(differencePercent) : '--';
+  const latestText = latest
+    ? portfolioInvestmentDateTime(latest.timestamp) + ' · 计划 ' + formatPortfolioMoney(latest.planned_amount, mode) + ' · 实际 ' + formatPortfolioMoney(latest.actual_cost, mode) + ' · 差额 ' + formatPortfolioSignedMoney(latest.difference, mode)
+    : '暂无包含计划金额的执行记录';
+  const feeText = coveredCount ? formatPortfolioMoney(source.fee || 0, mode) : '--';
+  const roundingDifference = Number(source.rounding_difference) || 0;
+  const roundingText = coveredCount ? formatPortfolioSignedMoney(Math.abs(roundingDifference) < 0.005 ? 0 : roundingDifference, mode) : '--';
+  const uncoveredNotice = uncoveredCount
+    ? '<small class="portfolio-investment-variance-notice">另有 ' + escapeHtml(String(uncoveredCount)) + ' 条旧流水未记录计划金额，未计入投入对照。</small>'
+    : '';
+  return [
+    '<div class="portfolio-investment-variance">',
+    '<div class="portfolio-investment-variance-head"><div><span>本计划 · 近' + escapeHtml(String(Number(source.days) || 90)) + '天投入对照</span><small>计划买入金额与实际支出对比；实际支出包含手续费，不代表真实成交滑点</small></div></div>',
+    '<div class="portfolio-investment-variance-grid">',
+    '<div><span>计划买入</span><strong>' + escapeHtml(coveredCount ? formatPortfolioMoney(source.planned_amount, mode) : '--') + '</strong><small>' + escapeHtml(coveredCount + ' 条可对照记录') + '</small></div>',
+    '<div><span>实际支出</span><strong>' + escapeHtml(coveredCount ? formatPortfolioMoney(source.actual_cost, mode) : '--') + '</strong><small>含手续费 ' + escapeHtml(feeText) + '</small></div>',
+    '<div class="' + differenceClass + '"><span>支出差额</span><strong>' + escapeHtml(differenceText) + '</strong><small>差额比例 ' + escapeHtml(differencePercentText) + '<br>数量舍入差额 ' + escapeHtml(roundingText) + '</small></div>',
+    '</div>',
+    '<small class="portfolio-investment-variance-latest">最近一次：' + escapeHtml(latestText) + '</small>',
+    uncoveredNotice,
+    '</div>',
+  ].join('');
+}
+
 function portfolioInvestmentCommitmentRange(item) {
   const first = portfolioInvestmentProjectionDateTime(item && item.first_run_at);
   const last = portfolioInvestmentProjectionDateTime(item && item.last_run_at);

@@ -793,6 +793,80 @@ def investment_execution_reliability_summary(
     return result
 
 
+def investment_plan_execution_variance_summary(
+    plan,
+    transactions,
+    *,
+    now=None,
+    days=INVESTMENT_RELIABILITY_WINDOW_DAYS,
+):
+    now = now or datetime.now()
+    window_days = _bounded_int(
+        days,
+        1,
+        366,
+        INVESTMENT_RELIABILITY_WINDOW_DAYS,
+    )
+    start_date = now.date() - timedelta(days=window_days - 1)
+    result = {
+        "days": window_days,
+        "execution_count": 0,
+        "covered_execution_count": 0,
+        "uncovered_execution_count": 0,
+        "planned_amount": 0.0,
+        "actual_cost": 0.0,
+        "difference": 0.0,
+        "difference_percent": None,
+        "fee": 0.0,
+        "rounding_difference": 0.0,
+        "latest": None,
+    }
+    for execution in investment_plan_executions(plan, transactions):
+        executed_on = parse_plan_date(execution.get("trade_date"))
+        if executed_on is None:
+            executed_at = parse_plan_datetime(
+                execution.get("timestamp") or execution.get("scheduled_at")
+            )
+            executed_on = executed_at.date() if executed_at else None
+        if executed_on is None or not start_date <= executed_on <= now.date():
+            continue
+        result["execution_count"] += 1
+        planned_amount = _positive_float(execution.get("planned_amount"))
+        if planned_amount is None:
+            result["uncovered_execution_count"] += 1
+            continue
+        actual_cost = execution["total_cost"]
+        difference = actual_cost - planned_amount
+        difference_percent = difference / planned_amount * 100
+        fee = execution["fee"]
+        result["covered_execution_count"] += 1
+        result["planned_amount"] += planned_amount
+        result["actual_cost"] += actual_cost
+        result["difference"] += difference
+        result["fee"] += fee
+        result["rounding_difference"] += difference - fee
+        if result["latest"] is None:
+            result["latest"] = {
+                "id": execution.get("id"),
+                "timestamp": (
+                    execution.get("timestamp")
+                    or execution.get("scheduled_at")
+                    or execution.get("trade_date")
+                ),
+                "execution_kind": execution.get("execution_kind"),
+                "planned_amount": planned_amount,
+                "actual_cost": actual_cost,
+                "difference": difference,
+                "difference_percent": difference_percent,
+                "fee": fee,
+            }
+    if result["planned_amount"] > 0:
+        result["difference_percent"] = (
+            result["difference"] / result["planned_amount"] * 100
+        )
+    return result
+
+
 def investment_plan_projection(
     item,
     *,
@@ -1060,6 +1134,11 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
             now=now,
             source_id=plan.get("id"),
         )
+        plan_variance = investment_plan_execution_variance_summary(
+            plan,
+            transactions,
+            now=now,
+        )
         target_count = _target_count(plan.get("target_count", 0))
         completed_count = performance["execution_count"]
         target_reached = bool(target_count and completed_count >= target_count)
@@ -1124,6 +1203,7 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
             summary["commitment_items"].append(commitment)
         plan["performance"] = performance
         plan["reliability"] = plan_reliability
+        plan["variance"] = plan_variance
         summary["execution_count"] += performance["execution_count"]
         invested_key = "usd_invested" if plan.get("mode") == "usd" else "rmb_invested"
         summary[invested_key] += performance["total_invested"]

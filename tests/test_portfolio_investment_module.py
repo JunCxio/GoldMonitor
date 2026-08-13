@@ -381,6 +381,94 @@ def test_investment_execution_reliability_can_filter_a_single_plan():
     }
 
 
+def test_investment_plan_execution_variance_compares_planned_and_actual_costs():
+    import pytest
+
+    from goldmonitor.portfolio_investment import investment_plan_execution_variance_summary
+
+    base = {
+        "type": "buy",
+        "mode": "rmb",
+        "source": "investment_plan",
+        "source_id": "plan-1",
+    }
+    variance = investment_plan_execution_variance_summary(
+        {"id": "plan-1", "name": "每月定投"},
+        [
+            {
+                **base,
+                "id": "execution-newest-legacy",
+                "price": 600.0,
+                "quantity": 1.0,
+                "fee": 1.0,
+                "created_at": "2026-08-12T11:00:00",
+            },
+            {
+                **base,
+                "id": "execution-2",
+                "price": 599.999999,
+                "quantity": 2.0,
+                "fee": 1.0,
+                "planned_amount": 1200.0,
+                "created_at": "2026-08-12T10:00:00",
+                "execution_kind": "manual",
+            },
+            {
+                **base,
+                "id": "execution-1",
+                "price": 500.0,
+                "quantity": 2.0,
+                "fee": 2.0,
+                "planned_amount": 1000.0,
+                "trade_date": "2026-07-15",
+                "created_at": "2026-07-15T09:00:00",
+                "execution_kind": "scheduled",
+            },
+            {
+                **base,
+                "id": "expired",
+                "price": 500.0,
+                "quantity": 2.0,
+                "fee": 2.0,
+                "planned_amount": 1000.0,
+                "trade_date": "2026-05-14",
+            },
+            {
+                **base,
+                "id": "other-plan",
+                "source_id": "plan-2",
+                "price": 500.0,
+                "quantity": 2.0,
+                "fee": 2.0,
+                "planned_amount": 1000.0,
+                "trade_date": "2026-08-12",
+            },
+        ],
+        now=datetime(2026, 8, 12, 12, 0),
+    )
+
+    assert variance["days"] == 90
+    assert variance["execution_count"] == 3
+    assert variance["covered_execution_count"] == 2
+    assert variance["uncovered_execution_count"] == 1
+    assert variance["planned_amount"] == 2200.0
+    assert variance["actual_cost"] == pytest.approx(2202.999998)
+    assert variance["difference"] == pytest.approx(2.999998)
+    assert variance["difference_percent"] == pytest.approx(2.999998 / 2200 * 100)
+    assert variance["fee"] == 3.0
+    assert variance["rounding_difference"] == pytest.approx(-0.000002)
+    assert variance["latest"] == {
+        "id": "execution-2",
+        "timestamp": "2026-08-12T10:00:00",
+        "execution_kind": "manual",
+        "planned_amount": 1200.0,
+        "actual_cost": pytest.approx(1200.999998),
+        "difference": pytest.approx(0.999998),
+        "difference_percent": pytest.approx(0.999998 / 1200 * 100),
+        "fee": 1.0,
+    }
+
+
 def test_investment_plan_window_projection_respects_target_and_schedule_window():
     from goldmonitor.portfolio_investment import investment_plan_window_projection
 

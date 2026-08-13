@@ -41,7 +41,8 @@ const plan = vm.runInContext(`normalizePortfolioInvestmentPlan({
   upcoming_run_ats: ['2026-09-01T09:00:00', '2026-10-01T09:00:00'],
   pending_run_at: '2026-09-01T09:00:00', last_skipped_at: '2026-08-13T10:00:00',
   last_skipped_scheduled_at: '2026-08-01T09:00:00', skip_count: 2,
-  reliability: {days:90,automatic_execution_count:3,on_time_execution_count:2,catch_up_execution_count:1,manual_execution_count:1,unclassified_execution_count:1,on_time_rate:66.6666667}
+  reliability: {days:90,automatic_execution_count:3,on_time_execution_count:2,catch_up_execution_count:1,manual_execution_count:1,unclassified_execution_count:1,on_time_rate:66.6666667},
+  variance: {days:90,execution_count:3,covered_execution_count:2,uncovered_execution_count:1,planned_amount:2200,actual_cost:2203,difference:3,difference_percent:0.1363636,fee:3,rounding_difference:0,latest:{id:'execution-2',timestamp:'2026-08-12T10:00:00',execution_kind:'manual',planned_amount:1200,actual_cost:1201,difference:1,difference_percent:0.0833333,fee:1}}
 })`, context);
 if (plan.start_date !== '2026-09-01' || plan.end_date !== '2026-12-31') {
   throw new Error('execution window must survive portfolio state normalization');
@@ -63,6 +64,9 @@ if (plan.upcoming_run_ats.length !== 2 || plan.upcoming_run_ats[1] !== '2026-10-
 }
 if (plan.reliability.on_time_rate !== 66.6666667 || plan.reliability.catch_up_execution_count !== 1) {
   throw new Error('plan reliability must survive portfolio state normalization');
+}
+if (plan.variance.planned_amount !== 2200 || plan.variance.latest.id !== 'execution-2' || plan.variance.uncovered_execution_count !== 1) {
+  throw new Error('plan investment comparison must survive portfolio state normalization');
 }
 """
     script = script.replace("__SOURCE__", json.dumps(source))
@@ -95,6 +99,7 @@ vm.runInContext(__SOURCE__, context);
 const html = vm.runInContext('renderPortfolioInvestmentPerformance', context)({
   id: 'plan-1', mode: 'rmb', target_count: 12,
   reliability: {days:90,automatic_execution_count:3,on_time_execution_count:2,catch_up_execution_count:1,manual_execution_count:1,unclassified_execution_count:1,on_time_rate:66.6666667},
+  variance: {days:90,execution_count:3,covered_execution_count:2,uncovered_execution_count:1,planned_amount:2200,actual_cost:2203,difference:3,difference_percent:0.1363636,fee:3,rounding_difference:0,latest:{id:'execution-2',timestamp:'2026-08-12T10:00:00',execution_kind:'manual',planned_amount:1200,actual_cost:1201,difference:1,difference_percent:0.0833333,fee:1}},
   performance: {execution_count:4,total_invested:4000,total_fees:4,total_quantity:8,average_cost:500,average_price:499.5,market_value:4100,pnl:100,pnl_percent:2.5,recent_executions:[]},
 });
 if (!html.includes('本计划 · 近90天执行稳定性') || !html.includes('66.7%') || !html.includes('2/3 次自动执行')) {
@@ -102,6 +107,54 @@ if (!html.includes('本计划 · 近90天执行稳定性') || !html.includes('66
 }
 if (!html.includes('补执行') || !html.includes('手动执行') || !html.includes('另有 1 条旧流水未记录执行类型')) {
   throw new Error('plan reliability must preserve execution kind semantics');
+}
+if (!html.includes('本计划 · 近90天投入对照') || !html.includes('计划买入') || !html.includes('实际支出') || !html.includes('支出差额')) {
+  throw new Error('expanded plan detail must render planned and actual investment comparison');
+}
+if (!html.includes('最近一次：') || !html.includes('计划 ¥1200.00') || !html.includes('实际 ¥1201.00') || !html.includes('另有 1 条旧流水未记录计划金额')) {
+  throw new Error('investment comparison must render latest covered execution and legacy coverage notice');
+}
+if (!html.includes('不代表真实成交滑点')) {
+  throw new Error('investment comparison must explain that it is not real trade slippage');
+}
+if (!html.includes('差额比例 0.1363636') || !html.includes('数量舍入差额 0')) {
+  throw new Error('investment comparison must render ratio separately and normalize negligible rounding differences');
+}
+"""
+    script = script.replace("__SOURCE__", json.dumps(source))
+    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_investment_plan_frontend_renders_empty_variance_without_zero_values():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("需要 Node.js 执行定投前端行为测试")
+
+    source = read_investment_source()
+    script = """
+const vm = require('vm');
+const context = {
+  console,
+  escapeHtml: value => String(value),
+  formatPortfolioMoney: (value, mode) => (mode === 'usd' ? '$' : '¥') + Number(value).toFixed(2),
+  formatPortfolioSignedMoney: value => String(value),
+  formatPortfolioPercent: value => String(value),
+  portfolioInvestmentDateTime: value => String(value),
+};
+context.globalThis = context;
+vm.createContext(context);
+vm.runInContext(__SOURCE__, context);
+const html = vm.runInContext('portfolioInvestmentVarianceMarkup', context)({
+  days:90, execution_count:0, covered_execution_count:0, uncovered_execution_count:0,
+  planned_amount:0, actual_cost:0, difference:0, difference_percent:null,
+  fee:0, rounding_difference:0, latest:null,
+}, 'rmb');
+if (!html.includes('暂无包含计划金额的执行记录')) {
+  throw new Error('empty comparison must explain that no covered execution exists');
+}
+if (!html.includes('含手续费 --') || !html.includes('数量舍入差额 --')) {
+  throw new Error('empty comparison must not render misleading zero fee or rounding values');
 }
 """
     script = script.replace("__SOURCE__", json.dumps(source))

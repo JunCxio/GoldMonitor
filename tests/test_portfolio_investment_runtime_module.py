@@ -121,6 +121,28 @@ def test_runtime_catches_up_latest_run_and_generates_sourced_transaction():
         "unclassified_execution_count": 0,
         "on_time_rate": 0.0,
     }
+    assert state_payload["items"][0]["variance"] == {
+        "days": 90,
+        "execution_count": 1,
+        "covered_execution_count": 1,
+        "uncovered_execution_count": 0,
+        "planned_amount": 1000.0,
+        "actual_cost": 1002.0,
+        "difference": 2.0,
+        "difference_percent": 0.2,
+        "fee": 2.0,
+        "rounding_difference": 0.0,
+        "latest": {
+            "id": "investment-plan-1-scheduled-202608150900",
+            "timestamp": "2026-08-20T10:00:00",
+            "execution_kind": "catch_up",
+            "planned_amount": 1000.0,
+            "actual_cost": 1002.0,
+            "difference": 2.0,
+            "difference_percent": 0.2,
+            "fee": 2.0,
+        },
+    }
 
 
 def test_runtime_uses_usd_price_and_creates_position_on_first_execution():

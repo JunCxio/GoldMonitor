@@ -151,6 +151,35 @@ function normalizePortfolioInvestmentReliability(value, fallbackDays) {
   };
 }
 
+function normalizePortfolioInvestmentVariance(value, fallbackDays) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const latest = source.latest && typeof source.latest === 'object' && !Array.isArray(source.latest)
+    ? source.latest
+    : null;
+  return {
+    days: Number.isFinite(Number(source.days)) ? Number(source.days) : fallbackDays,
+    execution_count: Number.isFinite(Number(source.execution_count)) ? Number(source.execution_count) : 0,
+    covered_execution_count: Number.isFinite(Number(source.covered_execution_count)) ? Number(source.covered_execution_count) : 0,
+    uncovered_execution_count: Number.isFinite(Number(source.uncovered_execution_count)) ? Number(source.uncovered_execution_count) : 0,
+    planned_amount: Number.isFinite(Number(source.planned_amount)) ? Number(source.planned_amount) : 0,
+    actual_cost: Number.isFinite(Number(source.actual_cost)) ? Number(source.actual_cost) : 0,
+    difference: Number.isFinite(Number(source.difference)) ? Number(source.difference) : 0,
+    difference_percent: source.difference_percent == null || !Number.isFinite(Number(source.difference_percent)) ? null : Number(source.difference_percent),
+    fee: Number.isFinite(Number(source.fee)) ? Number(source.fee) : 0,
+    rounding_difference: Number.isFinite(Number(source.rounding_difference)) ? Number(source.rounding_difference) : 0,
+    latest: latest ? {
+      id: String(latest.id || ''),
+      timestamp: String(latest.timestamp || ''),
+      execution_kind: String(latest.execution_kind || ''),
+      planned_amount: Number.isFinite(Number(latest.planned_amount)) ? Number(latest.planned_amount) : 0,
+      actual_cost: Number.isFinite(Number(latest.actual_cost)) ? Number(latest.actual_cost) : 0,
+      difference: Number.isFinite(Number(latest.difference)) ? Number(latest.difference) : 0,
+      difference_percent: latest.difference_percent == null || !Number.isFinite(Number(latest.difference_percent)) ? null : Number(latest.difference_percent),
+      fee: Number.isFinite(Number(latest.fee)) ? Number(latest.fee) : 0,
+    } : null,
+  };
+}
+
 function normalizePortfolioInvestmentPlan(item) {
   const source = item && typeof item === 'object' && !Array.isArray(item) ? item : {};
   const performance = source.performance && typeof source.performance === 'object' && !Array.isArray(source.performance)
@@ -196,6 +225,7 @@ function normalizePortfolioInvestmentPlan(item) {
     created_at: source.created_at || '',
     updated_at: source.updated_at || '',
     reliability: normalizePortfolioInvestmentReliability(source.reliability, 90),
+    variance: normalizePortfolioInvestmentVariance(source.variance, 90),
     performance: {
       execution_count: Number.isFinite(Number(performance.execution_count)) ? Number(performance.execution_count) : 0,
       total_quantity: Number.isFinite(Number(performance.total_quantity)) ? Number(performance.total_quantity) : 0,
