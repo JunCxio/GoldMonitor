@@ -1125,6 +1125,10 @@ def get_portfolio_investment_plan_state():
     return _get_portfolio_investment_runtime().state_payload()
 
 
+def build_portfolio_investment_executions_csv(plan_id):
+    return _get_portfolio_investment_runtime().build_executions_csv(plan_id)
+
+
 def upsert_portfolio_investment_plan(data):
     return _get_portfolio_investment_runtime().upsert(data)
 

@@ -1,5 +1,7 @@
+import csv
 import json
 from datetime import datetime
+from io import StringIO
 
 
 def test_investment_plan_calculates_daily_monthly_and_yearly_runs():
@@ -203,3 +205,81 @@ def test_investment_plan_performance_waits_for_current_price_and_limits_history(
     assert performance["pnl"] is None
     assert len(performance["recent_executions"]) == 10
     assert performance["recent_executions"][0]["id"] == "execution-11"
+
+
+def test_investment_plan_execution_csv_exports_all_matching_rows_in_time_order():
+    from goldmonitor.portfolio_investment import build_investment_plan_executions_csv
+
+    transactions = [
+        {
+            "id": f"execution-{index:02d}",
+            "position_id": "position-1",
+            "name": "积存金",
+            "type": "buy",
+            "mode": "rmb",
+            "price": 500.0 + index,
+            "quantity": 2.0,
+            "fee": 1.0,
+            "trade_date": f"2026-08-{index + 1:02d}",
+            "created_at": f"2026-08-{index + 1:02d}T09:05:00",
+            "source": "investment_plan",
+            "source_id": "plan-1",
+            "scheduled_at": f"2026-08-{index + 1:02d}T09:00:00",
+            "execution_kind": "scheduled",
+            "planned_amount": 1000.0,
+            "note": "计划执行",
+        }
+        for index in range(12)
+    ]
+    transactions.extend([
+        {
+            "id": "manual-transaction",
+            "type": "buy",
+            "price": 400.0,
+            "quantity": 1.0,
+            "fee": 0.0,
+            "source": "manual",
+            "source_id": "plan-1",
+        },
+        {
+            "id": "other-plan-execution",
+            "type": "buy",
+            "price": 450.0,
+            "quantity": 1.0,
+            "fee": 0.0,
+            "source": "investment_plan",
+            "source_id": "plan-2",
+        },
+    ])
+
+    content, count = build_investment_plan_executions_csv(
+        {"id": "plan-1", "name": "每月积存", "mode": "rmb"},
+        transactions,
+    )
+    rows = list(csv.DictReader(StringIO(content)))
+
+    assert count == 12
+    assert len(rows) == 12
+    assert rows[0]["transaction_id"] == "execution-00"
+    assert rows[-1]["transaction_id"] == "execution-11"
+    assert rows[0]["plan_name"] == "每月积存"
+    assert rows[0]["gross_amount"] == "1000.0"
+    assert rows[0]["total_cost"] == "1001.0"
+    assert {row["transaction_id"] for row in rows}.isdisjoint({
+        "manual-transaction",
+        "other-plan-execution",
+    })
+
+
+def test_investment_plan_execution_csv_supports_plan_without_executions():
+    from goldmonitor.portfolio_investment import build_investment_plan_executions_csv
+
+    content, count = build_investment_plan_executions_csv(
+        {"id": "plan-empty", "name": "尚未执行"},
+        [],
+    )
+    rows = list(csv.DictReader(StringIO(content)))
+
+    assert count == 0
+    assert rows == []
+    assert content.startswith("plan_id,plan_name,transaction_id,")

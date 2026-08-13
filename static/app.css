@@ -923,6 +923,10 @@
   .portfolio-investment-performance-empty { grid-column:1 / -1; padding:9px 10px; border:1px dashed rgba(255,255,255,0.08); border-radius:7px; color:var(--text-dim); font-size:0.64rem; text-align:center; }
   .portfolio-investment-execution-history { display:grid; gap:5px; min-width:0; }
   .portfolio-investment-execution-history-head { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--text-dim); font-size:0.58rem; }
+  .portfolio-investment-execution-history-head > div { min-width:0; }
+  .portfolio-investment-execution-history-head span, .portfolio-investment-execution-history-head small { display:block; }
+  .portfolio-investment-execution-history-head small { margin-top:2px; }
+  .portfolio-investment-execution-history-head button { flex:0 0 auto; }
   .portfolio-investment-execution-item { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap:8px; align-items:center; min-width:0; padding:7px 8px; border-radius:7px; background:rgba(255,255,255,0.018); }
   .portfolio-investment-execution-item > div { min-width:0; }
   .portfolio-investment-execution-item > div:last-child { text-align:right; }
@@ -1489,6 +1493,7 @@
     .portfolio-investment-overview-performance { align-items:flex-start; flex-direction:column; }
     .portfolio-investment-performance-grid, .portfolio-investment-execution-item { grid-template-columns:1fr; }
     .portfolio-investment-execution-item > div:last-child { text-align:left; }
+    .portfolio-investment-execution-history-head { align-items:flex-start; flex-direction:column; }
     .portfolio-item { grid-template-columns:1fr; }
     .portfolio-actions { justify-content:flex-start; }
     .portfolio-fields { grid-template-columns:1fr; }

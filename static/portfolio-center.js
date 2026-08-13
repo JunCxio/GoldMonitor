@@ -46,6 +46,18 @@ function registerPortfolioSocketHandlers(socketClient) {
     setPortfolioStatus((data && data.message) || '定投计划操作失败。', 'fail');
   });
 
+  socketClient.on('portfolio_investment_executions_exported', data => {
+    const count = data && Number.isFinite(Number(data.count)) ? Number(data.count) : 0;
+    const planName = data && data.plan_name ? String(data.plan_name) : '定投计划';
+    setPortfolioStatus(data && data.saved_path
+      ? planName + '的执行记录已导出 ' + count + ' 条，保存至 ' + data.saved_path
+      : '定投执行记录已导出。', 'ok');
+  });
+
+  socketClient.on('portfolio_investment_executions_export_error', data => {
+    setPortfolioStatus((data && data.message) || '定投执行记录导出失败。', 'fail');
+  });
+
   socketClient.on('portfolio_exported', data => {
     const count = data && Number.isFinite(Number(data.count)) ? Number(data.count) : portfolioState.total;
     const kindText = data && data.kind === 'review' ? '复盘' : data && data.kind === 'transactions' ? '流水' : '持仓';

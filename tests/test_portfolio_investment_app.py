@@ -218,3 +218,115 @@ def test_app_background_investment_task_executes_latest_due_plan(monkeypatch, tm
     assert result["executed_count"] == 1
     assert len(app.portfolio_transactions) == 1
     assert app.portfolio_transactions[0]["scheduled_at"] == "2026-08-12T09:00:00"
+
+
+def test_app_exports_investment_plan_execution_csv(monkeypatch, tmp_path):
+    import app
+
+    plan = {
+        "id": "plan-export",
+        "name": "每月积存",
+        "position_id": "position-1",
+        "position_name": "积存金",
+        "mode": "rmb",
+        "amount": 1000.0,
+        "fee": 2.0,
+        "frequency": "monthly",
+        "time": "09:00",
+        "month": 1,
+        "day": 15,
+        "enabled": True,
+        "next_run_at": "2026-09-15T09:00:00",
+        "last_scheduled_at": "2026-08-15T09:00:00",
+        "last_executed_at": "2026-08-15T09:05:00",
+        "last_transaction_id": "execution-1",
+        "last_price": 500.0,
+        "last_quantity": 2.0,
+        "last_result": "ok",
+        "last_message": "定投买入流水已生成",
+        "created_at": "2026-07-01T10:00:00",
+        "updated_at": "2026-08-15T09:05:00",
+    }
+    transaction = {
+        "id": "execution-1",
+        "position_id": "position-1",
+        "name": "积存金",
+        "type": "buy",
+        "mode": "rmb",
+        "price": 500.0,
+        "quantity": 2.0,
+        "fee": 2.0,
+        "trade_date": "2026-08-15",
+        "source": "investment_plan",
+        "source_id": "plan-export",
+        "scheduled_at": "2026-08-15T09:00:00",
+        "execution_kind": "scheduled",
+        "planned_amount": 1000.0,
+        "note": "定投计划：每月积存",
+        "created_at": "2026-08-15T09:05:00",
+        "updated_at": "2026-08-15T09:05:00",
+    }
+    saved = {}
+    monkeypatch.setattr(
+        app,
+        "PORTFOLIO_INVESTMENT_PLANS_PATH",
+        str(tmp_path / "portfolio_investment_plans.json"),
+    )
+    monkeypatch.setattr(
+        app,
+        "PORTFOLIO_TRANSACTIONS_PATH",
+        str(tmp_path / "portfolio_transactions.json"),
+    )
+    monkeypatch.setattr(app, "portfolio_investment_plans", [plan])
+    monkeypatch.setattr(app, "portfolio_transactions", [transaction])
+    monkeypatch.setattr(app, "portfolio_positions", [])
+    monkeypatch.setattr(app, "portfolio_alerts", [])
+    monkeypatch.setattr(app, "portfolio_import_backup", app.empty_portfolio_import_backup())
+
+    def fake_save_export_file(filename, content):
+        saved["filename"] = filename
+        saved["content"] = content
+        return f"/tmp/{filename}"
+
+    monkeypatch.setattr(app, "save_export_file", fake_save_export_file)
+    _reset_portfolio_runtime(app)
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+    client.emit("export_portfolio_investment_executions", {"id": "plan-export"})
+    events = client.get_received()
+    exported = next(
+        item["args"][0]
+        for item in events
+        if item["name"] == "portfolio_investment_executions_exported"
+    )
+
+    assert exported["ok"] is True
+    assert exported["plan_name"] == "每月积存"
+    assert exported["count"] == 1
+    assert exported["filename"].startswith("GoldMonitor-investment-executions-")
+    assert exported["filename"].endswith(".csv")
+    assert saved["filename"] == exported["filename"]
+    assert "execution-1" in saved["content"]
+    client.disconnect()
+
+
+def test_app_rejects_execution_export_for_missing_investment_plan(monkeypatch):
+    import app
+
+    monkeypatch.setattr(app, "portfolio_investment_plans", [])
+    monkeypatch.setattr(app, "portfolio_transactions", [])
+    _reset_portfolio_runtime(app)
+
+    client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
+    client.get_received()
+    client.emit("export_portfolio_investment_executions", {"id": "missing-plan"})
+    events = client.get_received()
+    error = next(
+        item["args"][0]
+        for item in events
+        if item["name"] == "portfolio_investment_executions_export_error"
+    )
+
+    assert error["message"] == "未找到定投计划"
+    client.disconnect()

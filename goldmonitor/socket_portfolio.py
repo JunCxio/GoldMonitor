@@ -25,6 +25,7 @@ def register_portfolio_handlers(
     delete_portfolio_investment_plan,
     toggle_portfolio_investment_plan,
     execute_portfolio_investment_plan,
+    build_portfolio_investment_executions_csv,
     broadcast_alert_rule_views,
     build_portfolio_csv,
     save_export_file,
@@ -164,6 +165,34 @@ def register_portfolio_handlers(
             "portfolio_investment_plans_updated",
             get_portfolio_investment_plan_state(),
         )
+
+    @socketio.on("export_portfolio_investment_executions")
+    def on_export_portfolio_investment_executions(data=None):
+        plan_id = data.get("id") if isinstance(data, dict) else None
+        try:
+            content, count, plan = build_portfolio_investment_executions_csv(plan_id)
+            filename = (
+                "GoldMonitor-investment-executions-"
+                f"{now_factory().strftime('%Y%m%d-%H%M%S')}.csv"
+            )
+            saved_path = save_export_file(filename, content)
+            emit("portfolio_investment_executions_exported", {
+                "ok": True,
+                "plan_id": plan.get("id"),
+                "plan_name": plan.get("name"),
+                "filename": filename,
+                "saved_path": saved_path,
+                "count": count,
+            })
+        except ValueError as exc:
+            emit("portfolio_investment_executions_export_error", {
+                "message": str(exc),
+            })
+        except OSError as exc:
+            emit(
+                "portfolio_investment_executions_export_error",
+                build_export_error_payload(f"定投执行记录导出失败: {exc}"),
+            )
 
     @socketio.on("preview_import_portfolio_transactions")
     def on_preview_import_portfolio_transactions(data=None):

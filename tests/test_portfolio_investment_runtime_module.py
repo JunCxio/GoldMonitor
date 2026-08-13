@@ -1,5 +1,7 @@
 import threading
+import csv
 from datetime import datetime
+from io import StringIO
 from types import SimpleNamespace
 
 
@@ -192,3 +194,40 @@ def test_runtime_run_due_only_executes_due_plans():
 
     assert result["executed_count"] == 1
     assert len(state.portfolio_transactions) == 2
+
+
+def test_runtime_builds_execution_csv_for_existing_plan():
+    transactions = [{
+        "id": "investment-plan-1-manual-202608121000",
+        "position_id": "position-1",
+        "name": "金条",
+        "type": "buy",
+        "mode": "rmb",
+        "price": 500.0,
+        "quantity": 2.0,
+        "fee": 2.0,
+        "trade_date": "2026-08-12",
+        "source": "investment_plan",
+        "source_id": "plan-1",
+        "execution_kind": "manual",
+        "planned_amount": 1000.0,
+        "created_at": "2026-08-12T10:00:00",
+        "updated_at": "2026-08-12T10:00:00",
+    }]
+    runtime, _state, _events = _runtime(_plan(), transactions=transactions)
+
+    content, count, plan = runtime.build_executions_csv("plan-1")
+    rows = list(csv.DictReader(StringIO(content)))
+
+    assert count == 1
+    assert plan["name"] == "每月定投"
+    assert rows[0]["execution_kind"] == "manual"
+
+
+def test_runtime_rejects_execution_csv_for_missing_plan():
+    import pytest
+
+    runtime, _state, _events = _runtime(_plan())
+
+    with pytest.raises(ValueError, match="未找到定投计划"):
+        runtime.build_executions_csv("missing-plan")

@@ -161,7 +161,7 @@ function renderPortfolioInvestmentPerformance(plan) {
     '<div><span>当前市值</span><strong>' + escapeHtml(performance.market_value == null ? '--' : formatPortfolioMoney(performance.market_value, mode)) + '</strong><small class="' + portfolioPnlClass(pnl) + '">' + escapeHtml(pnlText) + '</small></div>',
     '</div>',
     '<div class="portfolio-investment-execution-history">',
-    '<div class="portfolio-investment-execution-history-head"><span>最近执行</span><small>最多显示 10 条</small></div>',
+    '<div class="portfolio-investment-execution-history-head"><div><span>最近执行</span><small>页面最多显示 10 条</small></div><button class="btn-clear-sm btn-muted-sm" type="button" onclick="exportPortfolioInvestmentExecutions(\'' + escapeHtml(plan.id) + '\')">导出全部记录</button></div>',
     recentExecutions.map(item => [
       '<div class="portfolio-investment-execution-item">',
       '<div><strong>' + escapeHtml(portfolioInvestmentExecutionKindLabel(item.execution_kind)) + '</strong><span>' + escapeHtml(portfolioInvestmentDateTime(item.timestamp || item.scheduled_at || item.trade_date)) + '</span></div>',
@@ -338,6 +338,11 @@ function togglePortfolioInvestmentPlan(id, enabled) {
 function executePortfolioInvestmentPlan(id) {
   setPortfolioStatus('正在按最新行情生成买入流水...', '');
   socket.emit('execute_portfolio_investment_plan', { id });
+}
+
+function exportPortfolioInvestmentExecutions(id) {
+  setPortfolioStatus('正在导出定投执行记录...', '');
+  socket.emit('export_portfolio_investment_executions', { id });
 }
 
 function deletePortfolioInvestmentPlan(id) {

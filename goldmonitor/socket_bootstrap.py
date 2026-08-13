@@ -223,6 +223,10 @@ def register_socket_handlers(application):
         execute_portfolio_investment_plan=(
             lambda plan_id: application.execute_portfolio_investment_plan(plan_id)
         ),
+        build_portfolio_investment_executions_csv=(
+            lambda plan_id:
+            application.build_portfolio_investment_executions_csv(plan_id)
+        ),
         broadcast_alert_rule_views=(
             lambda: application._broadcast_alert_rule_views()
         ),

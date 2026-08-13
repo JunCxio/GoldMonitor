@@ -1,9 +1,11 @@
 import calendar
+import csv
 import json
 import math
 import os
 import secrets
 from datetime import datetime, timedelta
+from io import StringIO
 
 from .data_contracts import unwrap_item_payload, wrap_item_payload
 
@@ -12,6 +14,25 @@ INVESTMENT_PLAN_SCHEMA_VERSION = 1
 INVESTMENT_FREQUENCIES = {"daily", "monthly", "yearly"}
 INVESTMENT_EXECUTION_KINDS = {"scheduled", "catch_up", "manual"}
 INVESTMENT_EXECUTION_HISTORY_LIMIT = 10
+INVESTMENT_EXECUTION_CSV_FIELDS = [
+    "plan_id",
+    "plan_name",
+    "transaction_id",
+    "execution_kind",
+    "scheduled_at",
+    "executed_at",
+    "trade_date",
+    "mode",
+    "planned_amount",
+    "price",
+    "quantity",
+    "gross_amount",
+    "fee",
+    "total_cost",
+    "position_id",
+    "position_name",
+    "note",
+]
 
 
 def generate_investment_plan_id():
@@ -267,8 +288,10 @@ def normalize_investment_plans(items, *, now_factory=None, id_factory=None):
     return normalized
 
 
-def investment_plan_performance(plan, transactions, current_price=None, history_limit=INVESTMENT_EXECUTION_HISTORY_LIMIT):
+def investment_plan_executions(plan, transactions):
     plan_id = _clean_text((plan or {}).get("id"))
+    if not plan_id:
+        return []
     executions = []
     for raw in list(transactions or []):
         if not isinstance(raw, dict):
@@ -286,16 +309,22 @@ def investment_plan_performance(plan, transactions, current_price=None, history_
         total_cost = gross_amount + fee
         executions.append({
             "id": _clean_text(raw.get("id")),
+            "plan_id": plan_id,
+            "plan_name": _clean_text((plan or {}).get("name")),
             "timestamp": _clean_text(raw.get("created_at") or raw.get("updated_at")),
             "trade_date": _clean_text(raw.get("trade_date")),
             "scheduled_at": _clean_text(raw.get("scheduled_at")),
             "execution_kind": _clean_text(raw.get("execution_kind")),
+            "mode": _clean_text(raw.get("mode") or (plan or {}).get("mode")),
+            "position_id": _clean_text(raw.get("position_id")),
+            "position_name": _clean_text(raw.get("name")),
             "price": price,
             "quantity": quantity,
             "fee": fee,
             "planned_amount": raw.get("planned_amount"),
             "gross_amount": gross_amount,
             "total_cost": total_cost,
+            "note": _clean_text(raw.get("note")),
         })
     executions.sort(
         key=lambda item: (
@@ -304,6 +333,46 @@ def investment_plan_performance(plan, transactions, current_price=None, history_
         ),
         reverse=True,
     )
+    return executions
+
+
+def build_investment_plan_executions_csv(plan, transactions):
+    plan_id = _clean_text((plan or {}).get("id"))
+    if not plan_id:
+        raise ValueError("定投计划标识不能为空")
+    executions = investment_plan_executions(plan, transactions)
+    buffer = StringIO()
+    writer = csv.DictWriter(
+        buffer,
+        fieldnames=INVESTMENT_EXECUTION_CSV_FIELDS,
+        lineterminator="\n",
+    )
+    writer.writeheader()
+    for item in reversed(executions):
+        writer.writerow({
+            "plan_id": item.get("plan_id"),
+            "plan_name": item.get("plan_name"),
+            "transaction_id": item.get("id"),
+            "execution_kind": item.get("execution_kind"),
+            "scheduled_at": item.get("scheduled_at"),
+            "executed_at": item.get("timestamp"),
+            "trade_date": item.get("trade_date"),
+            "mode": item.get("mode"),
+            "planned_amount": item.get("planned_amount"),
+            "price": item.get("price"),
+            "quantity": item.get("quantity"),
+            "gross_amount": item.get("gross_amount"),
+            "fee": item.get("fee"),
+            "total_cost": item.get("total_cost"),
+            "position_id": item.get("position_id"),
+            "position_name": item.get("position_name"),
+            "note": item.get("note"),
+        })
+    return buffer.getvalue(), len(executions)
+
+
+def investment_plan_performance(plan, transactions, current_price=None, history_limit=INVESTMENT_EXECUTION_HISTORY_LIMIT):
+    executions = investment_plan_executions(plan, transactions)
     total_quantity = sum(item["quantity"] for item in executions)
     gross_invested = sum(item["gross_amount"] for item in executions)
     total_fees = sum(item["fee"] for item in executions)

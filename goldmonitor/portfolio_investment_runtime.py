@@ -34,6 +34,20 @@ class PortfolioInvestmentRuntime:
             prices=prices,
         )
 
+    def build_executions_csv(self, plan_id):
+        plan_id = str(plan_id or "").strip()
+        with self.state.lock, self.state.investment_plan_lock:
+            index = self._find_plan_index(plan_id)
+            if index < 0:
+                raise ValueError("未找到定投计划")
+            plan = dict(self.state.portfolio_investment_plans[index])
+            transactions = [dict(item) for item in self.state.portfolio_transactions]
+        content, count = investment_core.build_investment_plan_executions_csv(
+            plan,
+            transactions,
+        )
+        return content, count, plan
+
     def _find_plan_index(self, plan_id):
         plan_id = str(plan_id or "").strip()
         for index, item in enumerate(self.state.portfolio_investment_plans):
