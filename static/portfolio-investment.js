@@ -24,6 +24,8 @@ function portfolioInvestmentBaseDraft(item) {
     month: source.month == null ? '1' : String(source.month),
     day: source.day == null ? '1' : String(source.day),
     weekday: source.weekday == null ? '1' : String(source.weekday),
+    start_date: source.start_date || '',
+    end_date: source.end_date || '',
     enabled: source.enabled !== false,
   };
 }
@@ -55,6 +57,8 @@ function capturePortfolioInvestmentDraft(id) {
     month: portfolioInvestmentInputValue(key, 'Month') || '1',
     day: portfolioInvestmentInputValue(key, 'Day') || '1',
     weekday: portfolioInvestmentInputValue(key, 'Weekday') || '1',
+    start_date: portfolioInvestmentInputValue(key, 'StartDate'),
+    end_date: portfolioInvestmentInputValue(key, 'EndDate'),
     enabled: portfolioInvestmentInputValue(key, 'Enabled') !== false,
   };
 }
@@ -148,6 +152,8 @@ function portfolioInvestmentResultLabel(result) {
 
 function portfolioInvestmentStateLabel(plan) {
   if (!plan.enabled) return '已暂停';
+  if (plan.status === 'pending_start') return '待开始';
+  if (plan.status === 'completed') return '已完成';
   if (plan.status === 'due') return '待执行';
   if (plan.last_result === 'waiting_price') return '等待行情';
   if (plan.last_result === 'orphaned') return '关联失效';
@@ -157,7 +163,27 @@ function portfolioInvestmentStateLabel(plan) {
 function portfolioInvestmentStateClass(plan) {
   if (plan.last_result === 'orphaned' || plan.last_result === 'error') return 'warn';
   if (plan.status === 'due' || plan.last_result === 'waiting_price') return 'attention';
+  if (plan.status === 'completed') return 'off';
   return plan.enabled ? 'on' : 'off';
+}
+
+function portfolioInvestmentNextRunLabel(plan) {
+  if (!plan.enabled) return '计划已暂停';
+  if (plan.status === 'completed') return '计划已完成';
+  return portfolioInvestmentDateTime(plan.next_run_at);
+}
+
+function portfolioInvestmentWindowLabel(plan) {
+  const start = plan.start_date || '';
+  const end = plan.end_date || '';
+  if (start && end) return start + ' 至 ' + end;
+  if (start) return start + ' 起';
+  if (end) return end + ' 前';
+  return '长期有效';
+}
+
+function portfolioInvestmentCanExecute(plan) {
+  return !['pending_start', 'completed'].includes(plan.status);
 }
 
 function portfolioInvestmentExecutionKindLabel(kind) {
@@ -278,6 +304,8 @@ function buildPortfolioInvestmentEditor(item) {
     target.frequency === 'yearly' ? '<div class="portfolio-field"><label for="portfolioInvestmentMonth_' + escapedId + '">月份</label><input id="portfolioInvestmentMonth_' + escapedId + '" type="number" min="1" max="12" value="' + escapeHtml(target.month) + '"' + fieldInput + '></div>' : '<input id="portfolioInvestmentMonth_' + escapedId + '" type="hidden" value="' + escapeHtml(target.month) + '">',
     ['monthly', 'yearly'].includes(target.frequency) ? '<div class="portfolio-field"><label for="portfolioInvestmentDay_' + escapedId + '">日期</label><input id="portfolioInvestmentDay_' + escapedId + '" type="number" min="1" max="31" value="' + escapeHtml(target.day) + '"' + fieldInput + '></div>' : '<input id="portfolioInvestmentDay_' + escapedId + '" type="hidden" value="' + escapeHtml(target.day) + '">',
     '<div class="portfolio-field"><label for="portfolioInvestmentTime_' + escapedId + '">执行时间</label><input id="portfolioInvestmentTime_' + escapedId + '" type="time" value="' + escapeHtml(target.time) + '"' + fieldChange + '></div>',
+    '<div class="portfolio-field"><label for="portfolioInvestmentStartDate_' + escapedId + '">开始日期（可选）</label><input id="portfolioInvestmentStartDate_' + escapedId + '" type="date" value="' + escapeHtml(target.start_date) + '"' + fieldChange + '></div>',
+    '<div class="portfolio-field"><label for="portfolioInvestmentEndDate_' + escapedId + '">结束日期（可选）</label><input id="portfolioInvestmentEndDate_' + escapedId + '" type="date" value="' + escapeHtml(target.end_date) + '"' + fieldChange + '></div>',
     '<label class="portfolio-investment-enabled"><input id="portfolioInvestmentEnabled_' + escapedId + '" type="checkbox"' + (target.enabled ? ' checked' : '') + fieldChange + '><span>保存后启用计划</span></label>',
     '</div>',
     '<div class="portfolio-editor-actions"><button class="btn-set" type="button" onclick="savePortfolioInvestmentPlan(\'' + escapedId + '\')">保存计划</button><button class="btn-clear-sm btn-muted-sm" type="button" onclick="setActivePortfolioInvestmentPlan(\'' + escapedId + '\')">取消</button></div>',
@@ -316,13 +344,17 @@ function renderPortfolioInvestments(box) {
       '<div class="portfolio-investment-card-head"><div><div class="portfolio-line">' + escapeHtml(plan.name || '未命名计划') + '</div><div class="portfolio-meta">' + escapeHtml(portfolioInvestmentFrequencyLabel(plan) + ' · ' + formatPortfolioMoney(plan.amount, mode) + (Number(plan.fee) > 0 ? ' · 手续费 ' + formatPortfolioMoney(plan.fee, mode) : '')) + '</div></div><span class="portfolio-investment-state ' + portfolioInvestmentStateClass(plan) + '">' + escapeHtml(portfolioInvestmentStateLabel(plan)) + '</span></div>',
       '<div class="portfolio-investment-timeline">',
       '<div class="portfolio-investment-timeline-marker"></div>',
-      '<div><span>下一次执行</span><strong>' + escapeHtml(plan.enabled ? portfolioInvestmentDateTime(plan.next_run_at) : '计划已暂停') + '</strong><small>' + escapeHtml(plan.position_name + ' · ' + portfolioModeLabel(mode)) + '</small></div>',
+      '<div><span>下一次执行</span><strong>' + escapeHtml(portfolioInvestmentNextRunLabel(plan)) + '</strong><small>' + escapeHtml(portfolioInvestmentWindowLabel(plan) + ' · ' + plan.position_name + ' · ' + portfolioModeLabel(mode)) + '</small></div>',
       '<div><span>最近结果</span><strong>' + escapeHtml(lastDetail) + '</strong><small>' + escapeHtml(resultMetrics) + '</small></div>',
       '</div>',
       '</div>',
       '<div class="portfolio-investment-actions">',
-      '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="executePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">立即执行</button>',
-      '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="togglePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\', ' + String(!plan.enabled) + ')">' + (plan.enabled ? '暂停' : '启用') + '</button>',
+      portfolioInvestmentCanExecute(plan)
+        ? '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="executePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">立即执行</button>'
+        : '<button class="btn-clear-sm btn-muted-sm" type="button" disabled>' + (plan.status === 'pending_start' ? '尚未开始' : '已结束') + '</button>',
+      plan.status === 'completed'
+        ? '<button class="btn-clear-sm btn-muted-sm" type="button" disabled>已结束</button>'
+        : '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="togglePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\', ' + String(!plan.enabled) + ')">' + (plan.enabled ? '暂停' : '启用') + '</button>',
       '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="setActivePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">' + (expanded ? '收起' : '编辑') + '</button>',
       '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="duplicatePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">复制</button>',
       '<button class="btn-clear-sm" type="button" onclick="deletePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">删除</button>',
@@ -348,6 +380,8 @@ function savePortfolioInvestmentPlan(id) {
     month: Number(portfolioInvestmentInputValue(id, 'Month') || 1),
     day: Number(portfolioInvestmentInputValue(id, 'Day') || 1),
     weekday: Number(portfolioInvestmentInputValue(id, 'Weekday') || 1),
+    start_date: String(portfolioInvestmentInputValue(id, 'StartDate') || '').trim(),
+    end_date: String(portfolioInvestmentInputValue(id, 'EndDate') || '').trim(),
     enabled: portfolioInvestmentInputValue(id, 'Enabled') !== false,
   };
   const position = (portfolioState.items || []).find(item => item.id === payload.position_id);
@@ -359,6 +393,7 @@ function savePortfolioInvestmentPlan(id) {
   if (!payload.position_name) return setPortfolioStatus('请输入或选择定投持仓。', 'fail');
   if (!Number.isFinite(payload.amount) || payload.amount <= 0) return setPortfolioStatus('请输入有效的定投金额。', 'fail');
   if (!Number.isFinite(payload.fee) || payload.fee < 0) return setPortfolioStatus('手续费不能为负数。', 'fail');
+  if (payload.start_date && payload.end_date && payload.start_date > payload.end_date) return setPortfolioStatus('结束日期不能早于开始日期。', 'fail');
   if (id !== 'new') payload.id = id;
   portfolioInvestmentDraftNotice = '';
   pendingPortfolioSave = { kind: 'investment', id };

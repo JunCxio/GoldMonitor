@@ -63,6 +63,64 @@ def test_investment_plan_uses_latest_missed_run_only():
     assert latest_due_run_at(weekly, datetime(2026, 8, 12, 8, 0)) == datetime(2026, 8, 5, 9, 0)
 
 
+def test_investment_plan_applies_optional_start_and_end_dates():
+    import pytest
+
+    from goldmonitor.portfolio_investment import (
+        investment_plan_state,
+        latest_due_run_at,
+        next_plan_run_in_window,
+        normalize_investment_plan,
+    )
+
+    plan = normalize_investment_plan(
+        {
+            "name": "季度积累",
+            "position_name": "积存金",
+            "mode": "rmb",
+            "amount": 1000,
+            "fee": 0,
+            "frequency": "monthly",
+            "day": 15,
+            "time": "09:00",
+            "start_date": "2026-10-01",
+            "end_date": "2026-12-31",
+            "enabled": True,
+        },
+        now_factory=lambda: datetime(2026, 8, 12, 10, 0),
+        id_factory=lambda: "plan-window",
+    )
+
+    assert plan["next_run_at"] == "2026-10-15T09:00:00"
+    pending = investment_plan_state([plan], now=datetime(2026, 9, 1, 10, 0))
+    assert pending["items"][0]["status"] == "pending_start"
+    assert pending["summary"]["enabled"] == 1
+    assert latest_due_run_at(plan, datetime(2026, 9, 15, 10, 0)) is None
+    assert next_plan_run_in_window(plan, datetime(2026, 12, 15, 10, 0)) is None
+
+    completed_plan = {**plan, "next_run_at": ""}
+    completed = investment_plan_state([completed_plan], now=datetime(2027, 1, 1, 10, 0))
+    assert completed["items"][0]["status"] == "completed"
+    assert completed["summary"]["enabled"] == 0
+
+    supplied_outside_window = normalize_investment_plan(
+        {
+            **plan,
+            "id": "plan-imported",
+            "next_run_at": "2026-08-15T09:00:00",
+        },
+        now_factory=lambda: datetime(2026, 8, 12, 10, 0),
+    )
+    assert supplied_outside_window["next_run_at"] == "2026-10-15T09:00:00"
+
+    with pytest.raises(ValueError, match="结束日期不能早于开始日期"):
+        normalize_investment_plan(
+            {**plan, "start_date": "2026-12-01", "end_date": "2026-11-30"},
+            existing=plan,
+            now_factory=lambda: datetime(2026, 8, 12, 10, 0),
+        )
+
+
 def test_investment_plan_reenable_starts_from_current_time():
     from goldmonitor.portfolio_investment import normalize_investment_plan
 

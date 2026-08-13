@@ -156,6 +156,8 @@ function normalizePortfolioInvestmentPlan(item) {
     month: Number.isFinite(Number(source.month)) ? Number(source.month) : 1,
     day: Number.isFinite(Number(source.day)) ? Number(source.day) : 1,
     weekday: Number.isFinite(Number(source.weekday)) ? Number(source.weekday) : 1,
+    start_date: source.start_date || '',
+    end_date: source.end_date || '',
     enabled: source.enabled !== false,
     next_run_at: source.next_run_at || '',
     last_scheduled_at: source.last_scheduled_at || '',

@@ -4,7 +4,7 @@ import json
 import math
 import os
 import secrets
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from io import StringIO
 
 from .data_contracts import unwrap_item_payload, wrap_item_payload
@@ -77,7 +77,25 @@ def _parse_time(value):
     return parsed.strftime("%H:%M")
 
 
-def _schedule_signature(frequency, time_text, month, day, weekday):
+def _parse_date(value, field_name):
+    text = _clean_text(value)
+    if not text:
+        return ""
+    try:
+        return date.fromisoformat(text).isoformat()
+    except ValueError as exc:
+        raise ValueError(f"定投{field_name}无效") from exc
+
+
+def _schedule_signature(
+    frequency,
+    time_text,
+    month,
+    day,
+    weekday,
+    start_date="",
+    end_date="",
+):
     signature = [frequency, time_text]
     if frequency == "weekly":
         signature.append(weekday)
@@ -85,6 +103,7 @@ def _schedule_signature(frequency, time_text, month, day, weekday):
         signature.append(day)
     elif frequency == "yearly":
         signature.extend([month, day])
+    signature.extend([start_date, end_date])
     return tuple(signature)
 
 
@@ -94,6 +113,16 @@ def parse_plan_datetime(value):
         return None
     try:
         return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def parse_plan_date(value):
+    text = _clean_text(value)
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text)
     except ValueError:
         return None
 
@@ -152,39 +181,81 @@ def next_plan_run_at(plan, after):
     )
 
 
+def next_plan_run_in_window(plan, after):
+    anchor = after
+    start_date = parse_plan_date(plan.get("start_date"))
+    if start_date and start_date > after.date():
+        anchor = datetime.combine(start_date, datetime.min.time()) - timedelta(microseconds=1)
+    candidate = next_plan_run_at(plan, anchor)
+    end_date = parse_plan_date(plan.get("end_date"))
+    return None if end_date and candidate.date() > end_date else candidate
+
+
 def latest_due_run_at(plan, now):
     next_run = parse_plan_datetime(plan.get("next_run_at"))
-    if next_run is None or next_run > now:
+    end_date = parse_plan_date(plan.get("end_date"))
+    effective_now = now
+    if end_date and now.date() > end_date:
+        effective_now = _scheduled_datetime(
+            end_date.year,
+            end_date.month,
+            end_date.day,
+            plan["time"],
+        )
+    if next_run is None or next_run > effective_now:
         return None
     time_text = plan["time"]
     if plan["frequency"] == "daily":
-        candidate = _scheduled_datetime(now.year, now.month, now.day, time_text)
-        return candidate if candidate <= now else candidate - timedelta(days=1)
-    if plan["frequency"] == "weekly":
+        candidate = _scheduled_datetime(
+            effective_now.year,
+            effective_now.month,
+            effective_now.day,
+            time_text,
+        )
+        candidate = candidate if candidate <= effective_now else candidate - timedelta(days=1)
+    elif plan["frequency"] == "weekly":
         target_weekday = plan["weekday"] - 1
-        days_back = (now.weekday() - target_weekday) % 7
-        candidate_date = now - timedelta(days=days_back)
+        days_back = (effective_now.weekday() - target_weekday) % 7
+        candidate_date = effective_now - timedelta(days=days_back)
         candidate = _scheduled_datetime(
             candidate_date.year,
             candidate_date.month,
             candidate_date.day,
             time_text,
         )
-        return candidate if candidate <= now else candidate - timedelta(days=7)
-    if plan["frequency"] == "monthly":
-        candidate = _scheduled_datetime(now.year, now.month, plan["day"], time_text)
-        if candidate <= now:
-            return candidate
-        month = now.month - 1
-        year = now.year
-        if month < 1:
-            month = 12
-            year -= 1
-        return _scheduled_datetime(year, month, plan["day"], time_text)
-    candidate = _scheduled_datetime(now.year, plan["month"], plan["day"], time_text)
-    if candidate <= now:
-        return candidate
-    return _scheduled_datetime(now.year - 1, plan["month"], plan["day"], time_text)
+        candidate = candidate if candidate <= effective_now else candidate - timedelta(days=7)
+    elif plan["frequency"] == "monthly":
+        candidate = _scheduled_datetime(
+            effective_now.year,
+            effective_now.month,
+            plan["day"],
+            time_text,
+        )
+        if candidate > effective_now:
+            month = effective_now.month - 1
+            year = effective_now.year
+            if month < 1:
+                month = 12
+                year -= 1
+            candidate = _scheduled_datetime(year, month, plan["day"], time_text)
+    else:
+        candidate = _scheduled_datetime(
+            effective_now.year,
+            plan["month"],
+            plan["day"],
+            time_text,
+        )
+        if candidate > effective_now:
+            candidate = _scheduled_datetime(
+                effective_now.year - 1,
+                plan["month"],
+                plan["day"],
+                time_text,
+            )
+    start_date = parse_plan_date(plan.get("start_date"))
+    if start_date and candidate.date() < start_date:
+        return None
+    return candidate
 
 
 def normalize_investment_plan(
@@ -241,6 +312,16 @@ def normalize_investment_plan(
         7,
         1,
     )
+    start_date = _parse_date(
+        item.get("start_date", existing.get("start_date", "")),
+        "开始日期",
+    )
+    end_date = _parse_date(
+        item.get("end_date", existing.get("end_date", "")),
+        "结束日期",
+    )
+    if start_date and end_date and start_date > end_date:
+        raise ValueError("定投结束日期不能早于开始日期")
     enabled = item.get("enabled", existing.get("enabled", True)) is not False
 
     existing_frequency = _clean_text(existing.get("frequency", "monthly")).lower()
@@ -250,6 +331,8 @@ def normalize_investment_plan(
         _bounded_int(existing.get("month", 1), 1, 12, 1),
         _bounded_int(existing.get("day", 1), 1, 31, 1),
         _bounded_int(existing.get("weekday", 1), 1, 7, 1),
+        _clean_text(existing.get("start_date")),
+        _clean_text(existing.get("end_date")),
     )
     schedule_changed = existing_signature != _schedule_signature(
         frequency,
@@ -257,6 +340,8 @@ def normalize_investment_plan(
         month,
         day,
         weekday,
+        start_date,
+        end_date,
     ) if existing else False
     was_enabled = existing.get("enabled") is not False if existing else False
     supplied_next_run = parse_plan_datetime(item.get("next_run_at"))
@@ -266,7 +351,24 @@ def normalize_investment_plan(
     elif existing and was_enabled and not schedule_changed and preserved_next_run:
         next_run_at = preserved_next_run.isoformat(timespec="seconds")
     elif not existing and supplied_next_run:
-        next_run_at = supplied_next_run.isoformat(timespec="seconds")
+        supplied_outside_window = (
+            (start_date and supplied_next_run.date() < parse_plan_date(start_date))
+            or (end_date and supplied_next_run.date() > parse_plan_date(end_date))
+        )
+        if supplied_outside_window:
+            schedule_plan = {
+                "frequency": frequency,
+                "time": time_text,
+                "month": month,
+                "day": day,
+                "weekday": weekday,
+                "start_date": start_date,
+                "end_date": end_date,
+            }
+            next_run = next_plan_run_in_window(schedule_plan, now)
+            next_run_at = next_run.isoformat(timespec="seconds") if next_run else ""
+        else:
+            next_run_at = supplied_next_run.isoformat(timespec="seconds")
     else:
         schedule_plan = {
             "frequency": frequency,
@@ -274,8 +376,11 @@ def normalize_investment_plan(
             "month": month,
             "day": day,
             "weekday": weekday,
+            "start_date": start_date,
+            "end_date": end_date,
         }
-        next_run_at = next_plan_run_at(schedule_plan, now).isoformat(timespec="seconds")
+        next_run = next_plan_run_in_window(schedule_plan, now)
+        next_run_at = next_run.isoformat(timespec="seconds") if next_run else ""
 
     return {
         "id": plan_id,
@@ -290,6 +395,8 @@ def normalize_investment_plan(
         "month": month,
         "day": day,
         "weekday": weekday,
+        "start_date": start_date,
+        "end_date": end_date,
         "enabled": enabled,
         "next_run_at": next_run_at,
         "last_scheduled_at": _clean_text(
@@ -463,10 +570,18 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
         plan = dict(raw)
         next_run = parse_plan_datetime(plan.get("next_run_at"))
         if plan.get("enabled"):
-            status = "due" if next_run and next_run <= now else "active"
-            summary["enabled"] += 1
-            if status == "due":
-                summary["due"] += 1
+            start_date = parse_plan_date(plan.get("start_date"))
+            end_date = parse_plan_date(plan.get("end_date"))
+            if start_date and now.date() < start_date:
+                status = "pending_start"
+                summary["enabled"] += 1
+            elif end_date and (next_run is None or next_run.date() > end_date):
+                status = "completed"
+            else:
+                status = "due" if next_run and next_run <= now else "active"
+                summary["enabled"] += 1
+                if status == "due":
+                    summary["due"] += 1
         else:
             status = "paused"
         if plan.get("last_result") in {"error", "waiting_price", "orphaned"}:

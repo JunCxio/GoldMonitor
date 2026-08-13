@@ -211,6 +211,41 @@ def test_runtime_executes_latest_due_weekly_plan_and_advances_one_week():
     assert state.portfolio_investment_plans[0]["next_run_at"] == "2026-08-19T09:00:00"
 
 
+def test_runtime_respects_start_date_and_completes_after_last_scheduled_run():
+    import pytest
+
+    future_runtime, future_state, _events = _runtime(_plan(
+        frequency="daily",
+        start_date="2026-08-20",
+        end_date="2026-08-22",
+        next_run_at="2026-08-20T09:00:00",
+    ))
+
+    future = future_runtime.execute(
+        "plan-1",
+        force=True,
+        now=datetime(2026, 8, 19, 10, 0),
+    )
+    assert future["status"] == "not_started"
+    assert len(future_state.portfolio_transactions) == 1
+
+    final_runtime, final_state, _events = _runtime(_plan(
+        frequency="daily",
+        start_date="2026-08-20",
+        end_date="2026-08-22",
+        next_run_at="2026-08-22T09:00:00",
+    ))
+    executed = final_runtime.execute("plan-1", now=datetime(2026, 8, 23, 10, 0))
+    assert executed["status"] == "completed"
+    assert executed["transaction"]["scheduled_at"] == "2026-08-22T09:00:00"
+    assert final_state.portfolio_investment_plans[0]["next_run_at"] == ""
+    assert final_runtime.state_payload(now=datetime(2026, 8, 23, 10, 0))["items"][0]["status"] == "completed"
+
+    final_runtime.now_factory = lambda: datetime(2026, 8, 23, 10, 0)
+    with pytest.raises(ValueError, match="结束日期已过"):
+        final_runtime.toggle("plan-1", True)
+
+
 def test_runtime_builds_execution_csv_for_existing_plan():
     transactions = [{
         "id": "investment-plan-1-manual-202608121000",

@@ -39,6 +39,8 @@ def test_app_portfolio_investment_socket_crud_and_manual_execution(monkeypatch, 
         "frequency": "weekly",
         "weekday": 4,
         "time": "09:00",
+        "start_date": "2026-01-01",
+        "end_date": "2026-12-31",
         "enabled": True,
     })
     events = client.get_received()
@@ -55,6 +57,8 @@ def test_app_portfolio_investment_socket_crud_and_manual_execution(monkeypatch, 
     plan_id = saved["plan"]["id"]
     assert saved["plan"]["frequency"] == "weekly"
     assert saved["plan"]["weekday"] == 4
+    assert saved["plan"]["start_date"] == "2026-01-01"
+    assert saved["plan"]["end_date"] == "2026-12-31"
     assert state["summary"]["total"] == 1
 
     client.emit("execute_portfolio_investment_plan", {"id": plan_id})

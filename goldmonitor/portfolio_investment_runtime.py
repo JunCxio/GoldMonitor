@@ -130,6 +130,10 @@ class PortfolioInvestmentRuntime:
             if index < 0:
                 raise ValueError("未找到定投计划")
             existing = self.state.portfolio_investment_plans[index]
+            if enabled:
+                end_date = investment_core.parse_plan_date(existing.get("end_date"))
+                if end_date and end_date < self.now_factory().date():
+                    raise ValueError("计划结束日期已过，请先调整结束日期")
             payload = dict(existing)
             payload["enabled"] = bool(enabled)
             plan = investment_core.normalize_investment_plan(
@@ -173,7 +177,13 @@ class PortfolioInvestmentRuntime:
             if index < 0:
                 raise ValueError("未找到定投计划")
             plan = dict(self.state.portfolio_investment_plans[index])
+            start_date = investment_core.parse_plan_date(plan.get("start_date"))
+            end_date = investment_core.parse_plan_date(plan.get("end_date"))
+            if start_date and now.date() < start_date:
+                return {"ok": True, "status": "not_started", "message": "定投计划尚未到开始日期", "plan": plan}
             due_at = investment_core.latest_due_run_at(plan, now) if plan.get("enabled") else None
+            if end_date and now.date() > end_date and (force or due_at is None):
+                return {"ok": True, "status": "completed", "message": "定投计划已超过结束日期", "plan": plan}
             if not force and due_at is None:
                 return {"ok": True, "status": "not_due", "message": "定投计划尚未到执行时间", "plan": plan}
 
@@ -260,7 +270,8 @@ class PortfolioInvestmentRuntime:
 
             next_run_at = plan.get("next_run_at", "")
             if due_at is not None:
-                next_run_at = investment_core.next_plan_run_at(plan, now).isoformat(timespec="seconds")
+                next_run = investment_core.next_plan_run_in_window(plan, now)
+                next_run_at = next_run.isoformat(timespec="seconds") if next_run else ""
             result_message = (
                 "已按最新行情补执行定投"
                 if execution_kind == "catch_up"
