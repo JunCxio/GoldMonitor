@@ -1175,6 +1175,175 @@ def _simulation_interval_label(seconds):
     return f"约 {max(1, round(seconds / 86400))} 天"
 
 
+def _simulation_granularity(interval_seconds):
+    if not interval_seconds:
+        return {"key": "unknown", "label": "无法判断"}
+    if interval_seconds <= 15 * 60:
+        return {"key": "fine", "label": "分钟级"}
+    if interval_seconds <= 2 * 60 * 60:
+        return {"key": "hourly", "label": "小时级"}
+    if interval_seconds <= 36 * 60 * 60:
+        return {"key": "daily", "label": "日级"}
+    return {"key": "sparse", "label": "稀疏样本"}
+
+
+def _simulation_gap_items(points, start_at, end_at, interval_seconds):
+    if not interval_seconds or end_at <= start_at:
+        return []
+    threshold_seconds = interval_seconds * 1.5
+    boundaries = [(start_at, None), *points, (end_at, None)]
+    gaps = []
+    for index, (previous, current) in enumerate(zip(boundaries, boundaries[1:])):
+        gap_seconds = int((current[0] - previous[0]).total_seconds())
+        if gap_seconds <= threshold_seconds:
+            continue
+        if index == 0:
+            estimated_missing = max(1, math.floor(gap_seconds / interval_seconds))
+            position = "leading"
+        elif index == len(boundaries) - 2:
+            estimated_missing = max(1, math.floor(gap_seconds / interval_seconds))
+            position = "trailing"
+        else:
+            estimated_missing = max(
+                1,
+                math.floor(gap_seconds / interval_seconds) - 1,
+            )
+            position = "internal"
+        gaps.append({
+            "start_timestamp": previous[0].isoformat(timespec="seconds"),
+            "end_timestamp": current[0].isoformat(timespec="seconds"),
+            "duration_seconds": gap_seconds,
+            "estimated_missing_points": estimated_missing,
+            "position": position,
+        })
+    return gaps
+
+
+def _simulation_data_quality(points, start_at, end_at, interval_seconds):
+    window_points = [item for item in points if start_at <= item[0] <= end_at]
+    duration_seconds = max(1, int((end_at - start_at).total_seconds()))
+    expected_point_count = (
+        math.floor(duration_seconds / interval_seconds) + 1
+        if interval_seconds
+        else 0
+    )
+    point_count = len(window_points)
+    missing_point_count = (
+        max(0, expected_point_count - point_count)
+        if expected_point_count
+        else 0
+    )
+    density_percent = (
+        min(100.0, point_count / expected_point_count * 100)
+        if expected_point_count
+        else None
+    )
+    if window_points:
+        range_start = max(start_at, window_points[0][0])
+        range_end = min(end_at, window_points[-1][0])
+        range_coverage_percent = max(
+            0.0,
+            min(
+                100.0,
+                (range_end - range_start).total_seconds() / duration_seconds * 100,
+            ),
+        )
+    else:
+        range_coverage_percent = 0.0
+    gaps = _simulation_gap_items(
+        window_points,
+        start_at,
+        end_at,
+        interval_seconds,
+    )
+    return {
+        "requested_start_timestamp": start_at.isoformat(timespec="seconds"),
+        "requested_end_timestamp": end_at.isoformat(timespec="seconds"),
+        "point_count": point_count,
+        "expected_point_count": expected_point_count,
+        "missing_point_count": missing_point_count,
+        "density_percent": density_percent,
+        "range_coverage_percent": range_coverage_percent,
+        "gap_count": len(gaps),
+        "largest_gap_seconds": max(
+            (item["duration_seconds"] for item in gaps),
+            default=0,
+        ),
+        "gaps": sorted(
+            gaps,
+            key=lambda item: item["duration_seconds"],
+            reverse=True,
+        )[:5],
+        "granularity": _simulation_granularity(interval_seconds),
+    }
+
+
+def _simulation_confidence(
+    *,
+    scheduled_count,
+    covered_count,
+    latest_price,
+    data_quality,
+):
+    if not scheduled_count:
+        return {
+            "level": "unavailable",
+            "label": "无法评估",
+            "score": None,
+            "summary": "所选窗口内没有计划期次，无法评估模拟结果可信度。",
+            "reasons": ["调整模拟范围，或检查计划的开始日期和执行频率。"],
+        }
+
+    covered_percent = covered_count / scheduled_count * 100
+    range_percent = float(data_quality.get("range_coverage_percent") or 0)
+    density_percent = float(data_quality.get("density_percent") or 0)
+    granularity_key = data_quality.get("granularity", {}).get("key")
+    granularity_score = {
+        "fine": 100,
+        "hourly": 90,
+        "daily": 65,
+        "sparse": 30,
+        "unknown": 0,
+    }.get(granularity_key, 0)
+    score = round(
+        covered_percent * 0.45
+        + range_percent * 0.20
+        + density_percent * 0.20
+        + granularity_score * 0.10
+        + (100 if latest_price is not None else 0) * 0.05
+    )
+    level = "high" if score >= 85 else "medium" if score >= 60 else "low"
+    label = {"high": "高", "medium": "中", "low": "低"}[level]
+    reasons = []
+    if covered_count < scheduled_count:
+        reasons.append(f"仅匹配 {covered_count}/{scheduled_count} 个计划期次。")
+    if range_percent < 90:
+        reasons.append(f"本地行情只覆盖所选时间范围的 {range_percent:.0f}%。")
+    if density_percent < 80:
+        reasons.append(f"按当前粒度估算，样本完整度为 {density_percent:.0f}%。")
+    if granularity_key in {"daily", "sparse", "unknown"}:
+        reasons.append(
+            "样本粒度较粗，期次成交价可能与真实时点存在偏差。"
+            if granularity_key != "unknown"
+            else "样本不足，无法判断时间粒度。"
+        )
+    if latest_price is None:
+        reasons.append("范围末端没有邻近行情，无法估算当前市值。")
+    if not reasons:
+        reasons.append("计划期次、时间范围和末端估值均有连续行情支持。")
+    return {
+        "level": level,
+        "label": label,
+        "score": score,
+        "summary": {
+            "high": "历史样本对当前模拟提供了较完整的支持。",
+            "medium": "模拟结果可用于趋势参考，但仍存在数据覆盖限制。",
+            "low": "历史样本不足，结果只适合了解大致方向。",
+        }[level],
+        "reasons": reasons[:4],
+    }
+
+
 def _nearest_simulation_point(points, timestamps, target, tolerance_seconds):
     if not points:
         return None
@@ -1337,6 +1506,18 @@ def investment_plan_history_simulation(plan, price_history, *, days=30, now=None
     scheduled_count = len(executions)
     missing_count = scheduled_count - covered_count
     point_count = len(eligible_points)
+    data_quality = _simulation_data_quality(
+        points,
+        start_at,
+        now,
+        interval_seconds,
+    )
+    confidence = _simulation_confidence(
+        scheduled_count=scheduled_count,
+        covered_count=covered_count,
+        latest_price=latest_price,
+        data_quality=data_quality,
+    )
     return {
         "days": window_days,
         "supported": True,
@@ -1385,7 +1566,9 @@ def investment_plan_history_simulation(plan, price_history, *, days=30, now=None
             "covered_percent": (
                 covered_count / scheduled_count * 100 if scheduled_count else None
             ),
+            "data_quality": data_quality,
         },
+        "confidence": confidence,
         "executions": executions,
     }
 

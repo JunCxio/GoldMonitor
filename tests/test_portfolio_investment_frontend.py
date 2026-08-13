@@ -122,7 +122,8 @@ vm.runInContext(`applyPortfolioInvestmentSimulation({id:'plan-1',request_id:'1',
   days:90,usable:true,partial:true,mode:'rmb',scheduled_count:3,covered_count:2,missing_count:1,
   actual_cost:2002,total_fees:2,quantity:4,average_price:500,latest_price:510,
   latest_price_timestamp:'2026-08-12T10:00:00',market_value:2040,pnl:38,pnl_percent:1.898,
-  coverage:{point_count:44,first_timestamp:'2026-07-01T09:00:00',last_timestamp:'2026-08-12T10:00:00',interval_label:'约 1 天'},
+  confidence:{level:'medium',label:'中',score:72,summary:'模拟结果可用于趋势参考，但仍存在数据覆盖限制。',reasons:['仅匹配 2/3 个计划期次。','样本粒度较粗，期次成交价可能与真实时点存在偏差。']},
+  coverage:{point_count:44,first_timestamp:'2026-07-01T09:00:00',last_timestamp:'2026-08-12T10:00:00',interval_label:'约 1 天',data_quality:{requested_start_timestamp:'2026-05-15T00:00:00',requested_end_timestamp:'2026-08-12T10:00:00',density_percent:78,range_coverage_percent:64,gap_count:3,largest_gap_seconds:259200,granularity:{key:'daily',label:'日级'},gaps:[{start_timestamp:'2026-05-15T00:00:00',end_timestamp:'2026-05-18T00:00:00',duration_seconds:259200,estimated_missing_points:3,position:'leading'}]}},
   executions:[
     {scheduled_at:'2026-07-01T09:00:00',status:'estimated',sample_timestamp:'2026-07-01T09:00:00',price:500,quantity:2,total_cost:1001},
     {scheduled_at:'2026-08-01T09:00:00',status:'missing'}
@@ -131,6 +132,10 @@ vm.runInContext(`applyPortfolioInvestmentSimulation({id:'plan-1',request_id:'1',
 const html = vm.runInContext("portfolioInvestmentSimulationMarkup({id:'plan-1'})", context);
 if (!html.includes('近 90 天') || !html.includes('部分覆盖') || !html.includes('2/3 期 · 67%')) throw new Error('simulation must render selected range and partial coverage');
 if (!html.includes('44 个') || !html.includes('约 1 天') || !html.includes('附近没有可用行情样本')) throw new Error('simulation must render data coverage and missing run');
+if (!html.includes('结果可信度') || !html.includes('72 / 100') || !html.includes('范围 64%') || !html.includes('完整度 78%')) throw new Error('simulation must render confidence score and quality facts');
+if (!html.includes('日级') || !html.includes('3 个缺口') || !html.includes('最大缺口') || !html.includes('3 天')) throw new Error('simulation must render granularity and gap summary');
+if (!html.includes('查看 1 个主要行情缺口') || !html.includes('窗口开头') || !html.includes('估算缺失 3 个样本')) throw new Error('simulation must render major gap detail');
+if (!html.includes('仅匹配 2/3 个计划期次') || !html.includes('成交价可能与真实时点存在偏差')) throw new Error('simulation must explain confidence limitations');
 if (!html.includes('基于本地历史样本估算') || !html.includes('不代表真实成交、滑点或历史真实收益') || !html.includes('不会写入持仓和流水')) throw new Error('simulation must explain estimation limits');
 vm.runInContext("setPortfolioInvestmentSimulationDays('plan-1', 7)", context);
 if (context.portfolioInvestmentSimulations['plan-1'].result !== null) throw new Error('changing range must clear the previous result');

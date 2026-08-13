@@ -490,6 +490,9 @@ def test_app_simulates_investment_plan_history_with_request_id(monkeypatch, tmp_
     assert simulated["request_id"] == "simulation-1"
     assert simulated["result"]["covered_count"] == 2
     assert simulated["result"]["latest_price"] == 520.0
+    assert simulated["result"]["coverage"]["data_quality"]["point_count"] == 3
+    assert simulated["result"]["coverage"]["data_quality"]["granularity"]["key"] == "daily"
+    assert simulated["result"]["confidence"]["level"] == "medium"
     assert app.portfolio_transactions == []
     client.disconnect()
 

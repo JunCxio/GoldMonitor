@@ -1390,11 +1390,134 @@ def test_investment_history_simulation_reports_partial_and_missing_coverage():
     assert partial["missing_count"] == 1
     assert partial["coverage"]["interval_seconds"] == 3600
     assert partial["coverage"]["interval_label"] == "约 1 小时"
+    assert partial["coverage"]["data_quality"]["granularity"] == {
+        "key": "hourly",
+        "label": "小时级",
+    }
+    assert partial["coverage"]["data_quality"]["gap_count"] >= 2
+    assert partial["confidence"]["level"] == "medium"
+    assert partial["confidence"]["score"] >= 60
+    assert any("计划期次" in reason for reason in partial["confidence"]["reasons"])
     assert missing["usable"] is False
     assert missing["partial"] is True
     assert missing["covered_count"] == 0
     assert missing["actual_cost"] == 0
     assert missing["market_value"] is None
+    assert missing["coverage"]["data_quality"]["point_count"] == 0
+    assert missing["coverage"]["data_quality"]["range_coverage_percent"] == 0
+    assert missing["confidence"]["level"] == "low"
+
+
+def test_investment_history_simulation_reports_continuous_quality_and_high_confidence():
+    from goldmonitor.portfolio_investment import investment_plan_history_simulation
+
+    now = datetime(2026, 8, 12, 10, 0)
+    start_at = datetime(2026, 8, 6, 0, 0)
+    history = []
+    cursor = start_at
+    while cursor <= now:
+        history.append({"timestamp": cursor.isoformat(), "rmb": 500})
+        cursor += timedelta(hours=1)
+    plan = {
+        "id": "plan-quality-high",
+        "mode": "rmb",
+        "amount": 1000,
+        "fee": 0,
+        "frequency": "daily",
+        "time": "09:00",
+        "month": 1,
+        "day": 1,
+        "weekday": 1,
+        "start_date": "2026-08-06",
+        "end_date": "",
+        "created_at": "2026-08-01T08:00:00",
+    }
+
+    result = investment_plan_history_simulation(plan, history, days=7, now=now)
+    quality = result["coverage"]["data_quality"]
+
+    assert quality["requested_start_timestamp"] == "2026-08-06T00:00:00"
+    assert quality["requested_end_timestamp"] == "2026-08-12T10:00:00"
+    assert quality["point_count"] == quality["expected_point_count"]
+    assert quality["missing_point_count"] == 0
+    assert quality["density_percent"] == 100
+    assert quality["range_coverage_percent"] == 100
+    assert quality["gap_count"] == 0
+    assert quality["largest_gap_seconds"] == 0
+    assert quality["gaps"] == []
+    assert result["confidence"]["level"] == "high"
+    assert result["confidence"]["score"] >= 95
+    assert result["confidence"]["reasons"] == [
+        "计划期次、时间范围和末端估值均有连续行情支持。"
+    ]
+
+
+def test_investment_history_simulation_reports_largest_internal_gap():
+    from goldmonitor.portfolio_investment import investment_plan_history_simulation
+
+    now = datetime(2026, 8, 12, 10, 0)
+    history = []
+    cursor = datetime(2026, 8, 6, 0, 0)
+    while cursor <= now:
+        if not datetime(2026, 8, 9, 0, 0) <= cursor <= datetime(2026, 8, 9, 6, 0):
+            history.append({"timestamp": cursor.isoformat(), "rmb": 500})
+        cursor += timedelta(hours=1)
+    plan = {
+        "id": "plan-quality-gap",
+        "mode": "rmb",
+        "amount": 1000,
+        "fee": 0,
+        "frequency": "daily",
+        "time": "09:00",
+        "month": 1,
+        "day": 1,
+        "weekday": 1,
+        "start_date": "2026-08-06",
+        "end_date": "",
+        "created_at": "2026-08-01T08:00:00",
+    }
+
+    result = investment_plan_history_simulation(plan, history, days=7, now=now)
+    quality = result["coverage"]["data_quality"]
+
+    assert quality["gap_count"] == 1
+    assert quality["largest_gap_seconds"] == 8 * 60 * 60
+    assert quality["gaps"][0] == {
+        "start_timestamp": "2026-08-08T23:00:00",
+        "end_timestamp": "2026-08-09T07:00:00",
+        "duration_seconds": 8 * 60 * 60,
+        "estimated_missing_points": 7,
+        "position": "internal",
+    }
+    assert quality["missing_point_count"] == 7
+
+
+def test_investment_history_simulation_confidence_is_unavailable_without_runs():
+    from goldmonitor.portfolio_investment import investment_plan_history_simulation
+
+    result = investment_plan_history_simulation(
+        {
+            "id": "plan-quality-no-runs",
+            "mode": "rmb",
+            "amount": 1000,
+            "fee": 0,
+            "frequency": "monthly",
+            "time": "09:00",
+            "month": 1,
+            "day": 1,
+            "weekday": 1,
+            "start_date": "2026-09-01",
+            "end_date": "",
+            "created_at": "2026-08-01T08:00:00",
+        },
+        [{"timestamp": "2026-08-12T10:00:00", "rmb": 500}],
+        days=7,
+        now=datetime(2026, 8, 12, 10, 0),
+    )
+
+    assert result["scheduled_count"] == 0
+    assert result["confidence"]["level"] == "unavailable"
+    assert result["confidence"]["score"] is None
 
 
 def test_investment_history_simulation_caps_sparse_sample_match_tolerance():
