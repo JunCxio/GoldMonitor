@@ -99,6 +99,32 @@ function portfolioInvestmentActualTrendMarkup(items, months) {
   ].join('');
 }
 
+function portfolioInvestmentReliabilityMarkup(summary) {
+  const source = summary && typeof summary === 'object' ? summary : {};
+  const automaticCount = Math.max(0, Number(source.automatic_execution_count) || 0);
+  const onTimeCount = Math.max(0, Number(source.on_time_execution_count) || 0);
+  const catchUpCount = Math.max(0, Number(source.catch_up_execution_count) || 0);
+  const manualCount = Math.max(0, Number(source.manual_execution_count) || 0);
+  const unclassifiedCount = Math.max(0, Number(source.unclassified_execution_count) || 0);
+  const rate = source.on_time_rate == null || !Number.isFinite(Number(source.on_time_rate))
+    ? null
+    : Math.max(0, Math.min(100, Number(source.on_time_rate)));
+  const notice = unclassifiedCount
+    ? '<small class="portfolio-investment-reliability-notice">另有 ' + escapeHtml(String(unclassifiedCount)) + ' 条旧流水未记录执行类型，未计入按时率。</small>'
+    : '';
+  return [
+    '<div class="portfolio-investment-reliability">',
+    '<div class="portfolio-investment-reliability-head"><div><span>近' + escapeHtml(String(Number(source.reliability_days) || 90)) + '天执行稳定性</span><small>按时率只计算计划执行与补执行，手动执行单独列出</small></div></div>',
+    '<div class="portfolio-investment-reliability-grid">',
+    '<div class="on-time"><span>按时率</span><strong>' + escapeHtml(rate == null ? '--' : rate.toFixed(1) + '%') + '</strong><small>' + escapeHtml(automaticCount ? onTimeCount + '/' + automaticCount + ' 次自动执行' : '暂无自动执行记录') + '</small></div>',
+    '<div class="catch-up"><span>补执行</span><strong>' + escapeHtml(String(catchUpCount)) + '</strong><small>应用恢复后执行</small></div>',
+    '<div class="manual"><span>手动执行</span><strong>' + escapeHtml(String(manualCount)) + '</strong><small>不计入按时率</small></div>',
+    '</div>',
+    notice,
+    '</div>',
+  ].join('');
+}
+
 function portfolioInvestmentCommitmentRange(item) {
   const first = portfolioInvestmentProjectionDateTime(item && item.first_run_at);
   const last = portfolioInvestmentProjectionDateTime(item && item.last_run_at);

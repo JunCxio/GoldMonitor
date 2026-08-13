@@ -108,6 +108,10 @@ def test_runtime_catches_up_latest_run_and_generates_sourced_transaction():
     assert state_payload["summary"]["actual_execution_count"] == 1
     assert state_payload["summary"]["rmb_actual_invested"] == 1002.0
     assert state_payload["summary"]["actual_trend"][-1]["rmb_invested"] == 1002.0
+    assert state_payload["summary"]["automatic_execution_count"] == 1
+    assert state_payload["summary"]["on_time_execution_count"] == 0
+    assert state_payload["summary"]["catch_up_execution_count"] == 1
+    assert state_payload["summary"]["on_time_rate"] == 0.0
 
 
 def test_runtime_uses_usd_price_and_creates_position_on_first_execution():
@@ -230,6 +234,13 @@ def test_runtime_archives_restores_and_permanently_deletes_plan():
             {"month": "2026-07", "execution_count": 0, "rmb_invested": 0.0, "usd_invested": 0.0},
             {"month": "2026-08", "execution_count": 0, "rmb_invested": 0.0, "usd_invested": 0.0},
         ],
+        "reliability_days": 90,
+        "automatic_execution_count": 0,
+        "on_time_execution_count": 0,
+        "catch_up_execution_count": 0,
+        "manual_execution_count": 0,
+        "unclassified_execution_count": 0,
+        "on_time_rate": None,
         "commitment_days": 30,
         "commitment_plan_count": 0,
         "commitment_run_count": 0,

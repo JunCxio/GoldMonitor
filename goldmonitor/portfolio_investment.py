@@ -18,6 +18,7 @@ INVESTMENT_SCHEDULE_PREVIEW_LIMIT = 5
 INVESTMENT_COMMITMENT_WINDOW_DAYS = 30
 INVESTMENT_ACTUAL_WINDOW_DAYS = 30
 INVESTMENT_ACTUAL_TREND_MONTHS = 6
+INVESTMENT_RELIABILITY_WINDOW_DAYS = 90
 INVESTMENT_EXECUTION_CSV_FIELDS = [
     "plan_id",
     "plan_name",
@@ -663,6 +664,7 @@ def _investment_execution_record(raw):
         "date": executed_on,
         "mode": mode,
         "total_cost": price * quantity + fee,
+        "execution_kind": _clean_text(raw.get("execution_kind")).lower(),
     }
 
 
@@ -735,6 +737,53 @@ def investment_execution_monthly_trend(
         bucket[execution["mode"] + "_invested"] += execution["total_cost"]
         bucket["execution_count"] += 1
     return buckets
+
+
+def investment_execution_reliability_summary(
+    transactions,
+    *,
+    now=None,
+    days=INVESTMENT_RELIABILITY_WINDOW_DAYS,
+):
+    now = now or datetime.now()
+    window_days = _bounded_int(
+        days,
+        1,
+        366,
+        INVESTMENT_RELIABILITY_WINDOW_DAYS,
+    )
+    start_date = now.date() - timedelta(days=window_days - 1)
+    result = {
+        "days": window_days,
+        "automatic_execution_count": 0,
+        "on_time_execution_count": 0,
+        "catch_up_execution_count": 0,
+        "manual_execution_count": 0,
+        "unclassified_execution_count": 0,
+        "on_time_rate": None,
+    }
+    for raw in list(transactions or []):
+        execution = _investment_execution_record(raw)
+        if execution is None or not start_date <= execution["date"] <= now.date():
+            continue
+        execution_kind = execution["execution_kind"]
+        if execution_kind == "scheduled":
+            result["automatic_execution_count"] += 1
+            result["on_time_execution_count"] += 1
+        elif execution_kind == "catch_up":
+            result["automatic_execution_count"] += 1
+            result["catch_up_execution_count"] += 1
+        elif execution_kind == "manual":
+            result["manual_execution_count"] += 1
+        else:
+            result["unclassified_execution_count"] += 1
+    if result["automatic_execution_count"]:
+        result["on_time_rate"] = (
+            result["on_time_execution_count"]
+            / result["automatic_execution_count"]
+            * 100
+        )
+    return result
 
 
 def investment_plan_projection(
@@ -958,6 +1007,7 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
     prices = prices if isinstance(prices, dict) else {}
     actual = investment_execution_window_summary(transactions, now=now)
     actual_trend = investment_execution_monthly_trend(transactions, now=now)
+    reliability = investment_execution_reliability_summary(transactions, now=now)
     plans = []
     summary = {
         "total": 0,
@@ -975,6 +1025,13 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
         "usd_actual_invested": actual["usd_invested"],
         "actual_trend_months": len(actual_trend),
         "actual_trend": actual_trend,
+        "reliability_days": reliability["days"],
+        "automatic_execution_count": reliability["automatic_execution_count"],
+        "on_time_execution_count": reliability["on_time_execution_count"],
+        "catch_up_execution_count": reliability["catch_up_execution_count"],
+        "manual_execution_count": reliability["manual_execution_count"],
+        "unclassified_execution_count": reliability["unclassified_execution_count"],
+        "on_time_rate": reliability["on_time_rate"],
         "commitment_days": INVESTMENT_COMMITMENT_WINDOW_DAYS,
         "commitment_plan_count": 0,
         "commitment_run_count": 0,

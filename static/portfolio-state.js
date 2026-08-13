@@ -231,6 +231,13 @@ function normalizePortfolioInvestmentState(data) {
           usd_invested: Number.isFinite(Number(item && item.usd_invested)) ? Number(item.usd_invested) : 0,
         })).filter(item => item.month)
         : [],
+      reliability_days: Number.isFinite(Number(summary.reliability_days)) ? Number(summary.reliability_days) : 90,
+      automatic_execution_count: Number.isFinite(Number(summary.automatic_execution_count)) ? Number(summary.automatic_execution_count) : 0,
+      on_time_execution_count: Number.isFinite(Number(summary.on_time_execution_count)) ? Number(summary.on_time_execution_count) : 0,
+      catch_up_execution_count: Number.isFinite(Number(summary.catch_up_execution_count)) ? Number(summary.catch_up_execution_count) : 0,
+      manual_execution_count: Number.isFinite(Number(summary.manual_execution_count)) ? Number(summary.manual_execution_count) : 0,
+      unclassified_execution_count: Number.isFinite(Number(summary.unclassified_execution_count)) ? Number(summary.unclassified_execution_count) : 0,
+      on_time_rate: summary.on_time_rate == null || !Number.isFinite(Number(summary.on_time_rate)) ? null : Number(summary.on_time_rate),
       commitment_days: Number.isFinite(Number(summary.commitment_days)) ? Number(summary.commitment_days) : 30,
       commitment_plan_count: Number.isFinite(Number(summary.commitment_plan_count)) ? Number(summary.commitment_plan_count) : 0,
       commitment_run_count: Number.isFinite(Number(summary.commitment_run_count)) ? Number(summary.commitment_run_count) : 0,

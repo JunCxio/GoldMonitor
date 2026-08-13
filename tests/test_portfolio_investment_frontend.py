@@ -96,6 +96,9 @@ context.portfolioState.investment_plans = vm.runInContext(`normalizePortfolioInv
     {month:'2026-07',execution_count:1,rmb_invested:306,usd_invested:501},
     {month:'2026-08',execution_count:2,rmb_invested:153,usd_invested:250.5}
   ],
+  reliability_days:90, automatic_execution_count:3, on_time_execution_count:2,
+  catch_up_execution_count:1, manual_execution_count:2,
+  unclassified_execution_count:1, on_time_rate:66.6666667,
   commitment_days:30, commitment_plan_count:2, commitment_run_count:5,
   rmb_commitment:102, usd_commitment:2004,
   commitment_items:[
@@ -118,6 +121,12 @@ if (!box.innerHTML.includes('近6个月投入趋势') || !box.innerHTML.includes
 }
 if (!box.innerHTML.includes('26/03') || !box.innerHTML.includes('¥153.00') || !box.innerHTML.includes('$250.50')) {
   throw new Error('monthly trend must render chronological buckets and both currency amounts');
+}
+if (!box.innerHTML.includes('近90天执行稳定性') || !box.innerHTML.includes('66.7%') || !box.innerHTML.includes('2/3 次自动执行')) {
+  throw new Error('reliability summary must render its window and on-time rate');
+}
+if (!box.innerHTML.includes('补执行') || !box.innerHTML.includes('手动执行') || !box.innerHTML.includes('另有 1 条旧流水未记录执行类型')) {
+  throw new Error('reliability summary must separate execution kinds and explain unclassified records');
 }
 if (!box.innerHTML.includes('¥102.00 · $2,004.00') || !box.innerHTML.includes('预计 5 期 · 涉及 2 个计划')) {
   throw new Error('commitment totals and counts must render by currency');

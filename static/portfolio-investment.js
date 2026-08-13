@@ -359,6 +359,7 @@ function renderPortfolioInvestmentSummary(box) {
     '<div class="portfolio-investment-overview-actual-values"><strong>' + escapeHtml(formatPortfolioMoney(summary.rmb_actual_invested || 0, 'rmb')) + ' · ' + escapeHtml(formatPortfolioMoney(summary.usd_actual_invested || 0, 'usd')) + '</strong><small>实际执行 ' + escapeHtml(String(summary.actual_execution_count || 0)) + ' 次</small></div>',
     '</div>',
     portfolioInvestmentActualTrendMarkup(summary.actual_trend, summary.actual_trend_months),
+    portfolioInvestmentReliabilityMarkup(summary),
     '<div class="portfolio-investment-overview-commitment">',
     '<b>未来' + escapeHtml(String(summary.commitment_days || 30)) + '天</b>',
     '<div><span>计划投入</span><small>含当前待执行期次，按固定金额估算</small></div>',

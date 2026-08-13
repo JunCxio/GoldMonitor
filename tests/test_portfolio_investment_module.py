@@ -311,6 +311,41 @@ def test_investment_execution_monthly_trend_spans_year_and_separates_currencies(
     assert trend[5]["usd_invested"] == 201.0
 
 
+def test_investment_execution_reliability_separates_automatic_and_manual_runs():
+    from goldmonitor.portfolio_investment import investment_execution_reliability_summary
+
+    base = {
+        "type": "buy",
+        "mode": "rmb",
+        "price": 100,
+        "quantity": 2,
+        "fee": 1,
+        "source": "investment_plan",
+    }
+    reliability = investment_execution_reliability_summary(
+        [
+            {**base, "trade_date": "2026-05-15", "execution_kind": "scheduled"},
+            {**base, "trade_date": "2026-08-01", "execution_kind": "catch_up"},
+            {**base, "trade_date": "2026-08-12", "execution_kind": "manual"},
+            {**base, "trade_date": "2026-06-01", "execution_kind": ""},
+            {**base, "trade_date": "2026-05-14", "execution_kind": "scheduled"},
+            {**base, "trade_date": "2026-08-13", "execution_kind": "catch_up"},
+            {**base, "trade_date": "2026-08-01", "execution_kind": "scheduled", "source": ""},
+        ],
+        now=datetime(2026, 8, 12, 10, 0),
+    )
+
+    assert reliability == {
+        "days": 90,
+        "automatic_execution_count": 2,
+        "on_time_execution_count": 1,
+        "catch_up_execution_count": 1,
+        "manual_execution_count": 1,
+        "unclassified_execution_count": 1,
+        "on_time_rate": 50.0,
+    }
+
+
 def test_investment_plan_window_projection_respects_target_and_schedule_window():
     from goldmonitor.portfolio_investment import investment_plan_window_projection
 
@@ -419,6 +454,13 @@ def test_investment_plan_state_summarizes_next_30_day_commitments_by_currency():
         "rmb_invested": 102.0,
         "usd_invested": 0.0,
     }
+    assert summary["reliability_days"] == 90
+    assert summary["automatic_execution_count"] == 1
+    assert summary["on_time_execution_count"] == 1
+    assert summary["catch_up_execution_count"] == 0
+    assert summary["manual_execution_count"] == 0
+    assert summary["unclassified_execution_count"] == 0
+    assert summary["on_time_rate"] == 100.0
     assert [item["id"] for item in summary["commitment_items"]] == [
         "plan-rmb",
         "plan-usd",
