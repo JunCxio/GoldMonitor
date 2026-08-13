@@ -222,6 +222,15 @@ function normalizePortfolioInvestmentState(data) {
       actual_execution_count: Number.isFinite(Number(summary.actual_execution_count)) ? Number(summary.actual_execution_count) : 0,
       rmb_actual_invested: Number.isFinite(Number(summary.rmb_actual_invested)) ? Number(summary.rmb_actual_invested) : 0,
       usd_actual_invested: Number.isFinite(Number(summary.usd_actual_invested)) ? Number(summary.usd_actual_invested) : 0,
+      actual_trend_months: Number.isFinite(Number(summary.actual_trend_months)) ? Number(summary.actual_trend_months) : 6,
+      actual_trend: Array.isArray(summary.actual_trend)
+        ? summary.actual_trend.map(item => ({
+          month: String((item && item.month) || ''),
+          execution_count: Number.isFinite(Number(item && item.execution_count)) ? Number(item.execution_count) : 0,
+          rmb_invested: Number.isFinite(Number(item && item.rmb_invested)) ? Number(item.rmb_invested) : 0,
+          usd_invested: Number.isFinite(Number(item && item.usd_invested)) ? Number(item.usd_invested) : 0,
+        })).filter(item => item.month)
+        : [],
       commitment_days: Number.isFinite(Number(summary.commitment_days)) ? Number(summary.commitment_days) : 30,
       commitment_plan_count: Number.isFinite(Number(summary.commitment_plan_count)) ? Number(summary.commitment_plan_count) : 0,
       commitment_run_count: Number.isFinite(Number(summary.commitment_run_count)) ? Number(summary.commitment_run_count) : 0,

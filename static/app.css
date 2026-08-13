@@ -906,6 +906,27 @@
   .portfolio-investment-overview-actual-values { text-align:right; }
   .portfolio-investment-overview-actual-values strong { display:block; color:#ececf2; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.7rem; white-space:nowrap; }
   .portfolio-investment-overview-actual-values small { margin-top:2px; }
+  .portfolio-investment-actual-trend { grid-column:1 / -1; min-width:0; padding:9px 10px 10px; border-top:1px solid rgba(255,255,255,0.055); background:rgba(0,0,0,0.065); }
+  .portfolio-investment-actual-trend-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; min-width:0; margin-bottom:7px; }
+  .portfolio-investment-actual-trend-head > div:first-child { min-width:0; }
+  .portfolio-investment-actual-trend-head span, .portfolio-investment-actual-trend-head small { display:block; }
+  .portfolio-investment-actual-trend-head span { color:#dcdce4; font-weight:800; }
+  .portfolio-investment-actual-trend-head small { margin-top:2px; }
+  .portfolio-investment-actual-trend-legend { display:flex; flex:0 0 auto; gap:8px; }
+  .portfolio-investment-actual-trend-legend span { position:relative; padding-left:9px; color:var(--text-dim); font-size:0.54rem; font-weight:700; }
+  .portfolio-investment-actual-trend-legend span::before { content:""; position:absolute; left:0; top:50%; width:5px; height:5px; border-radius:50%; transform:translateY(-50%); }
+  .portfolio-investment-actual-trend-legend .rmb::before { background:var(--gold); }
+  .portfolio-investment-actual-trend-legend .usd::before { background:var(--blue); }
+  .portfolio-investment-actual-trend-scroll { min-width:0; }
+  .portfolio-investment-actual-trend-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:6px; min-width:0; }
+  .portfolio-investment-actual-trend-item { min-width:0; padding:7px; border:1px solid rgba(255,255,255,0.055); border-radius:7px; background:rgba(255,255,255,0.018); }
+  .portfolio-investment-actual-trend-item > strong { display:block; margin-bottom:6px; color:#d5d5dd; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.58rem; }
+  .portfolio-investment-actual-trend-item > small { display:block; margin:2px 0 5px; color:var(--text-dim); font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.51rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .portfolio-investment-actual-trend-item > small:last-child { margin-bottom:0; }
+  .portfolio-investment-actual-trend-row { height:3px; overflow:hidden; border-radius:99px; background:rgba(255,255,255,0.055); }
+  .portfolio-investment-actual-trend-row i { display:block; height:100%; border-radius:inherit; }
+  .portfolio-investment-actual-trend-row.rmb i { background:var(--gold); }
+  .portfolio-investment-actual-trend-row.usd i { background:var(--blue); }
   .portfolio-investment-overview-commitment { grid-column:1 / -1; display:grid; grid-template-columns:auto minmax(0, 1fr) auto; gap:9px; align-items:center; min-width:0; padding:9px 10px; border-top:1px solid rgba(232,184,48,0.13); background:rgba(232,184,48,0.025); }
   .portfolio-investment-overview-commitment > b { display:inline-flex; align-items:center; justify-content:center; min-width:58px; min-height:24px; border:1px solid rgba(232,184,48,0.24); border-radius:6px; color:var(--gold); background:rgba(232,184,48,0.06); font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.56rem; letter-spacing:0.02em; }
   .portfolio-investment-overview-commitment > div { min-width:0; }
@@ -1551,6 +1572,8 @@
     .portfolio-investment-overview-performance { align-items:flex-start; flex-direction:column; }
     .portfolio-investment-overview-actual, .portfolio-investment-overview-commitment { grid-template-columns:auto minmax(0, 1fr); }
     .portfolio-investment-overview-actual-values, .portfolio-investment-overview-commitment-values { grid-column:2; text-align:left; }
+    .portfolio-investment-actual-trend-head { align-items:stretch; flex-direction:column; }
+    .portfolio-investment-actual-trend-legend { justify-content:flex-start; }
     .portfolio-investment-commitment-item { grid-template-columns:1fr; }
     .portfolio-investment-commitment-item > div:last-child { text-align:left; }
     .portfolio-investment-performance-grid, .portfolio-investment-execution-item { grid-template-columns:1fr; }

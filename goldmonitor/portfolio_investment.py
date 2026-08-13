@@ -17,6 +17,7 @@ INVESTMENT_EXECUTION_HISTORY_LIMIT = 10
 INVESTMENT_SCHEDULE_PREVIEW_LIMIT = 5
 INVESTMENT_COMMITMENT_WINDOW_DAYS = 30
 INVESTMENT_ACTUAL_WINDOW_DAYS = 30
+INVESTMENT_ACTUAL_TREND_MONTHS = 6
 INVESTMENT_EXECUTION_CSV_FIELDS = [
     "plan_id",
     "plan_name",
@@ -635,6 +636,36 @@ def investment_plan_execution_count(plan, transactions):
     return len(investment_plan_executions(plan, transactions))
 
 
+def _investment_execution_record(raw):
+    if not isinstance(raw, dict):
+        return None
+    if raw.get("source") != "investment_plan" or raw.get("type") != "buy":
+        return None
+    executed_on = parse_plan_date(raw.get("trade_date"))
+    if executed_on is None:
+        executed_at = parse_plan_datetime(
+            raw.get("created_at") or raw.get("updated_at")
+        )
+        executed_on = executed_at.date() if executed_at else None
+    price = _positive_float(raw.get("price"))
+    quantity = _positive_float(raw.get("quantity"))
+    fee = _nonnegative_float(raw.get("fee"))
+    mode = _clean_text(raw.get("mode")).lower()
+    if (
+        executed_on is None
+        or price is None
+        or quantity is None
+        or fee is None
+        or mode not in {"rmb", "usd"}
+    ):
+        return None
+    return {
+        "date": executed_on,
+        "mode": mode,
+        "total_cost": price * quantity + fee,
+    }
+
+
 def investment_execution_window_summary(
     transactions,
     *,
@@ -656,29 +687,54 @@ def investment_execution_window_summary(
         "usd_invested": 0.0,
     }
     for raw in list(transactions or []):
-        if not isinstance(raw, dict):
+        execution = _investment_execution_record(raw)
+        if execution is None or not start_date <= execution["date"] <= now.date():
             continue
-        if raw.get("source") != "investment_plan" or raw.get("type") != "buy":
-            continue
-        executed_on = parse_plan_date(raw.get("trade_date"))
-        if executed_on is None:
-            executed_at = parse_plan_datetime(
-                raw.get("created_at") or raw.get("updated_at")
-            )
-            executed_on = executed_at.date() if executed_at else None
-        if executed_on is None or not start_date <= executed_on <= now.date():
-            continue
-        price = _positive_float(raw.get("price"))
-        quantity = _positive_float(raw.get("quantity"))
-        fee = _nonnegative_float(raw.get("fee"))
-        if price is None or quantity is None or fee is None:
-            continue
-        mode = _clean_text(raw.get("mode")).lower()
-        if mode not in {"rmb", "usd"}:
-            continue
-        result[mode + "_invested"] += price * quantity + fee
+        result[execution["mode"] + "_invested"] += execution["total_cost"]
         result["execution_count"] += 1
     return result
+
+
+def investment_execution_monthly_trend(
+    transactions,
+    *,
+    now=None,
+    months=INVESTMENT_ACTUAL_TREND_MONTHS,
+):
+    now = now or datetime.now()
+    month_count = _bounded_int(
+        months,
+        1,
+        24,
+        INVESTMENT_ACTUAL_TREND_MONTHS,
+    )
+    current_month_index = now.year * 12 + now.month - 1
+    buckets = []
+    by_month = {}
+    for offset in range(month_count - 1, -1, -1):
+        month_index = current_month_index - offset
+        year = month_index // 12
+        month = month_index % 12 + 1
+        key = f"{year:04d}-{month:02d}"
+        bucket = {
+            "month": key,
+            "execution_count": 0,
+            "rmb_invested": 0.0,
+            "usd_invested": 0.0,
+        }
+        buckets.append(bucket)
+        by_month[key] = bucket
+    first_month = parse_plan_date(buckets[0]["month"] + "-01")
+    for raw in list(transactions or []):
+        execution = _investment_execution_record(raw)
+        if execution is None or not first_month <= execution["date"] <= now.date():
+            continue
+        bucket = by_month.get(execution["date"].strftime("%Y-%m"))
+        if bucket is None:
+            continue
+        bucket[execution["mode"] + "_invested"] += execution["total_cost"]
+        bucket["execution_count"] += 1
+    return buckets
 
 
 def investment_plan_projection(
@@ -901,6 +957,7 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
     now = now or datetime.now()
     prices = prices if isinstance(prices, dict) else {}
     actual = investment_execution_window_summary(transactions, now=now)
+    actual_trend = investment_execution_monthly_trend(transactions, now=now)
     plans = []
     summary = {
         "total": 0,
@@ -916,6 +973,8 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
         "actual_execution_count": actual["execution_count"],
         "rmb_actual_invested": actual["rmb_invested"],
         "usd_actual_invested": actual["usd_invested"],
+        "actual_trend_months": len(actual_trend),
+        "actual_trend": actual_trend,
         "commitment_days": INVESTMENT_COMMITMENT_WINDOW_DAYS,
         "commitment_plan_count": 0,
         "commitment_run_count": 0,

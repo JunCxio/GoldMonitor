@@ -65,6 +65,40 @@ function portfolioInvestmentProjectionSummary(plan) {
   return remaining + ' · 预计完成 ' + portfolioInvestmentProjectionDateTime(projection.projected_completion_at);
 }
 
+function portfolioInvestmentActualTrendMarkup(items, months) {
+  const source = Array.isArray(items) ? items : [];
+  if (!source.length) return '';
+  const maxRmb = Math.max(...source.map(item => Math.max(0, Number(item.rmb_invested) || 0)), 0);
+  const maxUsd = Math.max(...source.map(item => Math.max(0, Number(item.usd_invested) || 0)), 0);
+  const barWidth = (value, maximum) => {
+    const amount = Math.max(0, Number(value) || 0);
+    if (!amount || !maximum) return 0;
+    return Math.max(4, Math.min(100, amount / maximum * 100));
+  };
+  return [
+    '<div class="portfolio-investment-actual-trend">',
+    '<div class="portfolio-investment-actual-trend-head"><div><span>近' + escapeHtml(String(Number(months) || source.length)) + '个月投入趋势</span><small>只统计定投买入流水，人民币与美元分别按各自峰值缩放</small></div><div class="portfolio-investment-actual-trend-legend"><span class="rmb">人民币</span><span class="usd">美元</span></div></div>',
+    '<div class="portfolio-investment-actual-trend-scroll"><div class="portfolio-investment-actual-trend-grid">',
+    source.map(item => {
+      const month = String(item.month || '');
+      const monthLabel = month.length === 7 ? month.slice(2, 4) + '/' + month.slice(5, 7) : month;
+      const rmb = Math.max(0, Number(item.rmb_invested) || 0);
+      const usd = Math.max(0, Number(item.usd_invested) || 0);
+      return [
+        '<div class="portfolio-investment-actual-trend-item" title="' + escapeHtml(month + ' · 实际执行 ' + String(Number(item.execution_count) || 0) + ' 次') + '">',
+        '<strong>' + escapeHtml(monthLabel) + '</strong>',
+        '<div class="portfolio-investment-actual-trend-row rmb"><i style="width:' + escapeHtml(String(barWidth(rmb, maxRmb))) + '%"></i></div>',
+        '<small>' + escapeHtml(formatPortfolioMoney(rmb, 'rmb')) + '</small>',
+        '<div class="portfolio-investment-actual-trend-row usd"><i style="width:' + escapeHtml(String(barWidth(usd, maxUsd))) + '%"></i></div>',
+        '<small>' + escapeHtml(formatPortfolioMoney(usd, 'usd')) + '</small>',
+        '</div>',
+      ].join('');
+    }).join(''),
+    '</div></div>',
+    '</div>',
+  ].join('');
+}
+
 function portfolioInvestmentCommitmentRange(item) {
   const first = portfolioInvestmentProjectionDateTime(item && item.first_run_at);
   const last = portfolioInvestmentProjectionDateTime(item && item.last_run_at);

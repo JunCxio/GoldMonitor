@@ -107,6 +107,7 @@ def test_runtime_catches_up_latest_run_and_generates_sourced_transaction():
     assert performance["pnl"] == -2.0
     assert state_payload["summary"]["actual_execution_count"] == 1
     assert state_payload["summary"]["rmb_actual_invested"] == 1002.0
+    assert state_payload["summary"]["actual_trend"][-1]["rmb_invested"] == 1002.0
 
 
 def test_runtime_uses_usd_price_and_creates_position_on_first_execution():
@@ -220,6 +221,15 @@ def test_runtime_archives_restores_and_permanently_deletes_plan():
         "actual_execution_count": 0,
         "rmb_actual_invested": 0.0,
         "usd_actual_invested": 0.0,
+        "actual_trend_months": 6,
+        "actual_trend": [
+            {"month": "2026-03", "execution_count": 0, "rmb_invested": 0.0, "usd_invested": 0.0},
+            {"month": "2026-04", "execution_count": 0, "rmb_invested": 0.0, "usd_invested": 0.0},
+            {"month": "2026-05", "execution_count": 0, "rmb_invested": 0.0, "usd_invested": 0.0},
+            {"month": "2026-06", "execution_count": 0, "rmb_invested": 0.0, "usd_invested": 0.0},
+            {"month": "2026-07", "execution_count": 0, "rmb_invested": 0.0, "usd_invested": 0.0},
+            {"month": "2026-08", "execution_count": 0, "rmb_invested": 0.0, "usd_invested": 0.0},
+        ],
         "commitment_days": 30,
         "commitment_plan_count": 0,
         "commitment_run_count": 0,

@@ -88,6 +88,14 @@ vm.runInContext(__INVESTMENT_SOURCE__, context);
 context.portfolioState.investment_plans = vm.runInContext(`normalizePortfolioInvestmentState({summary:{
   actual_days:30, actual_execution_count:3,
   rmb_actual_invested:306, usd_actual_invested:501,
+  actual_trend_months:6, actual_trend:[
+    {month:'2026-03',execution_count:0,rmb_invested:0,usd_invested:0},
+    {month:'2026-04',execution_count:1,rmb_invested:102,usd_invested:0},
+    {month:'2026-05',execution_count:1,rmb_invested:204,usd_invested:1002},
+    {month:'2026-06',execution_count:0,rmb_invested:0,usd_invested:0},
+    {month:'2026-07',execution_count:1,rmb_invested:306,usd_invested:501},
+    {month:'2026-08',execution_count:2,rmb_invested:153,usd_invested:250.5}
+  ],
   commitment_days:30, commitment_plan_count:2, commitment_run_count:5,
   rmb_commitment:102, usd_commitment:2004,
   commitment_items:[
@@ -104,6 +112,12 @@ if (!box.innerHTML.includes('近30天') || !box.innerHTML.includes('实际投入
 }
 if (!box.innerHTML.includes('¥306.00 · $501.00') || !box.innerHTML.includes('实际执行 3 次')) {
   throw new Error('actual investment totals and count must render by currency');
+}
+if (!box.innerHTML.includes('近6个月投入趋势') || !box.innerHTML.includes('人民币与美元分别按各自峰值缩放')) {
+  throw new Error('monthly trend must explain its range and independent currency scales');
+}
+if (!box.innerHTML.includes('26/03') || !box.innerHTML.includes('¥153.00') || !box.innerHTML.includes('$250.50')) {
+  throw new Error('monthly trend must render chronological buckets and both currency amounts');
 }
 if (!box.innerHTML.includes('¥102.00 · $2,004.00') || !box.innerHTML.includes('预计 5 期 · 涉及 2 个计划')) {
   throw new Error('commitment totals and counts must render by currency');

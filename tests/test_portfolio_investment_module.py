@@ -275,6 +275,42 @@ def test_investment_plan_state_keeps_recent_actuals_after_plan_deletion():
     assert state["summary"]["usd_actual_invested"] == 501.0
 
 
+def test_investment_execution_monthly_trend_spans_year_and_separates_currencies():
+    from goldmonitor.portfolio_investment import investment_execution_monthly_trend
+
+    base = {
+        "type": "buy",
+        "price": 100,
+        "quantity": 2,
+        "fee": 1,
+        "source": "investment_plan",
+    }
+    trend = investment_execution_monthly_trend(
+        [
+            {**base, "mode": "rmb", "trade_date": "2025-12-31"},
+            {**base, "mode": "usd", "price": 500, "quantity": 1, "trade_date": "2026-01-01"},
+            {**base, "mode": "rmb", "trade_date": "2026-05-15"},
+            {**base, "mode": "usd", "trade_date": "2026-06-12"},
+            {**base, "mode": "rmb", "trade_date": "2026-06-13"},
+            {**base, "mode": "rmb", "source": "", "trade_date": "2026-06-01"},
+        ],
+        now=datetime(2026, 6, 12, 10, 0),
+    )
+
+    assert [item["month"] for item in trend] == [
+        "2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06",
+    ]
+    assert trend[0] == {
+        "month": "2026-01",
+        "execution_count": 1,
+        "rmb_invested": 0.0,
+        "usd_invested": 501.0,
+    }
+    assert trend[4]["rmb_invested"] == 201.0
+    assert trend[5]["execution_count"] == 1
+    assert trend[5]["usd_invested"] == 201.0
+
+
 def test_investment_plan_window_projection_respects_target_and_schedule_window():
     from goldmonitor.portfolio_investment import investment_plan_window_projection
 
@@ -376,6 +412,13 @@ def test_investment_plan_state_summarizes_next_30_day_commitments_by_currency():
     assert summary["actual_execution_count"] == 1
     assert summary["rmb_actual_invested"] == 102.0
     assert summary["usd_actual_invested"] == 0.0
+    assert summary["actual_trend_months"] == 6
+    assert summary["actual_trend"][-1] == {
+        "month": "2026-08",
+        "execution_count": 1,
+        "rmb_invested": 102.0,
+        "usd_invested": 0.0,
+    }
     assert [item["id"] for item in summary["commitment_items"]] == [
         "plan-rmb",
         "plan-usd",
