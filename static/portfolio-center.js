@@ -48,6 +48,18 @@ function registerPortfolioSocketHandlers(socketClient) {
     setPortfolioStatus((data && data.message) || '已跳过本期定投计划。', data && data.ok === false ? 'fail' : 'ok');
   });
 
+  socketClient.on('portfolio_investment_plan_archived', data => {
+    setPortfolioStatus(data && data.plan ? '定投计划已归档。' : '定投计划归档完成。', 'ok');
+  });
+
+  socketClient.on('portfolio_investment_plan_restored', data => {
+    setPortfolioStatus(data && data.plan ? '定投计划已恢复，当前保持暂停。' : '定投计划恢复完成。', 'ok');
+  });
+
+  socketClient.on('portfolio_investment_plan_deleted', () => {
+    setPortfolioStatus('已永久删除归档计划，相关持仓流水仍保留。', 'ok');
+  });
+
   socketClient.on('portfolio_investment_schedule_preview', data => {
     applyPortfolioInvestmentSchedulePreview(data || {});
   });

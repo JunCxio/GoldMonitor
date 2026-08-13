@@ -500,9 +500,11 @@ function renderPortfolioHeaderChrome(detailItem) {
     primary.textContent = '返回列表';
     primary.onclick = closePortfolioDetail;
   } else {
-    primary.textContent = portfolioView === 'investment' ? '新增计划' : '新增流水';
+    primary.textContent = portfolioView === 'investment' && portfolioInvestmentListMode === 'archived' ? '返回进行中' : portfolioView === 'investment' ? '新增计划' : '新增流水';
     primary.onclick = portfolioView === 'investment'
-      ? () => setActivePortfolioInvestmentPlan('new')
+      ? portfolioInvestmentListMode === 'archived'
+        ? () => setPortfolioInvestmentListMode('active')
+        : () => setActivePortfolioInvestmentPlan('new')
       : () => setActivePortfolioTransaction('new');
   }
 }

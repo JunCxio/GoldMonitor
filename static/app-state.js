@@ -29,6 +29,7 @@ let portfolioInvestmentDrafts = {};
 let portfolioInvestmentDraftNotice = '';
 let portfolioInvestmentSchedulePreviews = {};
 let portfolioInvestmentSchedulePreviewSeq = 0;
+let portfolioInvestmentListMode = 'active';
 let portfolioAlertDrafts = {};
 let pendingPortfolioSave = null;
 let pendingPortfolioImportMessage = '';

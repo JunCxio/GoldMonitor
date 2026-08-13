@@ -417,7 +417,13 @@ def normalize_investment_plan(
     weekday = schedule["weekday"]
     start_date = schedule["start_date"]
     end_date = schedule["end_date"]
-    enabled = item.get("enabled", existing.get("enabled", True)) is not False
+    archived_at = _clean_text(
+        item.get("archived_at", existing.get("archived_at", ""))
+    )
+    enabled = (
+        item.get("enabled", existing.get("enabled", True)) is not False
+        and not archived_at
+    )
 
     existing_frequency = _clean_text(existing.get("frequency", "monthly")).lower()
     existing_signature = _schedule_signature(
@@ -492,6 +498,7 @@ def normalize_investment_plan(
         "weekday": weekday,
         "start_date": start_date,
         "end_date": end_date,
+        "archived_at": archived_at,
         "enabled": enabled,
         "next_run_at": next_run_at,
         "last_scheduled_at": _clean_text(
@@ -666,6 +673,8 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
     plans = []
     summary = {
         "total": 0,
+        "all_total": 0,
+        "archived": 0,
         "enabled": 0,
         "due": 0,
         "attention": 0,
@@ -675,9 +684,13 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
     }
     for raw in list(items or []):
         plan = dict(raw)
+        archived = bool(_clean_text(plan.get("archived_at")))
         next_run = parse_plan_datetime(plan.get("next_run_at"))
-        pending_run = pending_plan_run_at(plan, now)
-        if plan.get("enabled"):
+        pending_run = None if archived else pending_plan_run_at(plan, now)
+        if archived:
+            status = "archived"
+            summary["archived"] += 1
+        elif plan.get("enabled"):
             start_date = parse_plan_date(plan.get("start_date"))
             end_date = parse_plan_date(plan.get("end_date"))
             if start_date and now.date() < start_date:
@@ -692,7 +705,7 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
                     summary["due"] += 1
         else:
             status = "paused"
-        if plan.get("last_result") in {"error", "waiting_price", "orphaned"}:
+        if not archived and plan.get("last_result") in {"error", "waiting_price", "orphaned"}:
             summary["attention"] += 1
         plan["status"] = status
         plan["pending_run_at"] = (
@@ -704,7 +717,7 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
                 existing=plan,
                 now=now,
             )
-            if plan.get("enabled")
+            if plan.get("enabled") and not archived
             else []
         )
         performance = investment_plan_performance(
@@ -717,7 +730,8 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
         invested_key = "usd_invested" if plan.get("mode") == "usd" else "rmb_invested"
         summary[invested_key] += performance["total_invested"]
         plans.append(plan)
-    summary["total"] = len(plans)
+    summary["all_total"] = len(plans)
+    summary["total"] = len(plans) - summary["archived"]
     return {
         "items": plans,
         "summary": summary,

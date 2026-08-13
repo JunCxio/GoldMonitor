@@ -9,6 +9,13 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def read_investment_source():
+    return "\n".join(
+        (ROOT / "static" / name).read_text(encoding="utf-8")
+        for name in ("portfolio-investment.js", "portfolio-investment-actions.js")
+    )
+
+
 def test_investment_plan_state_preserves_execution_window():
     node = shutil.which("node")
     if not node:
@@ -23,12 +30,16 @@ vm.createContext(context);
 vm.runInContext(__SOURCE__, context);
 const plan = vm.runInContext(`normalizePortfolioInvestmentPlan({
   id: 'plan-window', start_date: '2026-09-01', end_date: '2026-12-31',
+  archived_at: '2027-01-01T10:00:00',
   upcoming_run_ats: ['2026-09-01T09:00:00', '2026-10-01T09:00:00'],
   pending_run_at: '2026-09-01T09:00:00', last_skipped_at: '2026-08-13T10:00:00',
   last_skipped_scheduled_at: '2026-08-01T09:00:00', skip_count: 2
 })`, context);
 if (plan.start_date !== '2026-09-01' || plan.end_date !== '2026-12-31') {
   throw new Error('execution window must survive portfolio state normalization');
+}
+if (plan.archived_at !== '2027-01-01T10:00:00') {
+  throw new Error('archive state must survive portfolio state normalization');
 }
 if (plan.pending_run_at !== '2026-09-01T09:00:00' || plan.skip_count !== 2) {
   throw new Error('skip state must survive portfolio state normalization');
@@ -47,7 +58,7 @@ def test_duplicate_investment_plan_creates_paused_new_draft_without_socket_write
     if not node:
         pytest.skip("需要 Node.js 执行定投前端行为测试")
 
-    source = (ROOT / "static" / "portfolio-investment.js").read_text(encoding="utf-8")
+    source = read_investment_source()
     script = """
 const vm = require('vm');
 
@@ -133,7 +144,7 @@ def test_investment_plan_frontend_validates_execution_window_before_socket_write
     if not node:
         pytest.skip("需要 Node.js 执行定投前端行为测试")
 
-    source = (ROOT / "static" / "portfolio-investment.js").read_text(encoding="utf-8")
+    source = read_investment_source()
     script = """
 const vm = require('vm');
 const emits = [];
@@ -173,7 +184,7 @@ def test_investment_plan_frontend_confirms_skip_and_sends_expected_run():
     if not node:
         pytest.skip("需要 Node.js 执行定投前端行为测试")
 
-    source = (ROOT / "static" / "portfolio-investment.js").read_text(encoding="utf-8")
+    source = read_investment_source()
     script = """
 const vm = require('vm');
 const emits = [];
@@ -208,7 +219,7 @@ def test_investment_plan_frontend_requests_preview_and_ignores_stale_response():
     if not node:
         pytest.skip("需要 Node.js 执行定投前端行为测试")
 
-    source = (ROOT / "static" / "portfolio-investment.js").read_text(encoding="utf-8")
+    source = read_investment_source()
     script = """
 const vm = require('vm');
 const emits = [];
@@ -247,6 +258,47 @@ assert(context.portfolioInvestmentSchedulePreviews.new.loading === true, 'stale 
 vm.runInContext("applyPortfolioInvestmentSchedulePreview({id:'new', request_id:'1', ok:true, items:['2026-09-30T09:00:00']})", context);
 assert(context.portfolioInvestmentSchedulePreviews.new.items[0] === '2026-09-30T09:00:00', 'latest response must update preview');
 assert(renderCount === 2, 'request and accepted response must each render once');
+"""
+    script = script.replace("__SOURCE__", json.dumps(source))
+    result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_investment_plan_frontend_archives_restores_and_guards_permanent_delete():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("需要 Node.js 执行定投前端行为测试")
+
+    source = read_investment_source()
+    script = """
+const vm = require('vm');
+const emits = [];
+const statuses = [];
+let confirmed = true;
+const active = { id: 'active-plan', archived_at: '' };
+const archived = { id: 'archived-plan', archived_at: '2026-08-12T10:00:00' };
+const context = {
+  console,
+  portfolioState: { investment_plans: { items: [active, archived] } },
+  socket: { emit: (...args) => emits.push(args) },
+  setPortfolioStatus: (message, state) => statuses.push({ message, state }),
+  window: { confirm: () => confirmed },
+};
+context.globalThis = context;
+vm.createContext(context);
+vm.runInContext(__SOURCE__, context);
+vm.runInContext("archivePortfolioInvestmentPlan('active-plan')", context);
+vm.runInContext("restorePortfolioInvestmentPlan('archived-plan')", context);
+vm.runInContext("deletePortfolioInvestmentPlan('active-plan')", context);
+vm.runInContext("deletePortfolioInvestmentPlan('archived-plan')", context);
+const assert = (condition, message) => { if (!condition) throw new Error(message); };
+assert(emits[0][0] === 'archive_portfolio_investment_plan', 'active plan must archive');
+assert(emits[1][0] === 'restore_portfolio_investment_plan', 'archived plan must restore');
+assert(statuses.some(item => item.message.includes('请先归档')), 'active plan permanent delete must be rejected');
+assert(emits[2][0] === 'delete_portfolio_investment_plan' && emits[2][1].id === 'archived-plan', 'archived plan may be permanently deleted');
+confirmed = false;
+vm.runInContext("archivePortfolioInvestmentPlan('active-plan')", context);
+assert(emits.length === 3, 'cancelled archive must not emit');
 """
     script = script.replace("__SOURCE__", json.dumps(source))
     result = subprocess.run([node, "-e", script], cwd=ROOT, check=False, capture_output=True, text=True)

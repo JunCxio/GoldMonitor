@@ -143,14 +143,56 @@ def test_app_portfolio_investment_socket_crud_and_manual_execution(monkeypatch, 
     )
     assert paused["items"][0]["enabled"] is False
 
+    client.emit("archive_portfolio_investment_plan", {"id": plan_id})
+    events = client.get_received()
+    archived_event = next(
+        item["args"][0]
+        for item in events
+        if item["name"] == "portfolio_investment_plan_archived"
+    )
+    archived = next(
+        item["args"][0]
+        for item in events
+        if item["name"] == "portfolio_investment_plans_updated"
+    )
+    assert archived_event["plan"]["archived_at"]
+    assert archived["summary"]["total"] == 0
+    assert archived["summary"]["archived"] == 1
+    assert archived["items"][0]["performance"]["execution_count"] == 1
+
+    client.emit("restore_portfolio_investment_plan", {"id": plan_id})
+    events = client.get_received()
+    restored_event = next(
+        item["args"][0]
+        for item in events
+        if item["name"] == "portfolio_investment_plan_restored"
+    )
+    restored = next(
+        item["args"][0]
+        for item in events
+        if item["name"] == "portfolio_investment_plans_updated"
+    )
+    assert restored_event["plan"]["archived_at"] == ""
+    assert restored_event["plan"]["enabled"] is False
+    assert restored["summary"]["total"] == 1
+
+    client.emit("archive_portfolio_investment_plan", {"id": plan_id})
+    client.get_received()
     client.emit("delete_portfolio_investment_plan", {"id": plan_id})
     events = client.get_received()
+    deleted_event = next(
+        item["args"][0]
+        for item in events
+        if item["name"] == "portfolio_investment_plan_deleted"
+    )
     deleted = next(
         item["args"][0]
         for item in events
         if item["name"] == "portfolio_investment_plans_updated"
     )
-    assert deleted["summary"]["total"] == 0
+    assert deleted_event["id"] == plan_id
+    assert deleted["summary"]["all_total"] == 0
+    assert len(app.portfolio_transactions) == transaction_count
     client.disconnect()
 
 

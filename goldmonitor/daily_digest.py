@@ -78,7 +78,11 @@ def _investment_time(value):
 def _investment_plan_summary(portfolio_state):
     state = portfolio_state.get("investment_plans") if isinstance(portfolio_state, dict) else None
     state = state if isinstance(state, dict) else {}
-    plans = [dict(item) for item in list(state.get("items") or []) if isinstance(item, dict)]
+    plans = [
+        dict(item)
+        for item in list(state.get("items") or [])
+        if isinstance(item, dict) and not item.get("archived_at")
+    ]
     supplied = state.get("summary") if isinstance(state.get("summary"), dict) else {}
     attention_plans = [
         item for item in plans
@@ -121,6 +125,7 @@ def _investment_plan_summary(portfolio_state):
                 "position_name",
                 "mode",
                 "amount",
+                "archived_at",
                 "enabled",
                 "status",
                 "next_run_at",

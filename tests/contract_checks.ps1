@@ -83,7 +83,7 @@ Assert-NotContains -Path "goldmonitor\application.py" -Pattern 'cors_allowed_ori
 Assert-Contains -Path "goldmonitor\application.py" -Pattern 'SOCKET_ACCESS_TOKEN' -Message "Socket.IO clients must use a per-process access token"
 Assert-Contains -Path "static\app-state.js" -Pattern 'auth:\s*\{\s*token:\s*SOCKET_ACCESS_TOKEN\s*\}' -Message "frontend must send the Socket.IO access token"
 Assert-Contains -Path "templates\index.html" -Pattern "setPortfolioView\('investment'\)" -Message "portfolio center must expose investment plans"
-Assert-Contains -Path "static\portfolio-investment.js" -Pattern 'save_portfolio_investment_plan' -Message "portfolio investment frontend must save plans"
+Assert-Contains -Path "static\portfolio-investment-actions.js" -Pattern 'save_portfolio_investment_plan' -Message "portfolio investment frontend must save plans"
 Assert-Contains -Path "goldmonitor\socket_portfolio.py" -Pattern 'execute_portfolio_investment_plan' -Message "portfolio socket must execute investment plans"
 Assert-Contains -Path "goldmonitor\application.py" -Pattern 'APP_USER_MODEL_ID\s*=\s*"GoldMonitor\.App"' -Message "app.py must define the Windows AppUserModelID"
 Assert-Contains -Path "goldmonitor\application.py" -Pattern 'MACOS_LAUNCH_AGENT_ID' -Message "app.py must define the macOS LaunchAgent identifier"

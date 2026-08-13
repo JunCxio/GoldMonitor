@@ -173,6 +173,15 @@ def test_daily_digest_summarizes_investment_plans_and_attention():
                         "last_message": "关联持仓已删除，请重新选择",
                         "updated_at": "2026-08-13T08:00:00",
                     },
+                    {
+                        "id": "plan-archived",
+                        "name": "已归档异常计划",
+                        "enabled": False,
+                        "status": "archived",
+                        "last_result": "orphaned",
+                        "last_message": "不应进入摘要",
+                        "archived_at": "2026-08-13T07:00:00",
+                    },
                 ],
             }
         },

@@ -1141,6 +1141,14 @@ def delete_portfolio_investment_plan(plan_id):
     return _get_portfolio_investment_runtime().delete(plan_id)
 
 
+def archive_portfolio_investment_plan(plan_id):
+    return _get_portfolio_investment_runtime().archive(plan_id)
+
+
+def restore_portfolio_investment_plan(plan_id):
+    return _get_portfolio_investment_runtime().restore(plan_id)
+
+
 def toggle_portfolio_investment_plan(plan_id, enabled):
     return _get_portfolio_investment_runtime().toggle(plan_id, enabled)
 

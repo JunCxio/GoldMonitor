@@ -158,6 +158,7 @@ function normalizePortfolioInvestmentPlan(item) {
     weekday: Number.isFinite(Number(source.weekday)) ? Number(source.weekday) : 1,
     start_date: source.start_date || '',
     end_date: source.end_date || '',
+    archived_at: source.archived_at || '',
     enabled: source.enabled !== false,
     next_run_at: source.next_run_at || '',
     upcoming_run_ats: Array.isArray(source.upcoming_run_ats) ? source.upcoming_run_ats.map(value => String(value || '')).filter(Boolean) : [],
@@ -203,6 +204,8 @@ function normalizePortfolioInvestmentState(data) {
     items,
     summary: {
       total: Number.isFinite(Number(summary.total)) ? Number(summary.total) : items.length,
+      all_total: Number.isFinite(Number(summary.all_total)) ? Number(summary.all_total) : items.length,
+      archived: Number.isFinite(Number(summary.archived)) ? Number(summary.archived) : items.filter(item => item.archived_at).length,
       enabled: Number.isFinite(Number(summary.enabled)) ? Number(summary.enabled) : items.filter(item => item.enabled).length,
       due: Number.isFinite(Number(summary.due)) ? Number(summary.due) : items.filter(item => item.status === 'due').length,
       attention: Number.isFinite(Number(summary.attention)) ? Number(summary.attention) : items.filter(item => ['waiting_price', 'orphaned', 'error'].includes(item.last_result)).length,

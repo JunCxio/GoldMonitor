@@ -167,9 +167,17 @@ function setActivePortfolioInvestmentPlan(id) {
     if (activePortfolioInvestmentPlanId === 'new' || id !== 'new') portfolioInvestmentDraftNotice = '';
     activePortfolioInvestmentPlanId = id;
   }
+  if (id === 'new') portfolioInvestmentListMode = 'active';
   portfolioView = 'investment';
   renderPortfolio();
   if (opening) requestPortfolioInvestmentSchedulePreview(id);
+}
+
+function setPortfolioInvestmentListMode(mode) {
+  captureActivePortfolioInvestmentDraft();
+  activePortfolioInvestmentPlanId = null;
+  portfolioInvestmentListMode = mode === 'archived' ? 'archived' : 'active';
+  renderPortfolio();
 }
 
 function refreshPortfolioInvestmentEditor(id) {
@@ -216,6 +224,7 @@ function portfolioInvestmentResultLabel(result) {
 }
 
 function portfolioInvestmentStateLabel(plan) {
+  if (plan.archived_at) return '已归档';
   if (!plan.enabled) return '已暂停';
   if (plan.status === 'pending_start') return '待开始';
   if (plan.status === 'completed') return '已完成';
@@ -226,6 +235,7 @@ function portfolioInvestmentStateLabel(plan) {
 }
 
 function portfolioInvestmentStateClass(plan) {
+  if (plan.archived_at) return 'off';
   if (plan.last_result === 'orphaned' || plan.last_result === 'error') return 'warn';
   if (plan.status === 'due' || plan.last_result === 'waiting_price') return 'attention';
   if (plan.status === 'completed') return 'off';
@@ -233,6 +243,7 @@ function portfolioInvestmentStateClass(plan) {
 }
 
 function portfolioInvestmentNextRunLabel(plan) {
+  if (plan.archived_at) return '计划已归档';
   if (!plan.enabled) return '计划已暂停';
   if (plan.status === 'completed') return '计划已完成';
   return portfolioInvestmentDateTime(plan.next_run_at);
@@ -336,6 +347,7 @@ function renderPortfolioInvestmentSummary(box) {
 
 function filteredPortfolioInvestments() {
   return portfolioInvestmentItems()
+    .filter(item => portfolioInvestmentListMode === 'archived' ? Boolean(item.archived_at) : !item.archived_at)
     .filter(item => portfolioSearchMatches([
       item.name,
       item.position_name,
@@ -398,6 +410,14 @@ function renderPortfolioInvestments(box) {
   const sourceItems = portfolioInvestmentItems();
   const items = filteredPortfolioInvestments();
   const parts = [];
+  const activeCount = sourceItems.filter(item => !item.archived_at).length;
+  const archivedCount = sourceItems.filter(item => item.archived_at).length;
+  parts.push([
+    '<div class="portfolio-investment-list-switch" role="tablist" aria-label="定投计划范围">',
+    '<button type="button" role="tab" aria-selected="' + String(portfolioInvestmentListMode === 'active') + '" class="' + (portfolioInvestmentListMode === 'active' ? 'active' : '') + '" onclick="setPortfolioInvestmentListMode(\'active\')">进行中 <span>' + escapeHtml(String(activeCount)) + '</span></button>',
+    '<button type="button" role="tab" aria-selected="' + String(portfolioInvestmentListMode === 'archived') + '" class="' + (portfolioInvestmentListMode === 'archived' ? 'active' : '') + '" onclick="setPortfolioInvestmentListMode(\'archived\')">已归档 <span>' + escapeHtml(String(archivedCount)) + '</span></button>',
+    '</div>',
+  ].join(''));
   if (activePortfolioInvestmentPlanId === 'new') {
     parts.push([
       '<div class="portfolio-investment-card expanded">',
@@ -408,7 +428,10 @@ function renderPortfolioInvestments(box) {
     ].join(''));
   }
   if (!items.length && activePortfolioInvestmentPlanId !== 'new') {
-    parts.push('<div class="portfolio-empty">' + (sourceItems.length ? '没有匹配的定投计划' : '暂无定投计划，可从右上角新增') + '</div>');
+    const emptyText = portfolioInvestmentListMode === 'archived'
+      ? '暂无归档计划'
+      : sourceItems.length ? '没有匹配的定投计划' : '暂无定投计划，可从右上角新增';
+    parts.push('<div class="portfolio-empty">' + emptyText + '</div>');
   }
   parts.push(...items.map(plan => {
     const expanded = activePortfolioInvestmentPlanId === plan.id;
@@ -427,10 +450,15 @@ function renderPortfolioInvestments(box) {
       '<div class="portfolio-investment-timeline-marker"></div>',
       '<div><span>下一次执行</span><strong>' + escapeHtml(portfolioInvestmentNextRunLabel(plan)) + '</strong><small>' + escapeHtml(portfolioInvestmentWindowLabel(plan) + ' · ' + plan.position_name + ' · ' + portfolioModeLabel(mode)) + '</small></div>',
       '<div><span>最近结果</span><strong>' + escapeHtml(lastDetail) + '</strong><small>' + escapeHtml(resultMetrics) + '</small></div>',
-      '<div class="portfolio-investment-upcoming"><span>后续安排</span><strong>' + escapeHtml((plan.upcoming_run_ats || []).slice(1, 4).map(portfolioInvestmentDateTime).join(' · ') || '暂无后续期次') + '</strong><small>显示下一期之后的 3 个日期</small></div>',
+      '<div class="portfolio-investment-upcoming"><span>' + (plan.archived_at ? '归档时间' : '后续安排') + '</span><strong>' + escapeHtml(plan.archived_at ? portfolioInvestmentDateTime(plan.archived_at) : (plan.upcoming_run_ats || []).slice(1, 4).map(portfolioInvestmentDateTime).join(' · ') || '暂无后续期次') + '</strong><small>' + (plan.archived_at ? '执行记录和绩效仍可查看及导出' : '显示下一期之后的 3 个日期') + '</small></div>',
       '</div>',
       '</div>',
       '<div class="portfolio-investment-actions">',
+      plan.archived_at ? [
+        '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="setActivePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">' + (expanded ? '收起记录' : '查看记录') + '</button>',
+        '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="restorePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">恢复计划</button>',
+        '<button class="btn-clear-sm" type="button" onclick="deletePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">永久删除</button>',
+      ].join('') : [
       portfolioInvestmentCanExecute(plan)
         ? '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="executePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">立即执行</button>'
         : '<button class="btn-clear-sm btn-muted-sm" type="button" disabled>' + (plan.status === 'pending_start' ? '尚未开始' : '已结束') + '</button>',
@@ -442,76 +470,13 @@ function renderPortfolioInvestments(box) {
         : '<button class="btn-clear-sm btn-muted-sm" type="button" disabled>不可跳过</button>',
       '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="setActivePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">' + (expanded ? '收起' : '编辑') + '</button>',
       '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="duplicatePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">复制</button>',
-      '<button class="btn-clear-sm" type="button" onclick="deletePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">删除</button>',
+      '<button class="btn-clear-sm" type="button" onclick="archivePortfolioInvestmentPlan(\'' + escapeHtml(plan.id) + '\')">归档</button>',
+      ].join(''),
       '</div>',
       expanded ? renderPortfolioInvestmentPerformance(plan) : '',
-      expanded ? buildPortfolioInvestmentEditor(plan) : '',
+      expanded && !plan.archived_at ? buildPortfolioInvestmentEditor(plan) : '',
       '</div>',
     ].join('');
   }));
   box.innerHTML = parts.join('');
-}
-
-function savePortfolioInvestmentPlan(id) {
-  const payload = {
-    name: String(portfolioInvestmentInputValue(id, 'Name') || '').trim(),
-    position_id: String(portfolioInvestmentInputValue(id, 'PositionId') || '').trim(),
-    position_name: String(portfolioInvestmentInputValue(id, 'PositionName') || '').trim(),
-    mode: portfolioInvestmentInputValue(id, 'Mode') || currentMode,
-    amount: Number(portfolioInvestmentInputValue(id, 'Amount')),
-    fee: Number(portfolioInvestmentInputValue(id, 'Fee') || 0),
-    frequency: portfolioInvestmentInputValue(id, 'Frequency') || 'monthly',
-    time: portfolioInvestmentInputValue(id, 'Time') || '09:00',
-    month: Number(portfolioInvestmentInputValue(id, 'Month') || 1),
-    day: Number(portfolioInvestmentInputValue(id, 'Day') || 1),
-    weekday: Number(portfolioInvestmentInputValue(id, 'Weekday') || 1),
-    start_date: String(portfolioInvestmentInputValue(id, 'StartDate') || '').trim(),
-    end_date: String(portfolioInvestmentInputValue(id, 'EndDate') || '').trim(),
-    enabled: portfolioInvestmentInputValue(id, 'Enabled') !== false,
-  };
-  const position = (portfolioState.items || []).find(item => item.id === payload.position_id);
-  if (position) {
-    payload.position_name = position.name;
-    payload.mode = position.mode;
-  }
-  if (!payload.name) return setPortfolioStatus('请输入计划名称。', 'fail');
-  if (!payload.position_name) return setPortfolioStatus('请输入或选择定投持仓。', 'fail');
-  if (!Number.isFinite(payload.amount) || payload.amount <= 0) return setPortfolioStatus('请输入有效的定投金额。', 'fail');
-  if (!Number.isFinite(payload.fee) || payload.fee < 0) return setPortfolioStatus('手续费不能为负数。', 'fail');
-  if (payload.start_date && payload.end_date && payload.start_date > payload.end_date) return setPortfolioStatus('结束日期不能早于开始日期。', 'fail');
-  if (id !== 'new') payload.id = id;
-  portfolioInvestmentDraftNotice = '';
-  pendingPortfolioSave = { kind: 'investment', id };
-  setPortfolioStatus('正在保存定投计划...', '');
-  socket.emit('save_portfolio_investment_plan', payload);
-}
-
-function togglePortfolioInvestmentPlan(id, enabled) {
-  setPortfolioStatus(enabled ? '正在启用定投计划...' : '正在暂停定投计划...', '');
-  socket.emit('toggle_portfolio_investment_plan', { id, enabled: enabled === true });
-}
-
-function executePortfolioInvestmentPlan(id) {
-  setPortfolioStatus('正在按最新行情生成买入流水...', '');
-  socket.emit('execute_portfolio_investment_plan', { id });
-}
-
-function skipPortfolioInvestmentPlan(id, scheduledAt) {
-  const plan = portfolioInvestmentItems().find(item => item.id === id);
-  if (!plan || !scheduledAt) return setPortfolioStatus('当前没有可跳过的定投期次。', 'fail');
-  const scheduledText = portfolioInvestmentDateTime(scheduledAt);
-  if (!window.confirm('确定跳过 ' + scheduledText + ' 的计划执行？\n本次不会生成买入流水，计划将继续运行。')) return;
-  setPortfolioStatus('正在跳过本期定投计划...', '');
-  socket.emit('skip_portfolio_investment_plan', { id, scheduled_at: scheduledAt });
-}
-
-function exportPortfolioInvestmentExecutions(id) {
-  setPortfolioStatus('正在导出定投执行记录...', '');
-  socket.emit('export_portfolio_investment_executions', { id });
-}
-
-function deletePortfolioInvestmentPlan(id) {
-  if (!window.confirm('确定删除这个定投计划？已生成的持仓流水不会删除。')) return;
-  setPortfolioStatus('正在删除定投计划...', '');
-  socket.emit('delete_portfolio_investment_plan', { id });
 }

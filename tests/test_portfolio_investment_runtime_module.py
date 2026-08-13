@@ -154,6 +154,55 @@ def test_runtime_previews_edited_schedule_without_persisting_plan():
     assert state.portfolio_investment_plans[0] == original
 
 
+def test_runtime_archives_restores_and_permanently_deletes_plan():
+    import pytest
+
+    runtime, state, _events = _runtime(_plan())
+    transaction_count = len(state.portfolio_transactions)
+
+    with pytest.raises(ValueError, match="请先归档"):
+        runtime.delete("plan-1")
+
+    archived, archived_state = runtime.archive("plan-1")
+    assert archived["archived_at"] == "2026-08-12T10:00:00"
+    assert archived["enabled"] is False
+    assert archived["next_run_at"] == ""
+    assert archived_state["items"][0]["status"] == "archived"
+    assert archived_state["summary"]["total"] == 0
+    assert archived_state["summary"]["all_total"] == 1
+    assert archived_state["summary"]["archived"] == 1
+    assert len(state.portfolio_transactions) == transaction_count
+
+    with pytest.raises(ValueError, match="已归档计划不能执行"):
+        runtime.execute("plan-1", force=True)
+    with pytest.raises(ValueError, match="已归档计划需先恢复"):
+        runtime.toggle("plan-1", True)
+
+    restored, restored_state = runtime.restore("plan-1")
+    assert restored["archived_at"] == ""
+    assert restored["enabled"] is False
+    assert restored["next_run_at"] == ""
+    assert restored_state["items"][0]["status"] == "paused"
+    assert restored_state["summary"]["total"] == 1
+    assert restored_state["summary"]["archived"] == 0
+
+    runtime.archive("plan-1")
+    ok, deleted_state = runtime.delete("plan-1")
+    assert ok is True
+    assert deleted_state["summary"] == {
+        "total": 0,
+        "all_total": 0,
+        "archived": 0,
+        "enabled": 0,
+        "due": 0,
+        "attention": 0,
+        "execution_count": 0,
+        "rmb_invested": 0.0,
+        "usd_invested": 0.0,
+    }
+    assert len(state.portfolio_transactions) == transaction_count
+
+
 def test_runtime_waits_for_price_without_advancing_schedule():
     runtime, state, _events = _runtime(_plan(), price_rmb=None)
 

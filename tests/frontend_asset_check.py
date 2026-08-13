@@ -56,6 +56,7 @@ portfolio_review_js_path = root / "static" / "portfolio-review.js"
 portfolio_detail_js_path = root / "static" / "portfolio-detail.js"
 portfolio_list_js_path = root / "static" / "portfolio-list.js"
 portfolio_investment_js_path = root / "static" / "portfolio-investment.js"
+portfolio_investment_actions_js_path = root / "static" / "portfolio-investment-actions.js"
 portfolio_actions_js_path = root / "static" / "portfolio-actions.js"
 portfolio_import_js_path = root / "static" / "portfolio-import.js"
 alert_log_js_path = root / "static" / "alert-log-center.js"
@@ -181,6 +182,7 @@ portfolio_module_js = "\n".join((
     portfolio_detail_js_path.read_text(encoding="utf-8"),
     portfolio_list_js_path.read_text(encoding="utf-8"),
     portfolio_investment_js_path.read_text(encoding="utf-8"),
+    portfolio_investment_actions_js_path.read_text(encoding="utf-8"),
     portfolio_actions_js_path.read_text(encoding="utf-8"),
     portfolio_import_js_path.read_text(encoding="utf-8"),
     portfolio_js,
@@ -559,6 +561,7 @@ portfolio_scripts = tuple(
         "portfolio-detail.js",
         "portfolio-list.js",
         "portfolio-investment.js",
+        "portfolio-investment-actions.js",
         "portfolio-actions.js",
         "portfolio-import.js",
         "portfolio-center.js",
@@ -1335,6 +1338,10 @@ for required in (
     "portfolio_investment_plan_skipped",
     "preview_portfolio_investment_schedule",
     "portfolio_investment_schedule_preview",
+    "archive_portfolio_investment_plan",
+    "restore_portfolio_investment_plan",
+    "portfolio_investment_plan_archived",
+    "portfolio_investment_plan_restored",
     "export_portfolio_investment_executions",
     "portfolio_investment_executions_exported",
     "导出全部记录",
@@ -1353,6 +1360,8 @@ for required in (
     "本次不会生成买入流水，计划将继续运行。",
     "未来 5 期",
     "后续安排",
+    "已归档",
+    "永久删除",
     "累计投入",
     "最近执行",
     "save_portfolio_alert",

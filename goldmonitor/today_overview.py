@@ -422,6 +422,8 @@ def _investment_attention(portfolio_state, start, end):
         "due": "investment_due",
     }
     for plan in plans:
+        if plan.get("archived_at"):
+            continue
         status = str(plan.get("status") or "")
         last_result = str(plan.get("last_result") or "")
         if status == "paused" and last_result == "waiting_price":

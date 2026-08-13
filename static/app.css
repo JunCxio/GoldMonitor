@@ -884,6 +884,11 @@
   .portfolio-transaction-type.sell { color:var(--up); background:rgba(255,91,111,0.08); }
   .portfolio-source-badge { display:inline-flex; align-items:center; min-height:20px; margin-right:4px; padding:2px 6px; border:1px solid rgba(232,184,48,0.22); border-radius:6px; color:var(--gold); background:rgba(232,184,48,0.07); font-size:0.6rem; font-weight:900; vertical-align:middle; }
   .portfolio-summary.portfolio-investment-summary { display:block; }
+  .portfolio-investment-list-switch { display:inline-grid; grid-template-columns:repeat(2, minmax(86px, 1fr)); gap:3px; width:max-content; max-width:100%; padding:3px; border:1px solid rgba(255,255,255,0.055); border-radius:8px; background:rgba(255,255,255,0.018); }
+  .portfolio-investment-list-switch button { min-height:28px; padding:5px 9px; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--control-muted); font-size:0.64rem; font-weight:850; cursor:pointer; }
+  .portfolio-investment-list-switch button span { margin-left:4px; color:var(--text-dim); font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.56rem; }
+  .portfolio-investment-list-switch button.active { color:#111116; border-color:rgba(232,184,48,0.66); background:linear-gradient(180deg, #f0c64a, var(--gold)); }
+  .portfolio-investment-list-switch button.active span { color:rgba(17,17,22,0.62); }
   .portfolio-investment-overview { display:grid; grid-template-columns:minmax(96px, 0.55fr) minmax(0, 1.45fr) minmax(104px, 0.7fr); min-width:0; border:1px solid rgba(232,184,48,0.15); border-radius:9px; background:linear-gradient(90deg, rgba(232,184,48,0.055), rgba(255,255,255,0.018)); overflow:hidden; }
   .portfolio-investment-overview-count, .portfolio-investment-next, .portfolio-investment-overview-flags, .portfolio-investment-overview-performance { min-width:0; padding:10px; }
   .portfolio-investment-overview-count, .portfolio-investment-next { border-right:1px solid rgba(255,255,255,0.055); }
@@ -1507,7 +1512,8 @@
     .portfolio-investment-overview-count, .portfolio-investment-next { border-right:0; border-bottom:1px solid rgba(255,255,255,0.055); }
     .portfolio-investment-overview-flags { grid-column:auto; border-top:0; }
     .portfolio-investment-timeline { grid-template-columns:minmax(4px, 4px) minmax(0, 1fr); }
-    .portfolio-investment-timeline > div:last-child { grid-column:2; }
+    .portfolio-investment-timeline-marker { grid-row:1 / span 3; }
+    .portfolio-investment-timeline > div:not(.portfolio-investment-timeline-marker) { grid-column:2; }
     .portfolio-investment-actions { grid-template-columns:repeat(2, minmax(0, 1fr)); }
     .portfolio-investment-schedule-preview-list { grid-template-columns:1fr; }
     .portfolio-investment-schedule-preview-list span { border-right:0; border-top:1px solid rgba(255,255,255,0.05); }

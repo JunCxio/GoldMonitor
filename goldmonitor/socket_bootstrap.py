@@ -219,6 +219,12 @@ def register_socket_handlers(application):
         delete_portfolio_investment_plan=(
             lambda plan_id: application.delete_portfolio_investment_plan(plan_id)
         ),
+        archive_portfolio_investment_plan=(
+            lambda plan_id: application.archive_portfolio_investment_plan(plan_id)
+        ),
+        restore_portfolio_investment_plan=(
+            lambda plan_id: application.restore_portfolio_investment_plan(plan_id)
+        ),
         toggle_portfolio_investment_plan=(
             lambda plan_id, enabled:
             application.toggle_portfolio_investment_plan(plan_id, enabled)

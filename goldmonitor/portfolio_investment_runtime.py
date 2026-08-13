@@ -91,6 +91,8 @@ class PortfolioInvestmentRuntime:
         with self.state.lock, self.state.investment_plan_lock:
             index = self._find_plan_index(plan_id)
             existing = self.state.portfolio_investment_plans[index] if index >= 0 else None
+            if existing and existing.get("archived_at"):
+                raise ValueError("已归档计划需先恢复")
             position_id = str(payload.get("position_id") or "").strip()
             if position_id:
                 position = self._portfolio_position(position_id)
@@ -121,7 +123,7 @@ class PortfolioInvestmentRuntime:
             now_text = self.now_factory().isoformat(timespec="seconds")
             for item in self.state.portfolio_investment_plans:
                 plan = dict(item)
-                if plan.get("position_id") == position_id:
+                if plan.get("position_id") == position_id and not plan.get("archived_at"):
                     plan.update({
                         "enabled": False,
                         "next_run_at": "",
@@ -140,10 +142,55 @@ class PortfolioInvestmentRuntime:
             index = self._find_plan_index(plan_id)
             if index < 0:
                 return False, self.state_payload()
+            if not self.state.portfolio_investment_plans[index].get("archived_at"):
+                raise ValueError("请先归档定投计划，再执行永久删除")
             next_plans = list(self.state.portfolio_investment_plans)
             next_plans.pop(index)
             self.state.portfolio_investment_plans = self.save_plans(next_plans)
         return True, self.state_payload()
+
+    def archive(self, plan_id):
+        with self.state.investment_plan_lock:
+            index = self._find_plan_index(plan_id)
+            if index < 0:
+                raise ValueError("未找到定投计划")
+            existing = self.state.portfolio_investment_plans[index]
+            if existing.get("archived_at"):
+                raise ValueError("定投计划已经归档")
+            payload = dict(existing)
+            payload.update({
+                "enabled": False,
+                "archived_at": self.now_factory().isoformat(timespec="seconds"),
+            })
+            plan = investment_core.normalize_investment_plan(
+                payload,
+                existing=existing,
+                now_factory=self.now_factory,
+            )
+            next_plans = list(self.state.portfolio_investment_plans)
+            next_plans[index] = plan
+            self.state.portfolio_investment_plans = self.save_plans(next_plans)
+        return plan, self.state_payload()
+
+    def restore(self, plan_id):
+        with self.state.investment_plan_lock:
+            index = self._find_plan_index(plan_id)
+            if index < 0:
+                raise ValueError("未找到定投计划")
+            existing = self.state.portfolio_investment_plans[index]
+            if not existing.get("archived_at"):
+                raise ValueError("定投计划尚未归档")
+            payload = dict(existing)
+            payload.update({"enabled": False, "archived_at": ""})
+            plan = investment_core.normalize_investment_plan(
+                payload,
+                existing=existing,
+                now_factory=self.now_factory,
+            )
+            next_plans = list(self.state.portfolio_investment_plans)
+            next_plans[index] = plan
+            self.state.portfolio_investment_plans = self.save_plans(next_plans)
+        return plan, self.state_payload()
 
     def toggle(self, plan_id, enabled):
         with self.state.investment_plan_lock:
@@ -151,6 +198,8 @@ class PortfolioInvestmentRuntime:
             if index < 0:
                 raise ValueError("未找到定投计划")
             existing = self.state.portfolio_investment_plans[index]
+            if existing.get("archived_at"):
+                raise ValueError("已归档计划需先恢复")
             if enabled:
                 end_date = investment_core.parse_plan_date(existing.get("end_date"))
                 if end_date and end_date < self.now_factory().date():
@@ -174,6 +223,8 @@ class PortfolioInvestmentRuntime:
             if index < 0:
                 raise ValueError("未找到定投计划")
             plan = dict(self.state.portfolio_investment_plans[index])
+            if plan.get("archived_at"):
+                raise ValueError("已归档计划不能跳过期次")
             if plan.get("enabled") is False:
                 raise ValueError("已暂停的计划不能跳过期次")
             pending_run = investment_core.pending_plan_run_at(plan, now)
@@ -234,6 +285,8 @@ class PortfolioInvestmentRuntime:
             if index < 0:
                 raise ValueError("未找到定投计划")
             plan = dict(self.state.portfolio_investment_plans[index])
+            if plan.get("archived_at"):
+                raise ValueError("已归档计划不能执行")
             start_date = investment_core.parse_plan_date(plan.get("start_date"))
             end_date = investment_core.parse_plan_date(plan.get("end_date"))
             if start_date and now.date() < start_date:
