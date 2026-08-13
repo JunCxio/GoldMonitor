@@ -31,12 +31,13 @@ def test_app_portfolio_investment_socket_crud_and_manual_execution(monkeypatch, 
     client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
     client.get_received()
     client.emit("save_portfolio_investment_plan", {
-        "name": "每日积累",
+        "name": "每周积累",
         "position_name": "积存金",
         "mode": "rmb",
         "amount": 1000,
         "fee": 0,
-        "frequency": "daily",
+        "frequency": "weekly",
+        "weekday": 4,
         "time": "09:00",
         "enabled": True,
     })
@@ -52,6 +53,8 @@ def test_app_portfolio_investment_socket_crud_and_manual_execution(monkeypatch, 
         if item["name"] == "portfolio_investment_plans_updated"
     )
     plan_id = saved["plan"]["id"]
+    assert saved["plan"]["frequency"] == "weekly"
+    assert saved["plan"]["weekday"] == 4
     assert state["summary"]["total"] == 1
 
     client.emit("execute_portfolio_investment_plan", {"id": plan_id})

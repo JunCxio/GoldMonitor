@@ -19,10 +19,11 @@ function portfolioInvestmentBaseDraft(item) {
     mode: source.mode === 'usd' ? 'usd' : source.mode === 'rmb' ? 'rmb' : currentMode,
     amount: source.amount == null || isNew ? '' : String(source.amount),
     fee: source.fee == null ? '0' : String(source.fee),
-    frequency: ['daily', 'monthly', 'yearly'].includes(source.frequency) ? source.frequency : 'monthly',
+    frequency: ['daily', 'weekly', 'monthly', 'yearly'].includes(source.frequency) ? source.frequency : 'monthly',
     time: source.time || '09:00',
     month: source.month == null ? '1' : String(source.month),
     day: source.day == null ? '1' : String(source.day),
+    weekday: source.weekday == null ? '1' : String(source.weekday),
     enabled: source.enabled !== false,
   };
 }
@@ -53,6 +54,7 @@ function capturePortfolioInvestmentDraft(id) {
     time: portfolioInvestmentInputValue(key, 'Time') || '09:00',
     month: portfolioInvestmentInputValue(key, 'Month') || '1',
     day: portfolioInvestmentInputValue(key, 'Day') || '1',
+    weekday: portfolioInvestmentInputValue(key, 'Weekday') || '1',
     enabled: portfolioInvestmentInputValue(key, 'Enabled') !== false,
   };
 }
@@ -86,8 +88,13 @@ function refreshPortfolioInvestmentEditor(id) {
 function portfolioInvestmentFrequencyLabel(plan) {
   const time = plan.time || '09:00';
   if (plan.frequency === 'daily') return '每天 ' + time;
+  if (plan.frequency === 'weekly') return '每周' + portfolioInvestmentWeekdayLabel(plan.weekday) + ' ' + time;
   if (plan.frequency === 'yearly') return '每年 ' + Number(plan.month || 1) + ' 月 ' + Number(plan.day || 1) + ' 日 ' + time;
   return '每月 ' + Number(plan.day || 1) + ' 日 ' + time;
+}
+
+function portfolioInvestmentWeekdayLabel(value) {
+  return ['', '一', '二', '三', '四', '五', '六', '日'][Number(value) || 1] || '一';
 }
 
 function portfolioInvestmentDateTime(value) {
@@ -241,9 +248,10 @@ function buildPortfolioInvestmentEditor(item) {
     '<div class="portfolio-field"><label for="portfolioInvestmentMode_' + escapedId + '">单位</label><select id="portfolioInvestmentMode_' + escapedId + '"' + (existingPosition ? ' disabled' : fieldChange) + '><option value="rmb"' + (selectedMode === 'rmb' ? ' selected' : '') + '>RMB/克</option><option value="usd"' + (selectedMode === 'usd' ? ' selected' : '') + '>USD/oz</option></select></div>',
     '<div class="portfolio-field"><label for="portfolioInvestmentAmount_' + escapedId + '">每次金额</label><input id="portfolioInvestmentAmount_' + escapedId + '" type="number" min="0.01" step="0.01" value="' + escapeHtml(target.amount) + '" placeholder="输入固定金额"' + fieldInput + '></div>',
     '<div class="portfolio-field"><label for="portfolioInvestmentFee_' + escapedId + '">固定手续费</label><input id="portfolioInvestmentFee_' + escapedId + '" type="number" min="0" step="0.01" value="' + escapeHtml(target.fee) + '"' + fieldInput + '></div>',
-    '<div class="portfolio-field"><label for="portfolioInvestmentFrequency_' + escapedId + '">周期</label><select id="portfolioInvestmentFrequency_' + escapedId + '"' + rerenderChange + '><option value="daily"' + (target.frequency === 'daily' ? ' selected' : '') + '>每天</option><option value="monthly"' + (target.frequency === 'monthly' ? ' selected' : '') + '>每月</option><option value="yearly"' + (target.frequency === 'yearly' ? ' selected' : '') + '>每年</option></select></div>',
+    '<div class="portfolio-field"><label for="portfolioInvestmentFrequency_' + escapedId + '">周期</label><select id="portfolioInvestmentFrequency_' + escapedId + '"' + rerenderChange + '><option value="daily"' + (target.frequency === 'daily' ? ' selected' : '') + '>每天</option><option value="weekly"' + (target.frequency === 'weekly' ? ' selected' : '') + '>每周</option><option value="monthly"' + (target.frequency === 'monthly' ? ' selected' : '') + '>每月</option><option value="yearly"' + (target.frequency === 'yearly' ? ' selected' : '') + '>每年</option></select></div>',
+    target.frequency === 'weekly' ? '<div class="portfolio-field"><label for="portfolioInvestmentWeekday_' + escapedId + '">星期</label><select id="portfolioInvestmentWeekday_' + escapedId + '"' + fieldChange + '><option value="1"' + (target.weekday === '1' ? ' selected' : '') + '>星期一</option><option value="2"' + (target.weekday === '2' ? ' selected' : '') + '>星期二</option><option value="3"' + (target.weekday === '3' ? ' selected' : '') + '>星期三</option><option value="4"' + (target.weekday === '4' ? ' selected' : '') + '>星期四</option><option value="5"' + (target.weekday === '5' ? ' selected' : '') + '>星期五</option><option value="6"' + (target.weekday === '6' ? ' selected' : '') + '>星期六</option><option value="7"' + (target.weekday === '7' ? ' selected' : '') + '>星期日</option></select></div>' : '<input id="portfolioInvestmentWeekday_' + escapedId + '" type="hidden" value="' + escapeHtml(target.weekday) + '">',
     target.frequency === 'yearly' ? '<div class="portfolio-field"><label for="portfolioInvestmentMonth_' + escapedId + '">月份</label><input id="portfolioInvestmentMonth_' + escapedId + '" type="number" min="1" max="12" value="' + escapeHtml(target.month) + '"' + fieldInput + '></div>' : '<input id="portfolioInvestmentMonth_' + escapedId + '" type="hidden" value="' + escapeHtml(target.month) + '">',
-    target.frequency !== 'daily' ? '<div class="portfolio-field"><label for="portfolioInvestmentDay_' + escapedId + '">日期</label><input id="portfolioInvestmentDay_' + escapedId + '" type="number" min="1" max="31" value="' + escapeHtml(target.day) + '"' + fieldInput + '></div>' : '<input id="portfolioInvestmentDay_' + escapedId + '" type="hidden" value="' + escapeHtml(target.day) + '">',
+    ['monthly', 'yearly'].includes(target.frequency) ? '<div class="portfolio-field"><label for="portfolioInvestmentDay_' + escapedId + '">日期</label><input id="portfolioInvestmentDay_' + escapedId + '" type="number" min="1" max="31" value="' + escapeHtml(target.day) + '"' + fieldInput + '></div>' : '<input id="portfolioInvestmentDay_' + escapedId + '" type="hidden" value="' + escapeHtml(target.day) + '">',
     '<div class="portfolio-field"><label for="portfolioInvestmentTime_' + escapedId + '">执行时间</label><input id="portfolioInvestmentTime_' + escapedId + '" type="time" value="' + escapeHtml(target.time) + '"' + fieldChange + '></div>',
     '<label class="portfolio-investment-enabled"><input id="portfolioInvestmentEnabled_' + escapedId + '" type="checkbox"' + (target.enabled ? ' checked' : '') + fieldChange + '><span>保存后启用计划</span></label>',
     '</div>',
@@ -261,7 +269,7 @@ function renderPortfolioInvestments(box) {
       '<div class="portfolio-investment-card expanded">',
       '<div class="portfolio-investment-card-main"><div class="portfolio-line">新增定投计划</div><div class="portfolio-meta">固定金额按执行时最新行情生成买入流水</div></div>',
       '<div class="portfolio-actions"><span class="alert-rule-state off">新建</span></div>',
-      buildPortfolioInvestmentEditor({ id: 'new', frequency: 'monthly', time: '09:00', day: 1, month: 1, fee: 0, enabled: true }),
+      buildPortfolioInvestmentEditor({ id: 'new', frequency: 'monthly', time: '09:00', day: 1, month: 1, weekday: 1, fee: 0, enabled: true }),
       '</div>',
     ].join(''));
   }
@@ -313,6 +321,7 @@ function savePortfolioInvestmentPlan(id) {
     time: portfolioInvestmentInputValue(id, 'Time') || '09:00',
     month: Number(portfolioInvestmentInputValue(id, 'Month') || 1),
     day: Number(portfolioInvestmentInputValue(id, 'Day') || 1),
+    weekday: Number(portfolioInvestmentInputValue(id, 'Weekday') || 1),
     enabled: portfolioInvestmentInputValue(id, 'Enabled') !== false,
   };
   const position = (portfolioState.items || []).find(item => item.id === payload.position_id);

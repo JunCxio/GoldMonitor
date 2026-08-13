@@ -196,6 +196,21 @@ def test_runtime_run_due_only_executes_due_plans():
     assert len(state.portfolio_transactions) == 2
 
 
+def test_runtime_executes_latest_due_weekly_plan_and_advances_one_week():
+    runtime, state, _events = _runtime(_plan(
+        frequency="weekly",
+        weekday=3,
+        next_run_at="2026-07-01T09:00:00",
+    ))
+
+    result = runtime.execute("plan-1", now=datetime(2026, 8, 14, 10, 0))
+
+    assert result["status"] == "completed"
+    assert result["transaction"]["scheduled_at"] == "2026-08-12T09:00:00"
+    assert result["transaction"]["execution_kind"] == "catch_up"
+    assert state.portfolio_investment_plans[0]["next_run_at"] == "2026-08-19T09:00:00"
+
+
 def test_runtime_builds_execution_csv_for_existing_plan():
     transactions = [{
         "id": "investment-plan-1-manual-202608121000",

@@ -4,13 +4,25 @@ from datetime import datetime
 from io import StringIO
 
 
-def test_investment_plan_calculates_daily_monthly_and_yearly_runs():
+def test_investment_plan_calculates_daily_weekly_monthly_and_yearly_runs():
     from goldmonitor.portfolio_investment import next_plan_run_at
 
     assert next_plan_run_at(
         {"frequency": "daily", "time": "09:00", "month": 1, "day": 1},
         datetime(2026, 8, 12, 8, 0),
     ) == datetime(2026, 8, 12, 9, 0)
+    assert next_plan_run_at(
+        {"frequency": "weekly", "time": "09:00", "weekday": 3},
+        datetime(2026, 8, 12, 8, 0),
+    ) == datetime(2026, 8, 12, 9, 0)
+    assert next_plan_run_at(
+        {"frequency": "weekly", "time": "09:00", "weekday": 3},
+        datetime(2026, 8, 12, 10, 0),
+    ) == datetime(2026, 8, 19, 9, 0)
+    assert next_plan_run_at(
+        {"frequency": "weekly", "time": "09:00", "weekday": 1},
+        datetime(2026, 8, 14, 10, 0),
+    ) == datetime(2026, 8, 17, 9, 0)
     assert next_plan_run_at(
         {"frequency": "monthly", "time": "09:00", "month": 1, "day": 31},
         datetime(2026, 2, 28, 10, 0),
@@ -38,9 +50,17 @@ def test_investment_plan_uses_latest_missed_run_only():
         "day": 29,
         "next_run_at": "2024-02-29T09:00:00",
     }
+    weekly = {
+        "frequency": "weekly",
+        "time": "09:00",
+        "weekday": 3,
+        "next_run_at": "2026-07-01T09:00:00",
+    }
 
     assert latest_due_run_at(monthly, datetime(2026, 3, 15, 10, 0)) == datetime(2026, 2, 28, 9, 0)
     assert latest_due_run_at(yearly, datetime(2027, 8, 12, 10, 0)) == datetime(2027, 2, 28, 9, 0)
+    assert latest_due_run_at(weekly, datetime(2026, 8, 14, 10, 0)) == datetime(2026, 8, 12, 9, 0)
+    assert latest_due_run_at(weekly, datetime(2026, 8, 12, 8, 0)) == datetime(2026, 8, 5, 9, 0)
 
 
 def test_investment_plan_reenable_starts_from_current_time():
@@ -70,6 +90,72 @@ def test_investment_plan_reenable_starts_from_current_time():
 
     assert payload["next_run_at"] == "2026-09-15T09:00:00"
     assert payload["created_at"] == "2026-01-01T10:00:00"
+
+
+def test_investment_plan_weekly_schedule_change_recalculates_next_run():
+    from goldmonitor.portfolio_investment import normalize_investment_plan
+
+    existing = {
+        "id": "plan-weekly",
+        "name": "每周定投",
+        "position_id": "position-1",
+        "position_name": "金条",
+        "mode": "rmb",
+        "amount": 1000,
+        "fee": 0,
+        "frequency": "weekly",
+        "time": "09:00",
+        "weekday": 3,
+        "month": 1,
+        "day": 1,
+        "enabled": True,
+        "next_run_at": "2026-08-19T09:00:00",
+        "created_at": "2026-08-01T10:00:00",
+    }
+
+    unchanged = normalize_investment_plan(
+        dict(existing),
+        existing=existing,
+        now_factory=lambda: datetime(2026, 8, 13, 10, 0),
+    )
+    changed = normalize_investment_plan(
+        {**existing, "weekday": 5},
+        existing=existing,
+        now_factory=lambda: datetime(2026, 8, 13, 10, 0),
+    )
+
+    assert unchanged["next_run_at"] == "2026-08-19T09:00:00"
+    assert changed["next_run_at"] == "2026-08-14T09:00:00"
+
+
+def test_old_monthly_plan_without_weekday_preserves_next_run():
+    from goldmonitor.portfolio_investment import normalize_investment_plan
+
+    existing = {
+        "id": "plan-monthly",
+        "name": "每月定投",
+        "position_id": "position-1",
+        "position_name": "金条",
+        "mode": "rmb",
+        "amount": 1000,
+        "fee": 0,
+        "frequency": "monthly",
+        "time": "09:00",
+        "month": 1,
+        "day": 15,
+        "enabled": True,
+        "next_run_at": "2026-09-15T09:00:00",
+        "created_at": "2026-08-01T10:00:00",
+    }
+
+    payload = normalize_investment_plan(
+        dict(existing),
+        existing=existing,
+        now_factory=lambda: datetime(2026, 8, 20, 10, 0),
+    )
+
+    assert payload["weekday"] == 1
+    assert payload["next_run_at"] == "2026-09-15T09:00:00"
 
 
 def test_investment_plan_store_round_trips_versioned_payload(tmp_path):
