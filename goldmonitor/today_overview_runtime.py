@@ -13,6 +13,7 @@ class TodayOverviewRuntime:
         get_alert_rules,
         get_source_health,
         get_fetch_status,
+        get_background_tasks,
         build_portfolio,
         get_risk_history,
         get_review_notes,
@@ -24,6 +25,7 @@ class TodayOverviewRuntime:
         self.get_alert_rules = get_alert_rules
         self.get_source_health = get_source_health
         self.get_fetch_status = get_fetch_status
+        self.get_background_tasks = get_background_tasks
         self.build_portfolio = build_portfolio
         self.get_risk_history = get_risk_history
         self.get_review_notes = get_review_notes
@@ -55,6 +57,7 @@ class TodayOverviewRuntime:
             alert_rules=self.get_alert_rules(),
             market_quality=source_health.get("quality"),
             fetch_status=self.get_fetch_status(),
+            background_tasks=self.get_background_tasks(),
             portfolio_state=self.build_portfolio(),
             risk_items=self._state_items(self.get_risk_history()),
             review_notes=self._state_items(self.get_review_notes()),

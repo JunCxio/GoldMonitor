@@ -22,6 +22,7 @@ const TODAY_OVERVIEW_REFRESH_EVENTS = [
   'risk_analysis_history_updated',
   'review_notes_updated',
   'source_health_updated',
+  'background_task_status',
   'fetch_status',
   'price_update',
 ];
@@ -105,6 +106,8 @@ function todayOverviewReasonLabel(reason) {
     waiting_price: '等待行情',
     investment_error: '执行失败',
     investment_due: '等待执行',
+    task_failure: '任务异常',
+    task_delayed: '调度延迟',
   })[reason] || String(reason || '');
 }
 
@@ -125,6 +128,7 @@ function todayOverviewActionLabel(action) {
     open_market_status: '查看详情',
     open_portfolio_transaction: '查看流水',
     open_portfolio_investment: '查看计划',
+    open_operations_task: '查看任务',
     open_risk_analysis: '查看分析',
     open_review_note: '查看笔记',
   })[action && action.kind] || '查看';
@@ -138,6 +142,7 @@ function todayOverviewFilterLabel(filter) {
     rule: '规则',
     market: '行情',
     portfolio: '持仓',
+    operations: '运维',
   })[filter] || '全部';
 }
 
@@ -147,6 +152,7 @@ function todayOverviewFilterMatches(item, filter) {
     return Array.isArray(item.reason_codes) && item.reason_codes.includes('notification_issue');
   }
   if (filter === 'portfolio') return item.kind === 'portfolio_investment';
+  if (filter === 'operations') return item.kind === 'background_task';
   return item.kind === filter;
 }
 
@@ -222,7 +228,7 @@ function renderTodayOverviewFilters(attention) {
   const counts = attention && attention.filter_counts && typeof attention.filter_counts === 'object'
     ? attention.filter_counts
     : {};
-  const filters = ['all', 'alert', 'notification', 'rule', 'market', 'portfolio'];
+  const filters = ['all', 'alert', 'notification', 'rule', 'market', 'portfolio', 'operations'];
   if (!filters.includes(todayOverviewAttentionFilter)) todayOverviewAttentionFilter = 'all';
   box.innerHTML = filters.map(filter => {
     const count = Math.max(0, Math.trunc(todayOverviewNumber(counts[filter])));
@@ -239,7 +245,7 @@ function renderTodayOverviewFilters(attention) {
 }
 
 function setTodayOverviewAttentionFilter(filter) {
-  todayOverviewAttentionFilter = ['all', 'alert', 'notification', 'rule', 'market', 'portfolio'].includes(filter) ? filter : 'all';
+  todayOverviewAttentionFilter = ['all', 'alert', 'notification', 'rule', 'market', 'portfolio', 'operations'].includes(filter) ? filter : 'all';
   if (todayOverviewState) renderTodayOverview(todayOverviewState);
 }
 
@@ -275,7 +281,7 @@ function renderTodayOverviewAttention(items, total, truncated) {
     list.innerHTML = [
       '<div class="today-overview-empty clear">',
       '<strong>' + (filtered ? '当前分类没有待处理事项' : '当前没有待处理事项') + '</strong>',
-      '<span>' + (filtered ? '可切换到其他分类继续检查。' : '警报、规则、行情和持仓计划均无需人工介入。') + '</span>',
+      '<span>' + (filtered ? '可切换到其他分类继续检查。' : '警报、规则、行情、持仓计划和后台任务均无需人工介入。') + '</span>',
       '</div>',
     ].join('');
     return;
@@ -650,6 +656,21 @@ function openTodayOverviewPortfolioInvestment(targetId) {
   document.querySelector('.portfolio-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+function openTodayOverviewOperationsTask(targetId) {
+  closeTodayOverview({ markViewed: true, restoreFocus: false });
+  openSettings();
+  switchSettingsTab('ops');
+  requestBackgroundTaskStatus();
+  window.requestAnimationFrame(() => {
+    const taskButton = Array.from(document.querySelectorAll('.ops-task-run')).find(
+      element => String(element.dataset.taskName || '') === String(targetId || '')
+    );
+    const target = taskButton ? taskButton.closest('.ops-task-item') : document.querySelector('.ops-task-card');
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (taskButton) taskButton.focus();
+  });
+}
+
 function openTodayOverviewRiskAnalysis(targetId) {
   closeTodayOverview({ markViewed: true, restoreFocus: false });
   if (!openRiskAnalysis()) return;
@@ -670,6 +691,7 @@ function activateTodayOverviewAction(kind, targetId, timestamp) {
   else if (kind === 'open_market_status') openTodayOverviewMarketStatus();
   else if (kind === 'open_portfolio_transaction') openTodayOverviewPortfolioTransaction(targetId);
   else if (kind === 'open_portfolio_investment') openTodayOverviewPortfolioInvestment(targetId);
+  else if (kind === 'open_operations_task') openTodayOverviewOperationsTask(targetId);
   else if (kind === 'open_risk_analysis') openTodayOverviewRiskAnalysis(targetId);
   else if (kind === 'open_review_note') openTodayOverviewReviewNote(targetId, timestamp);
 }

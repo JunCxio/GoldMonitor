@@ -2344,6 +2344,7 @@ def _get_today_overview_runtime():
                 get_alert_rules=lambda: get_alert_rules_state(),
                 get_source_health=lambda: get_source_health_state(),
                 get_fetch_status=lambda: get_fetch_status(),
+                get_background_tasks=lambda: get_background_task_status(),
                 build_portfolio=lambda: build_portfolio_state(),
                 get_risk_history=lambda: get_risk_analysis_history_state(),
                 get_review_notes=lambda: get_review_notes_state(),

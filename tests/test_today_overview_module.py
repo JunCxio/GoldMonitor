@@ -131,6 +131,7 @@ def test_today_overview_separates_today_activity_from_cross_day_attention():
         "portfolio_transactions_today": 1,
         "portfolio_investment_issues": 0,
         "portfolio_investments_today": 0,
+        "background_task_issues": 0,
         "risk_analyses_today": 1,
         "review_notes_today": 1,
     }
@@ -151,6 +152,7 @@ def test_today_overview_separates_today_activity_from_cross_day_attention():
         "rule": 3,
         "market": 1,
         "portfolio": 0,
+        "operations": 0,
     }
     assert "rule:rule-disabled" not in attention_ids
     assert result["portfolio"]["current"]["rmb"]["total_pnl"] == 650.0
@@ -331,6 +333,73 @@ def test_today_overview_market_issue_exposes_refresh_action():
     assert item["quick_actions"] == [
         {"kind": "refresh_market", "label": "重新获取", "target_id": "market-quality"}
     ]
+
+
+def test_today_overview_only_includes_actionable_background_tasks():
+    from goldmonitor.today_overview import build_today_overview
+
+    result = build_today_overview(
+        background_tasks={
+            "tasks": [
+                {
+                    "name": "price_history_health",
+                    "label": "历史数据检查",
+                    "state": "error",
+                    "attention_required": True,
+                    "consecutive_failures": 3,
+                    "last_message": "发现 2 项历史数据问题，请在历史数据维护中查看",
+                    "last_error_at": "2026-08-12T09:40:00",
+                    "schedule_delayed": False,
+                },
+                {
+                    "name": "news",
+                    "label": "资讯刷新",
+                    "state": "error",
+                    "attention_required": False,
+                    "consecutive_failures": 1,
+                    "last_message": "资讯刷新失败",
+                    "last_error_at": "2026-08-12T09:45:00",
+                    "schedule_delayed": False,
+                },
+                {
+                    "name": "daily_digest",
+                    "label": "每日摘要",
+                    "state": "idle",
+                    "attention_required": False,
+                    "consecutive_failures": 0,
+                    "last_message": "当前无需发送每日摘要",
+                    "last_completed_at": "2026-08-12T09:30:00",
+                    "schedule_delayed": True,
+                    "schedule_delay_seconds": 95,
+                },
+                {
+                    "name": "notification_retry",
+                    "label": "通知重试",
+                    "state": "disabled",
+                    "attention_required": False,
+                    "schedule_delayed": False,
+                },
+            ]
+        },
+        now=datetime(2026, 8, 12, 10, 0),
+    )
+
+    assert result["summary"]["attention_total"] == 2
+    assert result["summary"]["background_task_issues"] == 2
+    assert result["attention"]["filter_counts"]["operations"] == 2
+    assert [item["source_id"] for item in result["attention"]["items"]] == [
+        "price_history_health",
+        "daily_digest",
+    ]
+    history = result["attention"]["items"][0]
+    assert history["reason_codes"] == ["task_failure"]
+    assert history["action"] == {
+        "kind": "open_operations_task",
+        "target_id": "price_history_health",
+    }
+    delayed = result["attention"]["items"][1]
+    assert delayed["reason_codes"] == ["task_delayed"]
+    assert delayed["summary"] == "计划执行已延迟 95 秒"
 
 
 def test_today_overview_alert_quick_actions_follow_remaining_issue():

@@ -307,6 +307,7 @@ for required in (
     "function activateTodayOverviewItem",
     "function setTodayOverviewAttentionFilter",
     "function runTodayOverviewQuickAction",
+    "function openTodayOverviewOperationsTask",
     "function runTodayOverviewBatchAction",
     "function completeTodayOverviewBatchAction",
     "function registerTodayOverviewBatchSocketHandlers",
@@ -326,6 +327,8 @@ for required in (
     "socketClient.on('today_overview_updated'",
     "socket.emit('get_today_overview'",
     "socket.emit('mark_today_overview_viewed'",
+    "'background_task_status'",
+    "open_operations_task",
 ):
     if required not in today_overview_module_js:
         raise SystemExit(f"today overview scripts missing contract: {required}")
