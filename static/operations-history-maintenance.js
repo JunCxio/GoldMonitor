@@ -4,6 +4,13 @@ const PRICE_HISTORY_REPAIR_LABELS = {
   sync_json_and_rebuild: '同步 JSON 并重建',
   restore_last_repair: '恢复最近修复',
 };
+const PRICE_HISTORY_RESOLUTION_LABELS = {
+  raw: '原始明细',
+  '1m': '1 分钟汇总',
+  '5m': '5 分钟汇总',
+  '1h': '1 小时汇总',
+  '1d': '日线汇总',
+};
 
 function formatPriceHistoryCount(value) {
   const number = Number(value);
@@ -13,6 +20,94 @@ function formatPriceHistoryCount(value) {
 function formatPriceHistoryTime(value) {
   const text = String(value || '').trim();
   return text ? text.replace('T', ' ') : '无数据';
+}
+
+function formatPriceHistoryInterval(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value <= 0) return '采样间隔未知';
+  if (value % 86400 === 0) return (value / 86400) + ' 天间隔';
+  if (value % 3600 === 0) return (value / 3600) + ' 小时间隔';
+  if (value % 60 === 0) return (value / 60) + ' 分钟间隔';
+  return value + ' 秒间隔';
+}
+
+function formatPriceHistoryRetention(minutes) {
+  if (minutes === null || minutes === undefined) return '长期保留';
+  const value = Number(minutes);
+  if (!Number.isFinite(value) || value <= 0) return '不限制保留期';
+  if (value % (365 * 24 * 60) === 0) {
+    return '保留 ' + (value / (365 * 24 * 60)) + ' 年';
+  }
+  if (value % (24 * 60) === 0) return '保留 ' + (value / (24 * 60)) + ' 天';
+  if (value % 60 === 0) return '保留 ' + (value / 60) + ' 小时';
+  return '保留 ' + value + ' 分钟';
+}
+
+function formatPriceHistoryCoverageDuration(firstTimestamp, lastTimestamp) {
+  const first = Date.parse(String(firstTimestamp || ''));
+  const last = Date.parse(String(lastTimestamp || ''));
+  if (!Number.isFinite(first) || !Number.isFinite(last)) return '覆盖时长未知';
+  const minutes = Math.max(0, Math.round((last - first) / 60000));
+  if (minutes === 0) return '单个时间点';
+  if (minutes >= 365 * 24 * 60) {
+    return '覆盖 ' + (minutes / (365 * 24 * 60)).toFixed(1).replace('.0', '') + ' 年';
+  }
+  if (minutes >= 24 * 60) {
+    return '覆盖 ' + (minutes / (24 * 60)).toFixed(1).replace('.0', '') + ' 天';
+  }
+  if (minutes >= 60) {
+    return '覆盖 ' + (minutes / 60).toFixed(1).replace('.0', '') + ' 小时';
+  }
+  return '覆盖 ' + minutes + ' 分钟';
+}
+
+function priceHistoryCoverageState(item) {
+  const total = Number(item && item.total || 0);
+  if (!total) return { state: 'empty', label: '暂无数据' };
+  const issues = item && item.resolution === 'raw'
+    ? Number(item.invalid_timestamp || 0) + Number(item.missing_price || 0)
+    : Number(item && item.missing || 0)
+      + Number(item && item.mismatched || 0)
+      + Number(item && item.unexpected || 0);
+  return issues
+    ? { state: 'attention', label: formatPriceHistoryCount(issues) + ' 项差异' }
+    : { state: 'healthy', label: '状态正常' };
+}
+
+function renderPriceHistoryCoverage(database) {
+  const container = document.getElementById('priceHistoryMaintenanceCoverage');
+  if (!container) return;
+  const raw = database && database.raw || {};
+  const rollups = database && Array.isArray(database.rollups) ? database.rollups : [];
+  const items = [raw, ...rollups].filter(item => item && item.resolution);
+  if (!items.length) {
+    container.innerHTML = '<div class="price-maintenance-empty">暂无分层覆盖数据。</div>';
+    return;
+  }
+  container.innerHTML = items.map(item => {
+    const state = priceHistoryCoverageState(item);
+    const hasRange = item.first_timestamp && item.last_timestamp;
+    const range = hasRange
+      ? formatPriceHistoryTime(item.first_timestamp) + ' 至 '
+        + formatPriceHistoryTime(item.last_timestamp)
+      : '尚无可显示的数据区间';
+    const duration = hasRange
+      ? formatPriceHistoryCoverageDuration(item.first_timestamp, item.last_timestamp)
+      : '等待数据写入';
+    return [
+      '<div class="price-maintenance-coverage-row" data-state="' + state.state + '">',
+      '<div class="price-maintenance-coverage-ident"><strong>'
+        + escapeHtml(PRICE_HISTORY_RESOLUTION_LABELS[item.resolution] || item.resolution)
+        + '</strong><span>' + escapeHtml(formatPriceHistoryInterval(item.interval_seconds))
+        + ' · ' + escapeHtml(formatPriceHistoryRetention(item.retention_minutes)) + '</span></div>',
+      '<div class="price-maintenance-coverage-count"><strong>'
+        + escapeHtml(formatPriceHistoryCount(item.total)) + '</strong><span>条记录</span></div>',
+      '<div class="price-maintenance-coverage-detail"><span>' + escapeHtml(range)
+        + '</span><small>' + escapeHtml(duration) + ' · ' + escapeHtml(state.label)
+        + '</small></div>',
+      '</div>',
+    ].join('');
+  }).join('');
 }
 
 function setPriceHistoryMaintenanceBusy(pending) {
@@ -102,6 +197,7 @@ function renderPriceHistoryMaintenance(data) {
     '<div class="price-maintenance-metric"><span>' + escapeHtml(item[0])
       + '</span><strong>' + escapeHtml(item[1]) + '</strong></div>'
   )).join('');
+  renderPriceHistoryCoverage(database);
 
   const issueItems = Array.isArray(priceHistoryMaintenanceState.issues)
     ? priceHistoryMaintenanceState.issues : [];

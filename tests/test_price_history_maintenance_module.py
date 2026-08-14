@@ -78,6 +78,9 @@ def test_price_history_maintenance_diagnoses_and_repairs_only_recoverable_rollup
 
     assert diagnosis["status"] == "attention"
     assert diagnosis["database"]["raw"]["invalid_timestamp"] == 1
+    assert diagnosis["database"]["raw"]["resolution"] == "raw"
+    assert diagnosis["database"]["raw"]["interval_seconds"] == 10
+    assert diagnosis["database"]["raw"]["retention_minutes"] == 60
     assert diagnosis["comparison"]["rollup_missing"] == 1
     assert diagnosis["comparison"]["rollup_mismatched"] == 1
     assert diagnosis["comparison"]["rollup_unexpected"] == 1

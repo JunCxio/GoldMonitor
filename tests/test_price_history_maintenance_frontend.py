@@ -50,6 +50,7 @@ const ids = [
   'priceHistoryMaintenanceStatus',
   'priceHistoryMaintenanceMeta',
   'priceHistoryMaintenanceMetrics',
+  'priceHistoryMaintenanceCoverage',
   'priceHistoryMaintenanceIssues',
   'priceHistoryMaintenancePreview',
   'priceHistoryMaintenancePreviewTitle',
@@ -94,8 +95,25 @@ const diagnosis = {
   database: {
     exists: true,
     integrity_ok: true,
-    raw: { total: 14, valid: 12, invalid_timestamp: 1, missing_price: 1 },
-    rollups: [{ total: 24 }, { total: 6 }],
+    raw: {
+      resolution: 'raw', interval_seconds: 10, retention_minutes: 1440,
+      total: 14, valid: 12, invalid_timestamp: 1, missing_price: 1,
+      first_timestamp: '2026-08-13T10:00:00', last_timestamp: '2026-08-13T12:00:00',
+    },
+    rollups: [
+      {
+        resolution: '1m', interval_seconds: 60, retention_minutes: 43200,
+        total: 24, first_timestamp: '2026-08-01T10:00:00',
+        last_timestamp: '2026-08-13T12:00:00', missing: 1, mismatched: 0,
+        unexpected: 0,
+      },
+      {
+        resolution: '5m', interval_seconds: 300, retention_minutes: 129600,
+        total: 6, first_timestamp: '2026-08-01T10:00:00',
+        last_timestamp: '2026-08-13T12:00:00', missing: 0, mismatched: 0,
+        unexpected: 0,
+      },
+    ],
   },
   json_archive: { exists: true, unique_valid: 10 },
   repair_backup: {
@@ -123,6 +141,11 @@ const diagnosis = {
 listeners.price_history_maintenance_updated(diagnosis);
 assert(elements.priceHistoryMaintenanceStatus.textContent === '发现可处理问题', 'diagnosis status not rendered');
 assert(elements.priceHistoryMaintenanceMetrics.innerHTML.includes('数据库明细'), 'diagnosis metrics not rendered');
+assert(elements.priceHistoryMaintenanceCoverage.innerHTML.includes('原始明细'), 'raw coverage not rendered');
+assert(elements.priceHistoryMaintenanceCoverage.innerHTML.includes('5 分钟汇总'), 'rollup coverage not rendered');
+assert(elements.priceHistoryMaintenanceCoverage.innerHTML.includes('保留 90 天'), 'retention policy not rendered');
+assert(elements.priceHistoryMaintenanceCoverage.innerHTML.includes('2 小时'), 'coverage duration not rendered');
+assert(elements.priceHistoryMaintenanceCoverage.innerHTML.includes('1 项差异'), 'coverage issue state not rendered');
 assert(elements.priceHistoryMaintenanceIssues.innerHTML.includes('发现汇总差异'), 'diagnosis issues not rendered');
 assert(!elements.previewPriceHistoryCleanupButton.disabled, 'available cleanup action must be enabled');
 assert(!elements.previewPriceHistoryRebuildButton.disabled, 'available rebuild action must be enabled');

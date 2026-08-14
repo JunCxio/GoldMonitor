@@ -282,6 +282,9 @@ class PriceHistoryMaintenanceMixin:
             "integrity_message": "数据库尚未创建。",
             "schema_ok": False,
             "raw": {
+                "resolution": "raw",
+                "interval_seconds": self.raw_interval_seconds,
+                "retention_minutes": self.raw_retention_minutes,
                 "total": 0,
                 "valid": 0,
                 "invalid_timestamp": 0,

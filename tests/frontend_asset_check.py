@@ -497,6 +497,7 @@ for required in (
 
 for required in (
     'id="priceHistoryMaintenanceCard"',
+    'id="priceHistoryMaintenanceCoverage"',
     'id="priceHistoryMaintenancePreview"',
     'id="previewPriceHistoryCleanupButton"',
     "clean_invalid_records",
@@ -516,6 +517,8 @@ for required in (
 for required in (
     ".price-maintenance-card",
     ".price-maintenance-metrics",
+    ".price-maintenance-coverage",
+    ".price-maintenance-coverage-row",
     ".price-maintenance-preview",
     ".price-maintenance-preview-grid",
 ):
