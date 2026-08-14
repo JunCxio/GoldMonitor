@@ -246,7 +246,7 @@ def test_price_history_maintenance_cleans_only_invalid_database_rows(tmp_path):
         ).fetchone() == (1,)
 
 
-def test_price_history_maintenance_rejects_changed_preview_without_writing(tmp_path):
+def test_price_history_maintenance_rejects_changed_content_with_same_effects(tmp_path):
     from goldmonitor.price_history import PriceHistoryStore
 
     store = PriceHistoryStore(str(tmp_path / "price_history.json"))
@@ -264,28 +264,31 @@ def test_price_history_maintenance_rejects_changed_preview_without_writing(tmp_p
 
     with closing(sqlite3.connect(store.db_path())) as conn:
         conn.execute(
+            "DELETE FROM price_history WHERE timestamp = 'invalid-time'"
+        )
+        conn.execute(
             """
             INSERT INTO price_history(timestamp, time, usd, rmb, rate)
-            VALUES('2026-08-11T12:05:00', '12:05:00', NULL, NULL, 7.2)
+            VALUES('different-invalid-time', '00:00:00', 1, 1, 1)
             """
         )
         conn.commit()
+
+    current_preview = store.preview_maintenance_repair("clean_invalid_records")
+    assert current_preview["effects"] == preview["effects"]
+    assert current_preview["revision"] != preview["revision"]
 
     with pytest.raises(ValueError, match="影响范围已变化"):
         store.execute_maintenance_repair(
             "clean_invalid_records",
             expected_effects=preview["effects"],
+            expected_revision=preview["revision"],
         )
 
     with closing(sqlite3.connect(store.db_path())) as conn:
         assert conn.execute(
-            "SELECT COUNT(*) FROM price_history WHERE timestamp = 'invalid-time'"
-        ).fetchone() == (1,)
-        assert conn.execute(
-            """
-            SELECT COUNT(*) FROM price_history
-            WHERE timestamp = '2026-08-11T12:05:00'
-            """
+            """SELECT COUNT(*) FROM price_history
+               WHERE timestamp = 'different-invalid-time'"""
         ).fetchone() == (1,)
 
 

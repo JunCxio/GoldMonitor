@@ -141,12 +141,18 @@ class HistoryReviewRuntime:
         with self.state.price_history_maintenance_lock:
             return self.price_store().preview_maintenance_repair(action)
 
-    def execute_price_history_repair(self, action, expected_effects=None):
+    def execute_price_history_repair(
+        self,
+        action,
+        expected_effects=None,
+        expected_revision=None,
+    ):
         with self.state.price_history_maintenance_lock:
             store = self.price_store()
             result = store.execute_maintenance_repair(
                 action,
                 expected_effects=expected_effects,
+                expected_revision=expected_revision,
             )
         with self.state.lock:
             self.state.price_archive = store.load_from_db()

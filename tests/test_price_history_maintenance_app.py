@@ -181,7 +181,7 @@ def test_price_history_repair_completion_survives_background_recheck_failure(
     client.disconnect()
 
 
-def test_price_history_repair_rejects_stale_effects_and_accepts_new_preview(
+def test_price_history_repair_rejects_stale_revision_and_accepts_new_preview(
     monkeypatch,
     tmp_path,
 ):
@@ -202,7 +202,10 @@ def test_price_history_repair_rejects_stale_effects_and_accepts_new_preview(
     )
     json_path.write_text(json.dumps({
         "schema_version": 1,
-        "items": [build_point("2026-08-11T12:00:00")],
+        "items": [
+            build_point("2026-08-11T12:00:00"),
+            build_point("2026-08-11T12:10:00", usd=2310, rmb=542),
+        ],
     }), encoding="utf-8")
     app._connect_price_history_db().close()
 
@@ -223,7 +226,7 @@ def test_price_history_repair_rejects_stale_effects_and_accepts_new_preview(
         "schema_version": 1,
         "items": [
             build_point("2026-08-11T12:00:00"),
-            build_point("2026-08-11T12:10:00", usd=2310, rmb=542),
+            build_point("2026-08-11T12:10:00", usd=2390, rmb=559),
         ],
     }), encoding="utf-8")
     client.emit("execute_price_history_repair", {
@@ -247,6 +250,8 @@ def test_price_history_repair_rejects_stale_effects_and_accepts_new_preview(
         client.get_received(),
         "price_history_repair_previewed",
     )
+    assert current_preview["effects"] == stale_preview["effects"]
+    assert current_preview["revision"] != stale_preview["revision"]
     assert current_preview["effects"]["json_points_to_add"] == 2
 
     client.emit("execute_price_history_repair", {
@@ -262,4 +267,5 @@ def test_price_history_repair_rejects_stale_effects_and_accepts_new_preview(
     assert completed["ok"] is True
     assert completed["inserted_points"] == 2
     assert len(app.runtime.price_archive) == 2
+    assert app.runtime.price_archive[-1]["usd"] == 2390
     client.disconnect()

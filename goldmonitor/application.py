@@ -3218,10 +3218,15 @@ def preview_price_history_repair(action):
     return _get_history_review_runtime().preview_price_history_repair(action)
 
 
-def execute_price_history_repair(action, expected_effects=None):
+def execute_price_history_repair(
+    action,
+    expected_effects=None,
+    expected_revision=None,
+):
     return _get_history_review_runtime().execute_price_history_repair(
         action,
         expected_effects,
+        expected_revision,
     )
 
 

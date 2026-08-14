@@ -1,3 +1,4 @@
+import hashlib
 import json
 import math
 import os
@@ -30,6 +31,17 @@ def _parse_timestamp(value):
 
 
 class PriceHistoryMaintenanceMixin:
+    @staticmethod
+    def _maintenance_revision(payload):
+        content = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+        return hashlib.sha256(content).hexdigest()
+
     @staticmethod
     def _collapse_rollup_rows(rows):
         collapsed = {}
@@ -83,6 +95,7 @@ class PriceHistoryMaintenanceMixin:
             "first_timestamp": None,
             "last_timestamp": None,
             "items": [],
+            "revision": None,
             "message": "",
         }
         if not snapshot["exists"]:
@@ -90,7 +103,9 @@ class PriceHistoryMaintenanceMixin:
             return snapshot
         try:
             with open(self.json_path, "r", encoding="utf-8") as file:
-                payload = json.load(file)
+                content = file.read()
+            payload = json.loads(content)
+            snapshot["revision"] = self._maintenance_revision(payload)
         except (OSError, json.JSONDecodeError):
             snapshot.update({
                 "readable": False,
@@ -153,6 +168,8 @@ class PriceHistoryMaintenanceMixin:
             "unknown_resolution": 0,
             "items": [],
             "rollup_actual": {},
+            "raw_revision": None,
+            "rollup_revision": None,
             "message": "",
         }
         if not snapshot["exists"]:
@@ -191,7 +208,19 @@ class PriceHistoryMaintenanceMixin:
                     )
                     return snapshot
 
-                valid_items = self._read_valid_database_items(conn, snapshot["raw"])
+                raw_rows = conn.execute(
+                    """
+                    SELECT timestamp, time, usd, rmb, rate
+                    FROM price_history
+                    ORDER BY timestamp ASC
+                    """
+                ).fetchall()
+                snapshot["raw_revision"] = self._maintenance_revision(raw_rows)
+                valid_items = self._read_valid_database_items(
+                    conn,
+                    snapshot["raw"],
+                    rows=raw_rows,
+                )
                 snapshot["items"] = valid_items
                 expected = self._collapse_rollup_rows(self._rollup_rows(valid_items))
                 self._inspect_rollups(conn, expected, snapshot)
@@ -205,14 +234,15 @@ class PriceHistoryMaintenanceMixin:
             })
         return snapshot
 
-    def _read_valid_database_items(self, conn, raw):
-        rows = conn.execute(
-            """
-            SELECT timestamp, time, usd, rmb, rate
-            FROM price_history
-            ORDER BY timestamp ASC
-            """
-        ).fetchall()
+    def _read_valid_database_items(self, conn, raw, rows=None):
+        if rows is None:
+            rows = conn.execute(
+                """
+                SELECT timestamp, time, usd, rmb, rate
+                FROM price_history
+                ORDER BY timestamp ASC
+                """
+            ).fetchall()
         raw["total"] = len(rows)
         valid_items = []
         seen_timestamps = set()
@@ -249,6 +279,7 @@ class PriceHistoryMaintenanceMixin:
             ORDER BY resolution, bucket_timestamp
             """
         ).fetchall()
+        snapshot["rollup_revision"] = self._maintenance_revision(rows)
         known_resolutions = {item[0] for item in ROLLUP_RESOLUTIONS}
         actual = {}
         for row in rows:
@@ -331,7 +362,13 @@ class PriceHistoryMaintenanceMixin:
 
     @staticmethod
     def _public_maintenance_snapshot(snapshot):
-        private_keys = {"items", "rollup_actual"}
+        private_keys = {
+            "items",
+            "revision",
+            "raw_revision",
+            "rollup_actual",
+            "rollup_revision",
+        }
         return {key: value for key, value in snapshot.items() if key not in private_keys}
 
     @staticmethod
@@ -377,6 +414,22 @@ class PriceHistoryMaintenanceMixin:
     def diagnose_maintenance(self):
         database = self._database_maintenance_snapshot()
         json_archive = self._json_maintenance_snapshot()
+        revision = self._maintenance_revision({
+            "database": {
+                "exists": database["exists"],
+                "readable": database["readable"],
+                "integrity_ok": database["integrity_ok"],
+                "schema_ok": database["schema_ok"],
+                "raw": database["raw_revision"],
+                "rollups": database["rollup_revision"],
+            },
+            "json_archive": {
+                "exists": json_archive["exists"],
+                "readable": json_archive["readable"],
+                "content": json_archive["revision"],
+            },
+            "raw_retention_minutes": self.raw_retention_minutes,
+        })
         db_items = {
             item["timestamp"]: item for item in database.get("items", [])
         }
@@ -436,6 +489,7 @@ class PriceHistoryMaintenanceMixin:
             "ok": not database["exists"] or database_healthy,
             "status": status,
             "checked_at": datetime.now().isoformat(timespec="seconds"),
+            "revision": revision,
             "database": self._public_maintenance_snapshot(database),
             "json_archive": self._public_maintenance_snapshot(json_archive),
             "comparison": comparison,
@@ -626,6 +680,7 @@ class PriceHistoryMaintenanceMixin:
             "summary": summary,
             "message": operation["reason"],
             "effects": effects,
+            "revision": diagnosis["revision"],
             "diagnosis": diagnosis,
         }
 
@@ -710,12 +765,23 @@ class PriceHistoryMaintenanceMixin:
             )
         return len(invalid_timestamp_rowids), len(missing_price_rowids)
 
-    def execute_maintenance_repair(self, action, expected_effects=None):
+    def execute_maintenance_repair(
+        self,
+        action,
+        expected_effects=None,
+        expected_revision=None,
+    ):
         action = str(action or "").strip()
         preview = self.preview_maintenance_repair(action)
         if (
-            expected_effects is not None
-            and preview["effects"] != expected_effects
+            (
+                expected_effects is not None
+                and preview["effects"] != expected_effects
+            )
+            or (
+                expected_revision is not None
+                and preview["revision"] != expected_revision
+            )
         ):
             raise ValueError("修复影响范围已变化，请重新查看预览后确认")
         if not preview["executable"]:

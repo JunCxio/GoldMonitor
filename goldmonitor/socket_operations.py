@@ -64,6 +64,7 @@ def register_operations_handlers(
                 "sid": request.sid,
                 "action": action,
                 "effects": dict(preview.get("effects") or {}),
+                "revision": str(preview.get("revision") or ""),
                 "created_at": now,
             }
         return preview_token
@@ -322,6 +323,7 @@ def register_operations_handlers(
             result = execute_price_history_repair(
                 action,
                 preview_record["effects"],
+                preview_record["revision"],
             )
         except ValueError as exc:
             emit("price_history_maintenance_error", {"message": str(exc)})
