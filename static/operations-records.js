@@ -5,11 +5,18 @@ function setOpsStatus(message, ok) {
   el.style.color = ok ? 'var(--down)' : 'var(--up)';
 }
 
-function recentOpsTypeLabel(type) {
+function recentOpsTypeLabel(type, data) {
+  const payload = data && typeof data === 'object' ? data : {};
   if (type === 'config_export') return '导出配置';
   if (type === 'data_archive_export') return '完整数据归档';
   if (type === 'diagnostics_export') return '生成诊断';
   if (type === 'open_exports_folder') return '打开目录';
+  if (type === 'price_history_repair') {
+    if (payload.action === 'clean_invalid_records') return '清理历史无效明细';
+    if (payload.action === 'rebuild_rollups') return '重建历史汇总';
+    if (payload.action === 'sync_json_and_rebuild') return '同步历史 JSON';
+    return '历史数据修复';
+  }
   return '运维操作';
 }
 
@@ -30,7 +37,7 @@ function addRecentOpsRecord(type, data) {
   const record = {
     id: Date.now() + '-' + recentOpsRecords.length,
     type,
-    label: recentOpsTypeLabel(type),
+    label: recentOpsTypeLabel(type, payload),
     ok,
     status: ok ? '成功' : '失败',
     time: recentOpsTimeLabel(new Date()),

@@ -983,6 +983,7 @@ for required in (
     "config_export",
     "diagnostics_export",
     "open_exports_folder",
+    "price_history_repair",
     "payload.export_dir",
     "文件已保存到导出目录。",
     "失败原因",
@@ -1001,6 +1002,21 @@ if not (diagnostics_ready_pos >= 0 and diagnostics_record_pos > diagnostics_read
     raise SystemExit("diagnostics export results must be recorded in recent operations")
 if not (exports_folder_pos >= 0 and open_folder_record_pos > exports_folder_pos):
     raise SystemExit("open export folder results must be recorded in recent operations")
+
+history_repair_completed_pos = js.find("socket.on('price_history_repair_completed', data => {")
+history_repair_record_pos = js.find("addRecentOpsRecord('price_history_repair'", history_repair_completed_pos)
+history_repair_error_pos = js.find("socket.on('price_history_maintenance_error', data => {")
+history_repair_failure_record_pos = js.find("addRecentOpsRecord('price_history_repair'", history_repair_error_pos)
+if not (
+    history_repair_completed_pos >= 0
+    and history_repair_record_pos > history_repair_completed_pos
+):
+    raise SystemExit("successful price history repairs must be recorded")
+if not (
+    history_repair_error_pos >= 0
+    and history_repair_failure_record_pos > history_repair_error_pos
+):
+    raise SystemExit("failed price history repairs must be recorded")
 
 settings_updated_handler = "socket.on('settings_updated', data => {"
 settings_updated_pos = js.find(settings_updated_handler)

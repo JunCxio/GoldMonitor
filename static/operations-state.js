@@ -17,6 +17,7 @@ let backgroundTaskManualRefreshPending = false;
 let priceHistoryMaintenanceState = null;
 let pendingPriceHistoryMaintenancePreview = null;
 let priceHistoryMaintenancePending = false;
+let priceHistoryMaintenanceRequestType = '';
 const AUTO_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const BACKGROUND_TASK_REFRESH_INTERVAL_MS = 30 * 1000;
 const BACKGROUND_TASK_REFRESH_TIMEOUT_MS = 10 * 1000;

@@ -24,7 +24,10 @@ function setPriceHistoryMaintenanceBusy(pending) {
     refresh.disabled = priceHistoryMaintenancePending;
     refresh.textContent = priceHistoryMaintenancePending ? '正在检查' : '检查数据';
   }
-  if (execute) execute.disabled = priceHistoryMaintenancePending;
+  if (execute) {
+    execute.disabled = priceHistoryMaintenancePending
+      || !pendingPriceHistoryMaintenancePreview;
+  }
   updatePriceHistoryMaintenanceActions();
 }
 
@@ -108,6 +111,7 @@ function renderPriceHistoryMaintenance(data) {
 function refreshPriceHistoryMaintenance() {
   if (priceHistoryMaintenancePending) return;
   clearPriceHistoryRepairPreview();
+  priceHistoryMaintenanceRequestType = 'diagnose';
   setPriceHistoryMaintenanceBusy(true);
   setOpsStatus('正在检查历史数据...', true);
   socket.emit('get_price_history_maintenance');
@@ -116,6 +120,7 @@ function refreshPriceHistoryMaintenance() {
 function previewPriceHistoryRepair(action) {
   if (priceHistoryMaintenancePending || !PRICE_HISTORY_REPAIR_LABELS[action]) return;
   pendingPriceHistoryMaintenancePreview = null;
+  priceHistoryMaintenanceRequestType = 'preview';
   setPriceHistoryMaintenanceBusy(true);
   setOpsStatus('正在生成历史数据修复预览...', true);
   socket.emit('preview_price_history_repair', { action });
@@ -176,7 +181,12 @@ function renderPriceHistoryRepairPreview(preview) {
 function clearPriceHistoryRepairPreview() {
   pendingPriceHistoryMaintenancePreview = null;
   const container = document.getElementById('priceHistoryMaintenancePreview');
+  const execute = document.getElementById('executePriceHistoryRepairButton');
   if (container) container.hidden = true;
+  if (execute) {
+    execute.hidden = true;
+    execute.disabled = true;
+  }
 }
 
 function executePriceHistoryRepair() {
@@ -184,6 +194,7 @@ function executePriceHistoryRepair() {
   if (!preview || !preview.executable || priceHistoryMaintenancePending) return;
   const label = PRICE_HISTORY_REPAIR_LABELS[preview.action] || '历史数据修复';
   if (!confirm('确定执行“' + label + '”吗？\n\n' + preview.summary)) return;
+  priceHistoryMaintenanceRequestType = 'execute';
   setPriceHistoryMaintenanceBusy(true);
   setOpsStatus('正在执行历史数据修复...', true);
   socket.emit('execute_price_history_repair', {
@@ -195,10 +206,14 @@ function executePriceHistoryRepair() {
 
 function registerPriceHistoryMaintenanceSocketHandlers(socket) {
   socket.on('price_history_maintenance_updated', data => {
+    if (priceHistoryMaintenanceRequestType === 'diagnose') {
+      priceHistoryMaintenanceRequestType = '';
+    }
     renderPriceHistoryMaintenance(data || {});
   });
 
   socket.on('price_history_repair_previewed', data => {
+    priceHistoryMaintenanceRequestType = '';
     setPriceHistoryMaintenanceBusy(false);
     if (data && data.diagnosis) renderPriceHistoryMaintenance(data.diagnosis);
     renderPriceHistoryRepairPreview(data || {});
@@ -209,15 +224,36 @@ function registerPriceHistoryMaintenanceSocketHandlers(socket) {
   });
 
   socket.on('price_history_repair_completed', data => {
+    const preview = pendingPriceHistoryMaintenancePreview;
+    priceHistoryMaintenanceRequestType = '';
     clearPriceHistoryRepairPreview();
     setPriceHistoryMaintenanceBusy(false);
     if (data && data.diagnosis) renderPriceHistoryMaintenance(data.diagnosis);
+    addRecentOpsRecord('price_history_repair', {
+      ...(data || {}),
+      action: data && data.action || preview && preview.action || '',
+    });
     setOpsStatus(data && data.message ? data.message : '历史数据修复完成。', !!(data && data.ok));
     socket.emit('get_price_history', { limit: 600, scope: 'history' });
   });
 
   socket.on('price_history_maintenance_error', data => {
-    setPriceHistoryMaintenanceBusy(false);
+    const requestType = priceHistoryMaintenanceRequestType;
+    const preview = pendingPriceHistoryMaintenancePreview;
+    priceHistoryMaintenanceRequestType = '';
+    let refreshDiagnosis = false;
+    if (requestType === 'execute') {
+      clearPriceHistoryRepairPreview();
+      addRecentOpsRecord('price_history_repair', {
+        ...(data || {}),
+        ok: false,
+        action: preview && preview.action || '',
+      });
+      priceHistoryMaintenanceRequestType = 'diagnose';
+      refreshDiagnosis = true;
+    }
+    setPriceHistoryMaintenanceBusy(refreshDiagnosis);
     setOpsStatus(data && data.message ? data.message : '历史数据维护失败。', false);
+    if (refreshDiagnosis) socket.emit('get_price_history_maintenance');
   });
 }

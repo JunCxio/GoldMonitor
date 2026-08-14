@@ -20,6 +20,9 @@ def test_price_history_maintenance_frontend_preview_and_execute_flow():
     maintenance_source = (
         ROOT / "static" / "operations-history-maintenance.js"
     ).read_text(encoding="utf-8")
+    records_source = (
+        ROOT / "static" / "operations-records.js"
+    ).read_text(encoding="utf-8")
     script = """
 const vm = require('vm');
 
@@ -30,6 +33,7 @@ function element() {
     hidden: false,
     disabled: false,
     dataset: {},
+    style: {},
     attributes: {},
     setAttribute(name, value) { this.attributes[name] = String(value); },
   };
@@ -50,11 +54,11 @@ const ids = [
   'priceHistoryMaintenancePreviewTitle',
   'priceHistoryMaintenancePreviewSummary',
   'priceHistoryMaintenancePreviewEffects',
+  'opsStatus',
 ];
 const elements = Object.fromEntries(ids.map(id => [id, element()]));
 const listeners = {};
 const emits = [];
-const statuses = [];
 const socket = {
   on(name, handler) { listeners[name] = handler; },
   emit(name, payload) { emits.push({ name, payload }); },
@@ -68,11 +72,11 @@ const context = {
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;'),
-  setOpsStatus: (message, ok) => statuses.push({ message, ok }),
 };
 context.globalThis = context;
 vm.createContext(context);
 vm.runInContext(__STATE_SOURCE__, context);
+vm.runInContext(__RECORDS_SOURCE__, context);
 vm.runInContext(__MAINTENANCE_SOURCE__, context);
 
 const evaluate = expression => vm.runInContext(expression, context);
@@ -167,18 +171,58 @@ evaluate('executePriceHistoryRepair()');
 assert(emits.at(-1).name === 'execute_price_history_repair', 'execute event not emitted');
 assert(emits.at(-1).payload.confirmed === true, 'execute event must include confirmation');
 assert(emits.at(-1).payload.preview_token === 'preview-1', 'execute event must include preview token');
+assert(evaluate('priceHistoryMaintenanceRequestType') === 'execute', 'execute request type missing');
+
+listeners.price_history_maintenance_error({ message: '修复影响范围已变化，请重新预览' });
+assert(elements.priceHistoryMaintenancePreview.hidden, 'failed execution must close stale preview');
+const failedRecord = evaluate('recentOpsRecords[0]');
+assert(failedRecord.type === 'price_history_repair', 'failed repair record missing');
+assert(failedRecord.ok === false, 'failed repair record state mismatch');
+assert(failedRecord.label === '同步历史 JSON', 'failed repair label mismatch');
+assert(emits.at(-1).name === 'get_price_history_maintenance', 'failure must refresh diagnosis');
+assert(evaluate('priceHistoryMaintenancePending') === true, 'failure diagnosis refresh must stay pending');
+assert(evaluate('priceHistoryMaintenanceRequestType') === 'diagnose', 'failure diagnosis request type missing');
+
+listeners.price_history_maintenance_updated(diagnosis);
+assert(evaluate('priceHistoryMaintenancePending') === false, 'diagnosis refresh must clear pending state');
+assert(elements.executePriceHistoryRepairButton.disabled, 'stale execute button must stay disabled');
+
+listeners.price_history_repair_previewed({
+  executable: true,
+  action: 'sync_json_and_rebuild',
+  preview_token: 'preview-2',
+  summary: '补充 2 个时间点',
+  effects: {
+    json_points_eligible: 3,
+    json_points_to_add: 2,
+    json_fields_to_supplement: 1,
+    invalid_json_ignored: 1,
+    conflicts_preserved: 1,
+    rollup_buckets_to_remove: 2,
+    rollup_buckets_to_rebuild: 8,
+  },
+  diagnosis,
+});
+evaluate('executePriceHistoryRepair()');
 
 listeners.price_history_repair_completed({
   ok: true,
+  action: 'sync_json_and_rebuild',
   message: '修复完成',
   diagnosis: { ...diagnosis, status: 'healthy', issues: [] },
 });
 assert(emits.at(-1).name === 'get_price_history', 'completion must refresh history view');
 assert(elements.priceHistoryMaintenancePreview.hidden, 'completion must close preview');
-assert(statuses.at(-1).message === '修复完成', 'completion message missing');
+assert(elements.opsStatus.textContent === '修复完成', 'completion message missing');
+const successfulRecord = evaluate('recentOpsRecords[0]');
+assert(successfulRecord.type === 'price_history_repair', 'successful repair record missing');
+assert(successfulRecord.ok === true, 'successful repair record state mismatch');
+assert(successfulRecord.label === '同步历史 JSON', 'successful repair label mismatch');
 """
     script = script.replace(
         "__STATE_SOURCE__", json.dumps(state_source)
+    ).replace(
+        "__RECORDS_SOURCE__", json.dumps(records_source)
     ).replace(
         "__MAINTENANCE_SOURCE__", json.dumps(maintenance_source)
     )
