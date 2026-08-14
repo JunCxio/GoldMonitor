@@ -2049,6 +2049,9 @@ def _get_diagnostics_runtime():
             get_fetch_status=lambda: get_fetch_status(),
             get_source_health=lambda: get_source_health_state(),
             get_price_history=lambda **kwargs: build_price_history_state(**kwargs),
+            get_price_history_maintenance=(
+                lambda: diagnose_price_history_maintenance()
+            ),
             get_watch_targets=lambda: get_watch_targets_state(),
             get_risk_history=lambda: get_risk_analysis_history_state(),
             get_alert_rules=lambda: get_alert_rules_state(),

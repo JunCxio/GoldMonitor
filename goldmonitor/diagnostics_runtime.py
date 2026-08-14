@@ -23,6 +23,7 @@ def build_diagnostics_report(
     fetch_status,
     source_health,
     price_history,
+    price_history_maintenance,
     watch_targets,
     risk_history_count,
     recent_alerts,
@@ -61,6 +62,7 @@ def build_diagnostics_report(
         "fetch_status": fetch_status,
         "source_health": source_health,
         "price_history": price_history,
+        "price_history_maintenance": price_history_maintenance,
         "watch_targets": watch_targets,
         "alert_rules": alert_rules_diagnostics(alert_rules),
         "background_tasks": background_tasks or {},
@@ -125,6 +127,23 @@ def diagnostics_task_state_label(state):
     }.get(str(state or ""), diagnostics_value(state, "未知"))
 
 
+def diagnostics_history_maintenance_status_label(status):
+    return {
+        "healthy": "数据状态正常",
+        "attention": "发现可处理问题",
+        "unavailable": "数据库暂不可维护",
+        "empty": "尚无历史数据",
+    }.get(str(status or ""), diagnostics_value(status, "未检查"))
+
+
+def diagnostics_history_repair_action_label(action):
+    return {
+        "clean_invalid_records": "清理无效明细",
+        "rebuild_rollups": "重建汇总数据",
+        "sync_json_and_rebuild": "同步 JSON 并重建",
+    }.get(str(action or ""), diagnostics_value(action, "未知操作"))
+
+
 def build_diagnostics_clipboard_text(
     report,
     *,
@@ -152,6 +171,12 @@ def build_diagnostics_clipboard_text(
     background_tasks = payload.get("background_tasks") if isinstance(payload.get("background_tasks"), dict) else {}
     scheduled_tasks = background_tasks.get("tasks") if isinstance(background_tasks.get("tasks"), list) else []
     task_summary = background_tasks.get("summary") if isinstance(background_tasks.get("summary"), dict) else {}
+    history_maintenance = payload.get("price_history_maintenance") if isinstance(payload.get("price_history_maintenance"), dict) else {}
+    history_database = history_maintenance.get("database") if isinstance(history_maintenance.get("database"), dict) else {}
+    history_raw = history_database.get("raw") if isinstance(history_database.get("raw"), dict) else {}
+    history_comparison = history_maintenance.get("comparison") if isinstance(history_maintenance.get("comparison"), dict) else {}
+    history_backup = history_maintenance.get("repair_backup") if isinstance(history_maintenance.get("repair_backup"), dict) else {}
+    history_issues = history_maintenance.get("issues") if isinstance(history_maintenance.get("issues"), list) else []
     update_message = update_status.get("message") or ("尚未检查更新" if not update_status else "更新状态未知")
     logs = payload.get("logs")
     log_count = len(logs) if isinstance(logs, list) else len(str(logs or "").splitlines()) if logs else 0
@@ -170,6 +195,7 @@ def build_diagnostics_clipboard_text(
     export_dir_state = "可写" if export_dir_ok is True else "不可写" if export_dir_ok is False else "未检查"
     last_export_ok = last_export.get("ok")
     last_export_state = "成功" if last_export_ok is True else "失败" if last_export_ok is False else "未记录"
+    value = diagnostics_value
     windows_mode_labels = {
         "floating": "仅悬浮条",
         "taskbar": "仅任务栏价格",
@@ -200,7 +226,6 @@ def build_diagnostics_clipboard_text(
     if actual_monitor and monitor_width and monitor_height:
         actual_monitor_label = f"{actual_monitor} / {monitor_width}×{monitor_height}"
 
-    value = diagnostics_value
     lines = [
         "GoldMonitor 诊断摘要",
         f"生成时间: {value(payload.get('generated_at'))}",
@@ -215,6 +240,51 @@ def build_diagnostics_clipboard_text(
         f"- 数据源统计: 正常 {source_summary.get('ok', 0)}，异常 {source_summary.get('failed', 0)}，缓存 {source_summary.get('cached', 0)}",
         f"- 历史样本数: {price_history.get('total', 0)}",
         f"- 5 分钟 K 线样本数: {kline_count}",
+    ]
+    if history_maintenance:
+        if not history_database.get("exists"):
+            database_state = "尚未创建"
+        elif history_database.get("integrity_ok"):
+            database_state = "完整性检查通过"
+        else:
+            database_state = "完整性检查未通过"
+        if history_backup.get("available"):
+            backup_state = (
+                "可用，"
+                f"{diagnostics_history_repair_action_label(history_backup.get('action'))}前创建，"
+                f"时间 {value(history_backup.get('created_at'))}"
+            )
+        elif history_backup.get("exists"):
+            backup_state = "文件存在但不可恢复"
+        else:
+            backup_state = "无"
+        lines.extend([
+            "",
+            "历史数据维护",
+            "- 状态: "
+            + diagnostics_history_maintenance_status_label(
+                history_maintenance.get("status")
+            ),
+            f"- SQLite 数据库: {database_state}",
+            "- 数据库明细: "
+            f"有效 {int(history_raw.get('valid') or 0)} 条，"
+            f"无效时间 {int(history_raw.get('invalid_timestamp') or 0)} 条，"
+            f"缺少价格 {int(history_raw.get('missing_price') or 0)} 条",
+            "- 汇总差异: "
+            f"缺失 {int(history_comparison.get('rollup_missing') or 0)} 个，"
+            f"不一致 {int(history_comparison.get('rollup_mismatched') or 0)} 个，"
+            f"多余 {int(history_comparison.get('rollup_unexpected') or 0)} 个",
+            "- JSON 可补充: "
+            f"时间点 {int(history_comparison.get('missing_in_database') or 0)} 个，"
+            f"空缺字段 {int(history_comparison.get('supplementable_fields') or 0)} 个",
+            f"- 最近修复恢复点: {backup_state}",
+        ])
+        if history_issues:
+            lines.extend(
+                f"- 问题 {index}: {value(issue)}"
+                for index, issue in enumerate(history_issues[:5], start=1)
+            )
+    lines.extend([
         "",
         "风险分析",
         f"- 状态: {risk_enabled}",
@@ -235,7 +305,7 @@ def build_diagnostics_clipboard_text(
         f"- 调度延迟: {task_summary.get('delayed', 0)}",
         f"- 提醒阈值: 连续失败 {background_tasks.get('failure_alert_threshold', 3)} 次",
         f"- 延迟阈值: 超过计划时间 {background_tasks.get('schedule_delay_grace_seconds', 60)} 秒",
-    ]
+    ])
     for task in scheduled_tasks:
         if not isinstance(task, dict):
             continue
@@ -337,6 +407,7 @@ class DiagnosticsRuntime:
         get_fetch_status,
         get_source_health,
         get_price_history,
+        get_price_history_maintenance,
         get_watch_targets,
         get_risk_history,
         get_alert_rules,
@@ -358,6 +429,7 @@ class DiagnosticsRuntime:
         self.get_fetch_status = get_fetch_status
         self.get_source_health = get_source_health
         self.get_price_history = get_price_history
+        self.get_price_history_maintenance = get_price_history_maintenance
         self.get_watch_targets = get_watch_targets
         self.get_risk_history = get_risk_history
         self.get_alert_rules = get_alert_rules
@@ -382,6 +454,7 @@ class DiagnosticsRuntime:
             fetch_status=self.get_fetch_status(),
             source_health=self.get_source_health(),
             price_history=self.get_price_history(limit=120),
+            price_history_maintenance=self.get_price_history_maintenance(),
             watch_targets=self.get_watch_targets(),
             risk_history_count=len(risk_history.get("items", [])),
             recent_alerts=list(self.runtime.alert_log[-20:]),

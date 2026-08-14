@@ -220,6 +220,9 @@ def test_app_diagnostics_report_includes_complete_storage_manifest(monkeypatch, 
     assert report["storage_manifest"]["price_history_repair_backup"]["kind"] == (
         "sqlite"
     )
+    assert "status" in report["price_history_maintenance"]
+    assert "database" in report["price_history_maintenance"]
+    assert "comparison" in report["price_history_maintenance"]
     assert report["data_schemas"]["portfolio_transactions"]["expected_schema_version"] == 1
     assert report["data_schemas"]["portfolio_investment_plans"]["expected_schema_version"] == 1
     assert report["data_schemas"]["portfolio_alerts"]["expected_schema_version"] == 1

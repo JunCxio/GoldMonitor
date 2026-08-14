@@ -15,6 +15,10 @@ def test_report_builder_filters_storage_schema_and_rule_runtime_state():
         fetch_status={},
         source_health={},
         price_history={},
+        price_history_maintenance={
+            "status": "attention",
+            "issues": ["发现历史数据差异。"],
+        },
         watch_targets={},
         risk_history_count=0,
         recent_alerts=[],
@@ -35,6 +39,7 @@ def test_report_builder_filters_storage_schema_and_rule_runtime_state():
     assert report["alert_rules"]["schema_version"] == 2
     assert "items" not in report["alert_rules"]
     assert report["background_tasks"]["summary"]["attention"] == 1
+    assert report["price_history_maintenance"]["status"] == "attention"
 
 
 def test_clipboard_summary_uses_fallback_status_and_masks_raw_structure():
@@ -61,6 +66,32 @@ def test_clipboard_summary_uses_fallback_status_and_masks_raw_structure():
             "fetch_status": {"message": "行情正常", "status": "ready", "sources": {}},
             "source_health": {"summary": {}, "quality": {"label": "数据可信", "score": 100}},
             "price_history": {"total": 12},
+            "price_history_maintenance": {
+                "status": "attention",
+                "database": {
+                    "exists": True,
+                    "integrity_ok": True,
+                    "raw": {
+                        "valid": 10,
+                        "invalid_timestamp": 1,
+                        "missing_price": 2,
+                    },
+                },
+                "comparison": {
+                    "rollup_missing": 3,
+                    "rollup_mismatched": 4,
+                    "rollup_unexpected": 5,
+                    "missing_in_database": 6,
+                    "supplementable_fields": 7,
+                },
+                "repair_backup": {
+                    "exists": True,
+                    "available": True,
+                    "action": "rebuild_rollups",
+                    "created_at": "2026-08-14T10:30:00",
+                },
+                "issues": ["汇总数据存在差异。"],
+            },
             "paths": {"appdata": "/data", "exports": "/exports"},
             "background_tasks": {
                 "failure_alert_threshold": 3,
@@ -125,3 +156,34 @@ def test_clipboard_summary_uses_fallback_status_and_masks_raw_structure():
     assert "资讯刷新: 失败，连续失败 3 次，调度延迟 75 秒" in text
     assert "通知重试队列: 待重试 2 条，可立即处理 1 条，达到上限 1 条，已过期 1 条，不可重试 1 条，自动重试关闭" in text
     assert "后台任务提示" in text
+    assert "历史数据维护" in text
+    assert "状态: 发现可处理问题" in text
+    assert "SQLite 数据库: 完整性检查通过" in text
+    assert "有效 10 条，无效时间 1 条，缺少价格 2 条" in text
+    assert "缺失 3 个，不一致 4 个，多余 5 个" in text
+    assert "时间点 6 个，空缺字段 7 个" in text
+    assert "重建汇总数据前创建" in text
+    assert "问题 1: 汇总数据存在差异。" in text
+
+
+def test_clipboard_summary_accepts_unknown_taskbar_target():
+    from goldmonitor.diagnostics_runtime import build_diagnostics_clipboard_text
+
+    text = build_diagnostics_clipboard_text(
+        {
+            "settings": {
+                "floating_price_taskbar_target": "custom-target",
+            },
+        },
+        default_settings={
+            "risk_assistant_provider": "deepseek",
+            "deepseek_model": "deepseek-v4-pro",
+            "openai_compatible_model": "",
+        },
+        platform_name="win32",
+        kline_count=0,
+        fallback_export_status={},
+        fallback_update_status={},
+    )
+
+    assert "任务栏选择: custom-target" in text
