@@ -126,6 +126,7 @@ listeners.price_history_repair_previewed({
     json_fields_to_supplement: 1,
     invalid_json_ignored: 1,
     conflicts_preserved: 1,
+    rollup_buckets_to_remove: 2,
     rollup_buckets_to_rebuild: 8,
   },
   diagnosis,
@@ -133,6 +134,7 @@ listeners.price_history_repair_previewed({
 assert(!elements.priceHistoryMaintenancePreview.hidden, 'preview must become visible');
 assert(elements.priceHistoryMaintenancePreviewTitle.textContent === '同步 JSON 并重建', 'preview title mismatch');
 assert(elements.priceHistoryMaintenancePreviewEffects.innerHTML.includes('新增时间点'), 'preview effects missing');
+assert(elements.priceHistoryMaintenancePreviewEffects.innerHTML.includes('清理多余汇总'), 'cleanup effect missing');
 assert(!elements.executePriceHistoryRepairButton.disabled, 'executable preview must enable confirmation');
 
 evaluate('executePriceHistoryRepair()');

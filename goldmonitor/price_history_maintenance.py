@@ -151,6 +151,7 @@ class PriceHistoryMaintenanceMixin:
             "rollups": [],
             "unknown_resolution": 0,
             "items": [],
+            "rollup_actual": {},
             "message": "",
         }
         if not snapshot["exists"]:
@@ -263,6 +264,7 @@ class PriceHistoryMaintenanceMixin:
                 "rate": row[5],
                 "last_timestamp": row[6],
             }
+        snapshot["rollup_actual"] = actual
 
         for resolution, interval_seconds, retention_minutes in ROLLUP_RESOLUTIONS:
             resolution_rows = [
@@ -328,7 +330,27 @@ class PriceHistoryMaintenanceMixin:
 
     @staticmethod
     def _public_maintenance_snapshot(snapshot):
-        return {key: value for key, value in snapshot.items() if key != "items"}
+        private_keys = {"items", "rollup_actual"}
+        return {key: value for key, value in snapshot.items() if key not in private_keys}
+
+    @staticmethod
+    def _count_unexpected_rollups(actual, expected):
+        unexpected = 0
+        for resolution, _interval_seconds, _retention_minutes in ROLLUP_RESOLUTIONS:
+            expected_keys = {key for key in expected if key[0] == resolution}
+            timestamps = sorted(key[1] for key in expected_keys)
+            if not timestamps:
+                continue
+            unexpected += sum(
+                1
+                for key in actual
+                if (
+                    key[0] == resolution
+                    and timestamps[0] <= key[1] <= timestamps[-1]
+                    and key not in expected_keys
+                )
+            )
+        return unexpected
 
     def _json_sync_candidates(self, database, json_archive):
         items = list(json_archive.get("items", []))
@@ -360,12 +382,19 @@ class PriceHistoryMaintenanceMixin:
         json_candidates = self._json_sync_candidates(database, json_archive)
         comparison = self._compare_json_items(db_items, json_candidates)
         projected_items = self._project_synced_items(db_items, json_candidates)
+        projected_rollups = self._collapse_rollup_rows(
+            self._rollup_rows(projected_items)
+        )
         comparison["json_sync_candidates"] = len(json_candidates)
         comparison["repairable_rollups"] = sum(
             item["repairable_expected"] for item in database["rollups"]
         )
-        comparison["projected_repairable_rollups"] = len(
-            self._collapse_rollup_rows(self._rollup_rows(projected_items))
+        comparison["projected_repairable_rollups"] = len(projected_rollups)
+        comparison["projected_rollup_unexpected"] = (
+            self._count_unexpected_rollups(
+                database.get("rollup_actual", {}),
+                projected_rollups,
+            )
         )
         comparison["rollup_missing"] = sum(
             item["missing"] for item in database["rollups"]
@@ -512,6 +541,7 @@ class PriceHistoryMaintenanceMixin:
             effects = {
                 "raw_rows_unchanged": database["raw"]["total"],
                 "rollup_buckets_to_rebuild": comparison["repairable_rollups"],
+                "rollup_buckets_to_remove": comparison["rollup_unexpected"],
                 "json_points_to_add": 0,
                 "json_fields_to_supplement": 0,
                 "invalid_json_ignored": 0,
@@ -521,12 +551,14 @@ class PriceHistoryMaintenanceMixin:
             }
             summary = (
                 f"将保留 {database['raw']['total']} 条数据库明细，"
+                f"清理 {comparison['rollup_unexpected']} 个可还原范围内的多余汇总，"
                 f"重建 {comparison['repairable_rollups']} 个可还原汇总桶。"
             )
         else:
             effects = {
                 "raw_rows_unchanged": database["raw"]["total"],
                 "rollup_buckets_to_rebuild": comparison["projected_repairable_rollups"],
+                "rollup_buckets_to_remove": comparison["projected_rollup_unexpected"],
                 "json_points_to_add": comparison["missing_in_database"],
                 "json_points_eligible": comparison["json_sync_candidates"],
                 "json_fields_to_supplement": comparison["supplementable_fields"],
@@ -539,7 +571,9 @@ class PriceHistoryMaintenanceMixin:
             }
             summary = (
                 f"将从 JSON 补充 {comparison['missing_in_database']} 个时间点和 "
-                f"{comparison['supplementable_fields']} 个空缺字段，再重建 "
+                f"{comparison['supplementable_fields']} 个空缺字段，清理 "
+                f"{comparison['projected_rollup_unexpected']} 个可还原范围内的多余汇总，"
+                "再重建 "
                 f"{comparison['projected_repairable_rollups']} 个可还原汇总桶。"
             )
         return {
@@ -566,32 +600,42 @@ class PriceHistoryMaintenanceMixin:
         items = self._read_valid_database_items(conn, raw)
         expected = self._collapse_rollup_rows(self._rollup_rows(items))
         replaced = 0
+        removed = 0
         for resolution, _interval_seconds, _retention_minutes in ROLLUP_RESOLUTIONS:
             timestamps = sorted(key[1] for key in expected if key[0] == resolution)
-            for offset in range(0, len(timestamps), 500):
-                batch = timestamps[offset:offset + 500]
-                if not batch:
-                    continue
-                placeholders = ",".join("?" for _item in batch)
-                existing = conn.execute(
-                    f"""
-                    SELECT COUNT(*) FROM price_history_rollups
-                    WHERE resolution = ? AND bucket_timestamp IN ({placeholders})
+            if not timestamps:
+                continue
+            existing_timestamps = [
+                row[0]
+                for row in conn.execute(
+                    """
+                    SELECT bucket_timestamp FROM price_history_rollups
+                    WHERE resolution = ? AND bucket_timestamp BETWEEN ? AND ?
                     """,
-                    [resolution, *batch],
-                ).fetchone()[0]
-                replaced += int(existing or 0)
-                conn.execute(
-                    f"""
-                    DELETE FROM price_history_rollups
-                    WHERE resolution = ? AND bucket_timestamp IN ({placeholders})
-                    """,
-                    [resolution, *batch],
-                )
+                    [resolution, timestamps[0], timestamps[-1]],
+                ).fetchall()
+            ]
+            expected_timestamps = set(timestamps)
+            replaced += sum(
+                1 for timestamp in existing_timestamps
+                if timestamp in expected_timestamps
+            )
+            removed += sum(
+                1 for timestamp in existing_timestamps
+                if timestamp not in expected_timestamps
+            )
+            conn.execute(
+                """
+                DELETE FROM price_history_rollups
+                WHERE resolution = ? AND bucket_timestamp BETWEEN ? AND ?
+                """,
+                [resolution, timestamps[0], timestamps[-1]],
+            )
         self._upsert_rollups(conn, list(expected.values()))
         return {
             "raw_points": len(items),
             "replaced_rollups": replaced,
+            "removed_rollups": removed,
             "rebuilt_rollups": len(expected),
             "first_timestamp": items[0]["timestamp"] if items else None,
             "last_timestamp": items[-1]["timestamp"] if items else None,
@@ -640,9 +684,15 @@ class PriceHistoryMaintenanceMixin:
             **rebuild,
             "diagnosis": diagnosis,
             "message": (
-                "JSON 历史已同步，可还原汇总已重建。"
+                "JSON 历史已同步，"
+                f"清理 {rebuild['removed_rollups']} 个多余汇总并重建 "
+                f"{rebuild['rebuilt_rollups']} 个可还原汇总桶。"
                 if action == "sync_json_and_rebuild"
-                else "可还原汇总已重建，原始明细保持不变。"
+                else (
+                    f"清理 {rebuild['removed_rollups']} 个多余汇总并重建 "
+                    f"{rebuild['rebuilt_rollups']} 个可还原汇总桶，"
+                    "原始明细保持不变。"
+                )
             ),
         }
 

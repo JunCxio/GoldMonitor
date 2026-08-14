@@ -58,6 +58,14 @@ def test_price_history_maintenance_diagnoses_and_repairs_only_recoverable_rollup
         )
         conn.execute(
             """
+            INSERT INTO price_history_rollups(
+                resolution, bucket_timestamp, time, usd, rmb, rate, last_timestamp
+            ) VALUES('5m', '2026-08-09T09:00:00', '09:00:00', 2, 2, 2,
+                     '2026-08-09T09:00:00')
+            """
+        )
+        conn.execute(
+            """
             INSERT INTO price_history(timestamp, time, usd, rmb, rate)
             VALUES('invalid-time', '00:00:00', 1, 1, 1)
             """
@@ -78,14 +86,17 @@ def test_price_history_maintenance_diagnoses_and_repairs_only_recoverable_rollup
     assert preview["executable"] is True
     assert preview["effects"]["raw_rows_unchanged"] == 3
     assert preview["effects"]["rollup_buckets_to_rebuild"] == 7
+    assert preview["effects"]["rollup_buckets_to_remove"] == 1
 
     result = store.execute_maintenance_repair("rebuild_rollups")
 
     assert result["ok"] is True
     assert result["rebuilt_rollups"] == 7
+    assert result["removed_rollups"] == 1
+    assert "清理 1 个多余汇总" in result["message"]
     assert result["diagnosis"]["comparison"]["rollup_missing"] == 0
     assert result["diagnosis"]["comparison"]["rollup_mismatched"] == 0
-    assert result["diagnosis"]["comparison"]["rollup_unexpected"] == 1
+    assert result["diagnosis"]["comparison"]["rollup_unexpected"] == 0
     with closing(sqlite3.connect(store.db_path())) as conn:
         assert conn.execute(
             "SELECT COUNT(*) FROM price_history WHERE timestamp = 'invalid-time'"
@@ -100,6 +111,12 @@ def test_price_history_maintenance_diagnoses_and_repairs_only_recoverable_rollup
             """
             SELECT COUNT(*) FROM price_history_rollups
             WHERE resolution = '5m' AND bucket_timestamp = '2026-08-11T11:30:00'
+            """
+        ).fetchone() == (0,)
+        assert conn.execute(
+            """
+            SELECT COUNT(*) FROM price_history_rollups
+            WHERE resolution = '5m' AND bucket_timestamp = '2026-08-09T09:00:00'
             """
         ).fetchone() == (1,)
 

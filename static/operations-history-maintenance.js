@@ -124,11 +124,13 @@ function priceHistoryRepairEffectItems(preview) {
       ['补充空缺字段', formatPriceHistoryCount(effects.json_fields_to_supplement)],
       ['忽略无效记录', formatPriceHistoryCount(effects.invalid_json_ignored)],
       ['保留冲突值', formatPriceHistoryCount(effects.conflicts_preserved)],
+      ['清理多余汇总', formatPriceHistoryCount(effects.rollup_buckets_to_remove)],
       ['重建汇总桶', formatPriceHistoryCount(effects.rollup_buckets_to_rebuild)],
     ];
   }
   return [
     ['保留数据库明细', formatPriceHistoryCount(effects.raw_rows_unchanged)],
+    ['清理多余汇总', formatPriceHistoryCount(effects.rollup_buckets_to_remove)],
     ['重建汇总桶', formatPriceHistoryCount(effects.rollup_buckets_to_rebuild)],
     ['开始时间', formatPriceHistoryTime(effects.first_timestamp)],
     ['结束时间', formatPriceHistoryTime(effects.last_timestamp)],
