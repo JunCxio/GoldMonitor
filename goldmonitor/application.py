@@ -3207,6 +3207,18 @@ def save_price_history_archive(items=None):
     return _get_history_review_runtime().save_price_history_archive(items)
 
 
+def diagnose_price_history_maintenance():
+    return _get_history_review_runtime().diagnose_price_history_maintenance()
+
+
+def preview_price_history_repair(action):
+    return _get_history_review_runtime().preview_price_history_repair(action)
+
+
+def execute_price_history_repair(action):
+    return _get_history_review_runtime().execute_price_history_repair(action)
+
+
 def add_price_history_entry(entry, force_save=False):
     _get_history_review_runtime().add_price_history_entry(
         entry,

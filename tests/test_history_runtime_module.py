@@ -53,6 +53,7 @@ class StubPriceStore:
         self.saved = []
         self.state_archives = []
         self.csv_archives = []
+        self.maintenance_actions = []
 
     def normalize(self, items):
         return list(items or [])
@@ -93,6 +94,18 @@ class StubPriceStore:
         snapshot = list(items)
         self.saved.append(snapshot)
         return snapshot
+
+    @staticmethod
+    def diagnose_maintenance():
+        return {"status": "healthy"}
+
+    @staticmethod
+    def preview_maintenance_repair(action):
+        return {"action": action, "executable": True}
+
+    def execute_maintenance_repair(self, action):
+        self.maintenance_actions.append(action)
+        return {"ok": True, "action": action}
 
     @staticmethod
     def add_entry(archive, last_saved_at, entry, force_save=False):
@@ -140,6 +153,7 @@ def _build_runtime(
         lock=threading.RLock(),
         risk_history_lock=threading.RLock(),
         review_notes_lock=threading.RLock(),
+        price_history_maintenance_lock=threading.Lock(),
         risk_analysis_history=[],
         price_archive=[],
         last_price_history_save_at=0.0,
@@ -243,6 +257,21 @@ def test_history_runtime_uses_price_snapshots_for_save_state_and_csv():
     assert point["rmb"] == 760.2
     assert state.price_archive[-1] == point
     assert state.last_price_history_save_at == 42.0
+
+
+def test_history_runtime_proxies_maintenance_and_refreshes_archive():
+    runtime, state, _risk_store, price_store, _logger, _exports = _build_runtime()
+    state.price_archive = [{"id": "old"}]
+
+    diagnosis = runtime.diagnose_price_history_maintenance()
+    preview = runtime.preview_price_history_repair("rebuild_rollups")
+    result = runtime.execute_price_history_repair("rebuild_rollups")
+
+    assert diagnosis == {"status": "healthy"}
+    assert preview == {"action": "rebuild_rollups", "executable": True}
+    assert result == {"ok": True, "action": "rebuild_rollups"}
+    assert price_store.maintenance_actions == ["rebuild_rollups"]
+    assert state.price_archive == [{"id": "db"}]
 
 
 def test_history_runtime_builds_timeline_sources_from_bounded_state_snapshots():

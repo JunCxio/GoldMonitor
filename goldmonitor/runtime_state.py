@@ -17,6 +17,7 @@ class ApplicationRuntimeState:
     investment_plan_lock: Any = field(default_factory=threading.RLock)
     data_archive_lock: Any = field(default_factory=threading.Lock)
     data_archive_upload_lock: Any = field(default_factory=threading.Lock)
+    price_history_maintenance_lock: Any = field(default_factory=threading.Lock)
     price_refresh_lock: Any = field(default_factory=threading.Lock)
     risk_analysis_lock: Any = field(default_factory=threading.Lock)
     alert_dialog_lock: Any = field(default_factory=threading.Lock)

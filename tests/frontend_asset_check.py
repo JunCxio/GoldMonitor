@@ -27,6 +27,7 @@ settings_actions_js_path = root / "static" / "settings-actions.js"
 operations_js_path = root / "static" / "operations-center.js"
 operations_state_js_path = root / "static" / "operations-state.js"
 operations_socket_js_path = root / "static" / "operations-socket.js"
+operations_history_maintenance_js_path = root / "static" / "operations-history-maintenance.js"
 operations_tasks_js_path = root / "static" / "operations-tasks.js"
 operations_sources_js_path = root / "static" / "operations-sources.js"
 operations_records_js_path = root / "static" / "operations-records.js"
@@ -100,6 +101,7 @@ for settings_path in (
 for operations_path in (
     operations_state_js_path,
     operations_socket_js_path,
+    operations_history_maintenance_js_path,
     operations_tasks_js_path,
     operations_sources_js_path,
     operations_records_js_path,
@@ -205,6 +207,7 @@ settings_module_js = "\n".join((
 operations_module_js = "\n".join((
     operations_state_js_path.read_text(encoding="utf-8"),
     operations_socket_js_path.read_text(encoding="utf-8"),
+    operations_history_maintenance_js_path.read_text(encoding="utf-8"),
     operations_tasks_js_path.read_text(encoding="utf-8"),
     operations_sources_js_path.read_text(encoding="utf-8"),
     operations_records_js_path.read_text(encoding="utf-8"),
@@ -403,6 +406,7 @@ operations_scripts = tuple(
     for name in (
         "operations-state.js",
         "operations-socket.js",
+        "operations-history-maintenance.js",
         "operations-tasks.js",
         "operations-sources.js",
         "operations-records.js",
@@ -424,6 +428,10 @@ if operations_positions[-1] > template.find('<script src="/static/app.js?v={{ ap
 
 for required in (
     "function registerOperationsSocketHandlers",
+    "function registerPriceHistoryMaintenanceSocketHandlers",
+    "function refreshPriceHistoryMaintenance",
+    "function previewPriceHistoryRepair",
+    "function executePriceHistoryRepair",
     "function applyBackgroundTaskStatus",
     "function refreshBackgroundTaskStatus",
     "function backgroundTaskAutoRefreshActive",
@@ -483,6 +491,29 @@ for required in (
 ):
     if required not in css_path.read_text(encoding="utf-8"):
         raise SystemExit(f"static/app.css missing background task selector: {required}")
+
+for required in (
+    'id="priceHistoryMaintenanceCard"',
+    'id="priceHistoryMaintenancePreview"',
+    "socket.emit('get_price_history_maintenance')",
+    "socket.emit('preview_price_history_repair'",
+    "socket.emit('execute_price_history_repair'",
+    "socket.on('price_history_maintenance_updated'",
+    "socket.on('price_history_repair_previewed'",
+    "socket.on('price_history_repair_completed'",
+    "registerPriceHistoryMaintenanceSocketHandlers(socket)",
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing price history maintenance contract: {required}")
+
+for required in (
+    ".price-maintenance-card",
+    ".price-maintenance-metrics",
+    ".price-maintenance-preview",
+    ".price-maintenance-preview-grid",
+):
+    if required not in css_path.read_text(encoding="utf-8"):
+        raise SystemExit(f"static/app.css missing history maintenance selector: {required}")
 
 for moved in (
     "function registerOperationsSocketHandlers",

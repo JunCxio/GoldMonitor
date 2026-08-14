@@ -107,7 +107,8 @@ class HistoryReviewRuntime:
         return self.price_store().connect_db()
 
     def upsert_price_history_points(self, items):
-        return self.price_store().upsert_points(items)
+        with self.state.price_history_maintenance_lock:
+            return self.price_store().upsert_points(items)
 
     def load_price_history_from_db(self):
         return self.price_store().load_from_db()
@@ -122,25 +123,44 @@ class HistoryReviewRuntime:
         return self.price_store().load_archive()
 
     def write_price_history_json_archive(self, items):
-        return self.price_store().write_json_archive(items)
+        with self.state.price_history_maintenance_lock:
+            return self.price_store().write_json_archive(items)
 
     def save_price_history_archive(self, items=None):
         if items is None:
             with self.state.lock:
                 items = list(self.state.price_archive)
-        return self.price_store().save_archive(items)
+        with self.state.price_history_maintenance_lock:
+            return self.price_store().save_archive(items)
+
+    def diagnose_price_history_maintenance(self):
+        with self.state.price_history_maintenance_lock:
+            return self.price_store().diagnose_maintenance()
+
+    def preview_price_history_repair(self, action):
+        with self.state.price_history_maintenance_lock:
+            return self.price_store().preview_maintenance_repair(action)
+
+    def execute_price_history_repair(self, action):
+        with self.state.price_history_maintenance_lock:
+            store = self.price_store()
+            result = store.execute_maintenance_repair(action)
+        with self.state.lock:
+            self.state.price_archive = store.load_from_db()
+        return result
 
     def add_price_history_entry(self, entry, force_save=False):
-        (
-            self.state.price_archive,
-            self.state.last_price_history_save_at,
-            point,
-        ) = self.price_store().add_entry(
-            self.state.price_archive,
-            self.state.last_price_history_save_at,
-            entry,
-            force_save=force_save,
-        )
+        with self.state.price_history_maintenance_lock:
+            (
+                self.state.price_archive,
+                self.state.last_price_history_save_at,
+                point,
+            ) = self.price_store().add_entry(
+                self.state.price_archive,
+                self.state.last_price_history_save_at,
+                entry,
+                force_save=force_save,
+            )
         return point
 
     def filter_price_archive(self, minutes=None, limit=600):

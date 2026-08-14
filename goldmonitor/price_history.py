@@ -10,17 +10,13 @@ from contextlib import closing
 from datetime import datetime, timedelta
 
 from goldmonitor.data_contracts import unwrap_item_payload, wrap_item_payload
-
-
-PRICE_HISTORY_DB_SCHEMA_VERSION = 2
-ROLLUP_RESOLUTIONS = (
-    ("1m", 60, 30 * 24 * 60),
-    ("5m", 5 * 60, 90 * 24 * 60),
-    ("1h", 60 * 60, 2 * 365 * 24 * 60),
-    ("1d", 24 * 60 * 60, None),
+from goldmonitor.price_history_maintenance import (
+    ROLLUP_RESOLUTIONS,
+    PriceHistoryMaintenanceMixin,
 )
 
 
+PRICE_HISTORY_DB_SCHEMA_VERSION = 2
 def history_number(value):
     if value in (None, ""):
         return None
@@ -114,7 +110,7 @@ def parse_iso_datetime(value):
         return None
 
 
-class PriceHistoryStore:
+class PriceHistoryStore(PriceHistoryMaintenanceMixin):
     def __init__(
         self,
         json_path,

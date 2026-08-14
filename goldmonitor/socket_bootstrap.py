@@ -402,6 +402,15 @@ def register_socket_handlers(application):
             sqlite3.Error,
             data_archive_core.DataArchiveError,
         ),
+        diagnose_price_history_maintenance=(
+            lambda: application.diagnose_price_history_maintenance()
+        ),
+        preview_price_history_repair=(
+            lambda action: application.preview_price_history_repair(action)
+        ),
+        execute_price_history_repair=(
+            lambda action: application.execute_price_history_repair(action)
+        ),
         preview_config_backup=(
             lambda payload: application.preview_config_backup(payload)
         ),
