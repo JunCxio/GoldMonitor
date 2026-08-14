@@ -78,3 +78,52 @@ def test_save_export_file_records_success_and_failure(tmp_path):
     except PermissionError:
         pass
     assert statuses[-1]["category"] == "permission_denied"
+
+
+def test_create_data_archive_holds_archive_and_state_locks(tmp_path):
+    from goldmonitor.operations_runtime import create_data_archive
+
+    events = []
+
+    class RecordingLock:
+        def __init__(self, name):
+            self.name = name
+
+        def __enter__(self):
+            events.append(f"enter:{self.name}")
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            events.append(f"exit:{self.name}")
+
+    class Manager:
+        def create(self, destination_path, content_overrides):
+            events.append("create")
+            assert content_overrides["settings"]
+            return {
+                "path": destination_path,
+                "filename": "GoldMonitor-data.zip",
+                "files": 2,
+                "bytes": 12,
+                "contains_sensitive_data": True,
+            }
+
+    result = create_data_archive(
+        now=datetime(2026, 8, 14, 12, 0),
+        export_dir=str(tmp_path),
+        settings={"theme": "dark"},
+        archive_lock=RecordingLock("archive"),
+        state_locks=(RecordingLock("history"),),
+        manager=Manager(),
+        set_status=lambda _status: None,
+        directory_status={"ok": True},
+    )
+
+    assert result["ok"] is True
+    assert events == [
+        "enter:archive",
+        "enter:history",
+        "create",
+        "exit:history",
+        "exit:archive",
+    ]

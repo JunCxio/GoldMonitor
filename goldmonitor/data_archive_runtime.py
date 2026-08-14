@@ -89,6 +89,7 @@ class DataArchiveRuntime:
         with runtime.data_archive_lock, ExitStack() as stack:
             for state_lock in (
                 runtime.price_refresh_lock,
+                runtime.price_history_maintenance_lock,
                 runtime.risk_analysis_lock,
                 runtime.daily_digest_lock,
                 runtime.today_overview_lock,

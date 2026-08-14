@@ -1,4 +1,5 @@
 import io
+from datetime import datetime
 
 
 def test_data_archive_paths_cover_all_restorable_state():
@@ -32,6 +33,36 @@ def test_data_archive_paths_cover_all_restorable_state():
     assert paths["alert_rules"]["kind"] == "json"
     assert paths["price_history_db"]["kind"] == "sqlite"
     assert paths["alert_log_db"]["kind"] == "sqlite"
+
+
+def test_data_archive_creation_coordinates_with_price_history_maintenance(
+    monkeypatch,
+    tmp_path,
+):
+    import app
+
+    captured = {}
+
+    def create_archive(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(app, "resolve_export_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(app, "get_settings_snapshot", lambda: {})
+    monkeypatch.setattr(app, "_data_archive_manager", lambda now_factory=None: object())
+    monkeypatch.setattr(
+        app.operations_runtime_core,
+        "create_data_archive",
+        create_archive,
+    )
+
+    result = app.create_data_archive(datetime(2026, 8, 14, 12, 0))
+
+    assert result == {"ok": True}
+    assert captured["archive_lock"] is app.runtime.data_archive_lock
+    assert captured["state_locks"] == (
+        app.runtime.price_history_maintenance_lock,
+    )
 
 
 def test_data_archive_http_preview_and_restore_require_auth_and_one_time_token(monkeypatch, tmp_path):

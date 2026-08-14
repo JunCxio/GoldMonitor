@@ -6,6 +6,7 @@ def _runtime_state():
     return SimpleNamespace(
         data_archive_lock=threading.Lock(),
         price_refresh_lock=threading.RLock(),
+        price_history_maintenance_lock=threading.Lock(),
         risk_analysis_lock=threading.RLock(),
         daily_digest_lock=threading.RLock(),
         today_overview_lock=threading.RLock(),
@@ -106,8 +107,25 @@ def test_data_archive_runtime_restore_applies_reload_and_floating_settings():
     state = _runtime_state()
     calls = []
 
+    class TrackingLock:
+        def __init__(self):
+            self.held = False
+
+        def __enter__(self):
+            assert self.held is False
+            self.held = True
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            self.held = False
+
+    state.data_archive_lock = TrackingLock()
+    state.price_history_maintenance_lock = TrackingLock()
+
     class Manager:
         def restore(self, path, apply_callback, rollback_callback):
+            assert state.data_archive_lock.held is True
+            assert state.price_history_maintenance_lock.held is True
             calls.append(("restore", path))
             apply_callback({}, {})
             return {"ok": True, "restored": 1}
@@ -144,5 +162,7 @@ def test_data_archive_runtime_restore_applies_reload_and_floating_settings():
     result = service.restore("backup.zip")
 
     assert result == {"ok": True, "restored": 1}
+    assert state.data_archive_lock.held is False
+    assert state.price_history_maintenance_lock.held is False
     assert calls[0] == ("restore", "backup.zip")
     assert calls[-1] == ("floating", {"floating_price_enabled": False})

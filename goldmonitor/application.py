@@ -1739,6 +1739,7 @@ def create_data_archive(now=None):
         export_dir=resolve_export_dir(),
         settings=get_settings_snapshot(),
         archive_lock=runtime.data_archive_lock,
+        state_locks=(runtime.price_history_maintenance_lock,),
         manager=_data_archive_manager(now_factory=lambda: now),
         set_status=_set_last_export_status,
         directory_status=build_export_dir_check(),

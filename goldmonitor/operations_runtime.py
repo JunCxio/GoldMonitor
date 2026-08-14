@@ -4,6 +4,7 @@ import secrets
 import sqlite3
 import subprocess
 import time
+from contextlib import ExitStack
 from datetime import datetime
 
 from goldmonitor import data_archive as data_archive_core
@@ -240,6 +241,7 @@ def create_data_archive(
     export_dir,
     settings,
     archive_lock,
+    state_locks=(),
     manager,
     set_status,
     directory_status,
@@ -252,7 +254,9 @@ def create_data_archive(
         indent=2,
     ).encode("utf-8")
     try:
-        with archive_lock:
+        with archive_lock, ExitStack() as stack:
+            for state_lock in state_locks or ():
+                stack.enter_context(state_lock)
             result = manager.create(
                 destination_path,
                 content_overrides={"settings": settings_content},
