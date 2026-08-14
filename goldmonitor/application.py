@@ -1795,6 +1795,9 @@ def _get_data_archive_runtime():
             apply_floating_price_settings=(
                 lambda settings: apply_floating_price_settings(settings)
             ),
+            clear_price_history_repair_backup=(
+                lambda: _get_history_review_runtime().clear_price_history_repair_backup()
+            ),
         )
     return runtime.data_archive_runtime_instance
 
@@ -2038,6 +2041,7 @@ def _get_diagnostics_runtime():
                 "daily_digest_state": DAILY_DIGEST_STATE_PATH,
                 "today_overview_state": TODAY_OVERVIEW_STATE_PATH,
                 "price_history_db": _price_history_db_path(),
+                "price_history_repair_backup": _price_history_repair_backup_path(),
                 "alert_log_db": _alert_log_db_path(),
                 "log": APP_LOG_PATH,
             },
@@ -3174,6 +3178,10 @@ def normalize_price_history(items):
 
 def _price_history_db_path():
     return _get_history_review_runtime().price_history_db_path()
+
+
+def _price_history_repair_backup_path():
+    return _get_history_review_runtime().price_history_repair_backup_path()
 
 
 def _connect_price_history_db():

@@ -14,6 +14,7 @@ class DataArchiveRuntime:
         save_settings,
         archive_manager,
         apply_floating_price_settings,
+        clear_price_history_repair_backup,
     ):
         self.runtime = runtime
         self.loaders = loaders
@@ -24,6 +25,7 @@ class DataArchiveRuntime:
         self.save_settings = save_settings
         self.archive_manager = archive_manager
         self.apply_floating_price_settings = apply_floating_price_settings
+        self.clear_price_history_repair_backup = clear_price_history_repair_backup
 
     def reload_from_disk(self):
         runtime = self.runtime
@@ -104,6 +106,9 @@ class DataArchiveRuntime:
                 archive_path,
                 apply_callback=apply_restored_state,
                 rollback_callback=rollback_restored_state,
+            )
+            result["repair_backup_cleared"] = bool(
+                self.clear_price_history_repair_backup()
             )
         self.apply_floating_price_settings(self.get_settings())
         return result

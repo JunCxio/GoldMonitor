@@ -86,6 +86,7 @@ def test_data_archive_runtime_reloads_all_persisted_state_and_market_snapshot():
         save_settings=lambda settings: settings,
         archive_manager=lambda: None,
         apply_floating_price_settings=lambda settings: None,
+        clear_price_history_repair_backup=lambda: True,
     )
 
     service.reload_from_disk()
@@ -157,12 +158,20 @@ def test_data_archive_runtime_restore_applies_reload_and_floating_settings():
         apply_floating_price_settings=(
             lambda settings: calls.append(("floating", settings))
         ),
+        clear_price_history_repair_backup=lambda: (
+            calls.append("clear-repair-backup") or True
+        ),
     )
 
     result = service.restore("backup.zip")
 
-    assert result == {"ok": True, "restored": 1}
+    assert result == {
+        "ok": True,
+        "restored": 1,
+        "repair_backup_cleared": True,
+    }
     assert state.data_archive_lock.held is False
     assert state.price_history_maintenance_lock.held is False
     assert calls[0] == ("restore", "backup.zip")
+    assert calls[-2] == "clear-repair-backup"
     assert calls[-1] == ("floating", {"floating_price_enabled": False})

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 
 from goldmonitor.data_contracts import unwrap_item_payload, wrap_item_payload
 from goldmonitor.price_history_maintenance import (
+    PRICE_HISTORY_JSON_MIGRATION_METADATA_KEY,
     ROLLUP_RESOLUTIONS,
     PriceHistoryMaintenanceMixin,
 )
@@ -265,6 +266,32 @@ class PriceHistoryStore(PriceHistoryMaintenanceMixin):
                 (str(PRICE_HISTORY_DB_SCHEMA_VERSION),),
             )
 
+    @staticmethod
+    def _metadata_value(conn, key):
+        row = conn.execute(
+            "SELECT value FROM price_history_metadata WHERE key = ?",
+            (key,),
+        ).fetchone()
+        return str(row[0]) if row else None
+
+    @staticmethod
+    def _set_metadata_value(conn, key, value):
+        conn.execute(
+            """
+            INSERT INTO price_history_metadata(key, value) VALUES(?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (key, str(value)),
+        )
+
+    def _mark_json_migration_completed(self):
+        with closing(self.connect_db()) as conn, conn:
+            self._set_metadata_value(
+                conn,
+                PRICE_HISTORY_JSON_MIGRATION_METADATA_KEY,
+                "1",
+            )
+
     def _cleanup_retention(self, conn, latest_timestamp):
         latest_time = parse_iso_datetime(latest_timestamp)
         if not latest_time:
@@ -352,11 +379,16 @@ class PriceHistoryStore(PriceHistoryMaintenanceMixin):
             )
             self._upsert_rollups(conn, self._rollup_rows(normalized))
             self._cleanup_retention(conn, normalized[-1]["timestamp"])
+            self._set_metadata_value(
+                conn,
+                PRICE_HISTORY_JSON_MIGRATION_METADATA_KEY,
+                "1",
+            )
         return normalized
 
-    def load_from_db(self):
+    def _load_from_db_state(self):
         if not os.path.exists(self.db_path()):
-            return []
+            return [], False
         with closing(self.connect_db()) as conn:
             rows = conn.execute(
                 """
@@ -367,10 +399,19 @@ class PriceHistoryStore(PriceHistoryMaintenanceMixin):
                 """,
                 (self.archive_limit,),
             ).fetchall()
-        return self._normalize_items([
+            migration_completed = self._metadata_value(
+                conn,
+                PRICE_HISTORY_JSON_MIGRATION_METADATA_KEY,
+            ) == "1"
+        items = self._normalize_items([
             {"usd": row[0], "rmb": row[1], "rate": row[2], "time": row[3], "timestamp": row[4]}
             for row in rows
         ], max_items=self.archive_limit)
+        return items, migration_completed
+
+    def load_from_db(self):
+        items, _migration_completed = self._load_from_db_state()
+        return items
 
     def query_resolution(self, minutes=None, limit=600):
         if not minutes:
@@ -476,9 +517,16 @@ class PriceHistoryStore(PriceHistoryMaintenanceMixin):
 
     def load_archive(self):
         try:
-            db_items = self.load_from_db()
+            db_items, migration_completed = self._load_from_db_state()
             if db_items:
+                if not migration_completed:
+                    try:
+                        self._mark_json_migration_completed()
+                    except (OSError, sqlite3.Error) as exc:
+                        self.logger.warning("价格历史迁移状态更新失败: %s", exc)
                 return db_items
+            if migration_completed:
+                return []
         except (OSError, sqlite3.Error) as exc:
             self.logger.warning("价格历史数据库读取失败: %s", exc)
 

@@ -63,6 +63,14 @@ class StubPriceStore:
         return "/tmp/price-history.sqlite3"
 
     @staticmethod
+    def repair_backup_path():
+        return "/tmp/price-history.repair-backup.sqlite3"
+
+    @staticmethod
+    def clear_repair_backup():
+        return True
+
+    @staticmethod
     def connect_db():
         return "connection"
 
@@ -271,6 +279,8 @@ def test_history_runtime_proxies_maintenance_and_refreshes_archive():
     state.price_archive = [{"id": "old"}]
 
     diagnosis = runtime.diagnose_price_history_maintenance()
+    backup_path = runtime.price_history_repair_backup_path()
+    backup_cleared = runtime.clear_price_history_repair_backup()
     preview = runtime.preview_price_history_repair("rebuild_rollups")
     expected_effects = {"rollup_buckets_to_rebuild": 4}
     result = runtime.execute_price_history_repair(
@@ -280,6 +290,8 @@ def test_history_runtime_proxies_maintenance_and_refreshes_archive():
     )
 
     assert diagnosis == {"status": "healthy"}
+    assert backup_path.endswith("price-history.repair-backup.sqlite3")
+    assert backup_cleared is True
     assert preview == {"action": "rebuild_rollups", "executable": True}
     assert result == {"ok": True, "action": "rebuild_rollups"}
     assert price_store.maintenance_actions == [

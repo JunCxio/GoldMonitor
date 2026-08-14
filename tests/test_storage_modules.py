@@ -198,6 +198,46 @@ def test_price_history_store_closes_database_connections():
             assert all(connection.closed for connection in connections)
 
 
+def test_price_history_store_migrates_json_only_once():
+    from goldmonitor.price_history import (
+        PRICE_HISTORY_JSON_MIGRATION_METADATA_KEY,
+        PriceHistoryStore,
+    )
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        json_path = Path(tmp_dir) / "price_history.json"
+        json_path.write_text(json.dumps({
+            "schema_version": 1,
+            "items": [{
+                "usd": 2350,
+                "rmb": 543,
+                "rate": 7.19,
+                "timestamp": "2026-07-10T12:00:00",
+            }],
+        }), encoding="utf-8")
+        store = PriceHistoryStore(str(json_path))
+
+        first_load = store.load_archive()
+
+        assert len(first_load) == 1
+        with closing(sqlite3.connect(store.db_path())) as conn:
+            assert conn.execute(
+                "SELECT value FROM price_history_metadata WHERE key = ?",
+                (PRICE_HISTORY_JSON_MIGRATION_METADATA_KEY,),
+            ).fetchone() == ("1",)
+            conn.execute("DELETE FROM price_history")
+            conn.execute("DELETE FROM price_history_rollups")
+            conn.commit()
+
+        restarted_store = PriceHistoryStore(str(json_path))
+
+        assert restarted_store.load_archive() == []
+        with closing(sqlite3.connect(store.db_path())) as conn:
+            assert conn.execute(
+                "SELECT COUNT(*) FROM price_history"
+            ).fetchone() == (0,)
+
+
 def test_price_history_store_keeps_long_windows_in_rollups_after_raw_cleanup():
     from goldmonitor.price_history import PriceHistoryStore
 

@@ -246,6 +246,84 @@ def test_price_history_maintenance_cleans_only_invalid_database_rows(tmp_path):
         ).fetchone() == (1,)
 
 
+def test_price_history_maintenance_restores_latest_repair_checkpoint(tmp_path):
+    from goldmonitor.price_history import PriceHistoryStore
+
+    store = PriceHistoryStore(str(tmp_path / "price_history.json"))
+    store.upsert_points([point("2026-08-11T12:00:00")])
+    with closing(sqlite3.connect(store.db_path())) as conn:
+        conn.execute(
+            """
+            INSERT INTO price_history(timestamp, time, usd, rmb, rate)
+            VALUES('invalid-time', '00:00:00', 1, 1, 1)
+            """
+        )
+        conn.commit()
+
+    cleanup = store.execute_maintenance_repair("clean_invalid_records")
+
+    assert cleanup["diagnosis"]["repair_backup"]["available"] is True
+    assert cleanup["diagnosis"]["repair_backup"]["action"] == (
+        "clean_invalid_records"
+    )
+    with closing(sqlite3.connect(store.db_path())) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM price_history WHERE timestamp = 'invalid-time'"
+        ).fetchone() == (0,)
+
+    preview = store.preview_maintenance_repair("restore_last_repair")
+    assert preview["executable"] is True
+    assert preview["effects"]["raw_rows_to_restore"] == 2
+    assert preview["effects"]["backup_action"] == "clean_invalid_records"
+
+    restored = store.execute_maintenance_repair(
+        "restore_last_repair",
+        expected_effects=preview["effects"],
+        expected_revision=preview["revision"],
+    )
+
+    assert restored["ok"] is True
+    assert restored["restored_action"] == "clean_invalid_records"
+    assert restored["diagnosis"]["repair_backup"]["available"] is False
+    with closing(sqlite3.connect(store.db_path())) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM price_history WHERE timestamp = 'invalid-time'"
+        ).fetchone() == (1,)
+
+
+def test_price_history_maintenance_keeps_restored_empty_database_after_restart(
+    tmp_path,
+):
+    from goldmonitor.price_history import PriceHistoryStore
+
+    json_path = tmp_path / "price_history.json"
+    json_path.write_text(json.dumps({
+        "schema_version": 1,
+        "items": [point("2026-08-11T12:00:00")],
+    }), encoding="utf-8")
+    store = PriceHistoryStore(str(json_path))
+    store.connect_db().close()
+
+    synchronized = store.execute_maintenance_repair("sync_json_and_rebuild")
+    assert synchronized["inserted_points"] == 1
+
+    restore_preview = store.preview_maintenance_repair("restore_last_repair")
+    restored = store.execute_maintenance_repair(
+        "restore_last_repair",
+        expected_effects=restore_preview["effects"],
+        expected_revision=restore_preview["revision"],
+    )
+
+    assert restored["raw_points"] == 0
+    assert json.loads(json_path.read_text(encoding="utf-8"))["items"] == [
+        point("2026-08-11T12:00:00")
+    ]
+    restarted_store = PriceHistoryStore(str(json_path))
+    assert restarted_store.load_archive() == []
+    with closing(sqlite3.connect(store.db_path())) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM price_history").fetchone() == (0,)
+
+
 def test_price_history_maintenance_rejects_changed_content_with_same_effects(tmp_path):
     from goldmonitor.price_history import PriceHistoryStore
 
@@ -388,3 +466,4 @@ def test_price_history_maintenance_rolls_back_invalid_cleanup_on_rebuild_failure
         assert conn.execute(
             "SELECT COUNT(*) FROM price_history WHERE timestamp = 'invalid-time'"
         ).fetchone() == (1,)
+    assert not Path(store.repair_backup_path() + ".tmp").exists()

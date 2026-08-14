@@ -15,6 +15,7 @@ function recentOpsTypeLabel(type, data) {
     if (payload.action === 'clean_invalid_records') return '清理历史无效明细';
     if (payload.action === 'rebuild_rollups') return '重建历史汇总';
     if (payload.action === 'sync_json_and_rebuild') return '同步历史 JSON';
+    if (payload.action === 'restore_last_repair') return '恢复历史修复';
     return '历史数据修复';
   }
   return '运维操作';

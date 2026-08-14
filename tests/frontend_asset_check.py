@@ -503,6 +503,8 @@ for required in (
     "socket.emit('get_price_history_maintenance')",
     "socket.emit('preview_price_history_repair'",
     "socket.emit('execute_price_history_repair'",
+    "restore_last_repair",
+    "previewPriceHistoryRestoreButton",
     "socket.on('price_history_maintenance_updated'",
     "socket.on('price_history_repair_previewed'",
     "socket.on('price_history_repair_completed'",

@@ -269,3 +269,80 @@ def test_price_history_repair_rejects_stale_revision_and_accepts_new_preview(
     assert len(app.runtime.price_archive) == 2
     assert app.runtime.price_archive[-1]["usd"] == 2390
     client.disconnect()
+
+
+def test_price_history_repair_checkpoint_can_be_restored(monkeypatch, tmp_path):
+    import app
+
+    json_path = tmp_path / "price_history.json"
+    monkeypatch.setattr(app, "PRICE_HISTORY_PATH", str(json_path))
+    monkeypatch.setattr(app.runtime, "price_archive", [])
+    monkeypatch.setattr(
+        app,
+        "run_background_task_now",
+        lambda _name: {"ran": False, "reason": "not_due"},
+    )
+    monkeypatch.setattr(
+        app,
+        "get_background_task_status",
+        lambda: {"summary": {}, "tasks": []},
+    )
+    json_path.write_text(json.dumps({
+        "schema_version": 1,
+        "items": [build_point("2026-08-11T12:00:00")],
+    }), encoding="utf-8")
+    app._connect_price_history_db().close()
+
+    client = app.socketio.test_client(
+        app.app,
+        auth={"token": app.SOCKET_ACCESS_TOKEN},
+    )
+    client.get_received()
+    client.emit("preview_price_history_repair", {
+        "action": "sync_json_and_rebuild",
+    })
+    repair_preview = find_event(
+        client.get_received(),
+        "price_history_repair_previewed",
+    )
+    client.emit("execute_price_history_repair", {
+        "action": "sync_json_and_rebuild",
+        "confirmed": True,
+        "preview_token": repair_preview["preview_token"],
+    })
+    repaired = find_event(
+        client.get_received(),
+        "price_history_repair_completed",
+    )
+
+    assert repaired["diagnosis"]["repair_backup"]["available"] is True
+    assert len(app._load_price_history_from_db()) == 1
+
+    client.emit("preview_price_history_repair", {
+        "action": "restore_last_repair",
+    })
+    restore_preview = find_event(
+        client.get_received(),
+        "price_history_repair_previewed",
+    )
+    assert restore_preview["effects"]["raw_rows_to_restore"] == 0
+
+    client.emit("execute_price_history_repair", {
+        "action": "restore_last_repair",
+        "confirmed": True,
+        "preview_token": restore_preview["preview_token"],
+    })
+    restored = find_event(
+        client.get_received(),
+        "price_history_repair_completed",
+    )
+
+    assert restored["ok"] is True
+    assert restored["action"] == "restore_last_repair"
+    assert restored["diagnosis"]["repair_backup"]["available"] is False
+    assert app._load_price_history_from_db() == []
+    assert app.runtime.price_archive == []
+    assert json.loads(json_path.read_text(encoding="utf-8"))["items"] == [
+        build_point("2026-08-11T12:00:00"),
+    ]
+    client.disconnect()

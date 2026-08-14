@@ -103,6 +103,13 @@ class HistoryReviewRuntime:
     def price_history_db_path(self):
         return self.price_store().db_path()
 
+    def price_history_repair_backup_path(self):
+        return self.price_store().repair_backup_path()
+
+    def clear_price_history_repair_backup(self):
+        with self.state.price_history_maintenance_lock:
+            return self.price_store().clear_repair_backup()
+
     def connect_price_history_db(self):
         return self.price_store().connect_db()
 

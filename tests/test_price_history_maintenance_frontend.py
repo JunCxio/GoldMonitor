@@ -46,6 +46,7 @@ const ids = [
   'previewPriceHistoryCleanupButton',
   'previewPriceHistoryRebuildButton',
   'previewPriceHistorySyncButton',
+  'previewPriceHistoryRestoreButton',
   'priceHistoryMaintenanceStatus',
   'priceHistoryMaintenanceMeta',
   'priceHistoryMaintenanceMetrics',
@@ -97,6 +98,14 @@ const diagnosis = {
     rollups: [{ total: 24 }, { total: 6 }],
   },
   json_archive: { exists: true, unique_valid: 10 },
+  repair_backup: {
+    exists: true,
+    available: true,
+    action: 'clean_invalid_records',
+    created_at: '2026-08-13T11:50:00',
+    raw_rows: 14,
+    rollup_rows: 30,
+  },
   comparison: {
     missing_in_database: 2,
     rollup_missing: 1,
@@ -108,6 +117,7 @@ const diagnosis = {
     clean_invalid_records: { available: true },
     rebuild_rollups: { available: true },
     sync_json_and_rebuild: { available: true },
+    restore_last_repair: { available: true },
   },
 };
 listeners.price_history_maintenance_updated(diagnosis);
@@ -117,6 +127,28 @@ assert(elements.priceHistoryMaintenanceIssues.innerHTML.includes('发现汇总�
 assert(!elements.previewPriceHistoryCleanupButton.disabled, 'available cleanup action must be enabled');
 assert(!elements.previewPriceHistoryRebuildButton.disabled, 'available rebuild action must be enabled');
 assert(!elements.previewPriceHistorySyncButton.disabled, 'available sync action must be enabled');
+assert(!elements.previewPriceHistoryRestoreButton.disabled, 'available restore action must be enabled');
+
+evaluate("previewPriceHistoryRepair('restore_last_repair')");
+assert(emits.at(-1).name === 'preview_price_history_repair', 'restore preview event not emitted');
+assert(emits.at(-1).payload.action === 'restore_last_repair', 'restore preview action mismatch');
+listeners.price_history_repair_previewed({
+  executable: true,
+  action: 'restore_last_repair',
+  preview_token: 'preview-restore',
+  summary: '恢复最近一次修复前的数据',
+  effects: {
+    backup_action: 'clean_invalid_records',
+    backup_created_at: '2026-08-13T11:50:00',
+    raw_rows_to_restore: 14,
+    rollup_rows_to_restore: 30,
+  },
+  diagnosis,
+});
+assert(elements.priceHistoryMaintenancePreviewTitle.textContent === '恢复最近修复', 'restore preview title mismatch');
+assert(elements.priceHistoryMaintenancePreviewEffects.innerHTML.includes('还原数据库明细'), 'restore effects missing');
+assert(evaluate("recentOpsTypeLabel('price_history_repair', { action: 'restore_last_repair' })") === '恢复历史修复', 'restore record label mismatch');
+evaluate('clearPriceHistoryRepairPreview()');
 
 evaluate("previewPriceHistoryRepair('clean_invalid_records')");
 assert(emits.at(-1).name === 'preview_price_history_repair', 'cleanup preview event not emitted');

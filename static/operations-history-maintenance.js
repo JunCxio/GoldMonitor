@@ -2,6 +2,7 @@ const PRICE_HISTORY_REPAIR_LABELS = {
   clean_invalid_records: '清理无效明细',
   rebuild_rollups: '重建汇总数据',
   sync_json_and_rebuild: '同步 JSON 并重建',
+  restore_last_repair: '恢复最近修复',
 };
 
 function formatPriceHistoryCount(value) {
@@ -44,6 +45,7 @@ function updatePriceHistoryMaintenanceActions() {
   const cleanup = document.getElementById('previewPriceHistoryCleanupButton');
   const rebuild = document.getElementById('previewPriceHistoryRebuildButton');
   const sync = document.getElementById('previewPriceHistorySyncButton');
+  const restore = document.getElementById('previewPriceHistoryRestoreButton');
   if (cleanup) {
     cleanup.disabled = priceHistoryMaintenancePending
       || !(operations.clean_invalid_records && operations.clean_invalid_records.available);
@@ -55,6 +57,10 @@ function updatePriceHistoryMaintenanceActions() {
   if (sync) {
     sync.disabled = priceHistoryMaintenancePending
       || !(operations.sync_json_and_rebuild && operations.sync_json_and_rebuild.available);
+  }
+  if (restore) {
+    restore.disabled = priceHistoryMaintenancePending
+      || !(operations.restore_last_repair && operations.restore_last_repair.available);
   }
 }
 
@@ -128,6 +134,14 @@ function previewPriceHistoryRepair(action) {
 
 function priceHistoryRepairEffectItems(preview) {
   const effects = preview && preview.effects || {};
+  if (preview.action === 'restore_last_repair') {
+    return [
+      ['恢复点时间', formatPriceHistoryTime(effects.backup_created_at)],
+      ['恢复前操作', PRICE_HISTORY_REPAIR_LABELS[effects.backup_action] || '历史数据修复'],
+      ['还原数据库明细', formatPriceHistoryCount(effects.raw_rows_to_restore)],
+      ['还原汇总记录', formatPriceHistoryCount(effects.rollup_rows_to_restore)],
+    ];
+  }
   if (preview.action === 'clean_invalid_records') {
     return [
       ['移除无效时间', formatPriceHistoryCount(effects.invalid_timestamp_rows_to_remove)],

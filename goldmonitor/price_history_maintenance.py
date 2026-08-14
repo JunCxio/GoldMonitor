@@ -19,6 +19,15 @@ MAINTENANCE_ACTIONS = (
     "clean_invalid_records",
     "rebuild_rollups",
     "sync_json_and_rebuild",
+    "restore_last_repair",
+)
+MAINTENANCE_BACKUP_SCHEMA_VERSION = 1
+PRICE_HISTORY_JSON_MIGRATION_METADATA_KEY = "json_migration_completed"
+MAINTENANCE_BACKUP_METADATA_KEYS = (
+    "maintenance_backup_schema_version",
+    "maintenance_backup_action",
+    "maintenance_backup_created_at",
+    "maintenance_backup_source_revision",
 )
 
 
@@ -81,6 +90,123 @@ class PriceHistoryMaintenanceMixin:
         if point.get("usd") is None and point.get("rmb") is None:
             return None
         return point
+
+    def repair_backup_path(self):
+        base, extension = os.path.splitext(self.db_path())
+        return base + ".repair-backup" + (extension or ".sqlite3")
+
+    def clear_repair_backup(self):
+        try:
+            self._remove_sqlite_files(self.repair_backup_path())
+            return True
+        except OSError as exc:
+            self.logger.warning("清理历史数据修复点失败: %s", exc)
+            return False
+
+    @staticmethod
+    def _remove_sqlite_files(path):
+        for candidate in (path, path + "-wal", path + "-shm"):
+            try:
+                os.remove(candidate)
+            except FileNotFoundError:
+                pass
+
+    def _maintenance_backup_snapshot(self):
+        path = self.repair_backup_path()
+        snapshot = {
+            "exists": os.path.exists(path),
+            "available": False,
+            "action": "",
+            "created_at": "",
+            "raw_rows": 0,
+            "rollup_rows": 0,
+            "revision": None,
+            "message": "尚无可恢复的历史数据修复点。",
+        }
+        if not snapshot["exists"]:
+            return snapshot
+        required_tables = {
+            "price_history",
+            "price_history_rollups",
+            "price_history_metadata",
+        }
+        try:
+            with closing(sqlite3.connect(path, timeout=5)) as conn:
+                if not self._database_integrity_ok(conn):
+                    snapshot["message"] = "历史数据修复点完整性检查未通过。"
+                    return snapshot
+                tables = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    ).fetchall()
+                }
+                if not required_tables.issubset(tables):
+                    snapshot["message"] = "历史数据修复点结构不完整。"
+                    return snapshot
+                metadata = dict(conn.execute(
+                    """
+                    SELECT key, value FROM price_history_metadata
+                    WHERE key IN (?, ?, ?, ?)
+                    """,
+                    MAINTENANCE_BACKUP_METADATA_KEYS,
+                ).fetchall())
+                try:
+                    schema_version = int(metadata.get(
+                        "maintenance_backup_schema_version",
+                        0,
+                    ))
+                except (TypeError, ValueError):
+                    schema_version = 0
+                action = str(metadata.get("maintenance_backup_action") or "")
+                created_at = str(
+                    metadata.get("maintenance_backup_created_at") or ""
+                )
+                if (
+                    schema_version != MAINTENANCE_BACKUP_SCHEMA_VERSION
+                    or action not in MAINTENANCE_ACTIONS[:-1]
+                    or not created_at
+                ):
+                    snapshot["message"] = "历史数据修复点元数据无效。"
+                    return snapshot
+                raw_rows = conn.execute(
+                    """
+                    SELECT timestamp, time, usd, rmb, rate
+                    FROM price_history ORDER BY timestamp ASC
+                    """
+                ).fetchall()
+                rollup_rows = conn.execute(
+                    """
+                    SELECT resolution, bucket_timestamp, time, usd, rmb, rate,
+                           last_timestamp
+                    FROM price_history_rollups
+                    ORDER BY resolution, bucket_timestamp
+                    """
+                ).fetchall()
+                snapshot.update({
+                    "available": True,
+                    "action": action,
+                    "created_at": created_at,
+                    "raw_rows": len(raw_rows),
+                    "rollup_rows": len(rollup_rows),
+                    "revision": self._maintenance_revision({
+                        "metadata": metadata,
+                        "raw": raw_rows,
+                        "rollups": rollup_rows,
+                    }),
+                    "message": "可恢复最近一次历史数据修复前的数据库状态。",
+                })
+        except sqlite3.Error:
+            snapshot["message"] = "历史数据修复点无法读取。"
+        return snapshot
+
+    @staticmethod
+    def _public_maintenance_backup(snapshot):
+        return {
+            key: value
+            for key, value in snapshot.items()
+            if key != "revision"
+        }
 
     def _json_maintenance_snapshot(self):
         snapshot = {
@@ -414,6 +540,7 @@ class PriceHistoryMaintenanceMixin:
     def diagnose_maintenance(self):
         database = self._database_maintenance_snapshot()
         json_archive = self._json_maintenance_snapshot()
+        repair_backup = self._maintenance_backup_snapshot()
         revision = self._maintenance_revision({
             "database": {
                 "exists": database["exists"],
@@ -427,6 +554,11 @@ class PriceHistoryMaintenanceMixin:
                 "exists": json_archive["exists"],
                 "readable": json_archive["readable"],
                 "content": json_archive["revision"],
+            },
+            "repair_backup": {
+                "exists": repair_backup["exists"],
+                "available": repair_backup["available"],
+                "content": repair_backup["revision"],
             },
             "raw_retention_minutes": self.raw_retention_minutes,
         })
@@ -460,6 +592,8 @@ class PriceHistoryMaintenanceMixin:
             item["unexpected"] for item in database["rollups"]
         )
         issues = self._maintenance_issues(database, json_archive, comparison)
+        if repair_backup["exists"] and not repair_backup["available"]:
+            issues.append(repair_backup["message"])
         database_healthy = bool(
             database["exists"]
             and database["readable"]
@@ -492,6 +626,7 @@ class PriceHistoryMaintenanceMixin:
             "revision": revision,
             "database": self._public_maintenance_snapshot(database),
             "json_archive": self._public_maintenance_snapshot(json_archive),
+            "repair_backup": self._public_maintenance_backup(repair_backup),
             "comparison": comparison,
             "issues": issues,
             "operations": {
@@ -518,6 +653,10 @@ class PriceHistoryMaintenanceMixin:
                         if sync_available
                         else "没有可同步的有效 JSON 历史归档。"
                     ),
+                },
+                "restore_last_repair": {
+                    "available": repair_backup["available"],
+                    "reason": repair_backup["message"],
                 },
             },
         }
@@ -610,7 +749,20 @@ class PriceHistoryMaintenanceMixin:
         comparison = diagnosis["comparison"]
         database = diagnosis["database"]
         json_archive = diagnosis["json_archive"]
-        if action == "clean_invalid_records":
+        repair_backup = diagnosis["repair_backup"]
+        if action == "restore_last_repair":
+            effects = {
+                "backup_action": repair_backup["action"],
+                "backup_created_at": repair_backup["created_at"],
+                "raw_rows_to_restore": repair_backup["raw_rows"],
+                "rollup_rows_to_restore": repair_backup["rollup_rows"],
+            }
+            summary = (
+                f"将恢复 {repair_backup['created_at'] or '未知时间'} 创建的数据库恢复点，"
+                f"还原 {repair_backup['raw_rows']} 条明细和 "
+                f"{repair_backup['rollup_rows']} 条汇总；JSON 历史归档保持不变。"
+            )
+        elif action == "clean_invalid_records":
             effects = {
                 "invalid_timestamp_rows_to_remove": (
                     database["raw"]["invalid_timestamp"]
@@ -765,6 +917,142 @@ class PriceHistoryMaintenanceMixin:
             )
         return len(invalid_timestamp_rowids), len(missing_price_rowids)
 
+    def _prepare_maintenance_backup(self, action, source_revision):
+        source_path = self.db_path()
+        backup_path = self.repair_backup_path()
+        temporary_path = backup_path + ".tmp"
+        self._remove_sqlite_files(temporary_path)
+        source = sqlite3.connect(source_path, timeout=5)
+        destination = sqlite3.connect(temporary_path, timeout=5)
+        try:
+            source.backup(destination)
+            destination.execute("PRAGMA journal_mode=DELETE")
+            created_at = datetime.now().isoformat(timespec="seconds")
+            destination.executemany(
+                """
+                INSERT INTO price_history_metadata(key, value) VALUES(?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (
+                    (
+                        "maintenance_backup_schema_version",
+                        str(MAINTENANCE_BACKUP_SCHEMA_VERSION),
+                    ),
+                    ("maintenance_backup_action", action),
+                    ("maintenance_backup_created_at", created_at),
+                    (
+                        "maintenance_backup_source_revision",
+                        str(source_revision or ""),
+                    ),
+                ),
+            )
+            destination.commit()
+            if not self._database_integrity_ok(destination):
+                raise sqlite3.DatabaseError("历史数据修复点完整性检查未通过")
+        except Exception:
+            destination.close()
+            source.close()
+            self._remove_sqlite_files(temporary_path)
+            raise
+        destination.close()
+        source.close()
+        return temporary_path
+
+    def _promote_maintenance_backup(self, temporary_path):
+        backup_path = self.repair_backup_path()
+        previous_path = backup_path + ".previous"
+        self._remove_sqlite_files(previous_path)
+        had_previous = os.path.exists(backup_path)
+        if had_previous:
+            os.replace(backup_path, previous_path)
+        try:
+            os.replace(temporary_path, backup_path)
+        except Exception:
+            if had_previous and os.path.exists(previous_path):
+                os.replace(previous_path, backup_path)
+            raise
+        return previous_path if had_previous else ""
+
+    def _rollback_maintenance_backup_promotion(self, previous_path):
+        backup_path = self.repair_backup_path()
+        self._remove_sqlite_files(backup_path)
+        if previous_path and os.path.exists(previous_path):
+            os.replace(previous_path, backup_path)
+
+    def _finish_maintenance_backup_promotion(self, previous_path):
+        if not previous_path:
+            return
+        try:
+            self._remove_sqlite_files(previous_path)
+        except OSError as exc:
+            self.logger.warning("清理旧历史数据修复点失败: %s", exc)
+
+    def _restore_maintenance_backup(self):
+        snapshot = self._maintenance_backup_snapshot()
+        if not snapshot["available"]:
+            raise ValueError(snapshot["message"])
+        backup_path = self.repair_backup_path()
+        database_path = self.db_path()
+        temporary_path = database_path + ".restore.tmp"
+        self._remove_sqlite_files(temporary_path)
+        source = sqlite3.connect(backup_path, timeout=5)
+        destination = sqlite3.connect(temporary_path, timeout=5)
+        try:
+            source.backup(destination)
+            destination.execute("PRAGMA journal_mode=DELETE")
+            placeholders = ",".join("?" for _key in MAINTENANCE_BACKUP_METADATA_KEYS)
+            destination.execute(
+                f"DELETE FROM price_history_metadata WHERE key IN ({placeholders})",
+                MAINTENANCE_BACKUP_METADATA_KEYS,
+            )
+            destination.execute(
+                """
+                INSERT INTO price_history_metadata(key, value) VALUES(?, '1')
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (PRICE_HISTORY_JSON_MIGRATION_METADATA_KEY,),
+            )
+            destination.commit()
+            if not self._database_integrity_ok(destination):
+                raise sqlite3.DatabaseError("恢复后的历史数据库完整性检查未通过")
+        except Exception:
+            destination.close()
+            source.close()
+            self._remove_sqlite_files(temporary_path)
+            raise
+        destination.close()
+        source.close()
+        try:
+            with closing(sqlite3.connect(database_path, timeout=5)) as current:
+                checkpoint = current.execute(
+                    "PRAGMA wal_checkpoint(TRUNCATE)"
+                ).fetchone()
+                if checkpoint and int(checkpoint[0] or 0) != 0:
+                    raise sqlite3.OperationalError(
+                        "历史数据库仍有活动连接，暂时无法恢复"
+                    )
+        except Exception:
+            self._remove_sqlite_files(temporary_path)
+            raise
+        for sidecar in (database_path + "-wal", database_path + "-shm"):
+            try:
+                os.remove(sidecar)
+            except FileNotFoundError:
+                pass
+        os.replace(temporary_path, database_path)
+        try:
+            self._remove_sqlite_files(backup_path)
+        except OSError as exc:
+            self.logger.warning("清理已使用的历史数据修复点失败: %s", exc)
+        return {
+            "raw_points": snapshot["raw_rows"],
+            "rebuilt_rollups": snapshot["rollup_rows"],
+            "replaced_rollups": snapshot["rollup_rows"],
+            "removed_rollups": 0,
+            "restored_action": snapshot["action"],
+            "restored_at": snapshot["created_at"],
+        }
+
     def execute_maintenance_repair(
         self,
         action,
@@ -786,39 +1074,96 @@ class PriceHistoryMaintenanceMixin:
             raise ValueError("修复影响范围已变化，请重新查看预览后确认")
         if not preview["executable"]:
             raise ValueError(preview["message"])
+        if action == "restore_last_repair":
+            rebuild = self._restore_maintenance_backup()
+            diagnosis = self.diagnose_maintenance()
+            return {
+                "ok": True,
+                "action": action,
+                "inserted_points": 0,
+                "supplemented_fields": 0,
+                "removed_invalid_timestamps": 0,
+                "removed_missing_prices": 0,
+                **rebuild,
+                "diagnosis": diagnosis,
+                "message": (
+                    "已恢复最近一次历史数据修复前的数据库状态，"
+                    "JSON 历史归档保持不变。"
+                ),
+            }
         json_snapshot = (
             self._json_maintenance_snapshot()
             if action == "sync_json_and_rebuild"
             else None
         )
-        with closing(self.connect_db()) as conn:
-            if not self._database_integrity_ok(conn):
-                raise sqlite3.DatabaseError("历史数据库完整性检查未通过")
-            inserted = 0
-            supplemented = 0
-            removed_invalid_timestamps = 0
-            removed_missing_prices = 0
-            if json_snapshot is not None:
-                database_snapshot = self._database_maintenance_snapshot()
-                json_items = self._json_sync_candidates(database_snapshot, json_snapshot)
+        backup_temporary_path = self._prepare_maintenance_backup(
+            action,
+            preview["revision"],
+        )
+        previous_backup_path = ""
+        backup_promoted = False
+        try:
+            with closing(self.connect_db()) as conn:
+                if not self._database_integrity_ok(conn):
+                    raise sqlite3.DatabaseError("历史数据库完整性检查未通过")
+                inserted = 0
+                supplemented = 0
+                removed_invalid_timestamps = 0
+                removed_missing_prices = 0
+                database_snapshot = (
+                    self._database_maintenance_snapshot()
+                    if json_snapshot is not None
+                    else None
+                )
+                json_items = (
+                    self._json_sync_candidates(database_snapshot, json_snapshot)
+                    if json_snapshot is not None
+                    else None
+                )
                 with conn:
-                    inserted, supplemented = self._sync_json_items(conn, json_items)
-                    rebuild = self._rebuild_repairable_rollups(conn)
-                    latest_row = conn.execute(
-                        "SELECT MAX(timestamp) FROM price_history"
-                    ).fetchone()
-                    if latest_row and latest_row[0]:
-                        self._cleanup_retention(conn, latest_row[0])
-            elif action == "clean_invalid_records":
-                with conn:
-                    (
-                        removed_invalid_timestamps,
-                        removed_missing_prices,
-                    ) = self._remove_invalid_raw_rows(conn)
-                    rebuild = self._rebuild_repairable_rollups(conn)
+                    if json_items is not None:
+                        inserted, supplemented = self._sync_json_items(
+                            conn,
+                            json_items,
+                        )
+                        rebuild = self._rebuild_repairable_rollups(conn)
+                        latest_row = conn.execute(
+                            "SELECT MAX(timestamp) FROM price_history"
+                        ).fetchone()
+                        if latest_row and latest_row[0]:
+                            self._cleanup_retention(conn, latest_row[0])
+                    elif action == "clean_invalid_records":
+                        (
+                            removed_invalid_timestamps,
+                            removed_missing_prices,
+                        ) = self._remove_invalid_raw_rows(conn)
+                        rebuild = self._rebuild_repairable_rollups(conn)
+                    else:
+                        rebuild = self._rebuild_repairable_rollups(conn)
+                    self._set_metadata_value(
+                        conn,
+                        PRICE_HISTORY_JSON_MIGRATION_METADATA_KEY,
+                        "1",
+                    )
+                    previous_backup_path = self._promote_maintenance_backup(
+                        backup_temporary_path
+                    )
+                    backup_promoted = True
+        except Exception:
+            if backup_promoted:
+                try:
+                    self._rollback_maintenance_backup_promotion(
+                        previous_backup_path
+                    )
+                except OSError as exc:
+                    self.logger.warning(
+                        "回滚历史数据修复点失败: %s",
+                        exc,
+                    )
             else:
-                with conn:
-                    rebuild = self._rebuild_repairable_rollups(conn)
+                self._remove_sqlite_files(backup_temporary_path)
+            raise
+        self._finish_maintenance_backup_promotion(previous_backup_path)
         diagnosis = self.diagnose_maintenance()
         if action == "sync_json_and_rebuild":
             message = (
