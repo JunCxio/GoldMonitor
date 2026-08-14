@@ -1,6 +1,7 @@
 import json
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -282,13 +283,18 @@ assert(successfulRecord.label === '同步历史 JSON', 'successful repair label 
         "__MAINTENANCE_SOURCE__", json.dumps(maintenance_source)
     )
 
-    result = subprocess.run(
-        [node, "-e", script],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
+    with tempfile.TemporaryDirectory(
+        prefix="goldmonitor-price-history-frontend-"
+    ) as temp_dir:
+        script_path = Path(temp_dir) / "maintenance-flow.js"
+        script_path.write_text(script, encoding="utf-8")
+        result = subprocess.run(
+            [node, str(script_path)],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
 
     assert result.returncode == 0, result.stderr
