@@ -63,6 +63,7 @@ def register_operations_handlers(
             price_history_repair_previews[preview_token] = {
                 "sid": request.sid,
                 "action": action,
+                "effects": dict(preview.get("effects") or {}),
                 "created_at": now,
             }
         return preview_token
@@ -71,12 +72,14 @@ def register_operations_handlers(
         with price_history_repair_preview_lock:
             item = price_history_repair_previews.pop(preview_token, None)
         if not item:
-            return False
-        return bool(
-            item["sid"] == request.sid
-            and item["action"] == action
-            and time.monotonic() - item["created_at"] <= 300
-        )
+            return None
+        if (
+            item["sid"] != request.sid
+            or item["action"] != action
+            or time.monotonic() - item["created_at"] > 300
+        ):
+            return None
+        return item
 
     def recheck_price_history_background_task():
         try:
@@ -305,17 +308,21 @@ def register_operations_handlers(
             if isinstance(data, dict)
             else ""
         )
-        if (
-            not confirmed
-            or not preview_token
-            or not consume_price_history_repair_preview(preview_token, action)
-        ):
+        preview_record = (
+            consume_price_history_repair_preview(preview_token, action)
+            if confirmed and preview_token
+            else None
+        )
+        if not preview_record:
             emit("price_history_maintenance_error", {
                 "message": "修复预览已失效，请重新查看影响范围后确认。",
             })
             return
         try:
-            result = execute_price_history_repair(action)
+            result = execute_price_history_repair(
+                action,
+                preview_record["effects"],
+            )
         except ValueError as exc:
             emit("price_history_maintenance_error", {"message": str(exc)})
             return

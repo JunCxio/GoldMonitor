@@ -3,6 +3,8 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
+import pytest
+
 
 def point(timestamp, usd=2300, rmb=540, rate=7.2):
     return {
@@ -240,6 +242,49 @@ def test_price_history_maintenance_cleans_only_invalid_database_rows(tmp_path):
             """
             SELECT COUNT(*) FROM price_history_rollups
             WHERE resolution = 'future'
+            """
+        ).fetchone() == (1,)
+
+
+def test_price_history_maintenance_rejects_changed_preview_without_writing(tmp_path):
+    from goldmonitor.price_history import PriceHistoryStore
+
+    store = PriceHistoryStore(str(tmp_path / "price_history.json"))
+    store.upsert_points([point("2026-08-11T12:00:00")])
+    with closing(sqlite3.connect(store.db_path())) as conn:
+        conn.execute(
+            """
+            INSERT INTO price_history(timestamp, time, usd, rmb, rate)
+            VALUES('invalid-time', '00:00:00', 1, 1, 1)
+            """
+        )
+        conn.commit()
+
+    preview = store.preview_maintenance_repair("clean_invalid_records")
+
+    with closing(sqlite3.connect(store.db_path())) as conn:
+        conn.execute(
+            """
+            INSERT INTO price_history(timestamp, time, usd, rmb, rate)
+            VALUES('2026-08-11T12:05:00', '12:05:00', NULL, NULL, 7.2)
+            """
+        )
+        conn.commit()
+
+    with pytest.raises(ValueError, match="影响范围已变化"):
+        store.execute_maintenance_repair(
+            "clean_invalid_records",
+            expected_effects=preview["effects"],
+        )
+
+    with closing(sqlite3.connect(store.db_path())) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM price_history WHERE timestamp = 'invalid-time'"
+        ).fetchone() == (1,)
+        assert conn.execute(
+            """
+            SELECT COUNT(*) FROM price_history
+            WHERE timestamp = '2026-08-11T12:05:00'
             """
         ).fetchone() == (1,)
 

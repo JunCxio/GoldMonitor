@@ -710,9 +710,14 @@ class PriceHistoryMaintenanceMixin:
             )
         return len(invalid_timestamp_rowids), len(missing_price_rowids)
 
-    def execute_maintenance_repair(self, action):
+    def execute_maintenance_repair(self, action, expected_effects=None):
         action = str(action or "").strip()
         preview = self.preview_maintenance_repair(action)
+        if (
+            expected_effects is not None
+            and preview["effects"] != expected_effects
+        ):
+            raise ValueError("修复影响范围已变化，请重新查看预览后确认")
         if not preview["executable"]:
             raise ValueError(preview["message"])
         json_snapshot = (

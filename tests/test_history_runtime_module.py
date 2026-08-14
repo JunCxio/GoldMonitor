@@ -103,8 +103,8 @@ class StubPriceStore:
     def preview_maintenance_repair(action):
         return {"action": action, "executable": True}
 
-    def execute_maintenance_repair(self, action):
-        self.maintenance_actions.append(action)
+    def execute_maintenance_repair(self, action, expected_effects=None):
+        self.maintenance_actions.append((action, expected_effects))
         return {"ok": True, "action": action}
 
     @staticmethod
@@ -265,12 +265,18 @@ def test_history_runtime_proxies_maintenance_and_refreshes_archive():
 
     diagnosis = runtime.diagnose_price_history_maintenance()
     preview = runtime.preview_price_history_repair("rebuild_rollups")
-    result = runtime.execute_price_history_repair("rebuild_rollups")
+    expected_effects = {"rollup_buckets_to_rebuild": 4}
+    result = runtime.execute_price_history_repair(
+        "rebuild_rollups",
+        expected_effects,
+    )
 
     assert diagnosis == {"status": "healthy"}
     assert preview == {"action": "rebuild_rollups", "executable": True}
     assert result == {"ok": True, "action": "rebuild_rollups"}
-    assert price_store.maintenance_actions == ["rebuild_rollups"]
+    assert price_store.maintenance_actions == [
+        ("rebuild_rollups", expected_effects),
+    ]
     assert state.price_archive == [{"id": "db"}]
 
 

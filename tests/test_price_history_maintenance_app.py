@@ -179,3 +179,87 @@ def test_price_history_repair_completion_survives_background_recheck_failure(
         for event in events
     )
     client.disconnect()
+
+
+def test_price_history_repair_rejects_stale_effects_and_accepts_new_preview(
+    monkeypatch,
+    tmp_path,
+):
+    import app
+
+    json_path = tmp_path / "price_history.json"
+    monkeypatch.setattr(app, "PRICE_HISTORY_PATH", str(json_path))
+    monkeypatch.setattr(app.runtime, "price_archive", [])
+    monkeypatch.setattr(
+        app,
+        "run_background_task_now",
+        lambda _name: {"ran": False, "reason": "not_due"},
+    )
+    monkeypatch.setattr(
+        app,
+        "get_background_task_status",
+        lambda: {"summary": {}, "tasks": []},
+    )
+    json_path.write_text(json.dumps({
+        "schema_version": 1,
+        "items": [build_point("2026-08-11T12:00:00")],
+    }), encoding="utf-8")
+    app._connect_price_history_db().close()
+
+    client = app.socketio.test_client(
+        app.app,
+        auth={"token": app.SOCKET_ACCESS_TOKEN},
+    )
+    client.get_received()
+    client.emit("preview_price_history_repair", {
+        "action": "sync_json_and_rebuild",
+    })
+    stale_preview = find_event(
+        client.get_received(),
+        "price_history_repair_previewed",
+    )
+
+    json_path.write_text(json.dumps({
+        "schema_version": 1,
+        "items": [
+            build_point("2026-08-11T12:00:00"),
+            build_point("2026-08-11T12:10:00", usd=2310, rmb=542),
+        ],
+    }), encoding="utf-8")
+    client.emit("execute_price_history_repair", {
+        "action": "sync_json_and_rebuild",
+        "confirmed": True,
+        "preview_token": stale_preview["preview_token"],
+    })
+    rejected = find_event(
+        client.get_received(),
+        "price_history_maintenance_error",
+    )
+
+    assert "影响范围已变化" in rejected["message"]
+    assert app._load_price_history_from_db() == []
+    assert app.runtime.price_archive == []
+
+    client.emit("preview_price_history_repair", {
+        "action": "sync_json_and_rebuild",
+    })
+    current_preview = find_event(
+        client.get_received(),
+        "price_history_repair_previewed",
+    )
+    assert current_preview["effects"]["json_points_to_add"] == 2
+
+    client.emit("execute_price_history_repair", {
+        "action": "sync_json_and_rebuild",
+        "confirmed": True,
+        "preview_token": current_preview["preview_token"],
+    })
+    completed = find_event(
+        client.get_received(),
+        "price_history_repair_completed",
+    )
+
+    assert completed["ok"] is True
+    assert completed["inserted_points"] == 2
+    assert len(app.runtime.price_archive) == 2
+    client.disconnect()

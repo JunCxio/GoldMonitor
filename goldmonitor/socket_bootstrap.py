@@ -409,7 +409,10 @@ def register_socket_handlers(application):
             lambda action: application.preview_price_history_repair(action)
         ),
         execute_price_history_repair=(
-            lambda action: application.execute_price_history_repair(action)
+            lambda action, expected_effects: application.execute_price_history_repair(
+                action,
+                expected_effects,
+            )
         ),
         preview_config_backup=(
             lambda payload: application.preview_config_backup(payload)
