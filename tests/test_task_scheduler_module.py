@@ -390,6 +390,106 @@ def test_application_notification_retry_task_result_is_user_readable():
     assert failed["message"] == "重试完成，1 项成功，1 项失败"
 
 
+def test_application_price_history_health_task_result_is_user_readable():
+    import app
+
+    healthy = app._price_history_health_task_result({
+        "ok": True,
+        "status": "healthy",
+        "issues": [],
+    })
+    empty = app._price_history_health_task_result({
+        "ok": True,
+        "status": "empty",
+        "issues": [],
+    })
+    attention = app._price_history_health_task_result({
+        "ok": True,
+        "status": "attention",
+        "issues": ["汇总记录缺失", "JSON 中存在可补时间点"],
+    })
+    unavailable = app._price_history_health_task_result({
+        "ok": False,
+        "status": "unavailable",
+        "issues": ["历史数据库完整性检查未通过"],
+    })
+
+    assert healthy == {
+        "state": "ok",
+        "result": "healthy",
+        "message": "历史数据状态正常",
+    }
+    assert empty == {
+        "state": "idle",
+        "result": "empty",
+        "message": "尚无历史数据，本轮无需检查",
+    }
+    assert attention == {
+        "state": "error",
+        "result": "attention",
+        "message": "发现 2 项历史数据问题，请在历史数据维护中查看",
+    }
+    assert unavailable == {
+        "state": "error",
+        "result": "unavailable",
+        "message": "历史数据库暂不可检查，请在历史数据维护中查看",
+    }
+
+
+def test_application_scheduler_registers_price_history_health_check(monkeypatch):
+    import app
+
+    registrations = []
+
+    class Scheduler:
+        def register(
+            self,
+            name,
+            label,
+            interval_seconds,
+            runner,
+            *,
+            result_handler=None,
+            run_immediately=True,
+        ):
+            registrations.append({
+                "name": name,
+                "label": label,
+                "interval_seconds": interval_seconds,
+                "runner": runner,
+                "result_handler": result_handler,
+                "run_immediately": run_immediately,
+            })
+
+    scheduler = Scheduler()
+    monkeypatch.setattr(app.runtime, "task_scheduler_runtime_instance", None)
+    monkeypatch.setattr(
+        app.task_scheduler_core,
+        "TaskSchedulerRuntime",
+        lambda **_kwargs: scheduler,
+    )
+    monkeypatch.setattr(
+        app,
+        "diagnose_price_history_maintenance",
+        lambda: {"ok": True, "status": "healthy", "issues": []},
+    )
+
+    assert app._get_task_scheduler_runtime() is scheduler
+    history_task = next(
+        item for item in registrations if item["name"] == "price_history_health"
+    )
+
+    assert history_task["label"] == "历史数据检查"
+    assert history_task["interval_seconds"] == 6 * 60 * 60
+    assert history_task["run_immediately"] is True
+    assert history_task["runner"]() == {
+        "ok": True,
+        "status": "healthy",
+        "issues": [],
+    }
+    assert history_task["result_handler"] is app._price_history_health_task_result
+
+
 def test_background_task_status_socket_returns_scheduler_snapshot(monkeypatch):
     import app
 
@@ -502,9 +602,14 @@ def test_application_manual_background_task_uses_allowlist(monkeypatch):
     monkeypatch.setattr(app, "_get_task_scheduler_runtime", lambda: Scheduler())
 
     result = app.run_background_task_now("daily_digest")
+    history_result = app.run_background_task_now("price_history_health")
 
     assert result["ran"] is True
-    assert calls == [("daily_digest", True)]
+    assert history_result["ran"] is True
+    assert calls == [
+        ("daily_digest", True),
+        ("price_history_health", True),
+    ]
     with pytest.raises(ValueError, match="不支持的后台任务"):
         app.run_background_task_now("unknown")
 

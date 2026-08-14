@@ -200,6 +200,7 @@ SETTINGS_ONBOARDING_MARKER_PRESENT_AT_STARTUP = bool(
     )
 )
 NEWS_REFRESH_INTERVAL = 15 * 60
+PRICE_HISTORY_HEALTH_CHECK_INTERVAL = 6 * 60 * 60
 BACKGROUND_TASK_FAILURE_ALERT_THRESHOLD = 3
 BACKGROUND_TASK_SCHEDULE_DELAY_GRACE_SECONDS = 60
 BACKGROUND_TASK_NAMES = frozenset({
@@ -207,6 +208,7 @@ BACKGROUND_TASK_NAMES = frozenset({
     "daily_digest",
     "notification_retry",
     "portfolio_investment",
+    "price_history_health",
 })
 NOTIFICATION_RETRY_QUEUE_STATUS_KEYS = (
     "enabled",
@@ -4381,6 +4383,43 @@ def _notification_retry_task_result(result):
     }
 
 
+def _price_history_health_task_result(result):
+    payload = result if isinstance(result, dict) else {}
+    status = str(payload.get("status") or "unavailable")
+    raw_issues = payload.get("issues")
+    issues = [
+        str(item).strip()
+        for item in raw_issues
+        if str(item).strip()
+    ] if isinstance(raw_issues, list) else []
+    if status == "healthy" and payload.get("ok") is not False:
+        return {
+            "state": "ok",
+            "result": status,
+            "message": "历史数据状态正常",
+        }
+    if status == "empty" and payload.get("ok") is not False:
+        return {
+            "state": "idle",
+            "result": status,
+            "message": "尚无历史数据，本轮无需检查",
+        }
+    if status == "attention":
+        return {
+            "state": "error",
+            "result": status,
+            "message": (
+                f"发现 {max(1, len(issues))} 项历史数据问题，"
+                "请在历史数据维护中查看"
+            ),
+        }
+    return {
+        "state": "error",
+        "result": "unavailable",
+        "message": "历史数据库暂不可检查，请在历史数据维护中查看",
+    }
+
+
 def _handle_background_task_event(event):
     notification = task_scheduler_core.build_task_event_notification(event)
     if notification:
@@ -4438,6 +4477,13 @@ def _get_task_scheduler_runtime():
                 "持仓定投",
                 30,
                 lambda: run_portfolio_investment_plans(),
+            )
+            scheduler.register(
+                "price_history_health",
+                "历史数据检查",
+                PRICE_HISTORY_HEALTH_CHECK_INTERVAL,
+                lambda: diagnose_price_history_maintenance(),
+                result_handler=_price_history_health_task_result,
             )
             runtime.task_scheduler_runtime_instance = scheduler
     return runtime.task_scheduler_runtime_instance

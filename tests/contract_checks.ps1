@@ -193,6 +193,7 @@ Assert-Contains -Path "goldmonitor\application.py" -Pattern 'DAILY_DIGEST_STATE_
 Assert-Contains -Path "goldmonitor\socket_settings.py" -Pattern '@socketio\.on\("preview_daily_digest"\)' -Message "backend must expose daily digest previews"
 Assert-Contains -Path "goldmonitor\socket_settings.py" -Pattern '@socketio\.on\("test_daily_digest"\)' -Message "backend must expose manual daily digest delivery"
 Assert-Contains -Path "goldmonitor\application.py" -Pattern 'start_task_scheduler' -Message "backend must start the unified task scheduler"
+Assert-Contains -Path "goldmonitor\application.py" -Pattern '"price_history_health"' -Message "backend scheduler must include price history health checks"
 Assert-Contains -Path "goldmonitor\task_scheduler.py" -Pattern 'class TaskSchedulerRuntime' -Message "backend must provide a unified task scheduler runtime"
 Assert-Contains -Path "goldmonitor\task_scheduler.py" -Pattern 'failure_threshold' -Message "task scheduler must track repeated failures"
 Assert-Contains -Path "goldmonitor\task_scheduler.py" -Pattern 'recovered' -Message "task scheduler must report recovery after incidents"
