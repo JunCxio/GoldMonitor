@@ -45,7 +45,7 @@ markupsafe==3.0.3
     #   flask
     #   jinja2
     #   werkzeug
-packaging==26.2
+packaging==26.3
     # via
     #   pyinstaller
     #   pyinstaller-hooks-contrib
@@ -56,11 +56,11 @@ proxy-tools==0.1.0
     # via pywebview
 pygments==2.20.0
     # via pytest
-pyinstaller==6.21.0
+pyinstaller==6.22.0
     # via -r requirements-build.txt
 pyinstaller-hooks-contrib==2026.6
     # via pyinstaller
-pyobjc-core==12.2.1
+pyobjc-core==12.2.2
     # via
     #   -r requirements.txt
     #   pyobjc-framework-cocoa
@@ -69,7 +69,7 @@ pyobjc-core==12.2.1
     #   pyobjc-framework-uniformtypeidentifiers
     #   pyobjc-framework-webkit
     #   pywebview
-pyobjc-framework-cocoa==12.2.1
+pyobjc-framework-cocoa==12.2.2
     # via
     #   -r requirements.txt
     #   pyobjc-framework-quartz
@@ -77,33 +77,33 @@ pyobjc-framework-cocoa==12.2.1
     #   pyobjc-framework-uniformtypeidentifiers
     #   pyobjc-framework-webkit
     #   pywebview
-pyobjc-framework-quartz==12.2.1
+pyobjc-framework-quartz==12.2.2
     # via
     #   -r requirements.txt
     #   pywebview
-pyobjc-framework-security==12.2.1
+pyobjc-framework-security==12.2.2
     # via
     #   -r requirements.txt
     #   pywebview
-pyobjc-framework-uniformtypeidentifiers==12.2.1
+pyobjc-framework-uniformtypeidentifiers==12.2.2
     # via
     #   -r requirements.txt
     #   pywebview
-pyobjc-framework-webkit==12.2.1
+pyobjc-framework-webkit==12.2.2
     # via
     #   -r requirements.txt
     #   pywebview
 pytest==9.1.1
     # via -r requirements.txt
-python-engineio==4.13.3
+python-engineio==4.13.4
     # via python-socketio
-python-socketio==5.16.3
+python-socketio==5.16.4
     # via flask-socketio
 pywebview==6.2.1
     # via -r requirements.txt
 requests==2.34.2
     # via -r requirements.txt
-setuptools==83.0.0
+setuptools==84.0.0
     # via pyinstaller
 simple-websocket==1.1.0
     # via python-engineio
