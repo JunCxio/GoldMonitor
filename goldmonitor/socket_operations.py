@@ -78,6 +78,26 @@ def register_operations_handlers(
             and time.monotonic() - item["created_at"] <= 300
         )
 
+    def recheck_price_history_background_task():
+        try:
+            result = run_background_task_now("price_history_health")
+            result = result if isinstance(result, dict) else {"ran": False}
+        except Exception:
+            logging.exception("历史数据修复完成后的后台复检失败")
+            result = {
+                "ran": False,
+                "reason": "error",
+                "message": "历史数据后台状态复检失败",
+            }
+        try:
+            socketio.emit(
+                "background_task_status",
+                get_background_task_status(),
+            )
+        except Exception:
+            logging.exception("广播历史数据后台复检状态失败")
+        return result
+
     @socketio.on("get_background_task_status")
     def on_get_background_task_status():
         emit("background_task_status", get_background_task_status())
@@ -305,6 +325,13 @@ def register_operations_handlers(
                 "message": "历史数据修复失败，事务已回滚。",
             })
             return
+        background_task_recheck = recheck_price_history_background_task()
+        result["background_task_recheck"] = background_task_recheck
+        if background_task_recheck.get("ran"):
+            result["message"] = (
+                str(result.get("message") or "历史数据修复完成。")
+                + "后台历史数据状态已自动复检。"
+            )
         emit("price_history_repair_completed", result)
         socketio.emit(
             "price_history_maintenance_updated",

@@ -19,6 +19,15 @@ def build_point(timestamp, usd=2300, rmb=540):
 def test_price_history_maintenance_socket_requires_preview_confirmation(monkeypatch, tmp_path):
     import app
 
+    rechecked_tasks = []
+    background_status = {
+        "summary": {"total": 1, "error": 0, "attention": 0},
+        "tasks": [{
+            "name": "price_history_health",
+            "state": "ok",
+            "attention_required": False,
+        }],
+    }
     json_path = tmp_path / "price_history.json"
     monkeypatch.setattr(app, "PRICE_HISTORY_PATH", str(json_path))
     json_path.write_text(json.dumps({
@@ -29,6 +38,19 @@ def test_price_history_maintenance_socket_requires_preview_confirmation(monkeypa
         ],
     }), encoding="utf-8")
     monkeypatch.setattr(app.runtime, "price_archive", [])
+    monkeypatch.setattr(
+        app,
+        "run_background_task_now",
+        lambda name: (
+            rechecked_tasks.append(name)
+            or {"ran": True, "task": background_status["tasks"][0]}
+        ),
+    )
+    monkeypatch.setattr(
+        app,
+        "get_background_task_status",
+        lambda: background_status,
+    )
 
     client = app.socketio.test_client(
         app.app,
@@ -76,6 +98,7 @@ def test_price_history_maintenance_socket_requires_preview_confirmation(monkeypa
     )
     assert "确认" in rejected["message"]
     assert app._load_price_history_from_db() == []
+    assert rechecked_tasks == []
 
     client.emit("execute_price_history_repair", {
         "action": "sync_json_and_rebuild",
@@ -85,10 +108,74 @@ def test_price_history_maintenance_socket_requires_preview_confirmation(monkeypa
     events = client.get_received()
     completed = find_event(events, "price_history_repair_completed")
     updated = find_event(events, "price_history_maintenance_updated")
+    task_status = find_event(events, "background_task_status")
 
     assert completed["ok"] is True
     assert completed["inserted_points"] == 2
+    assert completed["background_task_recheck"]["ran"] is True
+    assert "自动复检" in completed["message"]
     assert updated["database"]["raw"]["valid"] == 2
+    assert task_status == background_status
+    assert rechecked_tasks == ["price_history_health"]
     assert len(app.runtime.price_archive) == 2
     assert Path(app._price_history_db_path()).exists()
+    client.disconnect()
+
+
+def test_price_history_repair_completion_survives_background_recheck_failure(
+    monkeypatch,
+    tmp_path,
+):
+    import app
+
+    json_path = tmp_path / "price_history.json"
+    monkeypatch.setattr(app, "PRICE_HISTORY_PATH", str(json_path))
+    json_path.write_text(json.dumps({
+        "schema_version": 1,
+        "items": [build_point("2026-08-11T12:00:00")],
+    }), encoding="utf-8")
+    monkeypatch.setattr(app.runtime, "price_archive", [])
+    monkeypatch.setattr(
+        app,
+        "run_background_task_now",
+        lambda _name: (_ for _ in ()).throw(RuntimeError("recheck failed")),
+    )
+    monkeypatch.setattr(
+        app,
+        "get_background_task_status",
+        lambda: {"summary": {}, "tasks": []},
+    )
+    app._connect_price_history_db().close()
+
+    client = app.socketio.test_client(
+        app.app,
+        auth={"token": app.SOCKET_ACCESS_TOKEN},
+    )
+    client.get_received()
+    client.emit("preview_price_history_repair", {
+        "action": "sync_json_and_rebuild",
+    })
+    preview = find_event(
+        client.get_received(),
+        "price_history_repair_previewed",
+    )
+
+    client.emit("execute_price_history_repair", {
+        "action": "sync_json_and_rebuild",
+        "confirmed": True,
+        "preview_token": preview["preview_token"],
+    })
+    events = client.get_received()
+    completed = find_event(events, "price_history_repair_completed")
+
+    assert completed["ok"] is True
+    assert completed["background_task_recheck"] == {
+        "ran": False,
+        "reason": "error",
+        "message": "历史数据后台状态复检失败",
+    }
+    assert not any(
+        event["name"] == "price_history_maintenance_error"
+        for event in events
+    )
     client.disconnect()
