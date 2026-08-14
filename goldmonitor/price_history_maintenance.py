@@ -15,6 +15,7 @@ ROLLUP_RESOLUTIONS = (
     ("1d", 24 * 60 * 60, None),
 )
 MAINTENANCE_ACTIONS = (
+    "clean_invalid_records",
     "rebuild_rollups",
     "sync_json_and_rebuild",
 )
@@ -416,6 +417,13 @@ class PriceHistoryMaintenanceMixin:
         sync_available = bool(
             database_healthy and json_archive["readable"] and json_candidates
         )
+        clean_invalid_available = bool(
+            database_healthy
+            and (
+                database["raw"]["invalid_timestamp"]
+                or database["raw"]["missing_price"]
+            )
+        )
         if database["exists"] and not database_healthy:
             status = "unavailable"
         elif issues:
@@ -433,6 +441,14 @@ class PriceHistoryMaintenanceMixin:
             "comparison": comparison,
             "issues": issues,
             "operations": {
+                "clean_invalid_records": {
+                    "available": clean_invalid_available,
+                    "reason": (
+                        "可移除无法参与行情计算的无效数据库明细。"
+                        if clean_invalid_available
+                        else "没有可安全清理的无效数据库明细。"
+                    ),
+                },
                 "rebuild_rollups": {
                     "available": rebuild_available,
                     "reason": (
@@ -512,7 +528,10 @@ class PriceHistoryMaintenanceMixin:
                 f"{comparison['rollup_unexpected']} 个多余汇总。"
             )
         if database["unknown_resolution"]:
-            issues.append(f"发现 {database['unknown_resolution']} 条未知粒度汇总记录。")
+            issues.append(
+                f"发现 {database['unknown_resolution']} 条未知粒度汇总记录，"
+                "为避免误删较新版本数据，当前不会自动清理。"
+            )
         if not json_archive["readable"]:
             issues.append("JSON 历史归档无法读取。")
         if json_archive["invalid_timestamp"] or json_archive["missing_price"]:
@@ -537,7 +556,30 @@ class PriceHistoryMaintenanceMixin:
         comparison = diagnosis["comparison"]
         database = diagnosis["database"]
         json_archive = diagnosis["json_archive"]
-        if action == "rebuild_rollups":
+        if action == "clean_invalid_records":
+            effects = {
+                "invalid_timestamp_rows_to_remove": (
+                    database["raw"]["invalid_timestamp"]
+                ),
+                "missing_price_rows_to_remove": database["raw"]["missing_price"],
+                "raw_rows_to_remove": (
+                    database["raw"]["invalid_timestamp"]
+                    + database["raw"]["missing_price"]
+                ),
+                "raw_rows_preserved": database["raw"]["valid"],
+                "unknown_rollups_preserved": database["unknown_resolution"],
+                "rollup_buckets_to_remove": comparison["rollup_unexpected"],
+                "rollup_buckets_to_rebuild": comparison["repairable_rollups"],
+            }
+            summary = (
+                f"将移除 {database['raw']['invalid_timestamp']} 条无效时间记录和 "
+                f"{database['raw']['missing_price']} 条缺少价格的记录，保留 "
+                f"{database['raw']['valid']} 条有效明细；清理 "
+                f"{comparison['rollup_unexpected']} 个多余汇总并重建 "
+                f"{comparison['repairable_rollups']} 个可还原汇总桶；"
+                f"{database['unknown_resolution']} 条未知粒度汇总不会被删除。"
+            )
+        elif action == "rebuild_rollups":
             effects = {
                 "raw_rows_unchanged": database["raw"]["total"],
                 "rollup_buckets_to_rebuild": comparison["repairable_rollups"],
@@ -646,6 +688,28 @@ class PriceHistoryMaintenanceMixin:
         rows = conn.execute("PRAGMA integrity_check").fetchall()
         return [str(row[0]) for row in rows] == ["ok"]
 
+    @staticmethod
+    def _remove_invalid_raw_rows(conn):
+        invalid_timestamp_rowids = []
+        missing_price_rowids = []
+        rows = conn.execute(
+            "SELECT rowid, timestamp, usd, rmb FROM price_history"
+        ).fetchall()
+        for rowid, timestamp, usd, rmb in rows:
+            if not _parse_timestamp(timestamp):
+                invalid_timestamp_rowids.append(rowid)
+            elif usd is None and rmb is None:
+                missing_price_rowids.append(rowid)
+        rowids = invalid_timestamp_rowids + missing_price_rowids
+        for offset in range(0, len(rowids), 500):
+            batch = rowids[offset:offset + 500]
+            placeholders = ",".join("?" for _item in batch)
+            conn.execute(
+                f"DELETE FROM price_history WHERE rowid IN ({placeholders})",
+                batch,
+            )
+        return len(invalid_timestamp_rowids), len(missing_price_rowids)
+
     def execute_maintenance_repair(self, action):
         action = str(action or "").strip()
         preview = self.preview_maintenance_repair(action)
@@ -661,6 +725,8 @@ class PriceHistoryMaintenanceMixin:
                 raise sqlite3.DatabaseError("历史数据库完整性检查未通过")
             inserted = 0
             supplemented = 0
+            removed_invalid_timestamps = 0
+            removed_missing_prices = 0
             if json_snapshot is not None:
                 database_snapshot = self._database_maintenance_snapshot()
                 json_items = self._json_sync_candidates(database_snapshot, json_snapshot)
@@ -672,28 +738,46 @@ class PriceHistoryMaintenanceMixin:
                     ).fetchone()
                     if latest_row and latest_row[0]:
                         self._cleanup_retention(conn, latest_row[0])
+            elif action == "clean_invalid_records":
+                with conn:
+                    (
+                        removed_invalid_timestamps,
+                        removed_missing_prices,
+                    ) = self._remove_invalid_raw_rows(conn)
+                    rebuild = self._rebuild_repairable_rollups(conn)
             else:
                 with conn:
                     rebuild = self._rebuild_repairable_rollups(conn)
         diagnosis = self.diagnose_maintenance()
+        if action == "sync_json_and_rebuild":
+            message = (
+                "JSON 历史已同步，"
+                f"清理 {rebuild['removed_rollups']} 个多余汇总并重建 "
+                f"{rebuild['rebuilt_rollups']} 个可还原汇总桶。"
+            )
+        elif action == "clean_invalid_records":
+            message = (
+                f"已移除 {removed_invalid_timestamps} 条无效时间记录和 "
+                f"{removed_missing_prices} 条缺少价格的记录，清理 "
+                f"{rebuild['removed_rollups']} 个多余汇总并重建 "
+                f"{rebuild['rebuilt_rollups']} 个可还原汇总桶。"
+            )
+        else:
+            message = (
+                f"清理 {rebuild['removed_rollups']} 个多余汇总并重建 "
+                f"{rebuild['rebuilt_rollups']} 个可还原汇总桶，"
+                "原始明细保持不变。"
+            )
         return {
             "ok": True,
             "action": action,
             "inserted_points": inserted,
             "supplemented_fields": supplemented,
+            "removed_invalid_timestamps": removed_invalid_timestamps,
+            "removed_missing_prices": removed_missing_prices,
             **rebuild,
             "diagnosis": diagnosis,
-            "message": (
-                "JSON 历史已同步，"
-                f"清理 {rebuild['removed_rollups']} 个多余汇总并重建 "
-                f"{rebuild['rebuilt_rollups']} 个可还原汇总桶。"
-                if action == "sync_json_and_rebuild"
-                else (
-                    f"清理 {rebuild['removed_rollups']} 个多余汇总并重建 "
-                    f"{rebuild['rebuilt_rollups']} 个可还原汇总桶，"
-                    "原始明细保持不变。"
-                )
-            ),
+            "message": message,
         }
 
     def _sync_json_items(self, conn, json_items):

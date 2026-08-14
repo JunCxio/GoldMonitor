@@ -498,6 +498,8 @@ for required in (
 for required in (
     'id="priceHistoryMaintenanceCard"',
     'id="priceHistoryMaintenancePreview"',
+    'id="previewPriceHistoryCleanupButton"',
+    "clean_invalid_records",
     "socket.emit('get_price_history_maintenance')",
     "socket.emit('preview_price_history_repair'",
     "socket.emit('execute_price_history_repair'",

@@ -171,6 +171,79 @@ def test_price_history_json_sync_preserves_database_values_and_retention(tmp_pat
     ]
 
 
+def test_price_history_maintenance_cleans_only_invalid_database_rows(tmp_path):
+    from goldmonitor.price_history import PriceHistoryStore
+
+    store = PriceHistoryStore(str(tmp_path / "price_history.json"))
+    store.upsert_points([point("2026-08-11T12:00:00")])
+    with closing(sqlite3.connect(store.db_path())) as conn:
+        conn.execute(
+            """
+            INSERT INTO price_history(timestamp, time, usd, rmb, rate)
+            VALUES('invalid-time', '00:00:00', 1, 1, 1)
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO price_history(timestamp, time, usd, rmb, rate)
+            VALUES('2026-08-11T12:05:00', '12:05:00', NULL, NULL, 7.2)
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO price_history_rollups(
+                resolution, bucket_timestamp, time, usd, rmb, rate, last_timestamp
+            ) VALUES('future', '2026-08-11T12:00:00', '12:00:00', 2300, 540,
+                     7.2, '2026-08-11T12:00:00')
+            """
+        )
+        conn.commit()
+
+    diagnosis = store.diagnose_maintenance()
+
+    assert diagnosis["database"]["raw"]["invalid_timestamp"] == 1
+    assert diagnosis["database"]["raw"]["missing_price"] == 1
+    assert diagnosis["database"]["unknown_resolution"] == 1
+    assert diagnosis["operations"]["clean_invalid_records"]["available"] is True
+    assert "不会自动清理" in diagnosis["issues"][-1]
+
+    preview = store.preview_maintenance_repair("clean_invalid_records")
+
+    assert preview["executable"] is True
+    assert preview["effects"] == {
+        "invalid_timestamp_rows_to_remove": 1,
+        "missing_price_rows_to_remove": 1,
+        "raw_rows_to_remove": 2,
+        "raw_rows_preserved": 1,
+        "unknown_rollups_preserved": 1,
+        "rollup_buckets_to_remove": 0,
+        "rollup_buckets_to_rebuild": 4,
+    }
+
+    result = store.execute_maintenance_repair("clean_invalid_records")
+
+    assert result["removed_invalid_timestamps"] == 1
+    assert result["removed_missing_prices"] == 1
+    assert "已移除 1 条无效时间记录和 1 条缺少价格的记录" in result["message"]
+    assert result["diagnosis"]["database"]["raw"]["invalid_timestamp"] == 0
+    assert result["diagnosis"]["database"]["raw"]["missing_price"] == 0
+    assert result["diagnosis"]["database"]["unknown_resolution"] == 1
+    assert (
+        result["diagnosis"]["operations"]["clean_invalid_records"]["available"]
+        is False
+    )
+    with closing(sqlite3.connect(store.db_path())) as conn:
+        assert conn.execute(
+            "SELECT timestamp FROM price_history ORDER BY timestamp"
+        ).fetchall() == [("2026-08-11T12:00:00",)]
+        assert conn.execute(
+            """
+            SELECT COUNT(*) FROM price_history_rollups
+            WHERE resolution = 'future'
+            """
+        ).fetchone() == (1,)
+
+
 def test_price_history_maintenance_disables_repair_for_corrupt_database(tmp_path):
     from goldmonitor.price_history import PriceHistoryStore
 
@@ -181,6 +254,7 @@ def test_price_history_maintenance_disables_repair_for_corrupt_database(tmp_path
 
     assert diagnosis["ok"] is False
     assert diagnosis["status"] == "unavailable"
+    assert diagnosis["operations"]["clean_invalid_records"]["available"] is False
     assert diagnosis["operations"]["rebuild_rollups"]["available"] is False
     assert diagnosis["operations"]["sync_json_and_rebuild"]["available"] is False
 
@@ -198,6 +272,7 @@ def test_price_history_maintenance_does_not_create_database_during_diagnosis(tmp
     diagnosis = store.diagnose_maintenance()
 
     assert diagnosis["database"]["exists"] is False
+    assert diagnosis["operations"]["clean_invalid_records"]["available"] is False
     assert diagnosis["operations"]["sync_json_and_rebuild"]["available"] is False
     assert not Path(store.db_path()).exists()
 
@@ -230,3 +305,38 @@ def test_price_history_maintenance_rolls_back_json_sync_on_rebuild_failure(
 
     with closing(sqlite3.connect(store.db_path())) as conn:
         assert conn.execute("SELECT COUNT(*) FROM price_history").fetchone() == (0,)
+
+
+def test_price_history_maintenance_rolls_back_invalid_cleanup_on_rebuild_failure(
+    monkeypatch,
+    tmp_path,
+):
+    from goldmonitor.price_history import PriceHistoryStore
+
+    store = PriceHistoryStore(str(tmp_path / "price_history.json"))
+    store.upsert_points([point("2026-08-11T12:00:00")])
+    with closing(sqlite3.connect(store.db_path())) as conn:
+        conn.execute(
+            """
+            INSERT INTO price_history(timestamp, time, usd, rmb, rate)
+            VALUES('invalid-time', '00:00:00', 1, 1, 1)
+            """
+        )
+        conn.commit()
+
+    def fail_rollup_write(_conn, _rows):
+        raise sqlite3.DatabaseError("rollup failed")
+
+    monkeypatch.setattr(store, "_upsert_rollups", fail_rollup_write)
+
+    try:
+        store.execute_maintenance_repair("clean_invalid_records")
+    except sqlite3.DatabaseError:
+        pass
+    else:
+        raise AssertionError("清理失败时应抛出数据库异常")
+
+    with closing(sqlite3.connect(store.db_path())) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM price_history WHERE timestamp = 'invalid-time'"
+        ).fetchone() == (1,)

@@ -39,6 +39,7 @@ const ids = [
   'priceHistoryMaintenanceCard',
   'refreshPriceHistoryMaintenanceButton',
   'executePriceHistoryRepairButton',
+  'previewPriceHistoryCleanupButton',
   'previewPriceHistoryRebuildButton',
   'previewPriceHistorySyncButton',
   'priceHistoryMaintenanceStatus',
@@ -88,7 +89,7 @@ const diagnosis = {
   database: {
     exists: true,
     integrity_ok: true,
-    raw: { total: 12, valid: 12 },
+    raw: { total: 14, valid: 12, invalid_timestamp: 1, missing_price: 1 },
     rollups: [{ total: 24 }, { total: 6 }],
   },
   json_archive: { exists: true, unique_valid: 10 },
@@ -100,6 +101,7 @@ const diagnosis = {
   },
   issues: ['发现汇总差异'],
   operations: {
+    clean_invalid_records: { available: true },
     rebuild_rollups: { available: true },
     sync_json_and_rebuild: { available: true },
   },
@@ -108,8 +110,32 @@ listeners.price_history_maintenance_updated(diagnosis);
 assert(elements.priceHistoryMaintenanceStatus.textContent === '发现可处理问题', 'diagnosis status not rendered');
 assert(elements.priceHistoryMaintenanceMetrics.innerHTML.includes('数据库明细'), 'diagnosis metrics not rendered');
 assert(elements.priceHistoryMaintenanceIssues.innerHTML.includes('发现汇总差异'), 'diagnosis issues not rendered');
+assert(!elements.previewPriceHistoryCleanupButton.disabled, 'available cleanup action must be enabled');
 assert(!elements.previewPriceHistoryRebuildButton.disabled, 'available rebuild action must be enabled');
 assert(!elements.previewPriceHistorySyncButton.disabled, 'available sync action must be enabled');
+
+evaluate("previewPriceHistoryRepair('clean_invalid_records')");
+assert(emits.at(-1).name === 'preview_price_history_repair', 'cleanup preview event not emitted');
+assert(emits.at(-1).payload.action === 'clean_invalid_records', 'cleanup preview action mismatch');
+
+listeners.price_history_repair_previewed({
+  executable: true,
+  action: 'clean_invalid_records',
+  preview_token: 'preview-cleanup',
+  summary: '清理 2 条无效明细',
+  effects: {
+    invalid_timestamp_rows_to_remove: 1,
+    missing_price_rows_to_remove: 1,
+    raw_rows_preserved: 12,
+    unknown_rollups_preserved: 1,
+    rollup_buckets_to_remove: 0,
+    rollup_buckets_to_rebuild: 8,
+  },
+  diagnosis,
+});
+assert(elements.priceHistoryMaintenancePreviewTitle.textContent === '清理无效明细', 'cleanup preview title mismatch');
+assert(elements.priceHistoryMaintenancePreviewEffects.innerHTML.includes('移除无效时间'), 'cleanup effects missing');
+assert(elements.priceHistoryMaintenancePreviewEffects.innerHTML.includes('保留未知粒度'), 'cleanup preservation missing');
 
 evaluate("previewPriceHistoryRepair('sync_json_and_rebuild')");
 assert(emits.at(-1).name === 'preview_price_history_repair', 'preview event not emitted');
