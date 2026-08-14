@@ -28,6 +28,9 @@ def test_storage_manifest_covers_current_persistent_paths():
             "daily_digest_state": str(tmp / "daily_digest_state.json"),
             "today_overview_state": str(tmp / "today_overview_state.json"),
             "price_history_db": str(tmp / "price_history.sqlite3"),
+            "price_history_repair_backup": str(
+                tmp / "price_history.repair-backup.sqlite3"
+            ),
             "alert_log_db": str(tmp / "alert_log.sqlite3"),
             "log": str(tmp / "GoldMonitor.log"),
         }
@@ -51,6 +54,7 @@ def test_storage_manifest_covers_current_persistent_paths():
     assert manifest["source_metrics"]["schema"] == "versioned_object"
     assert manifest["source_metrics"]["expected_schema_version"] == 1
     assert manifest["price_history_db"]["kind"] == "sqlite"
+    assert manifest["price_history_repair_backup"]["kind"] == "sqlite"
     assert manifest["alert_log_db"]["kind"] == "sqlite"
     assert manifest["exports"]["kind"] == "directory"
 
@@ -198,6 +202,7 @@ def test_app_diagnostics_report_includes_complete_storage_manifest(monkeypatch, 
         "daily_digest_state",
         "today_overview_state",
         "price_history_db",
+        "price_history_repair_backup",
         "alert_log_db",
     }:
         assert key in report["paths"]
@@ -212,6 +217,12 @@ def test_app_diagnostics_report_includes_complete_storage_manifest(monkeypatch, 
     assert report["storage_manifest"]["today_overview_state"]["expected_schema_version"] == 1
     assert report["storage_manifest"]["source_metrics"]["schema"] == "versioned_object"
     assert report["storage_manifest"]["price_history_db"]["kind"] == "sqlite"
+    assert report["storage_manifest"]["price_history_repair_backup"]["kind"] == (
+        "sqlite"
+    )
+    assert "status" in report["price_history_maintenance"]
+    assert "database" in report["price_history_maintenance"]
+    assert "comparison" in report["price_history_maintenance"]
     assert report["data_schemas"]["portfolio_transactions"]["expected_schema_version"] == 1
     assert report["data_schemas"]["portfolio_investment_plans"]["expected_schema_version"] == 1
     assert report["data_schemas"]["portfolio_alerts"]["expected_schema_version"] == 1

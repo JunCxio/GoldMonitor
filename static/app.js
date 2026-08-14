@@ -77,6 +77,8 @@ registerPortfolioSocketHandlers(socket);
 
 registerOperationsSocketHandlers(socket);
 
+registerPriceHistoryMaintenanceSocketHandlers(socket);
+
 registerRiskAnalysisSocketHandlers(socket);
 
 registerHistoryReviewSocketHandlers(socket);

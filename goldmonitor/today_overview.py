@@ -310,6 +310,55 @@ def _market_attention(market_quality, fetch_status, generated_at):
     )
 
 
+def _background_task_attention(background_tasks, start, end, generated_at):
+    state = background_tasks if isinstance(background_tasks, dict) else {}
+    tasks = state.get("tasks") if isinstance(state.get("tasks"), list) else []
+    result = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        attention_required = bool(task.get("attention_required"))
+        schedule_delayed = bool(task.get("schedule_delayed"))
+        if not attention_required and not schedule_delayed:
+            continue
+        task_name = str(task.get("name") or "").strip()
+        task_label = str(task.get("label") or task_name or "后台任务").strip()
+        reason_codes = []
+        if attention_required:
+            reason_codes.append("task_failure")
+        if schedule_delayed:
+            reason_codes.append("task_delayed")
+        delay_seconds = max(0, int(task.get("schedule_delay_seconds") or 0))
+        if attention_required:
+            summary = str(task.get("last_message") or "后台任务连续失败，需要检查")
+            timestamp = (
+                task.get("last_error_at")
+                or task.get("last_completed_at")
+                or generated_at
+            )
+        else:
+            summary = f"计划执行已延迟 {delay_seconds} 秒"
+            timestamp = generated_at
+        if attention_required and schedule_delayed:
+            summary = f"{summary}；计划执行已延迟 {delay_seconds} 秒"
+        priority = 90 if attention_required and schedule_delayed else 85 if attention_required else 65
+        result.append(_attention_item(
+            "background_task",
+            task_name or task_label,
+            priority,
+            task_label,
+            summary,
+            timestamp,
+            reason_codes,
+            {"kind": "open_operations_task", "target_id": task_name},
+            occurred_today=_in_range(timestamp, start, end),
+            task_state=str(task.get("state") or ""),
+            consecutive_failures=int(task.get("consecutive_failures") or 0),
+            schedule_delay_seconds=delay_seconds,
+        ))
+    return result
+
+
 def _portfolio_summary(summary):
     source = summary if isinstance(summary, dict) else {}
     return {
@@ -552,6 +601,7 @@ def _attention_filter_counts(items):
         "rule": 0,
         "market": 0,
         "portfolio": 0,
+        "operations": 0,
     }
     for item in items:
         kind = str(item.get("kind") or "")
@@ -559,6 +609,8 @@ def _attention_filter_counts(items):
             counts[kind] += 1
         if kind == "portfolio_investment":
             counts["portfolio"] += 1
+        if kind == "background_task":
+            counts["operations"] += 1
         if "notification_issue" in list(item.get("reason_codes") or []):
             counts["notification"] += 1
     return counts
@@ -587,6 +639,7 @@ def build_today_overview(
     alert_rules=None,
     market_quality=None,
     fetch_status=None,
+    background_tasks=None,
     portfolio_state=None,
     risk_items=None,
     review_notes=None,
@@ -607,7 +660,19 @@ def build_today_overview(
     rule_attention, rule_counts = _rule_attention(alert_rules)
     market_item = _market_attention(market_quality, fetch_status, generated_at)
     investment_attention = _investment_attention(portfolio, start, end)
-    attention = alert_attention + rule_attention + investment_attention + ([market_item] if market_item else [])
+    background_attention = _background_task_attention(
+        background_tasks,
+        start,
+        end,
+        generated_at,
+    )
+    attention = (
+        alert_attention
+        + rule_attention
+        + investment_attention
+        + background_attention
+        + ([market_item] if market_item else [])
+    )
     attention = _sort_attention(attention)
     attention_total = len(attention)
     attention_filter_counts = _attention_filter_counts(attention)
@@ -661,6 +726,7 @@ def build_today_overview(
             "portfolio_transactions_today": len(transaction_activity),
             "portfolio_investment_issues": len(investment_attention),
             "portfolio_investments_today": len(investment_activity),
+            "background_task_issues": len(background_attention),
             "risk_analyses_today": len(risk_activity),
             "review_notes_today": len(note_activity),
         },

@@ -51,6 +51,7 @@ STORAGE_DEFINITIONS = (
         "expected_schema_version": 1,
     },
     {"key": "price_history_db", "label": "价格历史数据库", "kind": "sqlite", "schema": "sqlite"},
+    {"key": "price_history_repair_backup", "label": "历史数据修复恢复点", "kind": "sqlite", "schema": "sqlite"},
     {"key": "alert_log_db", "label": "告警记录数据库", "kind": "sqlite", "schema": "sqlite"},
     {"key": "log", "label": "运行日志", "kind": "log", "schema": "text"},
 )

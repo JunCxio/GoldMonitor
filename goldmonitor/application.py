@@ -200,6 +200,7 @@ SETTINGS_ONBOARDING_MARKER_PRESENT_AT_STARTUP = bool(
     )
 )
 NEWS_REFRESH_INTERVAL = 15 * 60
+PRICE_HISTORY_HEALTH_CHECK_INTERVAL = 6 * 60 * 60
 BACKGROUND_TASK_FAILURE_ALERT_THRESHOLD = 3
 BACKGROUND_TASK_SCHEDULE_DELAY_GRACE_SECONDS = 60
 BACKGROUND_TASK_NAMES = frozenset({
@@ -207,6 +208,7 @@ BACKGROUND_TASK_NAMES = frozenset({
     "daily_digest",
     "notification_retry",
     "portfolio_investment",
+    "price_history_health",
 })
 NOTIFICATION_RETRY_QUEUE_STATUS_KEYS = (
     "enabled",
@@ -1737,6 +1739,7 @@ def create_data_archive(now=None):
         export_dir=resolve_export_dir(),
         settings=get_settings_snapshot(),
         archive_lock=runtime.data_archive_lock,
+        state_locks=(runtime.price_history_maintenance_lock,),
         manager=_data_archive_manager(now_factory=lambda: now),
         set_status=_set_last_export_status,
         directory_status=build_export_dir_check(),
@@ -1791,6 +1794,9 @@ def _get_data_archive_runtime():
             archive_manager=lambda: _data_archive_manager(),
             apply_floating_price_settings=(
                 lambda settings: apply_floating_price_settings(settings)
+            ),
+            clear_price_history_repair_backup=(
+                lambda: _get_history_review_runtime().clear_price_history_repair_backup()
             ),
         )
     return runtime.data_archive_runtime_instance
@@ -2035,6 +2041,7 @@ def _get_diagnostics_runtime():
                 "daily_digest_state": DAILY_DIGEST_STATE_PATH,
                 "today_overview_state": TODAY_OVERVIEW_STATE_PATH,
                 "price_history_db": _price_history_db_path(),
+                "price_history_repair_backup": _price_history_repair_backup_path(),
                 "alert_log_db": _alert_log_db_path(),
                 "log": APP_LOG_PATH,
             },
@@ -2042,6 +2049,9 @@ def _get_diagnostics_runtime():
             get_fetch_status=lambda: get_fetch_status(),
             get_source_health=lambda: get_source_health_state(),
             get_price_history=lambda **kwargs: build_price_history_state(**kwargs),
+            get_price_history_maintenance=(
+                lambda: diagnose_price_history_maintenance()
+            ),
             get_watch_targets=lambda: get_watch_targets_state(),
             get_risk_history=lambda: get_risk_analysis_history_state(),
             get_alert_rules=lambda: get_alert_rules_state(),
@@ -2342,6 +2352,7 @@ def _get_today_overview_runtime():
                 get_alert_rules=lambda: get_alert_rules_state(),
                 get_source_health=lambda: get_source_health_state(),
                 get_fetch_status=lambda: get_fetch_status(),
+                get_background_tasks=lambda: get_background_task_status(),
                 build_portfolio=lambda: build_portfolio_state(),
                 get_risk_history=lambda: get_risk_analysis_history_state(),
                 get_review_notes=lambda: get_review_notes_state(),
@@ -3172,6 +3183,10 @@ def _price_history_db_path():
     return _get_history_review_runtime().price_history_db_path()
 
 
+def _price_history_repair_backup_path():
+    return _get_history_review_runtime().price_history_repair_backup_path()
+
+
 def _connect_price_history_db():
     return _get_history_review_runtime().connect_price_history_db()
 
@@ -3205,6 +3220,26 @@ def _write_price_history_json_archive(items):
 
 def save_price_history_archive(items=None):
     return _get_history_review_runtime().save_price_history_archive(items)
+
+
+def diagnose_price_history_maintenance():
+    return _get_history_review_runtime().diagnose_price_history_maintenance()
+
+
+def preview_price_history_repair(action):
+    return _get_history_review_runtime().preview_price_history_repair(action)
+
+
+def execute_price_history_repair(
+    action,
+    expected_effects=None,
+    expected_revision=None,
+):
+    return _get_history_review_runtime().execute_price_history_repair(
+        action,
+        expected_effects,
+        expected_revision,
+    )
 
 
 def add_price_history_entry(entry, force_save=False):
@@ -4369,6 +4404,43 @@ def _notification_retry_task_result(result):
     }
 
 
+def _price_history_health_task_result(result):
+    payload = result if isinstance(result, dict) else {}
+    status = str(payload.get("status") or "unavailable")
+    raw_issues = payload.get("issues")
+    issues = [
+        str(item).strip()
+        for item in raw_issues
+        if str(item).strip()
+    ] if isinstance(raw_issues, list) else []
+    if status == "healthy" and payload.get("ok") is not False:
+        return {
+            "state": "ok",
+            "result": status,
+            "message": "历史数据状态正常",
+        }
+    if status == "empty" and payload.get("ok") is not False:
+        return {
+            "state": "idle",
+            "result": status,
+            "message": "尚无历史数据，本轮无需检查",
+        }
+    if status == "attention":
+        return {
+            "state": "error",
+            "result": status,
+            "message": (
+                f"发现 {max(1, len(issues))} 项历史数据问题，"
+                "请在历史数据维护中查看"
+            ),
+        }
+    return {
+        "state": "error",
+        "result": "unavailable",
+        "message": "历史数据库暂不可检查，请在历史数据维护中查看",
+    }
+
+
 def _handle_background_task_event(event):
     notification = task_scheduler_core.build_task_event_notification(event)
     if notification:
@@ -4426,6 +4498,13 @@ def _get_task_scheduler_runtime():
                 "持仓定投",
                 30,
                 lambda: run_portfolio_investment_plans(),
+            )
+            scheduler.register(
+                "price_history_health",
+                "历史数据检查",
+                PRICE_HISTORY_HEALTH_CHECK_INTERVAL,
+                lambda: diagnose_price_history_maintenance(),
+                result_handler=_price_history_health_task_result,
             )
             runtime.task_scheduler_runtime_instance = scheduler
     return runtime.task_scheduler_runtime_instance

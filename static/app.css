@@ -296,6 +296,50 @@
   .ops-update-status[data-state="available"] { color:var(--gold); }
   .ops-update-meta { margin-top:4px; color:var(--text-dim); font-size:0.72rem; line-height:1.35; white-space:normal; overflow-wrap:anywhere; }
   .diagnostics-copy-fallback { min-height:130px; max-height:220px; margin-top:8px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:0.72rem; line-height:1.5; white-space:pre; }
+  .price-maintenance-card { width:100%; max-width:min(560px, 100%); }
+  .price-maintenance-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+  .price-maintenance-status { color:var(--text); font-size:0.8rem; font-weight:750; line-height:1.4; }
+  .price-maintenance-status[data-state="healthy"] { color:var(--down); }
+  .price-maintenance-status[data-state="attention"] { color:var(--gold); }
+  .price-maintenance-status[data-state="unavailable"] { color:var(--up); }
+  .price-maintenance-meta { margin-top:4px; color:var(--text-dim); font-size:0.68rem; line-height:1.45; overflow-wrap:anywhere; }
+  .price-maintenance-metrics { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:6px; margin-top:11px; }
+  .price-maintenance-metric { min-width:0; padding:8px 9px; border:1px solid var(--hairline); border-radius:8px; background:rgba(255,255,255,0.025); }
+  .price-maintenance-metric span, .price-maintenance-preview-grid span { display:block; color:var(--text-dim); font-size:0.62rem; line-height:1.35; }
+  .price-maintenance-metric strong, .price-maintenance-preview-grid strong { display:block; margin-top:4px; color:var(--text); font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.78rem; line-height:1.3; overflow-wrap:anywhere; }
+  .price-maintenance-empty { grid-column:1 / -1; padding:11px; border:1px dashed var(--hairline); border-radius:8px; color:var(--text-dim); font-size:0.7rem; text-align:center; }
+  .price-maintenance-coverage-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-top:13px; }
+  .price-maintenance-coverage-head strong { color:var(--text); font-size:0.7rem; }
+  .price-maintenance-coverage-head span { color:var(--text-dim); font-size:0.62rem; line-height:1.4; text-align:right; }
+  .price-maintenance-coverage { display:grid; margin-top:7px; border:1px solid var(--hairline); border-radius:9px; overflow:hidden; }
+  .price-maintenance-coverage-row { display:grid; grid-template-columns:minmax(96px, 0.9fr) 52px minmax(0, 1.35fr); gap:8px; align-items:center; min-width:0; padding:9px 10px; border-left:2px solid transparent; background:rgba(255,255,255,0.018); }
+  .price-maintenance-coverage-row + .price-maintenance-coverage-row { border-top:1px solid var(--hairline); }
+  .price-maintenance-coverage-row[data-state="attention"] { border-left-color:var(--gold); background:rgba(232,184,48,0.035); }
+  .price-maintenance-coverage-row[data-state="healthy"] { border-left-color:rgba(90,194,142,0.65); }
+  .price-maintenance-coverage-ident, .price-maintenance-coverage-count, .price-maintenance-coverage-detail { min-width:0; }
+  .price-maintenance-coverage-ident strong, .price-maintenance-coverage-count strong { display:block; color:var(--text); font-size:0.7rem; line-height:1.35; }
+  .price-maintenance-coverage-ident span, .price-maintenance-coverage-count span, .price-maintenance-coverage-detail small { display:block; margin-top:2px; color:var(--text-dim); font-size:0.59rem; line-height:1.4; overflow-wrap:anywhere; }
+  .price-maintenance-coverage-count { text-align:right; }
+  .price-maintenance-coverage-count strong { font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.75rem; }
+  .price-maintenance-coverage-detail span { display:block; color:var(--text); font-size:0.61rem; line-height:1.4; overflow-wrap:anywhere; }
+  .price-maintenance-coverage-row[data-state="attention"] .price-maintenance-coverage-detail small { color:var(--gold); }
+  .price-maintenance-coverage-row[data-state="healthy"] .price-maintenance-coverage-detail small { color:var(--down); }
+  .price-maintenance-issues { margin-top:9px; color:var(--text-dim); font-size:0.68rem; line-height:1.5; }
+  .price-maintenance-issue-title { color:var(--gold); font-weight:750; }
+  .price-maintenance-issues ul { display:grid; gap:3px; margin:5px 0 0; padding-left:17px; }
+  .price-maintenance-ok { color:var(--down); }
+  .price-maintenance-action { width:100%; max-width:340px; display:flex; justify-content:flex-end; }
+  .price-maintenance-preview { margin:0; padding:14px 16px 15px; border-top:1px solid rgba(232,184,48,0.22); background:rgba(232,184,48,0.035); }
+  .price-maintenance-preview[hidden] { display:none; }
+  .price-maintenance-preview[data-state="blocked"] { border-top-color:rgba(224,85,106,0.25); background:rgba(224,85,106,0.035); }
+  .price-maintenance-preview-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+  .price-maintenance-preview-head strong { display:block; color:var(--gold); font-size:0.78rem; }
+  .price-maintenance-preview-head span { display:block; margin-top:4px; color:var(--text-dim); font-size:0.69rem; line-height:1.5; }
+  .price-maintenance-preview-close { flex:0 0 auto; width:30px; height:30px; }
+  .price-maintenance-preview-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:7px; margin-top:11px; }
+  .price-maintenance-preview-grid > div { min-width:0; padding:8px 9px; border:1px solid rgba(232,184,48,0.16); border-radius:8px; background:rgba(0,0,0,0.12); }
+  .price-maintenance-preview-note { margin-top:10px; color:var(--text-dim); font-size:0.67rem; line-height:1.5; }
+  .price-maintenance-preview-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
   .confirm-modal { width:min(460px, 100%); }
   .close-choice-copy { color:var(--text); font-size:0.92rem; line-height:1.65; }
   .dialog-check { margin-top:16px; display:flex; align-items:center; gap:10px; color:var(--text-dim); font-size:0.82rem; cursor:pointer; }
@@ -1602,6 +1646,8 @@
     .notification-retry-control { max-width:none; justify-items:start; grid-template-columns:auto minmax(0, 1fr); }
     .notification-retry-status { text-align:left; }
     .ops-task-card { max-width:none; }
+    .price-maintenance-card, .price-maintenance-action { max-width:none; }
+    .price-maintenance-action { justify-content:flex-start; }
     .setting-status-wide { max-width:none; }
     .today-overview-modal { height:calc(100dvh - 24px); max-height:calc(100dvh - 24px); }
     .today-overview-head { min-height:auto; padding:14px 16px 13px; }
@@ -1623,6 +1669,14 @@
     .review-note-editor-status { flex:1 0 100%; margin-right:0; }
     .header { padding:2px 0 8px; }
     .header h1 { font-size:1rem; }
+    .price-maintenance-head { flex-direction:column; }
+    .price-maintenance-metrics, .price-maintenance-preview-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+    .price-maintenance-coverage-head { display:block; }
+    .price-maintenance-coverage-head span { display:block; margin-top:3px; text-align:left; }
+    .price-maintenance-coverage-row { grid-template-columns:minmax(0, 1fr) auto; }
+    .price-maintenance-coverage-detail { grid-column:1 / -1; }
+    .price-maintenance-preview-actions { justify-content:stretch; }
+    .price-maintenance-preview-actions button { flex:1 1 0; }
     .header-actions { gap:6px; }
     .icon-btn { width:34px; height:34px; border-radius:8px; }
     .icon-btn svg { width:16px; height:16px; }

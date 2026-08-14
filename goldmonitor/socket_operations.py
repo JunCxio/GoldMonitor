@@ -1,6 +1,9 @@
 import json
 import logging
+import secrets
+import sqlite3
 import threading
+import time
 
 from flask import request
 from flask_socketio import emit
@@ -21,6 +24,9 @@ def register_operations_handlers(
     build_export_error_payload,
     create_data_archive,
     data_archive_errors,
+    diagnose_price_history_maintenance,
+    preview_price_history_repair,
+    execute_price_history_repair,
     preview_config_backup,
     restore_config_backup,
     reset_to_default_settings,
@@ -40,6 +46,62 @@ def register_operations_handlers(
     run_background_task_now,
     thread_factory=threading.Thread,
 ):
+    price_history_repair_previews = {}
+    price_history_repair_preview_lock = threading.Lock()
+
+    def store_price_history_repair_preview(action, preview):
+        now = time.monotonic()
+        preview_token = secrets.token_urlsafe(18)
+        with price_history_repair_preview_lock:
+            stale_tokens = [
+                token
+                for token, item in price_history_repair_previews.items()
+                if now - item["created_at"] > 300
+            ]
+            for token in stale_tokens:
+                price_history_repair_previews.pop(token, None)
+            price_history_repair_previews[preview_token] = {
+                "sid": request.sid,
+                "action": action,
+                "effects": dict(preview.get("effects") or {}),
+                "revision": str(preview.get("revision") or ""),
+                "created_at": now,
+            }
+        return preview_token
+
+    def consume_price_history_repair_preview(preview_token, action):
+        with price_history_repair_preview_lock:
+            item = price_history_repair_previews.pop(preview_token, None)
+        if not item:
+            return None
+        if (
+            item["sid"] != request.sid
+            or item["action"] != action
+            or time.monotonic() - item["created_at"] > 300
+        ):
+            return None
+        return item
+
+    def recheck_price_history_background_task():
+        try:
+            result = run_background_task_now("price_history_health")
+            result = result if isinstance(result, dict) else {"ran": False}
+        except Exception:
+            logging.exception("历史数据修复完成后的后台复检失败")
+            result = {
+                "ran": False,
+                "reason": "error",
+                "message": "历史数据后台状态复检失败",
+            }
+        try:
+            socketio.emit(
+                "background_task_status",
+                get_background_task_status(),
+            )
+        except Exception:
+            logging.exception("广播历史数据后台复检状态失败")
+        return result
+
     @socketio.on("get_background_task_status")
     def on_get_background_task_status():
         emit("background_task_status", get_background_task_status())
@@ -202,6 +264,88 @@ def register_operations_handlers(
         except data_archive_errors as exc:
             logging.warning("完整数据归档失败: %s", exc)
             emit("data_archive_export_error", build_export_error_payload("完整数据归档失败，请检查导出目录和本地数据文件。"))
+
+
+    @socketio.on("get_price_history_maintenance")
+    def on_get_price_history_maintenance():
+        try:
+            emit(
+                "price_history_maintenance_updated",
+                diagnose_price_history_maintenance(),
+            )
+        except (OSError, sqlite3.Error):
+            logging.exception("历史数据诊断失败")
+            emit("price_history_maintenance_error", {
+                "message": "历史数据诊断失败，请检查本地数据目录权限。",
+            })
+
+
+    @socketio.on("preview_price_history_repair")
+    def on_preview_price_history_repair(data=None):
+        action = data.get("action") if isinstance(data, dict) else ""
+        try:
+            preview = preview_price_history_repair(action)
+            if preview.get("executable"):
+                preview["preview_token"] = store_price_history_repair_preview(
+                    action,
+                    preview,
+                )
+            emit("price_history_repair_previewed", preview)
+        except ValueError as exc:
+            emit("price_history_maintenance_error", {"message": str(exc)})
+        except (OSError, sqlite3.Error):
+            logging.exception("历史数据修复预检失败")
+            emit("price_history_maintenance_error", {
+                "message": "历史数据修复预检失败，请稍后重试。",
+            })
+
+
+    @socketio.on("execute_price_history_repair")
+    def on_execute_price_history_repair(data=None):
+        action = data.get("action") if isinstance(data, dict) else ""
+        confirmed = bool(data.get("confirmed")) if isinstance(data, dict) else False
+        preview_token = (
+            str(data.get("preview_token") or "").strip()
+            if isinstance(data, dict)
+            else ""
+        )
+        preview_record = (
+            consume_price_history_repair_preview(preview_token, action)
+            if confirmed and preview_token
+            else None
+        )
+        if not preview_record:
+            emit("price_history_maintenance_error", {
+                "message": "修复预览已失效，请重新查看影响范围后确认。",
+            })
+            return
+        try:
+            result = execute_price_history_repair(
+                action,
+                preview_record["effects"],
+                preview_record["revision"],
+            )
+        except ValueError as exc:
+            emit("price_history_maintenance_error", {"message": str(exc)})
+            return
+        except (OSError, sqlite3.Error):
+            logging.exception("历史数据修复失败")
+            emit("price_history_maintenance_error", {
+                "message": "历史数据修复失败，事务已回滚。",
+            })
+            return
+        background_task_recheck = recheck_price_history_background_task()
+        result["background_task_recheck"] = background_task_recheck
+        if background_task_recheck.get("ran"):
+            result["message"] = (
+                str(result.get("message") or "历史数据修复完成。")
+                + "后台历史数据状态已自动复检。"
+            )
+        emit("price_history_repair_completed", result)
+        socketio.emit(
+            "price_history_maintenance_updated",
+            result.get("diagnosis") or diagnose_price_history_maintenance(),
+        )
 
 
     @socketio.on("preview_import_config")

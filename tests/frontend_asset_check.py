@@ -27,6 +27,7 @@ settings_actions_js_path = root / "static" / "settings-actions.js"
 operations_js_path = root / "static" / "operations-center.js"
 operations_state_js_path = root / "static" / "operations-state.js"
 operations_socket_js_path = root / "static" / "operations-socket.js"
+operations_history_maintenance_js_path = root / "static" / "operations-history-maintenance.js"
 operations_tasks_js_path = root / "static" / "operations-tasks.js"
 operations_sources_js_path = root / "static" / "operations-sources.js"
 operations_records_js_path = root / "static" / "operations-records.js"
@@ -100,6 +101,7 @@ for settings_path in (
 for operations_path in (
     operations_state_js_path,
     operations_socket_js_path,
+    operations_history_maintenance_js_path,
     operations_tasks_js_path,
     operations_sources_js_path,
     operations_records_js_path,
@@ -205,6 +207,7 @@ settings_module_js = "\n".join((
 operations_module_js = "\n".join((
     operations_state_js_path.read_text(encoding="utf-8"),
     operations_socket_js_path.read_text(encoding="utf-8"),
+    operations_history_maintenance_js_path.read_text(encoding="utf-8"),
     operations_tasks_js_path.read_text(encoding="utf-8"),
     operations_sources_js_path.read_text(encoding="utf-8"),
     operations_records_js_path.read_text(encoding="utf-8"),
@@ -304,6 +307,7 @@ for required in (
     "function activateTodayOverviewItem",
     "function setTodayOverviewAttentionFilter",
     "function runTodayOverviewQuickAction",
+    "function openTodayOverviewOperationsTask",
     "function runTodayOverviewBatchAction",
     "function completeTodayOverviewBatchAction",
     "function registerTodayOverviewBatchSocketHandlers",
@@ -323,6 +327,8 @@ for required in (
     "socketClient.on('today_overview_updated'",
     "socket.emit('get_today_overview'",
     "socket.emit('mark_today_overview_viewed'",
+    "'background_task_status'",
+    "open_operations_task",
 ):
     if required not in today_overview_module_js:
         raise SystemExit(f"today overview scripts missing contract: {required}")
@@ -403,6 +409,7 @@ operations_scripts = tuple(
     for name in (
         "operations-state.js",
         "operations-socket.js",
+        "operations-history-maintenance.js",
         "operations-tasks.js",
         "operations-sources.js",
         "operations-records.js",
@@ -424,6 +431,10 @@ if operations_positions[-1] > template.find('<script src="/static/app.js?v={{ ap
 
 for required in (
     "function registerOperationsSocketHandlers",
+    "function registerPriceHistoryMaintenanceSocketHandlers",
+    "function refreshPriceHistoryMaintenance",
+    "function previewPriceHistoryRepair",
+    "function executePriceHistoryRepair",
     "function applyBackgroundTaskStatus",
     "function refreshBackgroundTaskStatus",
     "function backgroundTaskAutoRefreshActive",
@@ -483,6 +494,36 @@ for required in (
 ):
     if required not in css_path.read_text(encoding="utf-8"):
         raise SystemExit(f"static/app.css missing background task selector: {required}")
+
+for required in (
+    'id="priceHistoryMaintenanceCard"',
+    'id="priceHistoryMaintenanceCoverage"',
+    'id="priceHistoryMaintenancePreview"',
+    'id="previewPriceHistoryCleanupButton"',
+    "clean_invalid_records",
+    "socket.emit('get_price_history_maintenance')",
+    "socket.emit('preview_price_history_repair'",
+    "socket.emit('execute_price_history_repair'",
+    "restore_last_repair",
+    "previewPriceHistoryRestoreButton",
+    "socket.on('price_history_maintenance_updated'",
+    "socket.on('price_history_repair_previewed'",
+    "socket.on('price_history_repair_completed'",
+    "registerPriceHistoryMaintenanceSocketHandlers(socket)",
+):
+    if required not in template + js:
+        raise SystemExit(f"frontend missing price history maintenance contract: {required}")
+
+for required in (
+    ".price-maintenance-card",
+    ".price-maintenance-metrics",
+    ".price-maintenance-coverage",
+    ".price-maintenance-coverage-row",
+    ".price-maintenance-preview",
+    ".price-maintenance-preview-grid",
+):
+    if required not in css_path.read_text(encoding="utf-8"):
+        raise SystemExit(f"static/app.css missing history maintenance selector: {required}")
 
 for moved in (
     "function registerOperationsSocketHandlers",
@@ -947,6 +988,7 @@ for required in (
     "config_export",
     "diagnostics_export",
     "open_exports_folder",
+    "price_history_repair",
     "payload.export_dir",
     "文件已保存到导出目录。",
     "失败原因",
@@ -965,6 +1007,21 @@ if not (diagnostics_ready_pos >= 0 and diagnostics_record_pos > diagnostics_read
     raise SystemExit("diagnostics export results must be recorded in recent operations")
 if not (exports_folder_pos >= 0 and open_folder_record_pos > exports_folder_pos):
     raise SystemExit("open export folder results must be recorded in recent operations")
+
+history_repair_completed_pos = js.find("socket.on('price_history_repair_completed', data => {")
+history_repair_record_pos = js.find("addRecentOpsRecord('price_history_repair'", history_repair_completed_pos)
+history_repair_error_pos = js.find("socket.on('price_history_maintenance_error', data => {")
+history_repair_failure_record_pos = js.find("addRecentOpsRecord('price_history_repair'", history_repair_error_pos)
+if not (
+    history_repair_completed_pos >= 0
+    and history_repair_record_pos > history_repair_completed_pos
+):
+    raise SystemExit("successful price history repairs must be recorded")
+if not (
+    history_repair_error_pos >= 0
+    and history_repair_failure_record_pos > history_repair_error_pos
+):
+    raise SystemExit("failed price history repairs must be recorded")
 
 settings_updated_handler = "socket.on('settings_updated', data => {"
 settings_updated_pos = js.find(settings_updated_handler)

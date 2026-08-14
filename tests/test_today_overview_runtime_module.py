@@ -22,6 +22,7 @@ def _runtime(tmp_path, **overrides):
             "quality": {"level": "normal", "score": 100, "label": "数据可信"}
         },
         "get_fetch_status": lambda: {"ok": True},
+        "get_background_tasks": lambda: {"tasks": []},
         "build_portfolio": lambda: {"total": 0, "transactions": []},
         "get_risk_history": lambda: {"items": []},
         "get_review_notes": lambda: {"items": []},
@@ -152,6 +153,18 @@ def test_app_today_overview_socket_persists_view_state(monkeypatch, tmp_path):
         "quality": {"level": "normal", "score": 100, "label": "数据可信"}
     })
     monkeypatch.setattr(app, "get_fetch_status", lambda: {"ok": True})
+    monkeypatch.setattr(app, "get_background_task_status", lambda: {
+        "tasks": [{
+            "name": "price_history_health",
+            "label": "历史数据检查",
+            "state": "error",
+            "attention_required": True,
+            "consecutive_failures": 3,
+            "last_message": "历史数据需要处理",
+            "last_error_at": datetime.now().replace(microsecond=0).isoformat(timespec="seconds"),
+            "schedule_delayed": False,
+        }]
+    })
     monkeypatch.setattr(app, "build_portfolio_state", lambda: {"total": 0, "transactions": []})
     monkeypatch.setattr(app, "get_risk_analysis_history_state", lambda: {"items": []})
     monkeypatch.setattr(app, "get_review_notes_state", lambda: {"items": []})
@@ -170,6 +183,7 @@ def test_app_today_overview_socket_persists_view_state(monkeypatch, tmp_path):
         if item["name"] == "today_overview_updated"
     )
     assert overview["summary"]["unhandled_alerts"] == 1
+    assert overview["summary"]["background_task_issues"] == 1
 
     client.emit("mark_today_overview_viewed")
     received = client.get_received()
