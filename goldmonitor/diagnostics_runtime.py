@@ -470,6 +470,11 @@ class DiagnosticsRuntime:
         payload["market_observation"] = dict(
             getattr(self.runtime, "market_observation", {}) or {}
         )
+        payload["market_quality_history"] = [
+            dict(item)
+            for item in getattr(self.runtime, "market_quality_history", [])
+            if isinstance(item, dict)
+        ]
         payload["export_status"] = self.get_export_status()
         payload["taskbar_price"] = dict(
             getattr(self.runtime, "taskbar_layout_state", {}) or {}

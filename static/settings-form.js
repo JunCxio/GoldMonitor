@@ -255,8 +255,11 @@ function switchSettingsTab(tab) {
   if (nextTab === 'risk') refreshRiskModels();
   if (nextTab === 'digest') socket.emit('get_daily_digest_status');
   if (nextTab === 'general') socket.emit('get_notification_retry_status');
-  if (nextTab === 'ops' && !priceHistoryMaintenanceState && !priceHistoryMaintenancePending) {
-    refreshPriceHistoryMaintenance();
+  if (nextTab === 'ops') {
+    refreshSourceHealth();
+    if (!priceHistoryMaintenanceState && !priceHistoryMaintenancePending) {
+      refreshPriceHistoryMaintenance();
+    }
   }
   syncBackgroundTaskAutoRefresh();
 }

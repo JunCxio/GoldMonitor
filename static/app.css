@@ -295,6 +295,70 @@
   .ops-update-status[data-state="error"] { color:var(--up); }
   .ops-update-status[data-state="available"] { color:var(--gold); }
   .ops-update-meta { margin-top:4px; color:var(--text-dim); font-size:0.72rem; line-height:1.35; white-space:normal; overflow-wrap:anywhere; }
+  .market-trust-setting-row { grid-template-columns:minmax(180px, 0.42fr) minmax(460px, 1fr); }
+  .market-trust-setting-row > .market-trust-card { justify-self:stretch; }
+  .market-trust-card { width:100%; min-width:0; display:grid; gap:12px; padding:14px; border:1px solid rgba(232,184,48,0.18); border-radius:11px; background:linear-gradient(180deg, rgba(232,184,48,0.045), rgba(255,255,255,0.018) 28%, rgba(0,0,0,0.08)); }
+  .market-trust-card[data-state="normal"] { border-color:rgba(76,175,132,0.28); }
+  .market-trust-card[data-state="stale"], .market-trust-card[data-state="anomaly"], .market-trust-card[data-state="invalid"], .market-trust-card[data-state="unavailable"] { border-color:rgba(224,85,106,0.28); }
+  .market-trust-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .market-trust-head > div { min-width:0; display:grid; gap:3px; }
+  .market-trust-head span { color:var(--text-dim); font-size:0.62rem; font-weight:800; letter-spacing:0.08em; }
+  .market-trust-head strong { color:var(--text-strong); font-size:0.88rem; line-height:1.35; }
+  .market-trust-card[data-state="normal"] .market-trust-head strong { color:#82d3ae; }
+  .market-trust-card[data-state="degraded"] .market-trust-head strong, .market-trust-card[data-state="stale"] .market-trust-head strong { color:#e8bd67; }
+  .market-trust-card[data-state="anomaly"] .market-trust-head strong, .market-trust-card[data-state="invalid"] .market-trust-head strong, .market-trust-card[data-state="unavailable"] .market-trust-head strong { color:#efa0ad; }
+  .market-trust-head .btn-form { flex:0 0 auto; min-height:31px; padding:5px 9px; font-size:0.68rem; }
+  .market-trust-rail { --quality-score:0; position:relative; height:46px; padding-top:18px; }
+  .market-trust-rail::before { content:""; position:absolute; left:0; right:0; bottom:5px; height:8px; border-radius:99px; background:linear-gradient(90deg, rgba(224,85,106,0.42) 0 60%, rgba(224,160,64,0.46) 60% 90%, rgba(76,175,132,0.55) 90% 100%); box-shadow:inset 0 0 0 1px rgba(255,255,255,0.08); }
+  .market-trust-rail::after { content:""; position:absolute; left:calc(var(--quality-score) * 1%); right:0; bottom:5px; height:8px; border-radius:0 99px 99px 0; background:rgba(14,14,25,0.78); box-shadow:inset 0 0 0 1px rgba(255,255,255,0.04); }
+  .market-trust-rail-labels { display:flex; justify-content:space-between; color:var(--text-dim); font-size:0.58rem; font-weight:750; }
+  .market-trust-marker { position:absolute; z-index:1; left:clamp(13px, calc(var(--quality-score) * 1%), calc(100% - 13px)); bottom:0; width:26px; height:26px; display:grid; place-items:center; transform:translateX(-50%); border:2px solid #141420; border-radius:50%; background:var(--warn); color:#11111b; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.56rem; font-weight:900; box-shadow:0 4px 10px rgba(0,0,0,0.36); }
+  .market-trust-card[data-state="normal"] .market-trust-marker { background:var(--down); }
+  .market-trust-card[data-state="anomaly"] .market-trust-marker, .market-trust-card[data-state="invalid"] .market-trust-marker, .market-trust-card[data-state="unavailable"] .market-trust-marker { background:var(--danger); color:#fff; }
+  .market-trust-gates { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:7px; }
+  .market-trust-gate { min-width:0; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 9px; border:1px solid var(--hairline); border-radius:8px; background:rgba(0,0,0,0.12); }
+  .market-trust-gate span { color:var(--text-dim); font-size:0.64rem; }
+  .market-trust-gate strong { font-size:0.65rem; white-space:nowrap; }
+  .market-trust-gate.allowed { border-color:rgba(76,175,132,0.2); background:rgba(76,175,132,0.045); }
+  .market-trust-gate.allowed strong { color:var(--down); }
+  .market-trust-gate.blocked { border-color:rgba(224,85,106,0.24); background:rgba(224,85,106,0.045); }
+  .market-trust-gate.blocked strong { color:#ed95a3; }
+  .market-trust-gate.waiting strong { color:var(--text-dim); }
+  .market-trust-observation { display:grid; gap:6px; }
+  .market-trust-observation-row { min-width:0; display:grid; grid-template-columns:38px minmax(0,1fr) auto; gap:9px; align-items:center; padding:8px 9px; border:1px solid var(--hairline); border-radius:8px; background:rgba(255,255,255,0.018); }
+  .market-trust-observation-kind { color:var(--gold); font-size:0.64rem; font-weight:850; }
+  .market-trust-observation-row > div { min-width:0; display:grid; gap:2px; }
+  .market-trust-observation-row strong { min-width:0; color:var(--text); font-size:0.7rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .market-trust-observation-row small { color:var(--text-dim); font-size:0.61rem; line-height:1.4; overflow-wrap:anywhere; }
+  .market-trust-cache { min-width:38px; padding:2px 6px; border:1px solid var(--hairline); border-radius:999px; font-size:0.59rem; font-weight:800; text-align:center; }
+  .market-trust-cache.live { color:var(--down); border-color:rgba(76,175,132,0.23); background:rgba(76,175,132,0.06); }
+  .market-trust-cache.cached { color:var(--warn); border-color:rgba(224,160,64,0.25); background:rgba(224,160,64,0.07); }
+  .market-trust-received { padding:0 2px; color:var(--text-dim); font-size:0.61rem; text-align:right; }
+  .market-trust-blockers { min-width:0; }
+  .market-trust-blockers:empty { display:none; }
+  .market-trust-blockers-clear { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 9px; border-left:3px solid rgba(76,175,132,0.7); border-radius:0 8px 8px 0; background:rgba(76,175,132,0.045); }
+  .market-trust-blockers-clear strong { color:#8dd8b5; font-size:0.65rem; }
+  .market-trust-blockers-clear span { color:var(--text-dim); font-size:0.61rem; text-align:right; }
+  .market-trust-blockers-title { margin-bottom:5px; color:#efa0ad; font-size:0.64rem; font-weight:850; }
+  .market-trust-blocker { padding:6px 8px; border-left:3px solid rgba(224,85,106,0.72); background:rgba(224,85,106,0.05); color:#dba5ae; font-size:0.64rem; line-height:1.45; }
+  .market-trust-blocker + .market-trust-blocker { margin-top:4px; }
+  .market-trust-section-head { display:flex; align-items:end; justify-content:space-between; gap:10px; padding-top:2px; }
+  .market-trust-section-head strong { color:var(--text); font-size:0.68rem; }
+  .market-trust-section-head span { color:var(--text-dim); font-size:0.59rem; text-align:right; }
+  .market-trust-sources, .market-trust-events { display:grid; gap:5px; max-height:190px; overflow:auto; }
+  .market-trust-source, .market-trust-event { min-width:0; display:grid; grid-template-columns:6px minmax(0,1fr) auto; align-items:center; gap:8px; padding:7px 8px; border:1px solid var(--hairline); border-radius:8px; background:rgba(0,0,0,0.1); }
+  .market-trust-source-mark, .market-trust-event-mark { align-self:stretch; width:5px; min-height:24px; border-radius:99px; background:#66667a; }
+  .market-trust-source.active .market-trust-source-mark, .market-trust-event.normal .market-trust-event-mark { background:var(--down); }
+  .market-trust-source.fail .market-trust-source-mark, .market-trust-event.anomaly .market-trust-event-mark, .market-trust-event.invalid .market-trust-event-mark, .market-trust-event.unavailable .market-trust-event-mark { background:var(--danger); }
+  .market-trust-source.cached .market-trust-source-mark, .market-trust-event.stale .market-trust-event-mark, .market-trust-event.degraded .market-trust-event-mark { background:var(--warn); }
+  .market-trust-source > div, .market-trust-event > div { min-width:0; display:grid; gap:2px; }
+  .market-trust-source strong, .market-trust-event strong { min-width:0; color:var(--text); font-size:0.67rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .market-trust-source small, .market-trust-event small, .market-trust-event time { min-width:0; color:var(--text-dim); font-size:0.59rem; line-height:1.4; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .market-trust-source > span:last-child, .market-trust-event-count { color:var(--text-dim); font-size:0.59rem; font-weight:800; white-space:nowrap; }
+  .market-trust-source.active > span:last-child { color:var(--down); }
+  .market-trust-source.fail > span:last-child { color:#ed95a3; }
+  .market-trust-event-count { padding:2px 5px; border:1px solid var(--hairline); border-radius:999px; }
+  .market-trust-empty { padding:9px 10px; border:1px dashed rgba(255,255,255,0.09); border-radius:8px; color:var(--text-dim); font-size:0.65rem; line-height:1.45; text-align:center; }
   .diagnostics-copy-fallback { min-height:130px; max-height:220px; margin-top:8px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:0.72rem; line-height:1.5; white-space:pre; }
   .price-maintenance-card { width:100%; max-width:min(560px, 100%); }
   .price-maintenance-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
@@ -1569,6 +1633,8 @@
     .today-overview-activity-section { overflow:visible; }
     .today-overview-attention-list, .today-overview-activity-list { flex:none; overflow:visible; }
     .today-overview-side { display:block; }
+    .market-trust-setting-row { grid-template-columns:1fr; }
+    .market-trust-setting-row > :not(:first-child) { justify-self:stretch; }
   }
 
   @media (max-width:720px) {
@@ -1658,6 +1724,11 @@
   }
 
   @media (max-width:500px) {
+    .market-trust-gates { grid-template-columns:1fr; }
+    .market-trust-head { align-items:stretch; flex-direction:column; }
+    .market-trust-head .btn-form { width:100%; }
+    .market-trust-blockers-clear, .market-trust-section-head { align-items:flex-start; flex-direction:column; }
+    .market-trust-blockers-clear span, .market-trust-section-head span { text-align:left; }
     body { padding:8px 6px; }
     .container { height:calc(100vh - 16px); }
     .price-value { font-size:1.55rem; }

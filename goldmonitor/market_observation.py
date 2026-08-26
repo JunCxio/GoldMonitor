@@ -40,6 +40,46 @@ def market_observation_snapshot(value):
     return snapshot
 
 
+def _quality_event_fingerprint(value):
+    snapshot = market_observation_snapshot(value)
+    return (
+        snapshot.get("quality_level"),
+        snapshot.get("source"),
+        snapshot.get("rate_source"),
+        bool(snapshot.get("is_cached")),
+        bool(snapshot.get("usable_for_history")),
+        bool(snapshot.get("usable_for_alert")),
+        bool(snapshot.get("usable_for_automation")),
+        tuple(snapshot.get("blocked_reasons") or []),
+    )
+
+
+def record_market_quality_event(history, observation, *, observed_at="", limit=20):
+    items = [dict(item) for item in history if isinstance(item, dict)] if isinstance(history, list) else []
+    snapshot = market_observation_snapshot(observation)
+    if not snapshot:
+        return items[-max(1, int(limit or 20)):]
+    event_time = str(
+        observed_at
+        or snapshot.get("received_at")
+        or datetime.now().astimezone().isoformat(timespec="seconds")
+    )
+    if items and _quality_event_fingerprint(items[-1]) == _quality_event_fingerprint(snapshot):
+        current = dict(items[-1])
+        current.update(snapshot)
+        current["last_seen_at"] = event_time
+        current["occurrences"] = max(1, int(current.get("occurrences") or 1)) + 1
+        items[-1] = current
+    else:
+        items.append({
+            **snapshot,
+            "first_seen_at": event_time,
+            "last_seen_at": event_time,
+            "occurrences": 1,
+        })
+    return items[-max(1, int(limit or 20)):]
+
+
 def unavailable_market_observation(reason="尚未获得可用于业务判断的实时行情"):
     return {
         "source": "",

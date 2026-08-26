@@ -474,6 +474,8 @@ for required in (
     "expired_count",
     "non_retryable_count",
     "function renderSourceHealth",
+    "function renderMarketTrust",
+    "function applyMarketObservationState",
     "function renderRecentOpsRecords",
     "function previewDataArchive",
     "function renderConfigImportPreview",
@@ -1197,6 +1199,10 @@ for required in (
     'id="marketQualityDetails"',
     'id="sourceManager"',
     'id="sourceManagerStatus"',
+    'id="marketTrustCard"',
+    'id="marketTrustGates"',
+    'id="marketTrustObservation"',
+    'id="marketTrustEvents"',
 ):
     if required not in template:
         raise SystemExit(f"template missing market source management anchor: {required}")
@@ -1206,6 +1212,10 @@ for required in (
     ".source-manager",
     ".source-manager-row",
     ".source-manager-current",
+    ".market-trust-card",
+    ".market-trust-rail",
+    ".market-trust-gates",
+    ".market-trust-events",
 ):
     if required not in css:
         raise SystemExit(f"static/app.css missing market source management selector: {required}")

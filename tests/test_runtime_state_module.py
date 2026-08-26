@@ -26,8 +26,10 @@ def test_runtime_state_factory_initializes_independent_mutable_state():
     }
     first.price_history.append({"usd": 2300})
     first.alert_rules.append({"id": "rule-1"})
+    first.market_quality_history.append({"quality_level": "normal"})
     assert second.price_history == []
     assert second.alert_rules == []
+    assert second.market_quality_history == []
     assert first.lock is not second.lock
 
 

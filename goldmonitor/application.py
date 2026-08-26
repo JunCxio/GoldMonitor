@@ -91,7 +91,7 @@ app.config["MAX_CONTENT_LENGTH"] = 256 * 1024 * 1024
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.0.21"
+APP_VERSION = "1.0.22"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 OFFICIAL_UPDATE_HOST = "github.com"
@@ -2640,9 +2640,15 @@ def record_source_health(name, category, ok, error="", started_at=None, cached=F
 def get_source_health_state():
     with runtime.lock:
         health_snapshot = {name: dict(item) for name, item in runtime.source_health.items()}
+        market_observation = dict(runtime.market_observation or {})
+        market_quality_history = [
+            dict(item)
+            for item in runtime.market_quality_history
+            if isinstance(item, dict)
+        ]
     comparison = get_source_comparison_state()
     adapters = get_market_adapter_catalog(health_snapshot=health_snapshot)
-    return market_runtime_core.build_source_health_state(
+    state = market_runtime_core.build_source_health_state(
         health_snapshot,
         comparison=comparison,
         adapters=adapters,
@@ -2650,6 +2656,9 @@ def get_source_health_state():
         fetch_status=get_fetch_status(),
         window_size=SOURCE_METRICS_WINDOW,
     )
+    state["market_observation"] = market_observation
+    state["market_quality_history"] = market_quality_history
+    return state
 
 
 def record_source_price_sample(name, data, cached=False):

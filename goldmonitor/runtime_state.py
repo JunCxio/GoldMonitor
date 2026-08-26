@@ -44,6 +44,7 @@ class ApplicationRuntimeState:
     market_observation: Dict[str, Any] = field(
         default_factory=unavailable_market_observation
     )
+    market_quality_history: List[Dict[str, Any]] = field(default_factory=list)
     price_history: List[Dict[str, Any]] = field(default_factory=list)
     price_archive: List[Dict[str, Any]] = field(default_factory=list)
     klines_5min: List[Dict[str, Any]] = field(default_factory=list)

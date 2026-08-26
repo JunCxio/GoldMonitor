@@ -325,6 +325,48 @@ def test_market_observation_blocks_cache_and_cross_source_anomaly():
     ]
 
 
+def test_market_quality_history_merges_consecutive_states_and_keeps_transitions():
+    from goldmonitor.market_observation import record_market_quality_event
+
+    normal = {
+        "source": "测试金价",
+        "rate_source": "测试汇率",
+        "received_at": "2026-08-26T12:00:00Z",
+        "quality_level": "normal",
+        "quality_score": 100,
+        "usable_for_history": True,
+        "usable_for_alert": True,
+        "usable_for_automation": True,
+        "blocked_reasons": [],
+    }
+    history = record_market_quality_event([], normal)
+    history = record_market_quality_event(
+        history,
+        {**normal, "received_at": "2026-08-26T12:00:10Z"},
+    )
+    assert len(history) == 1
+    assert history[0]["occurrences"] == 2
+    assert history[0]["first_seen_at"] == "2026-08-26T12:00:00Z"
+    assert history[0]["last_seen_at"] == "2026-08-26T12:00:10Z"
+
+    blocked = {
+        **normal,
+        "received_at": "2026-08-26T12:00:20Z",
+        "is_cached": True,
+        "gold_cached": True,
+        "quality_level": "stale",
+        "quality_score": 60,
+        "usable_for_history": False,
+        "usable_for_alert": False,
+        "usable_for_automation": False,
+        "blocked_reasons": ["金价来自缓存"],
+    }
+    history = record_market_quality_event(history, blocked)
+    assert len(history) == 2
+    assert history[-1]["quality_level"] == "stale"
+    assert history[-1]["occurrences"] == 1
+
+
 if __name__ == "__main__":
     failures = []
     for name, value in sorted(globals().items()):

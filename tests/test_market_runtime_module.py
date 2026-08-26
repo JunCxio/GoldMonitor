@@ -198,10 +198,12 @@ def test_market_runtime_updates_state_and_emits_price_status_and_history():
         "price_history_updated",
     ]
     assert emitted[0][1]["source_comparison"] == {"status": "ok"}
+    assert emitted[0][1]["market_quality_history"][0]["quality_level"] == "normal"
     assert emitted[-1][1]["scope"] == "live"
 
     assert runtime.fetch_once() is True
     assert alerts[1][2] is False
+    assert state["market_quality_history"][0]["occurrences"] == 2
 
     history_before_cache = list(state["price_history"])
     archived_before_cache = list(archived)
@@ -234,6 +236,10 @@ def test_market_runtime_updates_state_and_emits_price_status_and_history():
     assert state["market_observation"]["usable_for_history"] is False
     assert state["market_observation"]["usable_for_alert"] is False
     assert "金价来自缓存" in state["market_observation"]["blocked_reasons"]
+    assert [item["quality_level"] for item in state["market_quality_history"]] == [
+        "normal",
+        "stale",
+    ]
     assert emitted[-3][0] == "price_update"
     assert emitted[-3][1]["market_observation"] == state["market_observation"]
 
@@ -259,6 +265,7 @@ def test_market_runtime_updates_state_and_emits_price_status_and_history():
     assert emitted[-2][0] == "fetch_error"
     assert emitted[-1][0] == "fetch_status"
     assert state["market_observation"]["quality_level"] == "invalid"
+    assert state["market_quality_history"][-1]["quality_level"] == "invalid"
 
 
 def test_market_runtime_state_helpers_roundtrip_explicit_fields():

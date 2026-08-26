@@ -5,6 +5,7 @@ from datetime import datetime
 from goldmonitor import market_data as market_data_core
 from goldmonitor.market_observation import (
     build_market_observation,
+    record_market_quality_event,
     unavailable_market_observation,
 )
 from goldmonitor.time_utils import iso_utc
@@ -25,6 +26,7 @@ RUNTIME_MARKET_STATE_FIELDS = (
     "gold_price_cached",
     "gold_price_error",
     "market_observation",
+    "market_quality_history",
     "price_history",
     "klines_5min",
     "last_fetch_ok",
@@ -140,6 +142,9 @@ def current_fetch_status(runtime, status_builder=build_fetch_status):
             retryable=True,
         )
         status["market_observation"] = dict(runtime.market_observation or {})
+        status["market_quality_history"] = list(
+            runtime.market_quality_history or []
+        )
         return status
     status = status_builder(
         runtime.last_fetch_ok,
@@ -160,6 +165,9 @@ def current_fetch_status(runtime, status_builder=build_fetch_status):
         retryable=True,
     )
     status["market_observation"] = dict(runtime.market_observation or {})
+    status["market_quality_history"] = list(
+        runtime.market_quality_history or []
+    )
     return status
 
 
@@ -173,6 +181,7 @@ def market_state_snapshot(runtime):
         "gold_price_cached": runtime.gold_price_cached,
         "gold_price_error": runtime.gold_price_error,
         "market_observation": dict(runtime.market_observation or {}),
+        "market_quality_history": list(runtime.market_quality_history or []),
         "usdcny_rate_source": runtime.usdcny_rate_source,
         "usdcny_rate_time": runtime.usdcny_rate_time,
         "usdcny_rate_cached": runtime.usdcny_rate_cached,
@@ -568,6 +577,11 @@ class MarketRuntime:
                     )
                     observation["received_at"] = received_at
                     state["market_observation"] = observation
+                    state["market_quality_history"] = record_market_quality_event(
+                        state.get("market_quality_history"),
+                        observation,
+                        observed_at=received_at,
+                    )
                     self.state_committer(state)
                     status = self.build_fetch_status(
                         False,
@@ -581,6 +595,10 @@ class MarketRuntime:
                         gold_error=gold_error or "",
                         forex_error=forex_error or "",
                         retryable=True,
+                    )
+                    status["market_observation"] = dict(observation)
+                    status["market_quality_history"] = list(
+                        state["market_quality_history"]
                     )
                     self.emit("fetch_error", status)
                     self.emit("fetch_status", status)
@@ -616,6 +634,11 @@ class MarketRuntime:
                     comparison=source_comparison,
                 )
                 state["market_observation"] = observation
+                state["market_quality_history"] = record_market_quality_event(
+                    state.get("market_quality_history"),
+                    observation,
+                    observed_at=received_at,
+                )
                 invalid_gold_reasons = {
                     "金价数据缺失或不是有效正数",
                     "金价开高低收关系异常",
@@ -647,6 +670,9 @@ class MarketRuntime:
                         retryable=True,
                     )
                     status["market_observation"] = dict(observation)
+                    status["market_quality_history"] = list(
+                        state["market_quality_history"]
+                    )
                     self.emit("fetch_error", status)
                     self.emit("fetch_status", status)
                     return False
@@ -803,6 +829,9 @@ class MarketRuntime:
                     "daily": daily_stats,
                     "source_comparison": source_comparison,
                     "market_observation": dict(observation),
+                    "market_quality_history": list(
+                        state["market_quality_history"]
+                    ),
                 })
                 desktop_title = self.format_price_title(state["price_rmb"], state["price_usd"])
                 self.update_desktop_price_title(desktop_title)
@@ -844,6 +873,9 @@ class MarketRuntime:
                     retryable=True,
                 )
                 fetch_status["market_observation"] = dict(observation)
+                fetch_status["market_quality_history"] = list(
+                    state["market_quality_history"]
+                )
                 self.emit("fetch_status", fetch_status)
                 history_state = self.build_price_history_state(limit=240)
                 history_state["scope"] = "live"

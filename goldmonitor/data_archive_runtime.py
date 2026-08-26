@@ -66,6 +66,7 @@ class DataArchiveRuntime:
         runtime.gold_price_cached = False
         runtime.gold_price_error = ""
         runtime.market_observation = unavailable_market_observation()
+        runtime.market_quality_history = []
         self.initialize_market_cache()
 
         runtime.today_date = None
