@@ -4,6 +4,7 @@ import os
 from datetime import datetime, timedelta
 
 from goldmonitor.data_contracts import unwrap_item_payload, wrap_item_payload
+from goldmonitor.time_utils import to_local_naive
 
 
 RISK_SECTION_LABELS = (
@@ -21,13 +22,7 @@ class _NeverRaised(Exception):
 
 
 def parse_iso_datetime(value):
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        if parsed.tzinfo:
-            parsed = parsed.replace(tzinfo=None)
-        return parsed
-    except ValueError:
-        return None
+    return to_local_naive(value)
 
 
 def format_number(value, digits=2):
@@ -235,6 +230,7 @@ def build_context(state, settings, *, trigger=None, depth=None, valid_depths, tr
             "rate_cached": state["usdcny_rate_cached"], "rate_error": state["usdcny_rate_error"],
             "last_fetch_ok": state["last_fetch_ok"], "last_fetch_error": state["last_fetch_error"],
             "last_fetch_time": state["last_fetch_time"],
+            "observation": dict(state.get("market_observation") or {}),
         },
         "daily": {
             "date": state["today_date"],
@@ -293,6 +289,9 @@ def build_context_from_runtime(
             "gold_price_time": runtime.gold_price_time,
             "gold_price_cached": runtime.gold_price_cached,
             "gold_price_error": runtime.gold_price_error,
+            "market_observation": dict(
+                getattr(runtime, "market_observation", {}) or {}
+            ),
             "usdcny_rate_source": runtime.usdcny_rate_source,
             "usdcny_rate_time": runtime.usdcny_rate_time,
             "usdcny_rate_cached": runtime.usdcny_rate_cached,

@@ -5,6 +5,8 @@ import secrets
 from bisect import bisect_left
 from datetime import datetime, timedelta
 
+from goldmonitor.time_utils import to_local_naive
+
 
 ALERT_RULE_SCHEMA_VERSION = 1
 ALERT_RULE_KINDS = {"price_threshold", "volatility", "watch_target", "portfolio"}
@@ -115,10 +117,7 @@ def _parse_iso(value):
     text = str(value or "").strip()
     if not text:
         return None
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
-    except ValueError:
-        return None
+    return to_local_naive(text)
 
 
 def _normalize_iso(value, field_label):

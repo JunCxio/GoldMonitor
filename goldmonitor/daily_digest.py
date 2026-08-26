@@ -2,6 +2,8 @@ import json
 import os
 from datetime import datetime
 
+from goldmonitor.time_utils import to_local_naive
+
 
 DAILY_DIGEST_SCHEMA_VERSION = 1
 
@@ -69,10 +71,8 @@ def _investment_time(value):
     text = str(value or "").strip()
     if not text:
         return "--"
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M")
-    except (TypeError, ValueError):
-        return "--"
+    parsed = to_local_naive(text)
+    return parsed.strftime("%Y-%m-%d %H:%M") if parsed else "--"
 
 
 def _investment_plan_summary(portfolio_state):
@@ -87,7 +87,13 @@ def _investment_plan_summary(portfolio_state):
     attention_plans = [
         item for item in plans
         if item.get("last_result") in {"error", "orphaned"}
-        or (item.get("enabled") is True and item.get("last_result") == "waiting_price")
+        or (
+            item.get("enabled") is True
+            and item.get("last_result") in {
+                "waiting_price",
+                "waiting_market_quality",
+            }
+        )
     ]
     summary = {
         "total": int(supplied["total"] if "total" in supplied else len(plans)),

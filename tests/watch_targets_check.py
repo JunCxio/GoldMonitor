@@ -1,5 +1,6 @@
 import json
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 import sys
@@ -15,6 +16,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
     original_alert_rules = [dict(rule) for rule in app.alert_rules]
     original_price_usd = app.price_usd
     original_price_rmb = app.price_rmb
+    original_market_observation = dict(app.market_observation)
     original_alert_log = list(app.alert_log)
     original_emit_alert = app.emit_alert
     original_run_risk_analysis = app.run_risk_analysis
@@ -160,6 +162,14 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         app.run_risk_analysis = fail_risk_analysis
         app.price_usd = 2401.0
         app.price_rmb = 688.0
+        app.market_observation = {
+            "source": "测试金价",
+            "received_at": datetime.now().isoformat(timespec="seconds"),
+            "quality_level": "normal",
+            "quality_score": 100,
+            "usable_for_alert": True,
+            "blocked_reasons": [],
+        }
         app.alert_rules = []
         app._sync_legacy_alert_rule_views()
         app.upsert_watch_target({
@@ -204,6 +214,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         app.watch_targets = original_targets
         app.price_usd = original_price_usd
         app.price_rmb = original_price_rmb
+        app.market_observation = original_market_observation
         app.alert_log = original_alert_log
         app.emit_alert = original_emit_alert
         app.run_risk_analysis = original_run_risk_analysis

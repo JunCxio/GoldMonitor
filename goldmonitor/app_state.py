@@ -24,6 +24,7 @@ def build_price_api_state(market):
         "gold_time": market.get("gold_price_time"),
         "gold_cached": bool(market.get("gold_price_cached")),
         "gold_error": market.get("gold_price_error") or "",
+        "market_observation": dict(market.get("market_observation") or {}),
         "rate_source": market.get("usdcny_rate_source"),
         "rate_time": market.get("usdcny_rate_time"),
         "rate_cached": bool(market.get("usdcny_rate_cached")),

@@ -5,6 +5,7 @@ from datetime import datetime
 from email.utils import parsedate_to_datetime
 
 from goldmonitor.data_contracts import unwrap_item_payload, wrap_item_payload
+from goldmonitor.time_utils import UTC, iso_utc, parse_datetime
 
 
 NEWS_KEYWORDS = (
@@ -40,7 +41,10 @@ def parse_gdelt_time(value, now_factory=None):
     raw = str(value or "").strip()
     if len(raw) >= 15 and raw[8] == "T":
         try:
-            return datetime.strptime(raw[:15], "%Y%m%dT%H%M%S").isoformat()
+            parsed = datetime.strptime(raw[:15], "%Y%m%dT%H%M%S").replace(
+                tzinfo=UTC
+            )
+            return iso_utc(parsed)
         except ValueError:
             pass
     now_factory = now_factory or datetime.now
@@ -85,13 +89,7 @@ def normalize_news_items(items, limit=20, now_factory=None):
         })
 
     def sort_key(item):
-        try:
-            parsed = datetime.fromisoformat(item["time"].replace("Z", "+00:00"))
-            if parsed.tzinfo:
-                parsed = parsed.replace(tzinfo=None)
-            return parsed
-        except ValueError:
-            return datetime.min
+        return parse_datetime(item["time"]) or datetime.min.replace(tzinfo=UTC)
 
     normalized.sort(key=sort_key, reverse=True)
     return normalized[:limit]

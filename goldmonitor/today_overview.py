@@ -2,6 +2,8 @@ import json
 import os
 from datetime import datetime, time, timedelta
 
+from goldmonitor.time_utils import to_local_naive
+
 
 TODAY_OVERVIEW_SCHEMA_VERSION = 1
 TODAY_OVERVIEW_ATTENTION_LIMIT = 50
@@ -63,19 +65,7 @@ class TodayOverviewStateStore:
 
 
 def parse_iso_datetime(value):
-    if isinstance(value, datetime):
-        parsed = value
-    else:
-        text = str(value or "").strip()
-        if not text:
-            return None
-        try:
-            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        except (TypeError, ValueError):
-            return None
-    if parsed.tzinfo:
-        parsed = parsed.replace(tzinfo=None)
-    return parsed
+    return to_local_naive(value)
 
 
 def _items(value):
@@ -456,18 +446,21 @@ def _investment_attention(portfolio_state, start, end):
         "error": 85,
         "orphaned": 75,
         "waiting_price": 60,
+        "waiting_market_quality": 60,
         "due": 55,
     }
     labels = {
         "error": "执行失败",
         "orphaned": "关联持仓失效",
         "waiting_price": "等待有效行情",
+        "waiting_market_quality": "等待实时行情",
         "due": "计划已到执行时间",
     }
     reason_codes = {
         "error": "investment_error",
         "orphaned": "orphaned",
         "waiting_price": "waiting_price",
+        "waiting_market_quality": "waiting_price",
         "due": "investment_due",
     }
     for plan in plans:
@@ -475,7 +468,10 @@ def _investment_attention(portfolio_state, start, end):
             continue
         status = str(plan.get("status") or "")
         last_result = str(plan.get("last_result") or "")
-        if status == "paused" and last_result == "waiting_price":
+        if status == "paused" and last_result in {
+            "waiting_price",
+            "waiting_market_quality",
+        }:
             continue
         issue = last_result if last_result in priorities else "due" if status == "due" else ""
         if not issue:

@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 from io import StringIO
 
 from .data_contracts import unwrap_item_payload, wrap_item_payload
+from .time_utils import to_local_naive
 
 
 INVESTMENT_PLAN_SCHEMA_VERSION = 1
@@ -38,6 +39,12 @@ INVESTMENT_EXECUTION_CSV_FIELDS = [
     "total_cost",
     "position_id",
     "position_name",
+    "market_source",
+    "market_source_at",
+    "market_received_at",
+    "market_cached",
+    "market_quality_level",
+    "market_quality_score",
     "note",
 ]
 
@@ -1085,6 +1092,11 @@ def build_investment_plan_executions_csv(plan, transactions):
     )
     writer.writeheader()
     for item in reversed(executions):
+        observation = (
+            item.get("market_observation")
+            if isinstance(item.get("market_observation"), dict)
+            else {}
+        )
         writer.writerow({
             "plan_id": item.get("plan_id"),
             "plan_name": item.get("plan_name"),
@@ -1102,6 +1114,12 @@ def build_investment_plan_executions_csv(plan, transactions):
             "total_cost": item.get("total_cost"),
             "position_id": item.get("position_id"),
             "position_name": item.get("position_name"),
+            "market_source": observation.get("source"),
+            "market_source_at": observation.get("source_at"),
+            "market_received_at": observation.get("received_at"),
+            "market_cached": observation.get("is_cached"),
+            "market_quality_level": observation.get("quality_level"),
+            "market_quality_score": observation.get("quality_score"),
             "note": item.get("note"),
         })
     return buffer.getvalue(), len(executions)
@@ -1140,11 +1158,7 @@ def _simulation_history_timestamp(value):
     text = _clean_text(value)
     if not text:
         return None
-    try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
+    return to_local_naive(text)
 
 
 def _simulation_interval_seconds(points):
@@ -1657,7 +1671,12 @@ def investment_plan_state(items, *, now=None, transactions=None, prices=None):
                     summary["due"] += 1
         else:
             status = "paused"
-        if not archived and not target_reached and plan.get("last_result") in {"error", "waiting_price", "orphaned"}:
+        if not archived and not target_reached and plan.get("last_result") in {
+            "error",
+            "waiting_price",
+            "waiting_market_quality",
+            "orphaned",
+        }:
             summary["attention"] += 1
         plan["status"] = status
         plan["completed_count"] = completed_count

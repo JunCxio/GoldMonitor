@@ -30,7 +30,7 @@ function portfolioInvestmentSortOptions() {
 function portfolioInvestmentFilterStatus(plan) {
   if (plan.archived_at) return 'archived';
   if (plan.status === 'completed') return 'completed';
-  if (['error', 'waiting_price', 'orphaned'].includes(plan.last_result)) return 'attention';
+  if (['error', 'waiting_price', 'waiting_market_quality', 'orphaned'].includes(plan.last_result)) return 'attention';
   if (plan.status === 'due') return 'due';
   if (plan.enabled && ['active', 'pending_start'].includes(plan.status)) return 'running';
   return 'paused';

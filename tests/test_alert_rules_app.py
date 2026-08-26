@@ -60,6 +60,14 @@ def test_unified_runtime_evaluation_persists_state_and_emits_rule_metadata(monke
     emitted_events = []
     monkeypatch.setattr(app, "price_rmb", 725.0)
     monkeypatch.setattr(app, "price_usd", 2350.0)
+    monkeypatch.setattr(app, "market_observation", {
+        "source": "测试金价",
+        "received_at": "2026-07-27T14:00:00",
+        "quality_level": "normal",
+        "quality_score": 100,
+        "usable_for_alert": True,
+        "blocked_reasons": [],
+    })
     monkeypatch.setattr(app, "portfolio_positions", [])
     monkeypatch.setattr(app, "portfolio_transactions", [])
     monkeypatch.setattr(app, "portfolio_import_backup", app.empty_portfolio_import_backup())
@@ -83,6 +91,7 @@ def test_unified_runtime_evaluation_persists_state_and_emits_rule_metadata(monke
     assert entry["rule_kind"] == "price_threshold"
     assert entry["delivery_channels"] == []
     assert entry["cooldown_minutes"] == 5
+    assert entry["market_observation"]["source"] == "测试金价"
     assert "alert_rules_updated" in {name for name, _ in emitted_events}
 
     persisted = json.loads(Path(app.ALERT_RULES_PATH).read_text(encoding="utf-8"))

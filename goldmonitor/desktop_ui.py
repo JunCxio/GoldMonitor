@@ -1,6 +1,8 @@
 from datetime import datetime
 import math
 
+from goldmonitor.time_utils import to_local_naive
+
 
 DEFAULT_FLOATING_PRICE_PRESET = "compact"
 
@@ -103,12 +105,7 @@ def format_taskbar_price_text(settings, rmb=None, usd=None, pct=None):
 
 
 def _parse_iso_datetime(value):
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
-    except (TypeError, ValueError):
-        return None
+    return to_local_naive(value)
 
 
 def _format_trend(pct):

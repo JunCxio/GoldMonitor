@@ -8,6 +8,8 @@ import sqlite3
 from contextlib import closing
 from datetime import datetime
 
+from goldmonitor.time_utils import to_local_naive
+
 
 HANDLING_NOTE_LIMIT = 200
 
@@ -45,13 +47,7 @@ class AlertLogStore:
 
     @staticmethod
     def parse_datetime(value):
-        try:
-            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-            if parsed.tzinfo:
-                parsed = parsed.replace(tzinfo=None)
-            return parsed
-        except ValueError:
-            return None
+        return to_local_naive(value)
 
     def normalize_entry(self, entry, default_read=False):
         if not isinstance(entry, dict):
@@ -330,6 +326,7 @@ class AlertLogStore:
             "notification_summary",
             "notifications",
             "related_news",
+            "market_observation",
         ])
         for entry in items:
             related = entry.get("related_news")
@@ -355,5 +352,10 @@ class AlertLogStore:
                 self.format_notification_summary(entry),
                 self.format_notifications(entry),
                 news_text,
+                json.dumps(
+                    entry.get("market_observation") or {},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
             ])
         return output.getvalue(), len(items)

@@ -7,19 +7,15 @@ import statistics
 import time
 from datetime import datetime
 
+from goldmonitor.time_utils import to_local_naive
+
 
 SOURCE_METRICS_SCHEMA_VERSION = 1
 DEFAULT_SOURCE_METRICS_WINDOW = 50
 
 
 def parse_iso_datetime(value):
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        if parsed.tzinfo:
-            parsed = parsed.replace(tzinfo=None)
-        return parsed
-    except ValueError:
-        return None
+    return to_local_naive(value)
 
 
 def _format_number(value):
@@ -272,7 +268,10 @@ class MarketCacheStore:
         parsed_time = parse_iso_datetime(cached.get("timestamp"))
         if not parsed_time:
             return False
-        age = self.now_factory() - parsed_time
+        now = to_local_naive(self.now_factory())
+        if now is None:
+            return False
+        age = now - parsed_time
         max_age_seconds = self.max_age_seconds if max_age_seconds is None else int(max_age_seconds)
         return 0 <= age.total_seconds() <= max_age_seconds
 

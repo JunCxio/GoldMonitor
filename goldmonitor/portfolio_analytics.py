@@ -1,6 +1,8 @@
 import math
 from datetime import datetime, timedelta
 
+from goldmonitor.time_utils import to_local_naive
+
 
 PORTFOLIO_ANALYTICS_MODES = ("rmb", "usd")
 
@@ -17,15 +19,12 @@ def _parse_datetime(value):
     text = str(value or "").strip()
     if not text:
         return None
-    try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
+    parsed = to_local_naive(text)
+    if parsed is None:
         try:
             parsed = datetime.strptime(text[:10], "%Y-%m-%d")
         except ValueError:
             return None
-    if parsed.tzinfo:
-        parsed = parsed.replace(tzinfo=None)
     return parsed
 
 

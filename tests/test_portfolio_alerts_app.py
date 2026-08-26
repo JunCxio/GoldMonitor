@@ -32,6 +32,14 @@ def test_app_portfolio_alerts_attach_to_state_and_trigger_once(monkeypatch, tmp_
     }])
     monkeypatch.setattr(app, "price_rmb", 742.0)
     monkeypatch.setattr(app, "price_usd", 2350.0)
+    monkeypatch.setattr(app, "market_observation", {
+        "source": "测试金价",
+        "received_at": "2026-07-27T12:00:00",
+        "quality_level": "normal",
+        "quality_score": 100,
+        "usable_for_alert": True,
+        "blocked_reasons": [],
+    })
     monkeypatch.setattr(app, "emit_alert", lambda entry, title: emitted_alerts.append((dict(entry), title)))
 
     state = app.upsert_portfolio_alert({

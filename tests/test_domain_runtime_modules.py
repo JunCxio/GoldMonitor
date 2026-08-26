@@ -123,6 +123,14 @@ def test_alert_runtime_force_emits_view_when_first_market_data_becomes_available
     assert initial_state["items"][0]["state"]["status"] == "waiting_data"
 
     state.price_rmb = 700.0
+    state.market_observation = {
+        "source": "测试金价",
+        "received_at": "2026-07-30T12:00:10",
+        "quality_level": "normal",
+        "quality_score": 100,
+        "usable_for_alert": True,
+        "blocked_reasons": [],
+    }
     assert runtime.check_rules(
         "12:00:10",
         now=datetime(2026, 7, 30, 12, 0, 10),
@@ -135,6 +143,66 @@ def test_alert_runtime_force_emits_view_when_first_market_data_becomes_available
     assert rules_state["items"][0]["state"]["status"] == "watching"
     assert rules_state["items"][0]["inspection"]["current_value"] == 700.0
     assert {event for event, _payload in emitted} == {"alert_rules_updated"}
+
+
+def test_alert_runtime_does_not_evaluate_cached_market_observation():
+    from goldmonitor import alert_rules as alert_rules_core
+    from goldmonitor.alert_runtime import AlertRuntime
+
+    state = _state()
+    rules, _rule = alert_rules_core.upsert_alert_rule(
+        [],
+        {
+            "kind": "price_threshold",
+            "name": "缓存行情不得触发",
+            "scope": {"mode": "rmb"},
+            "condition": {"operator": "gte", "value": 600},
+            "alert_level": "warning",
+        },
+        now_factory=lambda: datetime(2026, 7, 30, 12, 0),
+        id_factory=lambda: "rule-cached",
+    )
+    state.alert_rules = rules
+    state.price_rmb = 700.0
+    state.market_observation = {
+        "source": "缓存金价",
+        "quality_level": "stale",
+        "quality_score": 60,
+        "usable_for_alert": False,
+        "blocked_reasons": ["金价来自缓存"],
+    }
+    alerts = []
+    runtime = AlertRuntime(
+        state,
+        rule_store_factory=lambda: None,
+        load_thresholds=dict,
+        load_watch_targets=list,
+        load_portfolio_alerts=list,
+        build_portfolio_state=lambda: {"items": []},
+        normalize_volatility=lambda value: value,
+        save_watch_targets=lambda items: items,
+        emit_event=lambda *args: None,
+        emit_alert=lambda entry, title: alerts.append((entry, title)),
+        get_settings=dict,
+        alert_log_reader=lambda **kwargs: [],
+        history_reader=lambda *args, **kwargs: [],
+        history_timestamp=lambda value: None,
+        alert_log_export_limit=1000,
+        simulation_point_limit=30000,
+        threshold_modes=("usd", "rmb"),
+        threshold_types=(
+            "upper_warning",
+            "upper_critical",
+            "lower_warning",
+            "lower_critical",
+        ),
+        watch_target_note_limit=200,
+        now_factory=lambda: datetime(2026, 7, 30, 12, 0),
+    )
+
+    assert runtime.check_rules("12:00:00") == []
+    assert alerts == []
+    assert state.alert_rules[0]["state"]["triggered"] is False
 
 
 def test_portfolio_runtime_builds_state_and_attaches_alert_status():

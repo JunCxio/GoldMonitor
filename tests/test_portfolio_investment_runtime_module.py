@@ -34,7 +34,14 @@ def _plan(**changes):
     return plan
 
 
-def _runtime(plan=None, *, price_rmb=500.0, price_usd=2500.0, transactions=None):
+def _runtime(
+    plan=None,
+    *,
+    price_rmb=500.0,
+    price_usd=2500.0,
+    transactions=None,
+    market_observation=None,
+):
     from goldmonitor.portfolio import build_portfolio_state_from_transactions
     from goldmonitor.portfolio_investment_runtime import PortfolioInvestmentRuntime
 
@@ -59,6 +66,26 @@ def _runtime(plan=None, *, price_rmb=500.0, price_usd=2500.0, transactions=None)
         portfolio_transactions=list(base_transactions),
         price_rmb=price_rmb,
         price_usd=price_usd,
+        gold_price_cached=False,
+        usdcny_rate_cached=False,
+        market_observation=market_observation or {
+            "source": "测试金价",
+            "rate_source": "测试汇率",
+            "source_at": "2026-08-12T02:00:00Z",
+            "rate_source_at": "2026-08-12T02:00:00Z",
+            "received_at": "2026-08-12T02:00:00Z",
+            "is_cached": False,
+            "gold_cached": False,
+            "rate_cached": False,
+            "age_seconds": 0,
+            "rate_age_seconds": 0,
+            "quality_score": 100,
+            "quality_level": "normal",
+            "usable_for_history": True,
+            "usable_for_alert": True,
+            "usable_for_automation": True,
+            "blocked_reasons": [],
+        },
     )
     events = []
 
@@ -96,6 +123,8 @@ def test_runtime_catches_up_latest_run_and_generates_sourced_transaction():
     assert transaction["source_id"] == "plan-1"
     assert transaction["execution_kind"] == "catch_up"
     assert transaction["planned_amount"] == 1000.0
+    assert transaction["market_observation"]["source"] == "测试金价"
+    assert transaction["market_observation"]["quality_score"] == 100
     assert state.portfolio_investment_plans[0]["next_run_at"] == "2026-09-15T09:00:00"
     assert events[-1][0] == "portfolio_updated"
 
@@ -289,6 +318,45 @@ def test_runtime_waits_for_price_without_advancing_schedule():
     result = runtime.execute("plan-1", now=datetime(2026, 8, 20, 10, 0))
 
     assert result["status"] == "waiting_price"
+    assert state.portfolio_investment_plans[0]["next_run_at"] == "2026-07-15T09:00:00"
+    assert len(state.portfolio_transactions) == 1
+
+
+def test_runtime_rejects_cached_market_for_scheduled_and_manual_execution():
+    cached_observation = {
+        "source": "缓存金价（测试金价）",
+        "rate_source": "测试汇率",
+        "source_at": "2026-08-11T02:00:00Z",
+        "rate_source_at": "2026-08-12T02:00:00Z",
+        "received_at": "2026-08-12T02:00:00Z",
+        "is_cached": True,
+        "gold_cached": True,
+        "rate_cached": False,
+        "age_seconds": 86400,
+        "rate_age_seconds": 0,
+        "quality_score": 60,
+        "quality_level": "stale",
+        "usable_for_history": False,
+        "usable_for_alert": False,
+        "usable_for_automation": False,
+        "blocked_reasons": ["金价来自缓存"],
+    }
+    runtime, state, _events = _runtime(
+        _plan(),
+        market_observation=cached_observation,
+    )
+
+    scheduled = runtime.execute("plan-1", now=datetime(2026, 8, 20, 10, 0))
+    manual = runtime.execute(
+        "plan-1",
+        force=True,
+        now=datetime(2026, 8, 20, 10, 1),
+    )
+
+    assert scheduled["status"] == "waiting_market_quality"
+    assert manual["status"] == "waiting_market_quality"
+    assert "金价来自缓存" in scheduled["message"]
+    assert state.portfolio_investment_plans[0]["last_result"] == "waiting_market_quality"
     assert state.portfolio_investment_plans[0]["next_run_at"] == "2026-07-15T09:00:00"
     assert len(state.portfolio_transactions) == 1
 

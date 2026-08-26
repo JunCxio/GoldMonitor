@@ -467,6 +467,9 @@ class DiagnosticsRuntime:
             now_factory=self.now_factory,
         )
         payload = json.loads(report)
+        payload["market_observation"] = dict(
+            getattr(self.runtime, "market_observation", {}) or {}
+        )
         payload["export_status"] = self.get_export_status()
         payload["taskbar_price"] = dict(
             getattr(self.runtime, "taskbar_layout_state", {}) or {}

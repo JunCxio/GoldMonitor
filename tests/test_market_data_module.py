@@ -293,6 +293,38 @@ def test_market_quality_applies_rolling_reliability_and_failure_deductions():
     }
 
 
+def test_market_observation_blocks_cache_and_cross_source_anomaly():
+    from goldmonitor.market_observation import build_market_observation
+
+    observation = build_market_observation(
+        {
+            "open": 2300,
+            "high": 2320,
+            "low": 2290,
+            "close": 2310,
+            "timestamp": "2026-08-26T11:59:30Z",
+            "cached": True,
+        },
+        source="缓存金价（测试源）",
+        received_at="2026-08-26T12:00:00Z",
+        rate_value=7.2,
+        rate_source="测试汇率",
+        rate_source_at="2026-08-26T12:00:00Z",
+        gold_cached=True,
+        comparison={"status": "anomaly", "message": "跨源价差超过阈值"},
+    )
+
+    assert observation["quality_level"] == "anomaly"
+    assert observation["quality_score"] == 10
+    assert observation["usable_for_history"] is False
+    assert observation["usable_for_alert"] is False
+    assert observation["usable_for_automation"] is False
+    assert observation["blocked_reasons"] == [
+        "金价来自缓存",
+        "跨源价差超过阈值",
+    ]
+
+
 if __name__ == "__main__":
     failures = []
     for name, value in sorted(globals().items()):

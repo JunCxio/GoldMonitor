@@ -91,7 +91,7 @@ app.config["MAX_CONTENT_LENGTH"] = 256 * 1024 * 1024
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.0.20"
+APP_VERSION = "1.0.21"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 OFFICIAL_UPDATE_HOST = "github.com"
@@ -1117,6 +1117,9 @@ def _get_portfolio_investment_runtime():
                 save_transactions=lambda items=None: save_portfolio_transactions(items),
                 build_portfolio_state=lambda: build_portfolio_state(),
                 emit_event=lambda event, payload: socketio.emit(event, payload),
+                market_observation_getter=lambda: dict(
+                    runtime.market_observation or {}
+                ),
                 now_factory=datetime.now,
             )
         )

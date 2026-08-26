@@ -24,6 +24,10 @@ def test_application_serves_all_rendered_static_assets():
     )
     assert "/static/app.css" in asset_paths
     assert any(path.startswith("/static/app.js?") for path in asset_paths)
+    assert any(path.startswith("/static/vendor/chart.umd.min.js?") for path in asset_paths)
+    assert any(path.startswith("/static/vendor/socket.io.min.js?") for path in asset_paths)
+    assert "cdn.jsdelivr.net" not in index_response.get_data(as_text=True)
+    assert "cdn.socket.io" not in index_response.get_data(as_text=True)
 
     failures = {}
     for path in sorted(asset_paths):

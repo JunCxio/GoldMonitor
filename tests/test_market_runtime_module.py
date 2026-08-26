@@ -203,6 +203,63 @@ def test_market_runtime_updates_state_and_emits_price_status_and_history():
     assert runtime.fetch_once() is True
     assert alerts[1][2] is False
 
+    history_before_cache = list(state["price_history"])
+    archived_before_cache = list(archived)
+    alert_count_before_cache = len(alerts)
+    cached_gold = sample_gold(2280.0)
+    cached_gold.update({
+        "cached": True,
+        "source": "测试缓存",
+        "timestamp": "2026-07-27T12:00:00+08:00",
+    })
+    runtime.fetch_market_data_result = lambda: (
+        cached_gold,
+        {
+            "value": 7.25,
+            "source": "测试汇率",
+            "timestamp": "2026-07-28T12:00:00+08:00",
+            "cached": False,
+        },
+        "缓存金价（测试缓存）",
+        "实时金价源不可用",
+        "",
+    )
+
+    assert runtime.fetch_once() is True
+    assert state["price_usd"] == 2280.0
+    assert state["price_history"] == history_before_cache
+    assert archived == archived_before_cache
+    assert len(alerts) == alert_count_before_cache
+    assert state["market_observation"]["quality_level"] == "stale"
+    assert state["market_observation"]["usable_for_history"] is False
+    assert state["market_observation"]["usable_for_alert"] is False
+    assert "金价来自缓存" in state["market_observation"]["blocked_reasons"]
+    assert emitted[-3][0] == "price_update"
+    assert emitted[-3][1]["market_observation"] == state["market_observation"]
+
+    invalid_gold = sample_gold(2400.0)
+    invalid_gold.update({"high": 2300.0, "low": 2450.0})
+    runtime.fetch_market_data_result = lambda: (
+        invalid_gold,
+        {
+            "value": 7.25,
+            "source": "测试汇率",
+            "timestamp": "2026-07-28T12:00:00+08:00",
+            "cached": False,
+        },
+        "异常测试金价",
+        "",
+        "",
+    )
+
+    assert runtime.fetch_once() is False
+    assert state["price_usd"] == 2280.0
+    assert state["price_history"] == history_before_cache
+    assert len(alerts) == alert_count_before_cache
+    assert emitted[-2][0] == "fetch_error"
+    assert emitted[-1][0] == "fetch_status"
+    assert state["market_observation"]["quality_level"] == "invalid"
+
 
 def test_market_runtime_state_helpers_roundtrip_explicit_fields():
     from goldmonitor.runtime_state import ApplicationRuntimeState
