@@ -57,6 +57,7 @@ DEFAULTS = {
     "market_quality_alert_email_enabled": False,
     "market_quality_alert_webhook_enabled": False,
     "market_quality_recovery_enabled": True,
+    "market_quality_recovery_confirmation_minutes": 2,
     "risk_assistant_enabled": True,
     "risk_assistant_provider": "deepseek",
     "risk_assistant_depth": "standard",
@@ -124,6 +125,7 @@ def test_normalize_settings_clamps_invalid_values_and_removes_legacy_update_keys
         "market_quality_alert_email_enabled": 0,
         "market_quality_alert_webhook_enabled": 0,
         "market_quality_recovery_enabled": 0,
+        "market_quality_recovery_confirmation_minutes": 7,
         "risk_assistant_provider": "unknown",
         "risk_assistant_depth": "slow",
         "deepseek_base_url": " https://api.deepseek.com/ ",
@@ -167,6 +169,7 @@ def test_normalize_settings_clamps_invalid_values_and_removes_legacy_update_keys
     assert normalized["market_quality_alert_email_enabled"] is False
     assert normalized["market_quality_alert_webhook_enabled"] is False
     assert normalized["market_quality_recovery_enabled"] is False
+    assert normalized["market_quality_recovery_confirmation_minutes"] == 2
     assert normalized["risk_assistant_provider"] == "deepseek"
     assert normalized["risk_assistant_depth"] == "standard"
     assert normalized["deepseek_base_url"] == "https://api.deepseek.com"

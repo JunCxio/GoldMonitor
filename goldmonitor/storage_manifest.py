@@ -41,7 +41,7 @@ STORAGE_DEFINITIONS = (
         "label": "行情质量通知状态",
         "kind": "json",
         "schema": "versioned_object",
-        "expected_schema_version": 1,
+        "expected_schema_version": 2,
     },
     {"key": "update_dir", "label": "更新下载目录", "kind": "directory", "schema": "directory"},
     {"key": "exports", "label": "导出目录", "kind": "directory", "schema": "directory"},

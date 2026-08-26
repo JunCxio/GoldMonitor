@@ -191,6 +191,20 @@ def normalize_settings(raw, defaults, options=None):
     data["market_quality_recovery_enabled"] = bool(
         data.get("market_quality_recovery_enabled", True)
     )
+    data["market_quality_recovery_confirmation_minutes"] = bounded_int(
+        data.get("market_quality_recovery_confirmation_minutes", 2),
+        2,
+        1,
+        10,
+    )
+    if data["market_quality_recovery_confirmation_minutes"] not in {
+        1,
+        2,
+        3,
+        5,
+        10,
+    }:
+        data["market_quality_recovery_confirmation_minutes"] = 2
     if data["market_quality_alert_enabled"] and not any((
         data["market_quality_alert_local_enabled"],
         data["market_quality_alert_email_enabled"],

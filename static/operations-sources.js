@@ -63,6 +63,7 @@ function syncMarketQualityAlertFields() {
     'setMarketQualityAlertEmail',
     'setMarketQualityAlertWebhook',
     'setMarketQualityRecoveryEnabled',
+    'setMarketQualityRecoveryConfirmation',
   ].forEach(id => {
     const element = document.getElementById(id);
     if (element) element.disabled = !active;
@@ -76,6 +77,7 @@ function renderMarketQualityAlertStatus(status) {
   if (!control || !label) return;
   const state = status && typeof status === 'object' ? status : {};
   const threshold = Math.max(1, Number(state.threshold_minutes) || Number(appSettings.market_quality_alert_threshold_minutes) || 5);
+  const recoveryConfirmation = Math.max(1, Number(state.recovery_confirmation_minutes) || Number(appSettings.market_quality_recovery_confirmation_minutes) || 2);
   const channelLabels = { local: '本机', email: '邮件', webhook: 'Webhook' };
   const channels = Array.isArray(state.channels) ? state.channels.map(key => channelLabels[key] || key).join('、') : '';
   let text = '正在监控，持续 ' + threshold + ' 分钟后提醒';
@@ -86,11 +88,17 @@ function renderMarketQualityAlertStatus(status) {
   } else if (state.status === 'countdown') {
     text = '异常已持续 ' + formatMarketTrustDuration(state.elapsed_seconds) + '，还需 ' + formatMarketTrustDuration(state.remaining_seconds);
     stateClass = 'countdown';
+  } else if (state.status === 'recovering') {
+    text = '行情已连续正常 ' + formatMarketTrustDuration(state.recovery_elapsed_seconds)
+      + '，还需 ' + formatMarketTrustDuration(state.recovery_remaining_seconds)
+      + '后确认恢复';
+    stateClass = 'recovering';
   } else if (state.status === 'notified') {
     text = '已发送异常通知，等待行情恢复';
     stateClass = 'notified';
   } else if (state.last_recovered_at) {
-    text = '最近一次异常已恢复，累计 ' + formatMarketTrustDuration(state.last_incident_duration_seconds);
+    text = '最近一次异常已恢复，累计 ' + formatMarketTrustDuration(state.last_incident_duration_seconds)
+      + ' · 连续正常 ' + recoveryConfirmation + ' 分钟确认';
     stateClass = 'recovered';
   }
   if (channels && state.status !== 'disabled') text += ' · ' + channels;

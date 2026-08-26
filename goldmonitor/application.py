@@ -94,7 +94,7 @@ app.config["MAX_CONTENT_LENGTH"] = 256 * 1024 * 1024
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.0.25"
+APP_VERSION = "1.0.26"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 OFFICIAL_UPDATE_HOST = "github.com"
@@ -381,6 +381,7 @@ DEFAULT_SETTINGS = {
     "market_quality_alert_email_enabled": False,
     "market_quality_alert_webhook_enabled": False,
     "market_quality_recovery_enabled": True,
+    "market_quality_recovery_confirmation_minutes": 2,
     # 风险分析助手
     "risk_assistant_enabled": True,
     "risk_assistant_provider": "deepseek",
@@ -2766,6 +2767,9 @@ def process_market_quality_alert_state(
         previous.get("accumulated_seconds"),
         previous.get("last_observed_at"),
         previous.get("notified_at"),
+        previous.get("recovery_pending"),
+        previous.get("recovery_accumulated_seconds"),
+        previous.get("recovery_last_observed_at"),
         previous.get("last_recovered_at"),
         previous.get("last_transition"),
     )
@@ -2774,6 +2778,9 @@ def process_market_quality_alert_state(
         updated.get("accumulated_seconds"),
         updated.get("last_observed_at"),
         updated.get("notified_at"),
+        updated.get("recovery_pending"),
+        updated.get("recovery_accumulated_seconds"),
+        updated.get("recovery_last_observed_at"),
         updated.get("last_recovered_at"),
         updated.get("last_transition"),
     )

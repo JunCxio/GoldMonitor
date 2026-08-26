@@ -86,6 +86,7 @@ let appSettings = {
   market_quality_alert_email_enabled: false,
   market_quality_alert_webhook_enabled: false,
   market_quality_recovery_enabled: true,
+  market_quality_recovery_confirmation_minutes: 2,
   export_dir: '',
   export_dir_default: '',
   export_dir_effective: '',

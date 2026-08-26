@@ -55,6 +55,7 @@ function saveSettings() {
     market_quality_alert_email_enabled: document.getElementById('setMarketQualityAlertEmail').checked,
     market_quality_alert_webhook_enabled: document.getElementById('setMarketQualityAlertWebhook').checked,
     market_quality_recovery_enabled: document.getElementById('setMarketQualityRecoveryEnabled').checked,
+    market_quality_recovery_confirmation_minutes: document.getElementById('setMarketQualityRecoveryConfirmation').value,
     risk_assistant_enabled: document.getElementById('setRiskAssistantEnabled').checked,
     risk_assistant_provider: document.getElementById('setRiskAssistantProvider').value,
     risk_assistant_depth: document.getElementById('setRiskAssistantDepth').value,

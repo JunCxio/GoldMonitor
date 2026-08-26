@@ -25,6 +25,7 @@ const SETTINGS_FIELD_IDS = [
   'setDailyDigestEnabled', 'setDailyDigestTime', 'setDailyDigestEmail', 'setDailyDigestWebhook',
   'setNotificationAutoRetry',
   'setMarketQualityAlertEnabled', 'setMarketQualityAlertThreshold',
+  'setMarketQualityRecoveryConfirmation',
   'setMarketQualityAlertLocal', 'setMarketQualityAlertEmail',
   'setMarketQualityAlertWebhook', 'setMarketQualityRecoveryEnabled',
   'setRiskAssistantEnabled', 'setRiskAssistantProvider', 'setRiskAssistantDepth',

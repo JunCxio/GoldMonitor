@@ -393,6 +393,7 @@ function applySettings(data) {
   document.getElementById('setMarketQualityAlertEmail').checked = !!appSettings.market_quality_alert_email_enabled;
   document.getElementById('setMarketQualityAlertWebhook').checked = !!appSettings.market_quality_alert_webhook_enabled;
   document.getElementById('setMarketQualityRecoveryEnabled').checked = appSettings.market_quality_recovery_enabled !== false;
+  document.getElementById('setMarketQualityRecoveryConfirmation').value = String(appSettings.market_quality_recovery_confirmation_minutes || 2);
   syncMarketQualityAlertFields();
   if (typeof renderMarketQualityAlertStatus === 'function') {
     renderMarketQualityAlertStatus(Object.assign(
@@ -407,6 +408,7 @@ function applySettings(data) {
           appSettings.market_quality_alert_webhook_enabled ? 'webhook' : '',
         ].filter(Boolean),
         recovery_enabled: appSettings.market_quality_recovery_enabled !== false,
+        recovery_confirmation_minutes: appSettings.market_quality_recovery_confirmation_minutes || 2,
       },
     ));
   }

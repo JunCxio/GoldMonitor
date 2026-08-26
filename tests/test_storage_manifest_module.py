@@ -58,7 +58,7 @@ def test_storage_manifest_covers_current_persistent_paths():
     assert manifest["market_quality_history"]["schema"] == "item_payload"
     assert manifest["market_quality_history"]["expected_schema_version"] == 1
     assert manifest["market_quality_alert_state"]["schema"] == "versioned_object"
-    assert manifest["market_quality_alert_state"]["expected_schema_version"] == 1
+    assert manifest["market_quality_alert_state"]["expected_schema_version"] == 2
     assert manifest["price_history_db"]["kind"] == "sqlite"
     assert manifest["price_history_repair_backup"]["kind"] == "sqlite"
     assert manifest["alert_log_db"]["kind"] == "sqlite"
