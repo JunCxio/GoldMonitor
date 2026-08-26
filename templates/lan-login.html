@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>{{ app_name }} · 局域网只读面板</title>
+  <link rel="stylesheet" href="/assets/dashboard.css?v={{ app_version }}">
+</head>
+<body class="login-page">
+  <main class="login-shell">
+    <section class="login-card" aria-labelledby="loginTitle">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32"><path d="M16 3 27 8v8c0 7.2-4.6 11.2-11 13-6.4-1.8-11-5.8-11-13V8l11-5Z"/><path d="m11.4 16 3 3 6.5-7"/></svg>
+      </div>
+      <p class="eyebrow">GoldMonitor / 只读访问</p>
+      <h1 id="loginTitle">查看本机行情状态</h1>
+      <p class="login-copy">此入口只提供行情、规则状态和警报摘要，不支持远程修改设置或数据。</p>
+      <form action="/login" method="post">
+        <label for="password">访问口令</label>
+        <input id="password" name="password" type="password" minlength="12" autocomplete="current-password" required autofocus>
+        {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+        <button type="submit">进入只读面板</button>
+      </form>
+      <p class="security-note">连接使用局域网 HTTP，仅应在可信网络中访问。</p>
+    </section>
+  </main>
+</body>
+</html>

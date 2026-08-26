@@ -38,6 +38,7 @@ from goldmonitor import taskbar_controller as taskbar_controller_core
 from goldmonitor import taskbar_runtime as taskbar_runtime_core
 from goldmonitor import today_overview_runtime as today_overview_runtime_core
 from goldmonitor import instance_runtime as instance_runtime_core
+from goldmonitor import lan_dashboard as lan_dashboard_core
 from goldmonitor import http_routes as http_routes_core
 from goldmonitor import market_adapters as market_adapters_core
 from goldmonitor import market_clients as market_clients_core
@@ -94,7 +95,7 @@ app.config["MAX_CONTENT_LENGTH"] = 256 * 1024 * 1024
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.0.26"
+APP_VERSION = "1.0.27"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 OFFICIAL_UPDATE_HOST = "github.com"
@@ -375,6 +376,10 @@ DEFAULT_SETTINGS = {
     "daily_digest_email_enabled": True,
     "daily_digest_webhook_enabled": False,
     "notification_auto_retry_enabled": False,
+    "lan_dashboard_enabled": False,
+    "lan_dashboard_host": lan_dashboard_core.LAN_DASHBOARD_DEFAULT_HOST,
+    "lan_dashboard_port": lan_dashboard_core.LAN_DASHBOARD_DEFAULT_PORT,
+    "lan_dashboard_password": "",
     "market_quality_alert_enabled": True,
     "market_quality_alert_threshold_minutes": 5,
     "market_quality_alert_local_enabled": True,
@@ -405,7 +410,12 @@ DEFAULT_SETTINGS = {
     },
     "export_dir": "",
 }
-SECRET_SETTING_KEYS = ("smtp_password", "deepseek_api_key", "openai_compatible_api_key")
+SECRET_SETTING_KEYS = (
+    "smtp_password",
+    "deepseek_api_key",
+    "openai_compatible_api_key",
+    "lan_dashboard_password",
+)
 CREDENTIAL_SERVICE_NAME = "GoldMonitor"
 CREDENTIAL_TARGET_PREFIX = "GoldMonitor:"
 VALID_SMTP_ENCRYPTIONS = {"ssl", "tls"}
@@ -617,6 +627,9 @@ def _settings_options():
         "default_email_body_template": DEFAULT_EMAIL_BODY_TEMPLATE,
         "risk_assistant_max_tokens": RISK_ASSISTANT_MAX_TOKENS,
         "market_source_defaults": MARKET_SOURCE_DEFAULT_ORDER,
+        "normalize_lan_dashboard_host": (
+            lan_dashboard_core.normalize_lan_dashboard_host
+        ),
     }
 
 
@@ -680,7 +693,13 @@ def mask_secret(value):
 
 
 def public_settings_snapshot(settings=None):
-    return _get_settings_runtime().public_snapshot(settings)
+    source = dict(settings or get_settings_snapshot())
+    public = _get_settings_runtime().public_snapshot(source)
+    public["lan_dashboard_status"] = lan_dashboard_status(source)
+    public["lan_dashboard_interfaces"] = (
+        lan_dashboard_core.discover_private_ipv4_addresses()
+    )
+    return public
 
 
 def diagnostic_settings_snapshot(settings=None):
@@ -1388,9 +1407,16 @@ def _apply_startup_setting(saved):
 
 
 def apply_settings(data):
-    saved = save_settings(data)
+    normalized = _normalize_settings(data)
+    validation_error = lan_dashboard_core.validate_lan_dashboard_settings(
+        normalized
+    )
+    if validation_error:
+        raise ValueError(validation_error)
+    saved = save_settings(normalized)
     saved, error = _apply_startup_setting(saved)
     apply_floating_price_settings(saved)
+    apply_lan_dashboard_settings(saved)
     return saved, error
 
 
@@ -1831,7 +1857,10 @@ def _get_data_archive_runtime():
             save_settings=lambda settings: save_settings(settings),
             archive_manager=lambda: _data_archive_manager(),
             apply_floating_price_settings=(
-                lambda settings: apply_floating_price_settings(settings)
+                lambda settings: (
+                    apply_floating_price_settings(settings),
+                    apply_lan_dashboard_settings(settings),
+                )
             ),
             clear_price_history_repair_backup=(
                 lambda: _get_history_review_runtime().clear_price_history_repair_backup()
@@ -1954,7 +1983,10 @@ def _get_config_restore_service():
             apply_startup_setting=lambda settings: _apply_startup_setting(settings),
             apply_settings=lambda settings: apply_settings(settings),
             apply_floating_settings=(
-                lambda settings: apply_floating_price_settings(settings)
+                lambda settings: (
+                    apply_floating_price_settings(settings),
+                    apply_lan_dashboard_settings(settings),
+                )
             ),
             public_settings=lambda settings: public_settings_snapshot(settings),
             emit_event=lambda event, payload: socketio.emit(event, payload),
@@ -2871,6 +2903,53 @@ def get_source_health_state():
         )
     )
     return state
+
+
+def _build_lan_dashboard_snapshot():
+    with runtime.lock:
+        market_state = dict(_market_state_locked())
+        alert_entries = [dict(item) for item in runtime.alert_log]
+    return lan_dashboard_core.build_lan_dashboard_snapshot(
+        app_name=APP_NAME,
+        app_version=APP_VERSION,
+        market=market_state,
+        source_health=get_source_health_state(),
+        alert_rules=get_alert_rules_state(),
+        alert_entries=alert_entries,
+        now_factory=datetime.now,
+    )
+
+
+def _get_lan_dashboard_runtime():
+    if runtime.lan_dashboard_runtime_instance is None:
+        runtime.lan_dashboard_runtime_instance = (
+            lan_dashboard_core.LanDashboardRuntime(
+                base_dir=_basedir,
+                app_name=APP_NAME,
+                app_version=APP_VERSION,
+                settings_provider=get_settings_snapshot,
+                snapshot_provider=_build_lan_dashboard_snapshot,
+                logger=logging,
+            )
+        )
+    return runtime.lan_dashboard_runtime_instance
+
+
+def lan_dashboard_status(settings=None):
+    return _get_lan_dashboard_runtime().status(settings)
+
+
+def apply_lan_dashboard_settings(settings=None):
+    return _get_lan_dashboard_runtime().apply(settings)
+
+
+def start_lan_dashboard():
+    return apply_lan_dashboard_settings(get_settings_snapshot())
+
+
+def stop_lan_dashboard():
+    if runtime.lan_dashboard_runtime_instance is not None:
+        runtime.lan_dashboard_runtime_instance.stop()
 
 
 def record_source_price_sample(name, data, cached=False):
@@ -4577,6 +4656,7 @@ def show_main_window():
 
 
 def exit_app():
+    stop_lan_dashboard()
     return desktop_runtime_core.exit_application(
         get_tray_icon=lambda: runtime.tray_icon,
         process_exit=os._exit,
@@ -4899,6 +4979,7 @@ def main():
         update_floating_price=update_floating_price,
         start_background_fetching=start_background_fetching,
         start_task_scheduler=start_task_scheduler,
+        start_lan_dashboard=start_lan_dashboard,
         get_settings=get_settings_snapshot,
         start_desktop_window=start_desktop_window,
         thread_factory=threading.Thread,

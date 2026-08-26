@@ -28,6 +28,8 @@ const SETTINGS_FIELD_IDS = [
   'setMarketQualityRecoveryConfirmation',
   'setMarketQualityAlertLocal', 'setMarketQualityAlertEmail',
   'setMarketQualityAlertWebhook', 'setMarketQualityRecoveryEnabled',
+  'setLanDashboardEnabled', 'setLanDashboardHost', 'setLanDashboardPort',
+  'setLanDashboardPassword', 'clearLanDashboardPassword',
   'setRiskAssistantEnabled', 'setRiskAssistantProvider', 'setRiskAssistantDepth',
   'setDeepseekBaseUrl', 'setDeepseekModel', 'setDeepseekApiKey', 'clearDeepseekApiKey',
   'setOpenaiCompatibleBaseUrl', 'setOpenaiCompatibleModel', 'setOpenaiCompatibleApiKey',

@@ -60,6 +60,7 @@ def register_settings_handlers(
             "smtp_password": "smtp_password_clear",
             "deepseek_api_key": "deepseek_api_key_clear",
             "openai_compatible_api_key": "openai_compatible_api_key_clear",
+            "lan_dashboard_password": "lan_dashboard_password_clear",
         }
         current = merge_settings_update(
             current,
@@ -78,8 +79,10 @@ def register_settings_handlers(
                 return
         try:
             updated, startup_error = apply_settings(current)
-        except OSError:
-            emit("settings_error", {"message": "设置保存失败，请检查配置目录权限。"})
+        except (OSError, ValueError) as exc:
+            emit("settings_error", {
+                "message": str(exc) or "设置保存失败，请检查配置目录权限。"
+            })
             emit("settings_updated", public_settings_snapshot())
             return
         if startup_error:

@@ -49,6 +49,7 @@ def test_run_application_web_mode_starts_services_before_server():
         update_floating_price=lambda: calls.append("floating"),
         start_background_fetching=lambda: calls.append("market"),
         start_task_scheduler=lambda: calls.append("tasks"),
+        start_lan_dashboard=lambda: calls.append("lan"),
         get_settings=lambda: {},
         start_desktop_window=lambda **kwargs: calls.append("window"),
         thread_factory=lambda **kwargs: None,
@@ -62,6 +63,7 @@ def test_run_application_web_mode_starts_services_before_server():
     assert calls[-1] == ("server", "127.0.0.1", 5001)
     assert calls.index("market") < len(calls) - 1
     assert calls.index("tasks") < len(calls) - 1
+    assert calls.index("lan") < len(calls) - 1
 
 
 def test_run_application_reuses_existing_instance_without_starting_services():
@@ -89,6 +91,7 @@ def test_run_application_reuses_existing_instance_without_starting_services():
         update_floating_price=lambda: calls.append("floating"),
         start_background_fetching=lambda: calls.append("market"),
         start_task_scheduler=lambda: calls.append("tasks"),
+        start_lan_dashboard=lambda: calls.append("lan"),
         get_settings=lambda: {},
         start_desktop_window=lambda **kwargs: calls.append("window"),
         thread_factory=lambda **kwargs: None,
@@ -101,3 +104,4 @@ def test_run_application_reuses_existing_instance_without_starting_services():
     assert calls[1][0] == "existing"
     assert calls[-1] == ("exit", 0)
     assert "market" not in calls
+    assert "lan" not in calls
