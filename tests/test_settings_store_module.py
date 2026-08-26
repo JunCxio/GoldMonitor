@@ -51,6 +51,12 @@ DEFAULTS = {
     "daily_digest_email_enabled": True,
     "daily_digest_webhook_enabled": False,
     "notification_auto_retry_enabled": False,
+    "market_quality_alert_enabled": True,
+    "market_quality_alert_threshold_minutes": 5,
+    "market_quality_alert_local_enabled": True,
+    "market_quality_alert_email_enabled": False,
+    "market_quality_alert_webhook_enabled": False,
+    "market_quality_recovery_enabled": True,
     "risk_assistant_enabled": True,
     "risk_assistant_provider": "deepseek",
     "risk_assistant_depth": "standard",
@@ -112,6 +118,12 @@ def test_normalize_settings_clamps_invalid_values_and_removes_legacy_update_keys
         "daily_digest_email_enabled": 0,
         "daily_digest_webhook_enabled": 1,
         "notification_auto_retry_enabled": 1,
+        "market_quality_alert_enabled": 1,
+        "market_quality_alert_threshold_minutes": 7,
+        "market_quality_alert_local_enabled": 0,
+        "market_quality_alert_email_enabled": 0,
+        "market_quality_alert_webhook_enabled": 0,
+        "market_quality_recovery_enabled": 0,
         "risk_assistant_provider": "unknown",
         "risk_assistant_depth": "slow",
         "deepseek_base_url": " https://api.deepseek.com/ ",
@@ -149,6 +161,12 @@ def test_normalize_settings_clamps_invalid_values_and_removes_legacy_update_keys
     assert normalized["daily_digest_email_enabled"] is False
     assert normalized["daily_digest_webhook_enabled"] is True
     assert normalized["notification_auto_retry_enabled"] is True
+    assert normalized["market_quality_alert_enabled"] is True
+    assert normalized["market_quality_alert_threshold_minutes"] == 5
+    assert normalized["market_quality_alert_local_enabled"] is True
+    assert normalized["market_quality_alert_email_enabled"] is False
+    assert normalized["market_quality_alert_webhook_enabled"] is False
+    assert normalized["market_quality_recovery_enabled"] is False
     assert normalized["risk_assistant_provider"] == "deepseek"
     assert normalized["risk_assistant_depth"] == "standard"
     assert normalized["deepseek_base_url"] == "https://api.deepseek.com"

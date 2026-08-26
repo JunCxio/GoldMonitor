@@ -387,6 +387,29 @@ function applySettings(data) {
   document.getElementById('setDailyDigestEmail').checked = appSettings.daily_digest_email_enabled !== false;
   document.getElementById('setDailyDigestWebhook').checked = !!appSettings.daily_digest_webhook_enabled;
   document.getElementById('setNotificationAutoRetry').checked = !!appSettings.notification_auto_retry_enabled;
+  document.getElementById('setMarketQualityAlertEnabled').checked = appSettings.market_quality_alert_enabled !== false;
+  document.getElementById('setMarketQualityAlertThreshold').value = String(appSettings.market_quality_alert_threshold_minutes || 5);
+  document.getElementById('setMarketQualityAlertLocal').checked = appSettings.market_quality_alert_local_enabled !== false;
+  document.getElementById('setMarketQualityAlertEmail').checked = !!appSettings.market_quality_alert_email_enabled;
+  document.getElementById('setMarketQualityAlertWebhook').checked = !!appSettings.market_quality_alert_webhook_enabled;
+  document.getElementById('setMarketQualityRecoveryEnabled').checked = appSettings.market_quality_recovery_enabled !== false;
+  syncMarketQualityAlertFields();
+  if (typeof renderMarketQualityAlertStatus === 'function') {
+    renderMarketQualityAlertStatus(Object.assign(
+      {},
+      latestSourceHealthState && latestSourceHealthState.market_quality_alert || {},
+      {
+        enabled: appSettings.market_quality_alert_enabled !== false,
+        threshold_minutes: appSettings.market_quality_alert_threshold_minutes || 5,
+        channels: [
+          appSettings.market_quality_alert_local_enabled !== false ? 'local' : '',
+          appSettings.market_quality_alert_email_enabled ? 'email' : '',
+          appSettings.market_quality_alert_webhook_enabled ? 'webhook' : '',
+        ].filter(Boolean),
+        recovery_enabled: appSettings.market_quality_recovery_enabled !== false,
+      },
+    ));
+  }
   applyNotificationRetryStatus(Object.assign({}, notificationRetryStatusState, {
     enabled: !!appSettings.notification_auto_retry_enabled,
   }));

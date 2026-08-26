@@ -21,6 +21,7 @@ def test_data_archive_paths_cover_all_restorable_state():
         "market_cache",
         "source_metrics",
         "market_quality_history",
+        "market_quality_alert_state",
         "news",
         "risk_analysis_history",
         "review_notes",
@@ -33,6 +34,7 @@ def test_data_archive_paths_cover_all_restorable_state():
     assert paths["settings"]["sensitive"] is True
     assert paths["alert_rules"]["kind"] == "json"
     assert paths["market_quality_history"]["required"] is False
+    assert paths["market_quality_alert_state"]["required"] is False
     assert paths["price_history_db"]["kind"] == "sqlite"
     assert paths["alert_log_db"]["kind"] == "sqlite"
 

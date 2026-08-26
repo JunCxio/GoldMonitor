@@ -49,6 +49,11 @@ class DataArchiveRuntime:
         runtime.source_health = self.source_health_loader()
         runtime.alert_log = self.loaders["alert_log"]()
         runtime.market_quality_history = self.loaders["market_quality_history"]()
+        runtime.market_quality_alert_state = self.loaders[
+            "market_quality_alert_state"
+        ]()
+        runtime.market_quality_last_saved_monotonic = 0.0
+        runtime.market_quality_alert_last_saved_monotonic = 0.0
         runtime.price_archive = self.loaders["price_history"]()
         self.restore_price_history_state(runtime.price_archive)
 

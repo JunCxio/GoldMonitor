@@ -404,6 +404,10 @@ for required in (
     "function registerSettingsSocketHandlers",
     "function applySettings",
     "function validateSettings",
+    "setMarketQualityAlertEnabled",
+    "setMarketQualityAlertThreshold",
+    "market_quality_alert_local_enabled",
+    "market_quality_recovery_enabled",
     "function openOnboarding",
     "function setupSettingsInteractions",
     "function saveSettings",
@@ -477,6 +481,8 @@ for required in (
     "function renderMarketTrust",
     "function renderMarketTrustHistorySummary",
     "function formatMarketTrustDuration",
+    "function syncMarketQualityAlertFields",
+    "function renderMarketQualityAlertStatus",
     "function marketTrustSegmentId",
     "function reviewMarketTrustEvent",
     "查看复盘",
@@ -490,6 +496,14 @@ for required in (
         raise SystemExit(f"operations modules missing contract: {required}")
 
 for required in (
+    'id="marketQualityAlertControl"',
+    'id="marketQualityAlertStatus"',
+    'id="setMarketQualityAlertEnabled"',
+    'id="setMarketQualityAlertThreshold"',
+    'id="setMarketQualityAlertLocal"',
+    'id="setMarketQualityAlertEmail"',
+    'id="setMarketQualityAlertWebhook"',
+    'id="setMarketQualityRecoveryEnabled"',
     'id="marketTrustHistorySummary"',
     'id="marketTrustBusinessImpact"',
     "跨重启保存",
@@ -498,6 +512,10 @@ for required in (
         raise SystemExit(f"template missing market quality history contract: {required}")
 
 for required in (
+    ".market-quality-alert-setting-row",
+    ".market-quality-alert-control",
+    ".market-quality-alert-options",
+    ".market-quality-alert-channels",
     ".market-trust-history-summary",
     ".market-trust-history-window",
     ".market-trust-business-impact",
@@ -687,6 +705,11 @@ if template.find(alert_log_script) > template.find('<script src="/static/app.js?
 for required in (
     "function registerAlertLogSocketHandlers",
     "function showAlertModal",
+    "function runActiveAlertPrimaryAction",
+    "function openAlertTimelineFromLog",
+    "entry.source === 'market_quality'",
+    "market_quality_segment_id",
+    "查看异常复盘",
     "function renderAlertLog",
     "function flashTitle",
 ):

@@ -324,7 +324,7 @@ Assert-Contains -Path "templates\index.html" -Pattern 'riskTrends' -Message "fro
 Assert-Contains -Path "templates\index.html" -Pattern 'id="riskDiagnostic"' -Message "frontend must render risk analysis failure diagnostics"
 Assert-Contains -Path "goldmonitor\application.py" -Pattern 'build_risk_analysis_error_payload' -Message "backend must emit structured risk analysis error diagnostics"
 Assert-Contains -Path "goldmonitor\risk_analysis.py" -Pattern 'build_error_diagnostic' -Message "risk analysis module must classify failure reasons"
-Assert-Contains -Path "templates\index.html" -Pattern 'analyzeActiveAlert' -Message "alert dialogs must support one-click risk analysis"
+Assert-Contains -Path "templates\index.html" -Pattern 'runActiveAlertPrimaryAction' -Message "alert dialogs must route their primary action by alert source"
 Assert-Contains -Path "static\risk-analysis-center.js" -Pattern 'riskAnalysisHistory' -Message "frontend must render session/local risk analysis history"
 Assert-Contains -Path "templates\index.html" -Pattern 'clearRiskHistory' -Message "frontend must allow clearing risk analysis history"
 Assert-Contains -Path "templates\index.html" -Pattern 'id="riskCompareButton"' -Message "risk history must expose a comparison action"

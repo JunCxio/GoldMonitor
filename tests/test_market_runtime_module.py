@@ -142,6 +142,7 @@ def test_market_runtime_updates_state_and_emits_price_status_and_history():
     emitted = []
     archived = []
     alerts = []
+    quality_alerts = []
 
     class RefreshLock:
         def __init__(self):
@@ -179,6 +180,13 @@ def test_market_runtime_updates_state_and_emits_price_status_and_history():
         check_alert_rules=lambda now_str, now=None, force_emit=False: alerts.append(
             (now_str, now, force_emit)
         ),
+        process_quality_alert=lambda alert_state, observation, history, observed_at="": (
+            quality_alerts.append((observation["quality_level"], observed_at))
+            or {"quality_level": observation["quality_level"]}
+        ),
+        build_quality_alert_status=lambda alert_state: {
+            "status": (alert_state or {}).get("quality_level", "monitoring")
+        },
         now_factory=lambda: datetime(2026, 7, 28, 12, 0, 0),
         ounce_to_gram=31.1035,
     )
@@ -199,6 +207,7 @@ def test_market_runtime_updates_state_and_emits_price_status_and_history():
     ]
     assert emitted[0][1]["source_comparison"] == {"status": "ok"}
     assert emitted[0][1]["market_quality_history"][0]["quality_level"] == "normal"
+    assert emitted[0][1]["market_quality_alert"] == {"status": "normal"}
     assert emitted[-1][1]["scope"] == "live"
 
     assert runtime.fetch_once() is True
@@ -242,6 +251,7 @@ def test_market_runtime_updates_state_and_emits_price_status_and_history():
     ]
     assert emitted[-3][0] == "price_update"
     assert emitted[-3][1]["market_observation"] == state["market_observation"]
+    assert emitted[-3][1]["market_quality_alert"] == {"status": "stale"}
 
     invalid_gold = sample_gold(2400.0)
     invalid_gold.update({"high": 2300.0, "low": 2450.0})
@@ -266,6 +276,13 @@ def test_market_runtime_updates_state_and_emits_price_status_and_history():
     assert emitted[-1][0] == "fetch_status"
     assert state["market_observation"]["quality_level"] == "invalid"
     assert state["market_quality_history"][-1]["quality_level"] == "invalid"
+    assert emitted[-1][1]["market_quality_alert"] == {"status": "invalid"}
+    assert [item[0] for item in quality_alerts] == [
+        "normal",
+        "normal",
+        "stale",
+        "invalid",
+    ]
 
 
 def test_market_runtime_state_helpers_roundtrip_explicit_fields():

@@ -147,11 +147,12 @@ def test_archive_preview_rejects_modified_payload_and_future_version(tmp_path):
         manager.preview(future_path)
 
 
-def test_archive_accepts_older_manifest_without_optional_quality_history(tmp_path):
+def test_archive_accepts_older_manifest_without_optional_quality_state(tmp_path):
     from goldmonitor.data_archive import DataArchiveManager
 
     settings_path = tmp_path / "settings.json"
     quality_path = tmp_path / "market_quality_history.json"
+    quality_alert_path = tmp_path / "market_quality_alert_state.json"
     settings_path.write_text('{"theme":"dark"}', encoding="utf-8")
     legacy_manager = DataArchiveManager(
         {
@@ -169,6 +170,10 @@ def test_archive_accepts_older_manifest_without_optional_quality_history(tmp_pat
         '{"schema_version":1,"items":[{"id":"current"}]}',
         encoding="utf-8",
     )
+    quality_alert_path.write_text(
+        '{"schema_version":1,"state":{"incident_active":true}}',
+        encoding="utf-8",
+    )
     manager = DataArchiveManager(
         {
             "settings": {
@@ -182,6 +187,12 @@ def test_archive_accepts_older_manifest_without_optional_quality_history(tmp_pat
                 "label": "行情质量历史",
                 "required": False,
             },
+            "market_quality_alert_state": {
+                "path": quality_alert_path,
+                "kind": "json",
+                "label": "行情质量通知状态",
+                "required": False,
+            },
         },
         app_version="1.0.23",
     )
@@ -191,3 +202,4 @@ def test_archive_accepts_older_manifest_without_optional_quality_history(tmp_pat
 
     assert preview["files"] == 1
     assert not quality_path.exists()
+    assert not quality_alert_path.exists()

@@ -43,6 +43,7 @@ from goldmonitor import market_adapters as market_adapters_core
 from goldmonitor import market_clients as market_clients_core
 from goldmonitor import market_data as market_data_core
 from goldmonitor import market_observation as market_observation_core
+from goldmonitor import market_quality_alerts as market_quality_alerts_core
 from goldmonitor import market_quality_history as market_quality_history_core
 from goldmonitor import market_runtime as market_runtime_core
 from goldmonitor import news as news_core
@@ -93,7 +94,7 @@ app.config["MAX_CONTENT_LENGTH"] = 256 * 1024 * 1024
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.0.24"
+APP_VERSION = "1.0.25"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 OFFICIAL_UPDATE_HOST = "github.com"
@@ -181,6 +182,10 @@ SOURCE_METRICS_PATH = os.path.join(APPDATA_DIR, "source_metrics.json")
 MARKET_QUALITY_HISTORY_PATH = os.path.join(
     APPDATA_DIR,
     "market_quality_history.json",
+)
+MARKET_QUALITY_ALERT_STATE_PATH = os.path.join(
+    APPDATA_DIR,
+    "market_quality_alert_state.json",
 )
 UPDATE_DIR = os.path.join(APPDATA_DIR, "updates")
 EXPORT_DIR = os.path.join(APPDATA_DIR, "exports")
@@ -370,6 +375,12 @@ DEFAULT_SETTINGS = {
     "daily_digest_email_enabled": True,
     "daily_digest_webhook_enabled": False,
     "notification_auto_retry_enabled": False,
+    "market_quality_alert_enabled": True,
+    "market_quality_alert_threshold_minutes": 5,
+    "market_quality_alert_local_enabled": True,
+    "market_quality_alert_email_enabled": False,
+    "market_quality_alert_webhook_enabled": False,
+    "market_quality_recovery_enabled": True,
     # 风险分析助手
     "risk_assistant_enabled": True,
     "risk_assistant_provider": "deepseek",
@@ -1727,6 +1738,12 @@ def _data_archive_paths():
             "label": "行情质量历史",
             "required": False,
         },
+        "market_quality_alert_state": {
+            "path": MARKET_QUALITY_ALERT_STATE_PATH,
+            "kind": "json",
+            "label": "行情质量通知状态",
+            "required": False,
+        },
         "news": {"path": NEWS_CACHE_PATH, "kind": "json", "label": "新闻缓存"},
         "risk_analysis_history": {"path": RISK_ANALYSIS_HISTORY_PATH, "kind": "json", "label": "风险分析历史"},
         "review_notes": {"path": REVIEW_NOTES_PATH, "kind": "json", "label": "复盘笔记"},
@@ -1798,6 +1815,7 @@ def _get_data_archive_runtime():
                     limit=ALERT_LOG_MEMORY_LIMIT
                 ),
                 "market_quality_history": lambda: load_market_quality_history(),
+                "market_quality_alert_state": lambda: load_market_quality_alert_state(),
                 "price_history": lambda: load_price_history_archive(),
             },
             source_health_loader=lambda: market_data_core.SourceMetricsStore(
@@ -2052,6 +2070,7 @@ def _get_diagnostics_runtime():
                 "market_cache": MARKET_CACHE_PATH,
                 "source_metrics": SOURCE_METRICS_PATH,
                 "market_quality_history": MARKET_QUALITY_HISTORY_PATH,
+                "market_quality_alert_state": MARKET_QUALITY_ALERT_STATE_PATH,
                 "update_dir": UPDATE_DIR,
                 "exports": resolve_export_dir(),
                 "news": NEWS_CACHE_PATH,
@@ -2121,7 +2140,13 @@ def select_related_news(title, items=None, limit=3):
 
 # ---------- 通知渠道 ----------
 
-_alert_level_map = {"warning": "关注", "critical": "警告", "volatility": "波动"}
+_alert_level_map = {
+    "warning": "关注",
+    "critical": "警告",
+    "volatility": "波动",
+    "quality": "行情质量异常",
+    "recovery": "行情质量恢复",
+}
 
 
 class _SafeFormatDict(dict):
@@ -2667,6 +2692,17 @@ def load_market_quality_history():
     return _market_quality_history_store().load()
 
 
+def _market_quality_alert_state_store():
+    return market_quality_alerts_core.MarketQualityAlertStateStore(
+        MARKET_QUALITY_ALERT_STATE_PATH,
+        now_factory=lambda: datetime.now().astimezone(),
+    )
+
+
+def load_market_quality_alert_state():
+    return _market_quality_alert_state_store().load()
+
+
 def record_market_quality_history(history, observation, *, observed_at=""):
     previous = list(history or [])
     updated = market_observation_core.record_market_quality_event(
@@ -2700,6 +2736,96 @@ def record_market_quality_history(history, observation, *, observed_at=""):
     return updated
 
 
+def process_market_quality_alert_state(
+    alert_state,
+    observation,
+    history,
+    *,
+    observed_at="",
+):
+    previous = market_quality_alerts_core.normalize_market_quality_alert_state(
+        alert_state
+    )
+    latest_event = history[-1] if history and isinstance(history[-1], dict) else {}
+    result = market_quality_alerts_core.evaluate_market_quality_alert(
+        previous,
+        observation,
+        get_settings_snapshot(),
+        observed_at=observed_at,
+        session_id=runtime.market_quality_session_id,
+        segment_id=market_quality_history_core.market_quality_segment_id(
+            latest_event
+        ),
+    )
+    updated = result["state"]
+    event = result.get("event")
+    if event and event.get("kind") == "incident":
+        updated["notification_alert_id"] = _generate_alert_log_id()
+    previous_transition = (
+        previous.get("incident_id"),
+        previous.get("accumulated_seconds"),
+        previous.get("last_observed_at"),
+        previous.get("notified_at"),
+        previous.get("last_recovered_at"),
+        previous.get("last_transition"),
+    )
+    current_transition = (
+        updated.get("incident_id"),
+        updated.get("accumulated_seconds"),
+        updated.get("last_observed_at"),
+        updated.get("notified_at"),
+        updated.get("last_recovered_at"),
+        updated.get("last_transition"),
+    )
+    now_monotonic = time.monotonic()
+    should_save = (
+        event is not None
+        or previous_transition != current_transition
+        or now_monotonic - runtime.market_quality_alert_last_saved_monotonic >= 60
+    )
+    if should_save:
+        try:
+            updated = _market_quality_alert_state_store().save(updated)
+            runtime.market_quality_alert_last_saved_monotonic = now_monotonic
+        except OSError as exc:
+            logging.warning("行情质量通知状态保存失败: %s", exc)
+    recovered_alert_id = str(result.get("recovered_alert_id") or "")
+    if recovered_alert_id:
+        try:
+            ok, handled_entry = update_alert_log_handling(
+                recovered_alert_id,
+                handled=True,
+                note="行情质量恢复后自动关闭",
+            )
+            if ok and handled_entry:
+                socketio.emit(
+                    "alert_log_handling_updated",
+                    {"ok": True, "entry": handled_entry},
+                )
+        except Exception:
+            logging.exception("行情质量异常待处理项自动关闭失败")
+    if not event:
+        return updated
+
+    settings = get_settings_snapshot()
+    entry = market_quality_alerts_core.build_market_quality_alert_entry(
+        event,
+        settings,
+    )
+    if event.get("kind") == "incident":
+        entry["id"] = updated.get("notification_alert_id") or _generate_alert_log_id()
+    else:
+        entry["id"] = _generate_alert_log_id()
+    try:
+        _get_alert_notification_runtime().emit_alert(
+            entry,
+            entry.get("title") or "行情质量通知",
+        )
+    except Exception:
+        logging.exception("行情质量通知处理失败")
+    return updated
+
+
 def get_source_health_state():
     with runtime.lock:
         health_snapshot = {name: dict(item) for name, item in runtime.source_health.items()}
@@ -2714,6 +2840,9 @@ def get_source_health_state():
                 now=datetime.now().astimezone(),
             )
         )
+        market_quality_alert_state = dict(
+            runtime.market_quality_alert_state or {}
+        )
     comparison = get_source_comparison_state()
     adapters = get_market_adapter_catalog(health_snapshot=health_snapshot)
     state = market_runtime_core.build_source_health_state(
@@ -2727,6 +2856,13 @@ def get_source_health_state():
     state["market_observation"] = market_observation
     state["market_quality_history"] = market_quality_history
     state["market_quality_summary"] = market_quality_summary
+    state["market_quality_alert"] = (
+        market_quality_alerts_core.build_market_quality_alert_status(
+            market_quality_alert_state,
+            get_settings_snapshot(),
+            now=datetime.now().astimezone(),
+        )
+    )
     return state
 
 
@@ -3623,6 +3759,7 @@ def _application_state_bootstrap():
             "risk_analysis_history": lambda: load_risk_analysis_history(),
             "alert_log": lambda **kwargs: load_alert_log_archive(**kwargs),
             "market_quality_history": lambda: load_market_quality_history(),
+            "market_quality_alert_state": lambda: load_market_quality_alert_state(),
             "price_history": lambda: load_price_history_archive(),
         },
         save_settings=lambda settings: save_settings(settings),
@@ -3875,6 +4012,17 @@ def _get_market_runtime():
             record_quality_event=lambda *args, **kwargs: record_market_quality_history(
                 *args,
                 **kwargs,
+            ),
+            process_quality_alert=lambda *args, **kwargs: process_market_quality_alert_state(
+                *args,
+                **kwargs,
+            ),
+            build_quality_alert_status=lambda alert_state: (
+                market_quality_alerts_core.build_market_quality_alert_status(
+                    alert_state,
+                    get_settings_snapshot(),
+                    now=datetime.now().astimezone(),
+                )
             ),
             now_factory=lambda: datetime.now(),
             ounce_to_gram=OZ_TO_GRAM,

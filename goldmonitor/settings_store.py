@@ -160,6 +160,43 @@ def normalize_settings(raw, defaults, options=None):
     data["notification_auto_retry_enabled"] = bool(
         data.get("notification_auto_retry_enabled", False)
     )
+    data["market_quality_alert_enabled"] = bool(
+        data.get("market_quality_alert_enabled", True)
+    )
+    data["market_quality_alert_threshold_minutes"] = bounded_int(
+        data.get("market_quality_alert_threshold_minutes", 5),
+        5,
+        1,
+        60,
+    )
+    if data["market_quality_alert_threshold_minutes"] not in {
+        1,
+        3,
+        5,
+        10,
+        15,
+        30,
+        60,
+    }:
+        data["market_quality_alert_threshold_minutes"] = 5
+    data["market_quality_alert_local_enabled"] = bool(
+        data.get("market_quality_alert_local_enabled", True)
+    )
+    data["market_quality_alert_email_enabled"] = bool(
+        data.get("market_quality_alert_email_enabled", False)
+    )
+    data["market_quality_alert_webhook_enabled"] = bool(
+        data.get("market_quality_alert_webhook_enabled", False)
+    )
+    data["market_quality_recovery_enabled"] = bool(
+        data.get("market_quality_recovery_enabled", True)
+    )
+    if data["market_quality_alert_enabled"] and not any((
+        data["market_quality_alert_local_enabled"],
+        data["market_quality_alert_email_enabled"],
+        data["market_quality_alert_webhook_enabled"],
+    )):
+        data["market_quality_alert_local_enabled"] = True
 
     data["risk_assistant_enabled"] = bool(data.get("risk_assistant_enabled", True))
     if data.get("risk_assistant_provider") not in options.get("valid_risk_assistant_providers", set()):

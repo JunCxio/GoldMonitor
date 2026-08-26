@@ -80,6 +80,9 @@ class ApplicationStateBootstrap:
         self.runtime.market_quality_history = self.loaders[
             "market_quality_history"
         ]()
+        self.runtime.market_quality_alert_state = self.loaders[
+            "market_quality_alert_state"
+        ]()
         self.runtime.price_archive = self.loaders["price_history"]()
         self.restore_price_history_state(self.runtime.price_archive)
         self.initialize_market_cache()
