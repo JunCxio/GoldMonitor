@@ -1,5 +1,4 @@
 import ipaddress
-import hashlib
 import logging
 import secrets
 import socket
@@ -383,7 +382,7 @@ class LanDashboardRuntime:
         self.port = 0
         self.error = ""
         self.session_secret = secrets.token_urlsafe(48)
-        self.password_fingerprint = ""
+        self.password_snapshot = ""
 
     def _password(self):
         return str(self.settings_provider().get("lan_dashboard_password") or "")
@@ -398,15 +397,13 @@ class LanDashboardRuntime:
             return self.status(settings)
         host = normalize_lan_dashboard_host(settings.get("lan_dashboard_host"))
         port = normalize_lan_dashboard_port(settings.get("lan_dashboard_port"))
-        password_fingerprint = hashlib.sha256(
-            str(settings.get("lan_dashboard_password") or "").encode("utf-8")
-        ).hexdigest()
+        password = str(settings.get("lan_dashboard_password") or "")
         with self.lock:
             if (
                 self.server is not None
                 and self.host == host
                 and self.port == port
-                and self.password_fingerprint == password_fingerprint
+                and secrets.compare_digest(self.password_snapshot, password)
             ):
                 self.error = ""
                 return self.status(settings)
@@ -450,7 +447,7 @@ class LanDashboardRuntime:
             self.thread = thread
             self.host = host
             self.port = actual_port
-            self.password_fingerprint = password_fingerprint
+            self.password_snapshot = password
             self.error = ""
         return self.status(settings)
 
@@ -462,6 +459,7 @@ class LanDashboardRuntime:
             self.thread = None
             self.host = ""
             self.port = 0
+            self.password_snapshot = ""
         if server is not None:
             try:
                 server.shutdown()

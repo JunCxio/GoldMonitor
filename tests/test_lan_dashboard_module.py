@@ -234,6 +234,74 @@ def test_lan_dashboard_runtime_starts_and_stops_real_read_only_server(tmp_path):
     assert server.closed is True
 
 
+def test_lan_dashboard_runtime_restarts_only_when_password_changes(tmp_path):
+    from goldmonitor.lan_dashboard import LanDashboardRuntime
+
+    class FakeServer:
+        server_port = 5050
+
+        def __init__(self):
+            self.closed = False
+
+        def serve_forever(self):
+            pass
+
+        def shutdown(self):
+            pass
+
+        def server_close(self):
+            self.closed = True
+
+    class FakeThread:
+        def __init__(self, target, **_kwargs):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+        def is_alive(self):
+            return False
+
+        def join(self, timeout=None):
+            pass
+
+    servers = []
+
+    def create_server(*_args, **_kwargs):
+        server = FakeServer()
+        servers.append(server)
+        return server
+
+    settings = {
+        "lan_dashboard_enabled": True,
+        "lan_dashboard_host": "127.0.0.1",
+        "lan_dashboard_port": 5050,
+        "lan_dashboard_password": "long-test-password",
+    }
+    runtime = LanDashboardRuntime(
+        base_dir=str(tmp_path),
+        app_name="金价监控",
+        app_version="1.0.27",
+        settings_provider=lambda: dict(settings),
+        snapshot_provider=_snapshot,
+        server_factory=create_server,
+        thread_factory=FakeThread,
+        address_provider=lambda: [],
+    )
+    try:
+        runtime.apply(settings)
+        runtime.apply(settings)
+        assert len(servers) == 1
+
+        settings["lan_dashboard_password"] = "different-test-password"
+        runtime.apply(settings)
+        assert len(servers) == 2
+        assert servers[0].closed is True
+    finally:
+        runtime.stop()
+    assert runtime.password_snapshot == ""
+
+
 def test_lan_dashboard_frontend_contract_has_no_remote_write_controls():
     from pathlib import Path
 
