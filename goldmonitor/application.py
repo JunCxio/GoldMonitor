@@ -42,6 +42,8 @@ from goldmonitor import http_routes as http_routes_core
 from goldmonitor import market_adapters as market_adapters_core
 from goldmonitor import market_clients as market_clients_core
 from goldmonitor import market_data as market_data_core
+from goldmonitor import market_observation as market_observation_core
+from goldmonitor import market_quality_history as market_quality_history_core
 from goldmonitor import market_runtime as market_runtime_core
 from goldmonitor import news as news_core
 from goldmonitor import notification_adapters as notification_adapters_core
@@ -91,7 +93,7 @@ app.config["MAX_CONTENT_LENGTH"] = 256 * 1024 * 1024
 socketio = SocketIO(app, async_mode="threading")
 
 # ---------- 常量 ----------
-APP_VERSION = "1.0.22"
+APP_VERSION = "1.0.23"
 APP_USER_MODEL_ID = "GoldMonitor.App"
 DEFAULT_UPDATE_MANIFEST_URL = "https://github.com/JunCxio/GoldMonitor/releases/latest/download/version.json"
 OFFICIAL_UPDATE_HOST = "github.com"
@@ -176,6 +178,10 @@ PORTFOLIO_IMPORT_BACKUP_PATH = os.path.join(APPDATA_DIR, "portfolio_import_backu
 PORTFOLIO_ALERTS_PATH = os.path.join(APPDATA_DIR, "portfolio_alerts.json")
 MARKET_CACHE_PATH = os.path.join(APPDATA_DIR, "market_cache.json")
 SOURCE_METRICS_PATH = os.path.join(APPDATA_DIR, "source_metrics.json")
+MARKET_QUALITY_HISTORY_PATH = os.path.join(
+    APPDATA_DIR,
+    "market_quality_history.json",
+)
 UPDATE_DIR = os.path.join(APPDATA_DIR, "updates")
 EXPORT_DIR = os.path.join(APPDATA_DIR, "exports")
 UPDATE_INSTALLER_NAME = "GoldMonitor-macOS.dmg" if sys.platform == "darwin" else "GoldMonitorSetup.exe"
@@ -246,6 +252,9 @@ EVENT_TIMELINE_DEFAULT_LIMIT = 300
 REVIEW_REPORT_EXPORT_PREFIX = "GoldMonitor-review-report"
 SOURCE_HEALTH_LIMIT = 20
 SOURCE_METRICS_WINDOW = 50
+MARKET_QUALITY_HISTORY_LIMIT = 2000
+MARKET_QUALITY_RETENTION_DAYS = 30
+MARKET_QUALITY_RECENT_LIMIT = 20
 SOURCE_COMPARISON_REFRESH_SECONDS = 60
 SOURCE_COMPARISON_STALE_SECONDS = 5 * 60
 SOURCE_COMPARISON_ANOMALY_PCT = 0.5
@@ -1712,6 +1721,12 @@ def _data_archive_paths():
         "portfolio_alerts": {"path": PORTFOLIO_ALERTS_PATH, "kind": "json", "label": "持仓提醒"},
         "market_cache": {"path": MARKET_CACHE_PATH, "kind": "json", "label": "行情缓存"},
         "source_metrics": {"path": SOURCE_METRICS_PATH, "kind": "json", "label": "数据源滚动指标"},
+        "market_quality_history": {
+            "path": MARKET_QUALITY_HISTORY_PATH,
+            "kind": "json",
+            "label": "行情质量历史",
+            "required": False,
+        },
         "news": {"path": NEWS_CACHE_PATH, "kind": "json", "label": "新闻缓存"},
         "risk_analysis_history": {"path": RISK_ANALYSIS_HISTORY_PATH, "kind": "json", "label": "风险分析历史"},
         "review_notes": {"path": REVIEW_NOTES_PATH, "kind": "json", "label": "复盘笔记"},
@@ -1782,6 +1797,7 @@ def _get_data_archive_runtime():
                 "alert_log": lambda: load_alert_log_archive(
                     limit=ALERT_LOG_MEMORY_LIMIT
                 ),
+                "market_quality_history": lambda: load_market_quality_history(),
                 "price_history": lambda: load_price_history_archive(),
             },
             source_health_loader=lambda: market_data_core.SourceMetricsStore(
@@ -2035,6 +2051,7 @@ def _get_diagnostics_runtime():
                 "portfolio_alerts": PORTFOLIO_ALERTS_PATH,
                 "market_cache": MARKET_CACHE_PATH,
                 "source_metrics": SOURCE_METRICS_PATH,
+                "market_quality_history": MARKET_QUALITY_HISTORY_PATH,
                 "update_dir": UPDATE_DIR,
                 "exports": resolve_export_dir(),
                 "news": NEWS_CACHE_PATH,
@@ -2637,15 +2654,66 @@ def record_source_health(name, category, ok, error="", started_at=None, cached=F
     )
 
 
+def _market_quality_history_store():
+    return market_quality_history_core.MarketQualityHistoryStore(
+        MARKET_QUALITY_HISTORY_PATH,
+        retention_days=MARKET_QUALITY_RETENTION_DAYS,
+        limit=MARKET_QUALITY_HISTORY_LIMIT,
+        now_factory=lambda: datetime.now().astimezone(),
+    )
+
+
+def load_market_quality_history():
+    return _market_quality_history_store().load()
+
+
+def record_market_quality_history(history, observation, *, observed_at=""):
+    previous = list(history or [])
+    updated = market_observation_core.record_market_quality_event(
+        previous,
+        observation,
+        observed_at=observed_at,
+        session_id=runtime.market_quality_session_id,
+        limit=MARKET_QUALITY_HISTORY_LIMIT,
+    )
+    previous_first_seen_at = (
+        str(previous[-1].get("first_seen_at") or "")
+        if previous and isinstance(previous[-1], dict)
+        else ""
+    )
+    current_first_seen_at = (
+        str(updated[-1].get("first_seen_at") or "")
+        if updated and isinstance(updated[-1], dict)
+        else ""
+    )
+    now_monotonic = time.monotonic()
+    should_save = (
+        current_first_seen_at != previous_first_seen_at
+        or now_monotonic - runtime.market_quality_last_saved_monotonic >= 60
+    )
+    if should_save:
+        try:
+            updated = _market_quality_history_store().save(updated)
+            runtime.market_quality_last_saved_monotonic = now_monotonic
+        except OSError as exc:
+            logging.warning("行情质量历史保存失败: %s", exc)
+    return updated
+
+
 def get_source_health_state():
     with runtime.lock:
         health_snapshot = {name: dict(item) for name, item in runtime.source_health.items()}
         market_observation = dict(runtime.market_observation or {})
-        market_quality_history = [
-            dict(item)
-            for item in runtime.market_quality_history
-            if isinstance(item, dict)
-        ]
+        market_quality_history = market_quality_history_core.recent_market_quality_events(
+            runtime.market_quality_history,
+            limit=MARKET_QUALITY_RECENT_LIMIT,
+        )
+        market_quality_summary = (
+            market_quality_history_core.build_market_quality_history_summary(
+                runtime.market_quality_history,
+                now=datetime.now().astimezone(),
+            )
+        )
     comparison = get_source_comparison_state()
     adapters = get_market_adapter_catalog(health_snapshot=health_snapshot)
     state = market_runtime_core.build_source_health_state(
@@ -2658,6 +2726,7 @@ def get_source_health_state():
     )
     state["market_observation"] = market_observation
     state["market_quality_history"] = market_quality_history
+    state["market_quality_summary"] = market_quality_summary
     return state
 
 
@@ -3553,6 +3622,7 @@ def _application_state_bootstrap():
             "news": lambda: load_news_cache(),
             "risk_analysis_history": lambda: load_risk_analysis_history(),
             "alert_log": lambda **kwargs: load_alert_log_archive(**kwargs),
+            "market_quality_history": lambda: load_market_quality_history(),
             "price_history": lambda: load_price_history_archive(),
         },
         save_settings=lambda settings: save_settings(settings),
@@ -3802,6 +3872,10 @@ def _get_market_runtime():
             update_desktop_price_title=lambda title: update_desktop_price_title(title),
             update_floating_price=lambda rmb, usd, pct: update_floating_price(rmb, usd, pct),
             check_alert_rules=lambda *args, **kwargs: check_alert_rules(*args, **kwargs),
+            record_quality_event=lambda *args, **kwargs: record_market_quality_history(
+                *args,
+                **kwargs,
+            ),
             now_factory=lambda: datetime.now(),
             ounce_to_gram=OZ_TO_GRAM,
         )

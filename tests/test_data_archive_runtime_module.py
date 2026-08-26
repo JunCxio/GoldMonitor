@@ -43,6 +43,7 @@ def _runtime_state():
         gold_price_time="old",
         gold_price_cached=True,
         gold_price_error="old",
+        market_quality_history=[{"quality_level": "stale"}],
         today_date="old",
         today_open_usd=1,
         today_high_usd=1,
@@ -75,6 +76,12 @@ def test_data_archive_runtime_reloads_all_persisted_state_and_market_snapshot():
             "news": lambda: [{"title": "news"}],
             "risk_analysis_history": lambda: [{"id": "risk-1"}],
             "alert_log": lambda: [{"id": "alert-1"}],
+            "market_quality_history": lambda: [
+                {
+                    "quality_level": "normal",
+                    "first_seen_at": "2026-08-26T10:00:00Z",
+                }
+            ],
             "price_history": lambda: [{"usd": 2350, "rmb": 545, "rate": 7.2}],
         },
         source_health_loader=lambda: {"source": {"ok": True}},
@@ -98,6 +105,7 @@ def test_data_archive_runtime_reloads_all_persisted_state_and_market_snapshot():
     assert state.usdcny_rate == 7.2
     assert state.news_last_updated is None
     assert state.alert_cooldown_state == {}
+    assert state.market_quality_history[0]["quality_level"] == "normal"
     assert calls[0] == "sync-rules"
     assert calls[-1] == "market-cache"
 
@@ -144,6 +152,7 @@ def test_data_archive_runtime_restore_applies_reload_and_floating_settings():
         "news": list,
         "risk_analysis_history": list,
         "alert_log": list,
+        "market_quality_history": list,
         "price_history": list,
     }
     service = DataArchiveRuntime(

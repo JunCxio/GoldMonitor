@@ -1,6 +1,11 @@
 import json
 from datetime import datetime
 
+from goldmonitor.market_quality_history import (
+    build_market_quality_history_summary,
+    recent_market_quality_events,
+)
+
 
 def alert_rules_diagnostics(state):
     return {
@@ -191,6 +196,16 @@ def build_diagnostics_clipboard_text(
     quality_score = quality.get("score")
     quality_text = f"{quality_label} / {quality_score}分" if quality_score is not None else quality_label
     quality_reasons = quality.get("reasons") if isinstance(quality.get("reasons"), list) else []
+    quality_history_summary = (
+        payload.get("market_quality_summary")
+        if isinstance(payload.get("market_quality_summary"), dict)
+        else {}
+    )
+    quality_windows = (
+        quality_history_summary.get("windows")
+        if isinstance(quality_history_summary.get("windows"), dict)
+        else {}
+    )
     export_dir_ok = export_dir_status.get("ok")
     export_dir_state = "可写" if export_dir_ok is True else "不可写" if export_dir_ok is False else "未检查"
     last_export_ok = last_export.get("ok")
@@ -241,6 +256,23 @@ def build_diagnostics_clipboard_text(
         f"- 历史样本数: {price_history.get('total', 0)}",
         f"- 5 分钟 K 线样本数: {kline_count}",
     ]
+    if quality_history_summary:
+        lines.append(
+            f"- 已保存质量状态段: {int(quality_history_summary.get('stored_events') or 0)}"
+        )
+        for window_key, window_label in (("24h", "最近 24 小时"), ("7d", "最近 7 天")):
+            window = quality_windows.get(window_key)
+            if not isinstance(window, dict):
+                continue
+            availability = window.get("availability_pct")
+            availability_text = (
+                f"{float(availability):.1f}%" if availability is not None else "无完整区间"
+            )
+            lines.append(
+                f"- {window_label}: 可信区间占比 {availability_text}，"
+                f"异常 {int(window.get('incident_count') or 0)} 段，"
+                f"异常时长 {int(window.get('abnormal_seconds') or 0)} 秒"
+            )
     if history_maintenance:
         if not history_database.get("exists"):
             database_state = "尚未创建"
@@ -470,11 +502,15 @@ class DiagnosticsRuntime:
         payload["market_observation"] = dict(
             getattr(self.runtime, "market_observation", {}) or {}
         )
-        payload["market_quality_history"] = [
-            dict(item)
-            for item in getattr(self.runtime, "market_quality_history", [])
-            if isinstance(item, dict)
-        ]
+        quality_history = getattr(self.runtime, "market_quality_history", [])
+        payload["market_quality_history"] = recent_market_quality_events(
+            quality_history,
+            limit=50,
+        )
+        payload["market_quality_summary"] = build_market_quality_history_summary(
+            quality_history,
+            now=self.now_factory().astimezone(),
+        )
         payload["export_status"] = self.get_export_status()
         payload["taskbar_price"] = dict(
             getattr(self.runtime, "taskbar_layout_state", {}) or {}

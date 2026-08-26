@@ -65,6 +65,7 @@ class DataArchiveManager:
                 "kind": str(value.get("kind") or "file"),
                 "label": str(value.get("label") or key),
                 "sensitive": bool(value.get("sensitive")),
+                "required": bool(value.get("required", True)),
             }
             for key, value in dict(paths or {}).items()
             if isinstance(value, dict) and str(value.get("path") or "")
@@ -235,7 +236,11 @@ class DataArchiveManager:
                     entry["extracted_path"] = extracted_path
                 validated.append(entry)
 
-            missing_keys = sorted(set(self.paths) - seen_keys)
+            missing_keys = sorted(
+                key
+                for key, definition in self.paths.items()
+                if definition["required"] and key not in seen_keys
+            )
             if missing_keys:
                 raise DataArchiveError("归档缺少数据项: " + "、".join(missing_keys))
             expected_members = {ARCHIVE_MANIFEST_NAME} | {

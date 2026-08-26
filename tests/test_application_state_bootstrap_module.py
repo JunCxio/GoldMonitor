@@ -29,6 +29,10 @@ def test_application_state_bootstrap_loads_all_runtime_state_in_order():
             "news": loader("news", [{"title": "news-1"}]),
             "risk_analysis_history": loader("risk_analysis_history", [{"id": "risk-1"}]),
             "alert_log": load_alert_log,
+            "market_quality_history": loader(
+                "market_quality_history",
+                [{"quality_level": "normal"}],
+            ),
             "price_history": loader("price_history", [{"usd": 2300}]),
         },
         save_settings=lambda settings: settings,
@@ -52,6 +56,7 @@ def test_application_state_bootstrap_loads_all_runtime_state_in_order():
     assert runtime.news_items == [{"title": "news-1"}]
     assert runtime.risk_analysis_history == [{"id": "risk-1"}]
     assert runtime.alert_log == [{"id": "alert-1"}]
+    assert runtime.market_quality_history == [{"quality_level": "normal"}]
     assert runtime.price_archive == [{"usd": 2300}]
     assert calls.count("sync_rules") == 2
     assert ("alert_log", 50) in calls
@@ -77,6 +82,7 @@ def test_application_state_bootstrap_migrates_existing_settings_marker():
         "news": lambda: [],
         "risk_analysis_history": lambda: [],
         "alert_log": lambda **kwargs: [],
+        "market_quality_history": lambda: [],
         "price_history": lambda: [],
     }
     bootstrap = ApplicationStateBootstrap(
