@@ -477,6 +477,9 @@ for required in (
     "function renderMarketTrust",
     "function renderMarketTrustHistorySummary",
     "function formatMarketTrustDuration",
+    "function marketTrustSegmentId",
+    "function reviewMarketTrustEvent",
+    "查看复盘",
     "function applyMarketObservationState",
     "function renderRecentOpsRecords",
     "function previewDataArchive",
@@ -498,9 +501,20 @@ for required in (
     ".market-trust-history-summary",
     ".market-trust-history-window",
     ".market-trust-business-impact",
+    ".market-trust-review",
 ):
     if required not in css_path.read_text(encoding="utf-8"):
         raise SystemExit(f"static/app.css missing market quality history selector: {required}")
+
+for required in (
+    "function timelineDuration",
+    "function timelineMarketQualityLabel",
+    "event.source === 'market_quality_history'",
+    "当前范围内时长",
+    "阻塞原因",
+):
+    if required not in history_review_timeline_js_path.read_text(encoding="utf-8"):
+        raise SystemExit(f"history timeline missing market quality review contract: {required}")
 
 for required in (
     'id="backgroundTaskStatus"',

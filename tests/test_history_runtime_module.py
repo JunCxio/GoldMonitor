@@ -173,6 +173,7 @@ def _build_runtime(
         price_archive=[],
         last_price_history_save_at=0.0,
         news_items=[],
+        market_quality_history=[],
         review_notes=[],
         today_date="2026-08-11",
     )
@@ -309,6 +310,7 @@ def test_history_runtime_builds_timeline_sources_from_bounded_state_snapshots():
         price_archive=[],
         last_price_history_save_at=0.0,
         news_items=[{"url": "news-1"}, {"url": "news-2"}, {"url": "news-3"}],
+        market_quality_history=[{"session_id": "quality-1"}],
         review_notes=[{"id": "note-1"}],
         today_date="2026-08-11",
     )
@@ -321,6 +323,7 @@ def test_history_runtime_builds_timeline_sources_from_bounded_state_snapshots():
     assert sources["alert_entries"] == [{"id": "alert-1000"}]
     assert [item["id"] for item in sources["risk_items"]] == ["risk-1", "risk-2"]
     assert [item["url"] for item in sources["news_items"]] == ["news-1", "news-2"]
+    assert sources["market_quality_history"] == [{"session_id": "quality-1"}]
     assert sources["review_notes"] == [{"id": "note-1"}]
     assert sources["fetch_status"] == {"status": "ok"}
     assert sources["source_health_state"] == {"items": [{"name": "gold"}]}

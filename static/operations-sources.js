@@ -52,6 +52,27 @@ function formatMarketTrustDuration(value) {
   return (seconds / 86400).toFixed(seconds < 864000 ? 1 : 0) + ' 天';
 }
 
+function marketTrustEventIsAbnormal(item) {
+  if (!item || typeof item !== 'object') return false;
+  if (String(item.quality_level || '') !== 'normal') return true;
+  return ['usable_for_history', 'usable_for_alert', 'usable_for_automation'].some(key => item[key] !== true);
+}
+
+function marketTrustSegmentId(item) {
+  const source = item && typeof item === 'object' ? item : {};
+  const rawTime = String(source.first_seen_at || '');
+  const date = new Date(rawTime);
+  const firstSeen = Number.isNaN(date.getTime())
+    ? rawTime
+    : date.toISOString().slice(0, 19) + 'Z';
+  return 'data-status-market-quality-' + String(source.session_id || '') + '-' + firstSeen;
+}
+
+function reviewMarketTrustEvent(timestamp, segmentId) {
+  closeSettings(true);
+  openEventTimelineAround(timestamp, 'data_status', segmentId);
+}
+
 function renderMarketTrustGates(observation) {
   const box = document.getElementById('marketTrustGates');
   if (!box) return;
@@ -196,11 +217,14 @@ function renderMarketTrustEvents(history) {
       : '未发现业务阻塞';
     const occurrences = Math.max(1, Number(item.occurrences || 1));
     const period = formatMarketTrustTime(item.first_seen_at) + (item.last_seen_at && item.last_seen_at !== item.first_seen_at ? ' 至 ' + formatMarketTrustTime(item.last_seen_at) : '');
+    const reviewButton = marketTrustEventIsAbnormal(item)
+      ? '<button class="market-trust-review" type="button" onclick="reviewMarketTrustEvent(decodeURIComponent(\'' + encodeURIComponent(String(item.first_seen_at || '')) + '\'),decodeURIComponent(\'' + encodeURIComponent(marketTrustSegmentId(item)) + '\'))">查看复盘</button>'
+      : '';
     return [
       '<div class="market-trust-event ' + meta.className + '">',
       '<span class="market-trust-event-mark"></span>',
       '<div><strong>' + escapeHtml(meta.label) + '</strong><small>' + escapeHtml(reasons) + '</small><time>' + escapeHtml(period) + '</time></div>',
-      '<span class="market-trust-event-count">' + occurrences + ' 次</span>',
+      '<div class="market-trust-event-actions"><span class="market-trust-event-count">' + occurrences + ' 次</span>' + reviewButton + '</div>',
       '</div>',
     ].join('');
   }).join('');

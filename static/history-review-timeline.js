@@ -139,6 +139,44 @@ function timelineEventTime(timestamp) {
   return text.replace('T', ' ').slice(0, 19);
 }
 
+function timelineLocalDateTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return timelineEventTime(value);
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+function timelineDuration(value) {
+  const seconds = Math.max(0, Number(value) || 0);
+  if (seconds < 60) return Math.round(seconds) + ' 秒';
+  if (seconds < 3600) return Math.floor(seconds / 60) + ' 分钟' + (seconds % 60 ? ' ' + Math.round(seconds % 60) + ' 秒' : '');
+  if (seconds < 86400) return Math.floor(seconds / 3600) + ' 小时' + (Math.floor(seconds / 60) % 60 ? ' ' + Math.floor(seconds / 60) % 60 + ' 分钟' : '');
+  return Math.floor(seconds / 86400) + ' 天' + (Math.floor(seconds / 3600) % 24 ? ' ' + Math.floor(seconds / 3600) % 24 + ' 小时' : '');
+}
+
+function timelineMarketQualityLabel(level) {
+  const labels = {
+    normal: '行情可信',
+    stale: '缓存或过期',
+    anomaly: '跨源价差异常',
+    invalid: '行情校验失败',
+    degraded: '数据源部分降级',
+    unavailable: '行情不可用',
+  };
+  return labels[String(level || '')] || '行情质量异常';
+}
+
+function timelineGateState(value) {
+  return value === true ? '允许' : value === false ? '已阻止' : '未记录';
+}
+
 function renderTimelineSummary() {
   const box = document.getElementById('timelineSummary');
   if (!box) return;
@@ -230,9 +268,25 @@ function renderTimelineDetail() {
       extras += '<div class="timeline-detail-news"><a href="' + escapeHtml(payload.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(payload.url) + '</a></div>';
     }
   } else if (event.type === 'data_status') {
-    cells.push(detailCell('状态', payload.cached ? '缓存' : (payload.ok === false ? '异常' : payload.status)));
-    cells.push(detailCell('说明', payload.error || payload.message));
-    if (payload.summary) cells.push(detailCell('价差比例', payload.summary.spread_pct == null ? '' : payload.summary.spread_pct + '%'));
+    if (event.source === 'market_quality_history') {
+      cells.push(detailCell('质量等级', timelineMarketQualityLabel(payload.quality_level)));
+      cells.push(detailCell('质量评分', payload.quality_score == null ? '' : payload.quality_score + ' 分'));
+      cells.push(detailCell('开始时间', timelineLocalDateTime(payload.first_seen_at)));
+      cells.push(detailCell('结束时间', timelineLocalDateTime(payload.last_seen_at)));
+      cells.push(detailCell('异常区间时长', timelineDuration(payload.duration_seconds)));
+      cells.push(detailCell('当前范围内时长', timelineDuration(payload.overlap_duration_seconds)));
+      cells.push(detailCell('行情来源', payload.source));
+      cells.push(detailCell('汇率来源', payload.rate_source));
+      cells.push(detailCell('历史入库', timelineGateState(payload.usable_for_history)));
+      cells.push(detailCell('预警判断', timelineGateState(payload.usable_for_alert)));
+      cells.push(detailCell('定投执行', timelineGateState(payload.usable_for_automation)));
+      cells.push(detailCell('观测次数', payload.occurrences));
+      cells.push(detailCell('阻塞原因', Array.isArray(payload.blocked_reasons) ? payload.blocked_reasons.join('；') : ''));
+    } else {
+      cells.push(detailCell('状态', payload.cached ? '缓存' : (payload.ok === false ? '异常' : payload.status)));
+      cells.push(detailCell('说明', payload.error || payload.message));
+      if (payload.summary) cells.push(detailCell('价差比例', payload.summary.spread_pct == null ? '' : payload.summary.spread_pct + '%'));
+    }
   } else if (event.type === 'price_summary') {
     const summary = payload.summary || {};
     const usd = summary.usd || {};

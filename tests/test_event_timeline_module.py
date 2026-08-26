@@ -214,6 +214,110 @@ def test_initial_fetch_waiting_status_is_not_reported_as_data_issue():
     assert "未记录数据状态异常" in report
 
 
+def test_market_quality_intervals_overlap_timeline_range_and_report_business_impact():
+    from goldmonitor.event_timeline import build_event_timeline_state, build_review_report
+
+    def quality_event(
+        first_seen_at,
+        last_seen_at,
+        *,
+        session_id,
+        level,
+        score,
+        history,
+        alert,
+        automation,
+        reasons,
+    ):
+        return {
+            "source": "测试金价源",
+            "rate_source": "测试汇率源",
+            "received_at": last_seen_at,
+            "quality_level": level,
+            "quality_score": score,
+            "usable_for_history": history,
+            "usable_for_alert": alert,
+            "usable_for_automation": automation,
+            "blocked_reasons": reasons,
+            "first_seen_at": first_seen_at,
+            "last_seen_at": last_seen_at,
+            "occurrences": 3,
+            "session_id": session_id,
+        }
+
+    state = build_event_timeline_state(
+        minutes=60,
+        limit=300,
+        types=["data_status"],
+        fetch_status={"ok": True, "message": "正常"},
+        source_health_state={"items": []},
+        source_comparison_state={"status": "normal"},
+        market_quality_history=[
+            quality_event(
+                "2026-06-08T10:50:00",
+                "2026-06-08T11:10:00",
+                session_id="session-before-range",
+                level="stale",
+                score=40,
+                history=False,
+                alert=False,
+                automation=False,
+                reasons=["金价来自缓存"],
+            ),
+            quality_event(
+                "2026-06-08T11:20:00",
+                "2026-06-08T11:35:00",
+                session_id="session-in-range",
+                level="anomaly",
+                score=55,
+                history=True,
+                alert=False,
+                automation=False,
+                reasons=["跨源价差超过阈值"],
+            ),
+            quality_event(
+                "2026-06-08T11:40:00",
+                "2026-06-08T11:50:00",
+                session_id="session-normal",
+                level="normal",
+                score=100,
+                history=True,
+                alert=True,
+                automation=True,
+                reasons=[],
+            ),
+            {"first_seen_at": "not-a-time", "quality_level": "invalid"},
+        ],
+        now_factory=fixed_now,
+    )
+
+    assert state["summary"]["by_type"]["data_status"] == 2
+    assert state["summary"]["skipped"] == 1
+    quality_events = [
+        event for event in state["events"]
+        if event["source"] == "market_quality_history"
+    ]
+    first = quality_events[0]
+    second = quality_events[1]
+    assert first["timestamp"] == "2026-06-08T11:00:00"
+    assert first["payload"]["duration_seconds"] == 1200
+    assert first["payload"]["overlap_duration_seconds"] == 600
+    assert first["id"] == first["payload"]["id"]
+    assert first["id"].startswith("data-status-market-quality-session-before-range-")
+    assert second["payload"]["overlap_duration_seconds"] == 900
+
+    report = build_review_report(state)
+    assert "行情质量异常区间：2 段；范围内累计 25 分钟" in report
+    assert "历史入库受影响：1 段；范围内累计 10 分钟" in report
+    assert "预警判断受影响：2 段；范围内累计 25 分钟" in report
+    assert "定投执行受影响：2 段；范围内累计 25 分钟" in report
+    assert "主要阻塞原因" in report
+    assert "金价来自缓存" in report
+    assert "跨源价差超过阈值" in report
+    assert "异常段" in report
+    assert "测试金价源 / 测试汇率源" in report
+
+
 def test_review_report_and_filename_are_stable_for_export():
     from goldmonitor.event_timeline import build_review_report, review_report_filename
 
