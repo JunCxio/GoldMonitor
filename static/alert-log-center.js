@@ -16,7 +16,15 @@ function registerAlertLogSocketHandlers(socket) {
       message: data.message || '',
     });
     showAlertModal(data);
-    flashTitle(data.type === 'critical' ? '警告' : data.type === 'warning' ? '关注' : '波动预警');
+    flashTitle(data.type === 'critical'
+      ? '警告'
+      : data.type === 'warning'
+        ? '关注'
+        : data.type === 'quality'
+          ? '行情质量异常'
+          : data.type === 'recovery'
+            ? '行情质量恢复'
+            : '波动预警');
   });
 
   socket.on('alert_log_exported', data => {
@@ -147,23 +155,31 @@ function alertLevelLabel(type) {
   if (type === 'critical') return '关键预警';
   if (type === 'warning') return '价格预警';
   if (type === 'volatility') return '波动预警';
+  if (type === 'quality') return '质量异常';
+  if (type === 'recovery') return '质量恢复';
   return '金价预警';
 }
 
 function alertModeLabel(mode) {
   if (mode === 'usd') return '国际金价';
   if (mode === 'rmb') return '国内金价';
+  if (mode === 'quality') return '行情可信度';
   return '金价监控';
 }
 
 function renderAlertModal(entry) {
   const modal = document.getElementById('alertModal');
   modal.className = 'settings-modal alert-modal alert-level-' + (entry.type || 'warning');
+  document.getElementById('alertTitle').textContent = entry.source === 'market_quality' ? '行情质量通知' : '金价预警';
   document.getElementById('alertBadge').textContent = alertLevelLabel(entry.type);
   const muted = entry.notification_muted && entry.notification_message ? '\n' + entry.notification_message : '';
   document.getElementById('alertMessage').textContent = (entry.message || '达到预警条件') + muted;
   document.getElementById('alertTime').textContent = '时间 ' + (entry.time || '--');
   document.getElementById('alertMode').textContent = alertModeLabel(entry.mode);
+  const primaryAction = document.getElementById('alertPrimaryAction');
+  if (primaryAction) {
+    primaryAction.textContent = entry.source === 'market_quality' ? '查看异常复盘' : '分析本次预警';
+  }
   const stackNote = document.getElementById('alertStackNote');
   if (mergedAlertCount > 0) {
     stackNote.textContent = '当前弹窗已合并 ' + mergedAlertCount + ' 条后续预警，警报记录中保留完整明细。';
@@ -230,6 +246,20 @@ function analyzeActiveAlert() {
   mergedAlertCount = 0;
   document.getElementById('riskResult').textContent = '正在分析本次预警...';
   requestRiskAnalysis(alertContext);
+}
+
+function runActiveAlertPrimaryAction() {
+  if (!activeAlert) return;
+  if (activeAlert.source === 'market_quality') {
+    const timestamp = activeAlert.market_quality_first_seen_at || activeAlert.timestamp || activeAlert.time;
+    const segmentId = activeAlert.market_quality_segment_id || '';
+    document.getElementById('alertBackdrop').classList.remove('show');
+    activeAlert = null;
+    mergedAlertCount = 0;
+    openEventTimelineAround(timestamp, 'data_status', segmentId);
+    return;
+  }
+  analyzeActiveAlert();
 }
 
 function onAlertBackdrop(event) {
@@ -384,7 +414,7 @@ function buildLogEntry(entry) {
     onclick: "window.openAlertTimelineFromLog(decodeURIComponent('" + encodedId + "'))",
     attrs: ' data-log-timeline-id="' + encodedId + '"',
   };
-  const actions = [
+  const actions = entry.source === 'market_quality' ? [] : [
     { label: '分析', buttonClass: 'btn-risk-sm', onclick: "analyzeAlertFromLog(decodeURIComponent('" + encodedId + "'))" },
   ];
   if (entry.rule_id || entry.rule_kind) {
@@ -548,6 +578,14 @@ function copyAlertRuleFromLog(id) {
 function openAlertTimelineFromLog(id) {
   const entry = alertEntries.find(item => item.id === id);
   if (!entry) return;
+  if (entry.source === 'market_quality') {
+    openEventTimelineAround(
+      entry.market_quality_first_seen_at || entry.timestamp || entry.time,
+      'data_status',
+      entry.market_quality_segment_id || '',
+    );
+    return;
+  }
   openEventTimelineAround(entry.timestamp || entry.time, 'alert', entry.id);
 }
 

@@ -46,6 +46,8 @@ class ApplicationRuntimeState:
         default_factory=unavailable_market_observation
     )
     market_quality_history: List[Dict[str, Any]] = field(default_factory=list)
+    market_quality_alert_state: Dict[str, Any] = field(default_factory=dict)
+    market_quality_alert_last_saved_monotonic: float = 0.0
     market_quality_session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     market_quality_last_saved_monotonic: float = 0.0
     price_history: List[Dict[str, Any]] = field(default_factory=list)

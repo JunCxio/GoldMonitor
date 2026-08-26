@@ -105,6 +105,17 @@ def market_quality_event_is_abnormal(event):
     return any(event.get(field) is not True for _, _, field in MARKET_QUALITY_BUSINESS_GATES)
 
 
+def market_quality_segment_id(event):
+    normalized = normalize_market_quality_event(event)
+    if normalized is None:
+        return ""
+    return (
+        "data-status-market-quality-"
+        f"{str(normalized.get('session_id') or '')}-"
+        f"{str(normalized.get('first_seen_at') or '')}"
+    )
+
+
 def _event_overlap_seconds(event, window_start, window_end):
     first_seen = parse_datetime(event.get("first_seen_at"))
     last_seen = parse_datetime(event.get("last_seen_at"))

@@ -437,6 +437,41 @@ def test_today_overview_alert_quick_actions_follow_remaining_issue():
     ]
 
 
+def test_today_overview_quality_alert_opens_exact_quality_review_segment():
+    from goldmonitor.today_overview import build_today_overview
+
+    result = build_today_overview(
+        alert_entries=[{
+            "id": "quality-alert-1",
+            "source": "market_quality",
+            "type": "quality",
+            "timestamp": "2026-08-26T08:05:00",
+            "message": "行情质量异常已持续 5 分钟。",
+            "handled": False,
+            "read": False,
+            "notification_summary": {"status": "sent"},
+            "market_quality_first_seen_at": "2026-08-26T08:00:00Z",
+            "market_quality_segment_id": (
+                "data-status-market-quality-session-a-2026-08-26T08:00:00Z"
+            ),
+        }],
+        now=datetime(2026, 8, 26, 9, 0),
+    )
+
+    attention = result["attention"]["items"][0]
+    activity = result["activity"]["items"][0]
+    expected_action = {
+        "kind": "open_market_quality_review",
+        "target_id": (
+            "data-status-market-quality-session-a-2026-08-26T08:00:00Z"
+        ),
+    }
+    assert attention["action"] == expected_action
+    assert activity["action"] == expected_action
+    assert attention["review_timestamp"] == "2026-08-26T08:00:00Z"
+    assert activity["review_timestamp"] == "2026-08-26T08:00:00Z"
+
+
 def test_today_overview_is_deterministic_limits_output_and_does_not_mutate_inputs():
     from goldmonitor.today_overview import build_today_overview
 

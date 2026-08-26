@@ -20,6 +20,7 @@ def test_storage_manifest_covers_current_persistent_paths():
             "market_cache": str(tmp / "market_cache.json"),
             "source_metrics": str(tmp / "source_metrics.json"),
             "market_quality_history": str(tmp / "market_quality_history.json"),
+            "market_quality_alert_state": str(tmp / "market_quality_alert_state.json"),
             "update_dir": str(tmp / "updates"),
             "exports": str(tmp / "exports"),
             "news": str(tmp / "news.json"),
@@ -56,6 +57,8 @@ def test_storage_manifest_covers_current_persistent_paths():
     assert manifest["source_metrics"]["expected_schema_version"] == 1
     assert manifest["market_quality_history"]["schema"] == "item_payload"
     assert manifest["market_quality_history"]["expected_schema_version"] == 1
+    assert manifest["market_quality_alert_state"]["schema"] == "versioned_object"
+    assert manifest["market_quality_alert_state"]["expected_schema_version"] == 2
     assert manifest["price_history_db"]["kind"] == "sqlite"
     assert manifest["price_history_repair_backup"]["kind"] == "sqlite"
     assert manifest["alert_log_db"]["kind"] == "sqlite"
@@ -175,6 +178,7 @@ def test_app_diagnostics_report_includes_complete_storage_manifest(monkeypatch, 
         "MARKET_CACHE_PATH": tmp_path / "market_cache.json",
         "SOURCE_METRICS_PATH": tmp_path / "source_metrics.json",
         "MARKET_QUALITY_HISTORY_PATH": tmp_path / "market_quality_history.json",
+        "MARKET_QUALITY_ALERT_STATE_PATH": tmp_path / "market_quality_alert_state.json",
         "UPDATE_DIR": tmp_path / "updates",
         "EXPORT_DIR": tmp_path / "exports",
         "NEWS_CACHE_PATH": tmp_path / "news.json",
@@ -200,6 +204,7 @@ def test_app_diagnostics_report_includes_complete_storage_manifest(monkeypatch, 
         "portfolio_alerts",
         "source_metrics",
         "market_quality_history",
+        "market_quality_alert_state",
         "news",
         "risk_analysis_history",
         "review_notes",
@@ -222,6 +227,7 @@ def test_app_diagnostics_report_includes_complete_storage_manifest(monkeypatch, 
     assert report["storage_manifest"]["today_overview_state"]["expected_schema_version"] == 1
     assert report["storage_manifest"]["source_metrics"]["schema"] == "versioned_object"
     assert report["storage_manifest"]["market_quality_history"]["schema"] == "item_payload"
+    assert report["storage_manifest"]["market_quality_alert_state"]["schema"] == "versioned_object"
     assert report["storage_manifest"]["price_history_db"]["kind"] == "sqlite"
     assert report["storage_manifest"]["price_history_repair_backup"]["kind"] == (
         "sqlite"

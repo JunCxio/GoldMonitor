@@ -457,6 +457,27 @@
           </section>
           <section class="setting-section">
             <header class="setting-section-head"><h4>行情可信度</h4><p>核对当前行情能否参与历史、预警和定投，并查看数据源健康与近期拦截。</p></header>
+            <div class="setting-row setting-row-top market-quality-alert-setting-row">
+              <div><div class="setting-label">持续异常通知</div><div class="setting-desc">异常累计达到门槛后只提醒一次；行情连续正常达到确认门槛后才关闭原待处理项，避免短暂回稳造成重复通知。应用关闭期间不累计时长。</div></div>
+              <div class="market-quality-alert-control" id="marketQualityAlertControl">
+                <div class="market-quality-alert-head">
+                  <div><strong>异常监控</strong><span id="marketQualityAlertStatus">等待行情状态</span></div>
+                  <label class="switch"><input type="checkbox" id="setMarketQualityAlertEnabled"><span class="slider"></span></label>
+                </div>
+                <div class="market-quality-alert-options">
+                  <label><span>持续门槛</span><select class="settings-select" id="setMarketQualityAlertThreshold"><option value="1">1 分钟</option><option value="3">3 分钟</option><option value="5">5 分钟</option><option value="10">10 分钟</option><option value="15">15 分钟</option><option value="30">30 分钟</option><option value="60">60 分钟</option></select></label>
+                  <label><span>恢复确认</span><select class="settings-select" id="setMarketQualityRecoveryConfirmation"><option value="1">1 分钟</option><option value="2">2 分钟</option><option value="3">3 分钟</option><option value="5">5 分钟</option><option value="10">10 分钟</option></select></label>
+                  <label class="inline-check"><input type="checkbox" id="setMarketQualityRecoveryEnabled"><span>恢复后通知</span></label>
+                </div>
+                <div class="market-quality-alert-channels" aria-label="行情质量通知渠道">
+                  <span>通知渠道</span>
+                  <label class="inline-check"><input type="checkbox" id="setMarketQualityAlertLocal"><span>本机</span></label>
+                  <label class="inline-check"><input type="checkbox" id="setMarketQualityAlertEmail"><span>邮件</span></label>
+                  <label class="inline-check"><input type="checkbox" id="setMarketQualityAlertWebhook"><span>Webhook</span></label>
+                </div>
+                <div class="market-quality-alert-note">恢复确认期间再次出现异常会取消确认，但不会重复发送同一轮异常通知。邮件和 Webhook 仍遵守各自启用状态；全局静默时段内只记录，不弹出或发送。</div>
+              </div>
+            </div>
             <div class="setting-row setting-row-top market-trust-setting-row">
               <div><div class="setting-label">当前质量门禁</div><div class="setting-desc">评分用于解释数据源运行状态；业务门禁以当前行情观测的来源时间、缓存和价格结构校验为准。</div></div>
               <div class="market-trust-card" id="marketTrustCard" aria-live="polite">
@@ -778,7 +799,7 @@
       </div>
     </div>
     <div class="settings-foot">
-      <button class="settings-cancel" onclick="analyzeActiveAlert()">分析本次预警</button>
+      <button class="settings-cancel" id="alertPrimaryAction" onclick="runActiveAlertPrimaryAction()">分析本次预警</button>
       <button class="settings-save" onclick="closeAlertModal()">知道了</button>
     </div>
   </div>

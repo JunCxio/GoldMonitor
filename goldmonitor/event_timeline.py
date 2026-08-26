@@ -198,6 +198,10 @@ def alert_level_label(alert_type):
         return "关键预警"
     if alert_type == "volatility":
         return "波动预警"
+    if alert_type == "quality":
+        return "行情质量异常"
+    if alert_type == "recovery":
+        return "行情质量恢复"
     return "价格预警"
 
 
@@ -396,9 +400,7 @@ def build_market_quality_timeline_events(
             0,
             int((overlap_end - overlap_start).total_seconds()),
         )
-        session_id = str(event_data.get("session_id") or "")
-        first_seen_at = str(event_data.get("first_seen_at") or "")
-        segment_id = f"data-status-market-quality-{session_id}-{first_seen_at}"
+        segment_id = market_quality_history_core.market_quality_segment_id(event_data)
         payload = dict(event_data)
         payload.update({
             "id": segment_id,

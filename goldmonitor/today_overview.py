@@ -214,6 +214,18 @@ def _alert_attention(entries, start, end):
                 "label": "重发通知",
                 "target_id": str(source_id or ""),
             })
+        is_quality_alert = str(entry.get("source") or "") == "market_quality"
+        action = (
+            {
+                "kind": "open_market_quality_review",
+                "target_id": str(entry.get("market_quality_segment_id") or ""),
+            }
+            if is_quality_alert
+            else {
+                "kind": "open_alert",
+                "target_id": str(entry.get("id") or entry.get("alert_id") or ""),
+            }
+        )
         items.append(_attention_item(
             "alert",
             source_id,
@@ -222,12 +234,15 @@ def _alert_attention(entries, start, end):
             entry.get("message") or "警报需要处理。",
             timestamp,
             reason_codes,
-            {"kind": "open_alert", "target_id": str(entry.get("id") or entry.get("alert_id") or "")},
+            action,
             occurred_today=_in_range(timestamp, start, end),
             alert_type=alert_type,
             rule_id=str(entry.get("rule_id") or ""),
             notification_status=notification_status,
             quick_actions=quick_actions,
+            review_timestamp=str(
+                entry.get("market_quality_first_seen_at") or ""
+            ),
         ))
     return items, {
         "unread": unread_count,
@@ -559,16 +574,31 @@ def _alert_activity(entries, start, end):
         timestamp = entry.get("timestamp")
         if not _in_range(timestamp, start, end):
             continue
+        is_quality_alert = str(entry.get("source") or "") == "market_quality"
+        action = (
+            {
+                "kind": "open_market_quality_review",
+                "target_id": str(entry.get("market_quality_segment_id") or ""),
+            }
+            if is_quality_alert
+            else {
+                "kind": "open_alert",
+                "target_id": str(entry.get("id") or entry.get("alert_id") or ""),
+            }
+        )
         result.append(_activity_item(
             "alert",
             entry.get("id") or entry.get("alert_id") or timestamp,
             timestamp,
             _alert_title(entry),
             str(entry.get("message") or ""),
-            {"kind": "open_alert", "target_id": str(entry.get("id") or entry.get("alert_id") or "")},
+            action,
             handled=bool(entry.get("handled")),
             read=bool(entry.get("read")),
             alert_type=str(entry.get("type") or "warning"),
+            review_timestamp=str(
+                entry.get("market_quality_first_seen_at") or ""
+            ),
         ))
     return result
 

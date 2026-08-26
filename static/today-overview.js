@@ -126,6 +126,7 @@ function todayOverviewActionLabel(action) {
     open_alert: '查看详情',
     open_rule: '编辑规则',
     open_market_status: '查看详情',
+    open_market_quality_review: '查看复盘',
     open_portfolio_transaction: '查看流水',
     open_portfolio_investment: '查看计划',
     open_operations_task: '查看任务',
@@ -643,6 +644,11 @@ function openTodayOverviewMarketStatus() {
   document.getElementById('sourceHealth')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
+function openTodayOverviewMarketQualityReview(targetId, timestamp) {
+  closeTodayOverview({ markViewed: true, restoreFocus: false });
+  openEventTimelineAround(timestamp, 'data_status', targetId);
+}
+
 function openTodayOverviewPortfolioTransaction(targetId) {
   closeTodayOverview({ markViewed: true, restoreFocus: false });
   setActivePortfolioTransaction(targetId);
@@ -689,6 +695,7 @@ function activateTodayOverviewAction(kind, targetId, timestamp) {
   if (kind === 'open_alert') openTodayOverviewAlert(targetId, timestamp);
   else if (kind === 'open_rule') openTodayOverviewRule(targetId);
   else if (kind === 'open_market_status') openTodayOverviewMarketStatus();
+  else if (kind === 'open_market_quality_review') openTodayOverviewMarketQualityReview(targetId, timestamp);
   else if (kind === 'open_portfolio_transaction') openTodayOverviewPortfolioTransaction(targetId);
   else if (kind === 'open_portfolio_investment') openTodayOverviewPortfolioInvestment(targetId);
   else if (kind === 'open_operations_task') openTodayOverviewOperationsTask(targetId);
@@ -700,7 +707,7 @@ function activateTodayOverviewItem(token) {
   const item = todayOverviewItemIndex[token];
   if (!item) return;
   const action = item.action && typeof item.action === 'object' ? item.action : {};
-  activateTodayOverviewAction(action.kind, action.target_id, item.timestamp);
+  activateTodayOverviewAction(action.kind, action.target_id, item.review_timestamp || item.timestamp);
 }
 
 function runTodayOverviewQuickAction(token, actionIndex) {

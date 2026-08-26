@@ -166,6 +166,14 @@ function validateSettings() {
     }
   }
 
+  if (document.getElementById('setMarketQualityAlertEnabled').checked) {
+    if (!document.getElementById('setMarketQualityAlertLocal').checked
+      && !document.getElementById('setMarketQualityAlertEmail').checked
+      && !document.getElementById('setMarketQualityAlertWebhook').checked) {
+      add('setMarketQualityAlertLocal', '启用行情质量通知前至少选择一个通知渠道。');
+    }
+  }
+
   if (document.getElementById('setRiskAssistantEnabled').checked) {
     const provider = document.getElementById('setRiskAssistantProvider').value;
     if (provider === 'deepseek') {
@@ -208,6 +216,10 @@ function handleSettingsFieldChange(event) {
     renderTaskbarPriceStatus();
   }
   if (target.id === 'setFloatingTaskbarTarget') renderTaskbarPriceStatus();
+  if (target.id === 'setMarketQualityAlertEnabled') syncMarketQualityAlertFields();
+  if (['setMarketQualityAlertLocal', 'setMarketQualityAlertEmail', 'setMarketQualityAlertWebhook'].includes(target.id)) {
+    clearSettingsFieldError(document.getElementById('setMarketQualityAlertLocal'));
+  }
   const message = document.getElementById('settingsMessage');
   if (message && message.dataset.state === 'error') showSettingsMessage('', '');
   updateSettingsDirtyState();

@@ -31,6 +31,7 @@ RUNTIME_MARKET_STATE_FIELDS = (
     "gold_price_error",
     "market_observation",
     "market_quality_history",
+    "market_quality_alert_state",
     "price_history",
     "klines_5min",
     "last_fetch_ok",
@@ -534,6 +535,8 @@ class MarketRuntime:
         update_floating_price,
         check_alert_rules,
         record_quality_event=record_market_quality_event,
+        process_quality_alert=None,
+        build_quality_alert_status=None,
         now_factory=datetime.now,
         ounce_to_gram=31.1035,
     ):
@@ -554,8 +557,27 @@ class MarketRuntime:
         self.update_floating_price = update_floating_price
         self.check_alert_rules = check_alert_rules
         self.record_quality_event = record_quality_event
+        self.process_quality_alert = process_quality_alert
+        self.build_quality_alert_status = build_quality_alert_status
         self.now_factory = now_factory
         self.ounce_to_gram = ounce_to_gram
+
+    def _process_quality_alert(self, state, observation, observed_at):
+        if not callable(self.process_quality_alert):
+            return
+        state["market_quality_alert_state"] = self.process_quality_alert(
+            state.get("market_quality_alert_state"),
+            observation,
+            state.get("market_quality_history"),
+            observed_at=observed_at,
+        )
+
+    def _quality_alert_status(self, state):
+        if not callable(self.build_quality_alert_status):
+            return {}
+        return self.build_quality_alert_status(
+            state.get("market_quality_alert_state")
+        )
 
     def fetch_once(self):
         if not self.refresh_lock.acquire(blocking=False):
@@ -597,6 +619,7 @@ class MarketRuntime:
                         observation,
                         observed_at=received_at,
                     )
+                    self._process_quality_alert(state, observation, received_at)
                     self.state_committer(state)
                     status = self.build_fetch_status(
                         False,
@@ -619,6 +642,7 @@ class MarketRuntime:
                         state["market_quality_history"],
                         now=received_at,
                     )
+                    status["market_quality_alert"] = self._quality_alert_status(state)
                     self.emit("fetch_error", status)
                     self.emit("fetch_status", status)
                     return False
@@ -658,6 +682,7 @@ class MarketRuntime:
                     observation,
                     observed_at=received_at,
                 )
+                self._process_quality_alert(state, observation, received_at)
                 invalid_gold_reasons = {
                     "金价数据缺失或不是有效正数",
                     "金价开高低收关系异常",
@@ -696,6 +721,7 @@ class MarketRuntime:
                         state["market_quality_history"],
                         now=received_at,
                     )
+                    status["market_quality_alert"] = self._quality_alert_status(state)
                     self.emit("fetch_error", status)
                     self.emit("fetch_status", status)
                     return False
@@ -859,6 +885,7 @@ class MarketRuntime:
                         state["market_quality_history"],
                         now=received_at,
                     ),
+                    "market_quality_alert": self._quality_alert_status(state),
                 })
                 desktop_title = self.format_price_title(state["price_rmb"], state["price_usd"])
                 self.update_desktop_price_title(desktop_title)
@@ -907,6 +934,7 @@ class MarketRuntime:
                     state["market_quality_history"],
                     now=received_at,
                 )
+                fetch_status["market_quality_alert"] = self._quality_alert_status(state)
                 self.emit("fetch_status", fetch_status)
                 history_state = self.build_price_history_state(limit=240)
                 history_state["scope"] = "live"
