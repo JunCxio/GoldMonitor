@@ -295,7 +295,7 @@
   .ops-update-status[data-state="error"] { color:var(--up); }
   .ops-update-status[data-state="available"] { color:var(--gold); }
   .ops-update-meta { margin-top:4px; color:var(--text-dim); font-size:0.72rem; line-height:1.35; white-space:normal; overflow-wrap:anywhere; }
-  .market-trust-setting-row { grid-template-columns:minmax(180px, 0.42fr) minmax(460px, 1fr); }
+  .market-trust-setting-row { grid-template-columns:minmax(180px, 0.42fr) minmax(0, 1fr); }
   .market-trust-setting-row > .market-trust-card { justify-self:stretch; }
   .market-trust-card { width:100%; min-width:0; display:grid; gap:12px; padding:14px; border:1px solid rgba(232,184,48,0.18); border-radius:11px; background:linear-gradient(180deg, rgba(232,184,48,0.045), rgba(255,255,255,0.018) 28%, rgba(0,0,0,0.08)); }
   .market-trust-card[data-state="normal"] { border-color:rgba(76,175,132,0.28); }
@@ -370,6 +370,9 @@
   .market-trust-source.active > span:last-child { color:var(--down); }
   .market-trust-source.fail > span:last-child { color:#ed95a3; }
   .market-trust-event-count { padding:2px 5px; border:1px solid var(--hairline); border-radius:999px; }
+  .market-trust-event-actions { display:flex; flex-direction:column; align-items:flex-end; gap:5px; }
+  .market-trust-review { min-height:26px; padding:4px 7px; border:1px solid rgba(232,184,48,0.28); border-radius:6px; background:rgba(232,184,48,0.06); color:var(--gold); font-size:0.59rem; font-weight:800; white-space:nowrap; cursor:pointer; }
+  .market-trust-review:hover { border-color:rgba(232,184,48,0.5); background:rgba(232,184,48,0.11); }
   .market-trust-empty { padding:9px 10px; border:1px dashed rgba(255,255,255,0.09); border-radius:8px; color:var(--text-dim); font-size:0.65rem; line-height:1.45; text-align:center; }
   .diagnostics-copy-fallback { min-height:130px; max-height:220px; margin-top:8px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:0.72rem; line-height:1.5; white-space:pre; }
   .price-maintenance-card { width:100%; max-width:min(560px, 100%); }

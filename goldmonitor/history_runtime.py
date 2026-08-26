@@ -249,6 +249,7 @@ class HistoryReviewRuntime:
             )
         with self.state.lock:
             news_items = list(self.state.news_items[: self.news_limit])
+            market_quality_history = list(self.state.market_quality_history)
         with self.state.review_notes_lock:
             review_notes = list(self.state.review_notes)
         return {
@@ -257,6 +258,7 @@ class HistoryReviewRuntime:
             ),
             "risk_items": risk_items,
             "news_items": news_items,
+            "market_quality_history": market_quality_history,
             "review_notes": review_notes,
             "fetch_status": self.get_fetch_status(),
             "source_health_state": self.get_source_health_state(),
@@ -298,12 +300,15 @@ class HistoryReviewRuntime:
         )
 
     def build_data_status_timeline_events(self, start_time, end_time):
+        with self.state.lock:
+            market_quality_history = list(self.state.market_quality_history)
         return event_timeline_core.build_data_status_timeline_events(
             start_time,
             end_time,
             fetch_status=self.get_fetch_status(),
             source_health_state=self.get_source_health_state(),
             source_comparison_state=self.get_source_comparison_state(),
+            market_quality_history=market_quality_history,
             now_factory=self.now_factory,
         )
 

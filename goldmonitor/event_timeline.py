@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 
+from goldmonitor import market_quality_history as market_quality_history_core
 from goldmonitor.time_utils import to_local_naive
 
 
@@ -338,12 +339,105 @@ def is_initial_fetch_waiting_status(fetch_status):
     return not error and "等待首次行情" in message
 
 
+def format_duration_seconds(value):
+    try:
+        seconds = max(0, int(value or 0))
+    except (TypeError, ValueError):
+        seconds = 0
+    if seconds < 60:
+        return f"{seconds} 秒"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes} 分钟" + (f" {seconds} 秒" if seconds else "")
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours} 小时" + (f" {minutes} 分钟" if minutes else "")
+    days, hours = divmod(hours, 24)
+    return f"{days} 天" + (f" {hours} 小时" if hours else "")
+
+
+def market_quality_level_label(level):
+    labels = {
+        "normal": "行情可信",
+        "stale": "缓存或过期",
+        "anomaly": "跨源价差异常",
+        "invalid": "行情校验失败",
+        "degraded": "数据源部分降级",
+        "unavailable": "行情不可用",
+    }
+    return labels.get(str(level or ""), "行情质量异常")
+
+
+def build_market_quality_timeline_events(
+    start_time,
+    end_time,
+    market_quality_history=None,
+):
+    events = []
+    skipped = 0
+    for raw_event in list(market_quality_history or []):
+        event_data = market_quality_history_core.normalize_market_quality_event(raw_event)
+        if event_data is None:
+            skipped += 1
+            continue
+        if not market_quality_history_core.market_quality_event_is_abnormal(event_data):
+            continue
+        first_seen = parse_iso_datetime(event_data.get("first_seen_at"))
+        last_seen = parse_iso_datetime(event_data.get("last_seen_at"))
+        if first_seen is None or last_seen is None:
+            skipped += 1
+            continue
+        if last_seen < start_time or first_seen > end_time:
+            continue
+        overlap_start = max(first_seen, start_time)
+        overlap_end = min(last_seen, end_time)
+        duration_seconds = max(0, int((last_seen - first_seen).total_seconds()))
+        overlap_duration_seconds = max(
+            0,
+            int((overlap_end - overlap_start).total_seconds()),
+        )
+        session_id = str(event_data.get("session_id") or "")
+        first_seen_at = str(event_data.get("first_seen_at") or "")
+        segment_id = f"data-status-market-quality-{session_id}-{first_seen_at}"
+        payload = dict(event_data)
+        payload.update({
+            "id": segment_id,
+            "duration_seconds": duration_seconds,
+            "overlap_duration_seconds": overlap_duration_seconds,
+        })
+        quality_label = market_quality_level_label(event_data.get("quality_level"))
+        reasons = [
+            str(reason).strip()
+            for reason in list(event_data.get("blocked_reasons") or [])
+            if str(reason or "").strip()
+        ]
+        source = str(event_data.get("source") or "未知行情源")
+        summary = (
+            f"{source}，范围内持续 {format_duration_seconds(overlap_duration_seconds)}"
+        )
+        if reasons:
+            summary += "；" + "；".join(reasons[:2])
+        event = make_timeline_event(
+            "data_status",
+            overlap_start.isoformat(timespec="seconds"),
+            f"行情可信度异常：{quality_label}",
+            summary,
+            "market_quality_history",
+            payload,
+            event_id=segment_id,
+        )
+        if event:
+            events.append(event)
+    return events, skipped
+
+
 def build_data_status_timeline_events(
     start_time,
     end_time,
     fetch_status=None,
     source_health_state=None,
     source_comparison_state=None,
+    market_quality_history=None,
     now_factory=None,
 ):
     events = []
@@ -408,6 +502,14 @@ def build_data_status_timeline_events(
             if event:
                 events.append(event)
 
+    quality_events, quality_skipped = build_market_quality_timeline_events(
+        start_time,
+        end_time,
+        market_quality_history=market_quality_history,
+    )
+    events.extend(quality_events)
+    skipped += quality_skipped
+
     return events, skipped
 
 
@@ -455,6 +557,7 @@ def build_event_timeline_events(
     fetch_status=None,
     source_health_state=None,
     source_comparison_state=None,
+    market_quality_history=None,
     review_notes=None,
     today_date=None,
     news_key=None,
@@ -488,6 +591,7 @@ def build_event_timeline_events(
             fetch_status=fetch_status,
             source_health_state=source_health_state,
             source_comparison_state=source_comparison_state,
+            market_quality_history=market_quality_history,
             now_factory=now_factory,
         )
         events.extend(built)
@@ -516,6 +620,7 @@ def build_event_timeline_state(
     fetch_status=None,
     source_health_state=None,
     source_comparison_state=None,
+    market_quality_history=None,
     review_notes=None,
     today_date=None,
     news_key=None,
@@ -536,6 +641,7 @@ def build_event_timeline_state(
         fetch_status=fetch_status,
         source_health_state=source_health_state,
         source_comparison_state=source_comparison_state,
+        market_quality_history=market_quality_history,
         review_notes=review_notes,
         today_date=today_date,
         news_key=news_key,
@@ -717,6 +823,80 @@ def build_data_quality_report_lines(events, summary, price_series):
         )
     else:
         lines.append("- 未记录数据状态异常，当前报告未发现行情源、缓存或多源价差异常事件。")
+
+    quality_events = [
+        event for event in data_status_events
+        if event.get("source") == "market_quality_history"
+        and isinstance(event.get("payload"), dict)
+    ]
+    if quality_events:
+        overlap_seconds = sum(
+            max(0, int(event["payload"].get("overlap_duration_seconds") or 0))
+            for event in quality_events
+        )
+        lines.append(
+            f"- 行情质量异常区间：{len(quality_events)} 段；"
+            f"范围内累计 {format_duration_seconds(overlap_seconds)}。"
+        )
+        for _key, label, field in market_quality_history_core.MARKET_QUALITY_BUSINESS_GATES:
+            affected = [
+                event for event in quality_events
+                if event["payload"].get(field) is False
+            ]
+            blocked_seconds = sum(
+                max(0, int(event["payload"].get("overlap_duration_seconds") or 0))
+                for event in affected
+            )
+            lines.append(
+                f"- {label}受影响：{len(affected)} 段；"
+                f"范围内累计 {format_duration_seconds(blocked_seconds)}。"
+            )
+
+        reason_stats = {}
+        for event in quality_events:
+            payload = event["payload"]
+            duration = max(0, int(payload.get("overlap_duration_seconds") or 0))
+            for reason in list(payload.get("blocked_reasons") or []):
+                reason = str(reason or "").strip()
+                if not reason:
+                    continue
+                item = reason_stats.setdefault(
+                    reason,
+                    {"count": 0, "seconds": 0},
+                )
+                item["count"] += 1
+                item["seconds"] += duration
+        if reason_stats:
+            reasons = sorted(
+                reason_stats.items(),
+                key=lambda item: (-item[1]["seconds"], -item[1]["count"], item[0]),
+            )
+            lines.append(
+                "- 主要阻塞原因：" + "；".join(
+                    f"{reason}（{item['count']} 段，{format_duration_seconds(item['seconds'])}）"
+                    for reason, item in reasons[:5]
+                ) + "。"
+            )
+        for event in sorted(quality_events, key=lambda item: item.get("timestamp", "")):
+            payload = event["payload"]
+            sources = " / ".join(
+                item for item in (
+                    str(payload.get("source") or "").strip(),
+                    str(payload.get("rate_source") or "").strip(),
+                )
+                if item
+            ) or "未知来源"
+            score = format_number(payload.get("quality_score"))
+            score_text = "--" if score is None else str(score)
+            lines.append(
+                f"- 异常段 {payload.get('first_seen_at', '--')} -> "
+                f"{payload.get('last_seen_at', '--')}；"
+                f"{market_quality_level_label(payload.get('quality_level'))}；"
+                f"评分 {score_text}；来源 {sources}；"
+                f"范围内 {format_duration_seconds(payload.get('overlap_duration_seconds'))}。"
+            )
+    else:
+        lines.append("- 当前复盘范围内无已保存的行情质量异常区间。")
 
     risk_quality_scores = []
     for event in events:
