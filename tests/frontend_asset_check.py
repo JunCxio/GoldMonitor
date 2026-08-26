@@ -475,6 +475,8 @@ for required in (
     "non_retryable_count",
     "function renderSourceHealth",
     "function renderMarketTrust",
+    "function renderMarketTrustHistorySummary",
+    "function formatMarketTrustDuration",
     "function applyMarketObservationState",
     "function renderRecentOpsRecords",
     "function previewDataArchive",
@@ -483,6 +485,22 @@ for required in (
 ):
     if required not in operations_module_js:
         raise SystemExit(f"operations modules missing contract: {required}")
+
+for required in (
+    'id="marketTrustHistorySummary"',
+    'id="marketTrustBusinessImpact"',
+    "跨重启保存",
+):
+    if required not in template:
+        raise SystemExit(f"template missing market quality history contract: {required}")
+
+for required in (
+    ".market-trust-history-summary",
+    ".market-trust-history-window",
+    ".market-trust-business-impact",
+):
+    if required not in css_path.read_text(encoding="utf-8"):
+        raise SystemExit(f"static/app.css missing market quality history selector: {required}")
 
 for required in (
     'id="backgroundTaskStatus"',

@@ -54,7 +54,14 @@ def _quality_event_fingerprint(value):
     )
 
 
-def record_market_quality_event(history, observation, *, observed_at="", limit=20):
+def record_market_quality_event(
+    history,
+    observation,
+    *,
+    observed_at="",
+    session_id="",
+    limit=20,
+):
     items = [dict(item) for item in history if isinstance(item, dict)] if isinstance(history, list) else []
     snapshot = market_observation_snapshot(observation)
     if not snapshot:
@@ -64,7 +71,12 @@ def record_market_quality_event(history, observation, *, observed_at="", limit=2
         or snapshot.get("received_at")
         or datetime.now().astimezone().isoformat(timespec="seconds")
     )
-    if items and _quality_event_fingerprint(items[-1]) == _quality_event_fingerprint(snapshot):
+    current_session_id = str(session_id or "")
+    if (
+        items
+        and str(items[-1].get("session_id") or "") == current_session_id
+        and _quality_event_fingerprint(items[-1]) == _quality_event_fingerprint(snapshot)
+    ):
         current = dict(items[-1])
         current.update(snapshot)
         current["last_seen_at"] = event_time
@@ -76,6 +88,7 @@ def record_market_quality_event(history, observation, *, observed_at="", limit=2
             "first_seen_at": event_time,
             "last_seen_at": event_time,
             "occurrences": 1,
+            "session_id": current_session_id,
         })
     return items[-max(1, int(limit or 20)):]
 

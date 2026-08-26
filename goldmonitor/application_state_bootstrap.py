@@ -77,6 +77,9 @@ class ApplicationStateBootstrap:
         self.runtime.alert_log = self.loaders["alert_log"](
             limit=self.alert_log_memory_limit
         )
+        self.runtime.market_quality_history = self.loaders[
+            "market_quality_history"
+        ]()
         self.runtime.price_archive = self.loaders["price_history"]()
         self.restore_price_history_state(self.runtime.price_archive)
         self.initialize_market_cache()

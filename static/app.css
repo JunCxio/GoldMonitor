@@ -345,6 +345,18 @@
   .market-trust-section-head { display:flex; align-items:end; justify-content:space-between; gap:10px; padding-top:2px; }
   .market-trust-section-head strong { color:var(--text); font-size:0.68rem; }
   .market-trust-section-head span { color:var(--text-dim); font-size:0.59rem; text-align:right; }
+  .market-trust-history-summary { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:7px; }
+  .market-trust-history-summary > .market-trust-empty { grid-column:1 / -1; }
+  .market-trust-history-window { min-width:0; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:3px 8px; padding:9px 10px; border:1px solid rgba(76,175,132,0.16); border-radius:8px; background:rgba(76,175,132,0.035); }
+  .market-trust-history-window span { color:var(--text-dim); font-size:0.62rem; }
+  .market-trust-history-window strong { color:#82d3ae; font-family:"SF Mono","JetBrains Mono","Consolas",monospace; font-size:0.78rem; }
+  .market-trust-history-window small { grid-column:1 / -1; color:var(--text-dim); font-size:0.59rem; line-height:1.4; }
+  .market-trust-business-impact { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:6px; }
+  .market-trust-business-impact:empty { display:none; }
+  .market-trust-business-impact > div { min-width:0; display:grid; gap:2px; padding:7px 8px; border:1px solid var(--hairline); border-radius:8px; background:rgba(0,0,0,0.1); }
+  .market-trust-business-impact span { color:var(--text-dim); font-size:0.59rem; }
+  .market-trust-business-impact strong { color:var(--text); font-size:0.64rem; }
+  .market-trust-business-impact small { color:#d6a0a9; font-size:0.58rem; }
   .market-trust-sources, .market-trust-events { display:grid; gap:5px; max-height:190px; overflow:auto; }
   .market-trust-source, .market-trust-event { min-width:0; display:grid; grid-template-columns:6px minmax(0,1fr) auto; align-items:center; gap:8px; padding:7px 8px; border:1px solid var(--hairline); border-radius:8px; background:rgba(0,0,0,0.1); }
   .market-trust-source-mark, .market-trust-event-mark { align-self:stretch; width:5px; min-height:24px; border-radius:99px; background:#66667a; }
@@ -1725,6 +1737,7 @@
 
   @media (max-width:500px) {
     .market-trust-gates { grid-template-columns:1fr; }
+    .market-trust-history-summary, .market-trust-business-impact { grid-template-columns:1fr; }
     .market-trust-head { align-items:stretch; flex-direction:column; }
     .market-trust-head .btn-form { width:100%; }
     .market-trust-blockers-clear, .market-trust-section-head { align-items:flex-start; flex-direction:column; }

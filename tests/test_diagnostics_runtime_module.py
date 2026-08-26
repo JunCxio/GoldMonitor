@@ -66,6 +66,21 @@ def test_clipboard_summary_uses_fallback_status_and_masks_raw_structure():
             "fetch_status": {"message": "行情正常", "status": "ready", "sources": {}},
             "source_health": {"summary": {}, "quality": {"label": "数据可信", "score": 100}},
             "price_history": {"total": 12},
+            "market_quality_summary": {
+                "stored_events": 8,
+                "windows": {
+                    "24h": {
+                        "availability_pct": 92.5,
+                        "incident_count": 2,
+                        "abnormal_seconds": 300,
+                    },
+                    "7d": {
+                        "availability_pct": 97.0,
+                        "incident_count": 4,
+                        "abnormal_seconds": 900,
+                    },
+                },
+            },
             "price_history_maintenance": {
                 "status": "attention",
                 "database": {
@@ -146,6 +161,9 @@ def test_clipboard_summary_uses_fallback_status_and_masks_raw_structure():
 
     assert "5 分钟 K 线样本数: 6" in text
     assert "行情质量: 数据可信 / 100分" in text
+    assert "已保存质量状态段: 8" in text
+    assert "最近 24 小时: 可信区间占比 92.5%，异常 2 段，异常时长 300 秒" in text
+    assert "最近 7 天: 可信区间占比 97.0%，异常 4 段，异常时长 900 秒" in text
     assert "目录状态: 可写" in text
     assert "任务栏选择: 固定到 DISPLAY2" in text
     assert "实际显示器: DISPLAY2 / 2560×1440" in text

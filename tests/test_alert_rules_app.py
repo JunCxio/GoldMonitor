@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 
@@ -161,6 +161,9 @@ def test_alert_rule_socket_batch_operations_are_transactional(monkeypatch, tmp_p
 
 def test_alert_rule_insight_reports_delivery_and_effectiveness(monkeypatch, tmp_path):
     app = _prepare_rules_state(monkeypatch, tmp_path)
+    now = datetime.now().replace(microsecond=0)
+    alert_at = now - timedelta(hours=2)
+    follow_up_at = now - timedelta(minutes=30)
     _, rule = app.upsert_alert_rule_entry({
         "kind": "price_threshold",
         "scope": {"mode": "rmb"},
@@ -182,7 +185,7 @@ def test_alert_rule_insight_reports_delivery_and_effectiveness(monkeypatch, tmp_
         "id": "alert-one",
         "rule_id": rule["id"],
         "rule_kind": "price_threshold",
-        "timestamp": "2026-07-27T13:00:00",
+        "timestamp": alert_at.isoformat(),
         "mode": "rmb",
         "trigger_price": 721,
         "alert_direction": "up",
@@ -190,11 +193,11 @@ def test_alert_rule_insight_reports_delivery_and_effectiveness(monkeypatch, tmp_
         "handled": True,
     }])
     monkeypatch.setattr(app, "_analytics_price_history", lambda days, limit=1000: [
-        {"timestamp": "2026-07-27T13:00:00", "rmb": 721},
-        {"timestamp": "2026-07-27T14:30:00", "rmb": 723},
+        {"timestamp": alert_at.isoformat(), "rmb": 721},
+        {"timestamp": follow_up_at.isoformat(), "rmb": 723},
     ])
 
-    insight = app.build_alert_rule_insight(rule["id"], now=datetime(2026, 7, 27, 15, 0, 0))
+    insight = app.build_alert_rule_insight(rule["id"], now=now)
     assert insight["effectiveness"]["period_alerts"] == 1
     assert insight["effectiveness"]["delivery"]["sent"] == 1
     assert insight["effectiveness"]["response"]["handled"] == 1

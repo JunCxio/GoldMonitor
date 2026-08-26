@@ -44,6 +44,14 @@ function formatMarketTrustAge(value) {
   return (seconds / 86400).toFixed(seconds < 864000 ? 1 : 0) + ' 天';
 }
 
+function formatMarketTrustDuration(value) {
+  const seconds = Math.max(0, Number(value) || 0);
+  if (seconds < 60) return Math.round(seconds) + ' 秒';
+  if (seconds < 3600) return Math.round(seconds / 60) + ' 分钟';
+  if (seconds < 86400) return (seconds / 3600).toFixed(seconds < 36000 ? 1 : 0) + ' 小时';
+  return (seconds / 86400).toFixed(seconds < 864000 ? 1 : 0) + ' 天';
+}
+
 function renderMarketTrustGates(observation) {
   const box = document.getElementById('marketTrustGates');
   if (!box) return;
@@ -106,6 +114,41 @@ function renderMarketTrustBlockers(observation) {
   box.innerHTML = '<div class="market-trust-blockers-title">阻塞原因</div>' + reasons.map(reason => '<div class="market-trust-blocker">' + escapeHtml(reason) + '</div>').join('');
 }
 
+function renderMarketTrustHistorySummary(summary) {
+  const box = document.getElementById('marketTrustHistorySummary');
+  const impactBox = document.getElementById('marketTrustBusinessImpact');
+  if (!box || !impactBox) return;
+  const windows = summary && summary.windows && typeof summary.windows === 'object'
+    ? summary.windows
+    : {};
+  const entries = [['24h', '最近 24 小时'], ['7d', '最近 7 天']];
+  const hasHistory = Number(summary && summary.stored_events || 0) > 0;
+  if (!hasHistory) {
+    box.innerHTML = '<div class="market-trust-empty">尚无跨重启质量历史。</div>';
+    impactBox.innerHTML = '';
+    return;
+  }
+  box.innerHTML = entries.map(([key, label]) => {
+    const item = windows[key] && typeof windows[key] === 'object' ? windows[key] : {};
+    const availability = item.availability_pct == null ? '--' : Number(item.availability_pct).toFixed(1) + '%';
+    return [
+      '<div class="market-trust-history-window">',
+      '<span>' + label + '</span>',
+      '<strong>' + escapeHtml(availability) + '</strong>',
+      '<small>可信区间占比 · 异常 ' + Number(item.incident_count || 0) + ' 段 · ' + escapeHtml(formatMarketTrustDuration(item.abnormal_seconds)) + '</small>',
+      '</div>',
+    ].join('');
+  }).join('');
+  const weekly = windows['7d'] && typeof windows['7d'] === 'object' ? windows['7d'] : {};
+  const affected = weekly.affected_business && typeof weekly.affected_business === 'object'
+    ? weekly.affected_business
+    : {};
+  impactBox.innerHTML = ['history', 'alert', 'automation'].map(key => {
+    const item = affected[key] && typeof affected[key] === 'object' ? affected[key] : {};
+    return '<div><span>' + escapeHtml(item.label || '--') + '</span><strong>' + Number(item.incident_count || 0) + ' 段</strong><small>' + escapeHtml(formatMarketTrustDuration(item.blocked_seconds)) + '</small></div>';
+  }).join('');
+}
+
 function renderMarketTrustSources(data) {
   const box = document.getElementById('marketTrustSources');
   const summaryBox = document.getElementById('marketTrustSourceSummary');
@@ -143,7 +186,7 @@ function renderMarketTrustEvents(history) {
   if (!box) return;
   const items = Array.isArray(history) ? history.slice().reverse() : [];
   if (!items.length) {
-    box.innerHTML = '<div class="market-trust-empty">本次运行尚无质量事件。</div>';
+    box.innerHTML = '<div class="market-trust-empty">尚无已保存的质量事件。</div>';
     return;
   }
   box.innerHTML = items.map(item => {
@@ -180,6 +223,7 @@ function renderMarketTrust(data) {
   renderMarketTrustGates(observation);
   renderMarketTrustObservation(observation);
   renderMarketTrustBlockers(observation);
+  renderMarketTrustHistorySummary(data && data.market_quality_summary);
   renderMarketTrustSources(data || {});
   renderMarketTrustEvents(data && data.market_quality_history);
 }
@@ -191,6 +235,9 @@ function applyMarketObservationState(data) {
   }
   if (Array.isArray(data.market_quality_history)) {
     latestSourceHealthState.market_quality_history = data.market_quality_history;
+  }
+  if (data.market_quality_summary && typeof data.market_quality_summary === 'object') {
+    latestSourceHealthState.market_quality_summary = data.market_quality_summary;
   }
   renderMarketTrust(latestSourceHealthState);
 }

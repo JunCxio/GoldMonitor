@@ -145,3 +145,49 @@ def test_archive_preview_rejects_modified_payload_and_future_version(tmp_path):
 
     with pytest.raises(DataArchiveError, match="高于当前支持版本"):
         manager.preview(future_path)
+
+
+def test_archive_accepts_older_manifest_without_optional_quality_history(tmp_path):
+    from goldmonitor.data_archive import DataArchiveManager
+
+    settings_path = tmp_path / "settings.json"
+    quality_path = tmp_path / "market_quality_history.json"
+    settings_path.write_text('{"theme":"dark"}', encoding="utf-8")
+    legacy_manager = DataArchiveManager(
+        {
+            "settings": {
+                "path": settings_path,
+                "kind": "json",
+                "label": "通用设置",
+            },
+        },
+        app_version="1.0.22",
+    )
+    archive_path = tmp_path / "legacy.zip"
+    legacy_manager.create(archive_path)
+    quality_path.write_text(
+        '{"schema_version":1,"items":[{"id":"current"}]}',
+        encoding="utf-8",
+    )
+    manager = DataArchiveManager(
+        {
+            "settings": {
+                "path": settings_path,
+                "kind": "json",
+                "label": "通用设置",
+            },
+            "market_quality_history": {
+                "path": quality_path,
+                "kind": "json",
+                "label": "行情质量历史",
+                "required": False,
+            },
+        },
+        app_version="1.0.23",
+    )
+
+    preview = manager.preview(archive_path)
+    manager.restore(archive_path)
+
+    assert preview["files"] == 1
+    assert not quality_path.exists()

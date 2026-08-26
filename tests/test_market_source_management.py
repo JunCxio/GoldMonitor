@@ -223,6 +223,9 @@ def test_disabled_source_failure_does_not_degrade_operational_summary(monkeypatc
     assert state["summary"]["failed"] == 0
     assert state["market_observation"] == app.market_observation
     assert state["market_quality_history"] == app.market_quality_history
+    assert state["market_quality_summary"]["stored_events"] == len(
+        app.market_quality_history
+    )
     disabled = next(item for item in state["items"] if item["key"] == "eastmoney_gold")
     assert disabled["enabled"] is False
 

@@ -48,6 +48,7 @@ class DataArchiveRuntime:
         runtime.risk_analysis_history = self.loaders["risk_analysis_history"]()
         runtime.source_health = self.source_health_loader()
         runtime.alert_log = self.loaders["alert_log"]()
+        runtime.market_quality_history = self.loaders["market_quality_history"]()
         runtime.price_archive = self.loaders["price_history"]()
         self.restore_price_history_state(runtime.price_archive)
 
@@ -66,7 +67,6 @@ class DataArchiveRuntime:
         runtime.gold_price_cached = False
         runtime.gold_price_error = ""
         runtime.market_observation = unavailable_market_observation()
-        runtime.market_quality_history = []
         self.initialize_market_cache()
 
         runtime.today_date = None

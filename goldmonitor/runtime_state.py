@@ -1,4 +1,5 @@
 import threading
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -45,6 +46,8 @@ class ApplicationRuntimeState:
         default_factory=unavailable_market_observation
     )
     market_quality_history: List[Dict[str, Any]] = field(default_factory=list)
+    market_quality_session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    market_quality_last_saved_monotonic: float = 0.0
     price_history: List[Dict[str, Any]] = field(default_factory=list)
     price_archive: List[Dict[str, Any]] = field(default_factory=list)
     klines_5min: List[Dict[str, Any]] = field(default_factory=list)

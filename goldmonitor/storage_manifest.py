@@ -30,6 +30,12 @@ STORAGE_DEFINITIONS = (
         "schema": "versioned_object",
         "expected_schema_version": 1,
     },
+    {
+        "key": "market_quality_history",
+        "label": "行情质量历史",
+        "kind": "json",
+        "schema": "item_payload",
+    },
     {"key": "update_dir", "label": "更新下载目录", "kind": "directory", "schema": "directory"},
     {"key": "exports", "label": "导出目录", "kind": "directory", "schema": "directory"},
     {"key": "news", "label": "新闻缓存", "kind": "json", "schema": "item_payload"},
