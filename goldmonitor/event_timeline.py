@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
 
+from goldmonitor.time_utils import to_local_naive
+
 
 EVENT_TIMELINE_TYPES = (
     "price_summary",
@@ -17,12 +19,7 @@ REVIEW_REPORT_EXPORT_PREFIX = "GoldMonitor-review-report"
 
 
 def parse_iso_datetime(value):
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
-    except (TypeError, ValueError):
-        return None
+    return to_local_naive(value)
 
 
 def format_number(value, digits=2):

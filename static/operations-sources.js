@@ -11,6 +11,190 @@ function sourceQualityText(quality) {
   return '行情质量 ' + score + '分/' + label;
 }
 
+function marketTrustLevelMeta(observation, quality) {
+  const level = observation && observation.quality_level || quality && quality.level || 'unavailable';
+  if (level === 'normal') return { label: '可用于业务判断', className: 'normal' };
+  if (level === 'stale') return { label: '缓存或过期', className: 'stale' };
+  if (level === 'anomaly') return { label: '跨源价差异常', className: 'anomaly' };
+  if (level === 'invalid') return { label: '行情校验失败', className: 'invalid' };
+  if (level === 'degraded') return { label: '数据源部分降级', className: 'degraded' };
+  return { label: '等待有效行情', className: 'unavailable' };
+}
+
+function formatMarketTrustTime(value) {
+  if (!value) return '未记录';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).replace('T', ' ');
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+function formatMarketTrustAge(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds < 0) return '时效未知';
+  if (seconds < 60) return Math.round(seconds) + ' 秒';
+  if (seconds < 3600) return Math.round(seconds / 60) + ' 分钟';
+  if (seconds < 86400) return (seconds / 3600).toFixed(seconds < 36000 ? 1 : 0) + ' 小时';
+  return (seconds / 86400).toFixed(seconds < 864000 ? 1 : 0) + ' 天';
+}
+
+function renderMarketTrustGates(observation) {
+  const box = document.getElementById('marketTrustGates');
+  if (!box) return;
+  const gates = [
+    ['历史入库', 'usable_for_history'],
+    ['预警判断', 'usable_for_alert'],
+    ['定投执行', 'usable_for_automation'],
+  ];
+  box.innerHTML = gates.map(([label, key]) => {
+    const usable = observation && observation[key] === true;
+    const waiting = !observation || observation[key] == null;
+    const state = waiting ? 'waiting' : usable ? 'allowed' : 'blocked';
+    const text = waiting ? '等待' : usable ? '允许' : '已阻止';
+    return '<div class="market-trust-gate ' + state + '"><span>' + label + '</span><strong>' + text + '</strong></div>';
+  }).join('');
+}
+
+function renderMarketTrustObservation(observation) {
+  const box = document.getElementById('marketTrustObservation');
+  if (!box) return;
+  if (!observation || typeof observation !== 'object' || !observation.received_at) {
+    box.innerHTML = '<div class="market-trust-empty">尚未收到行情来源与时效信息。</div>';
+    return;
+  }
+  const rows = [
+    {
+      label: '金价',
+      source: observation.source || '未知来源',
+      time: observation.source_at,
+      age: observation.age_seconds,
+      cached: observation.gold_cached,
+    },
+    {
+      label: '汇率',
+      source: observation.rate_source || '未知来源',
+      time: observation.rate_source_at,
+      age: observation.rate_age_seconds,
+      cached: observation.rate_cached,
+    },
+  ];
+  box.innerHTML = rows.map(item => [
+    '<div class="market-trust-observation-row">',
+    '<span class="market-trust-observation-kind">' + item.label + '</span>',
+    '<div><strong>' + escapeHtml(item.source) + '</strong><small>来源时间 ' + escapeHtml(formatMarketTrustTime(item.time)) + ' · 年龄 ' + escapeHtml(formatMarketTrustAge(item.age)) + '</small></div>',
+    '<span class="market-trust-cache ' + (item.cached ? 'cached' : 'live') + '">' + (item.cached ? '缓存' : '实时') + '</span>',
+    '</div>',
+  ].join('')).join('') + '<div class="market-trust-received">本机接收 ' + escapeHtml(formatMarketTrustTime(observation.received_at)) + '</div>';
+}
+
+function renderMarketTrustBlockers(observation) {
+  const box = document.getElementById('marketTrustBlockers');
+  if (!box) return;
+  const reasons = observation && Array.isArray(observation.blocked_reasons)
+    ? observation.blocked_reasons.filter(Boolean)
+    : [];
+  if (!reasons.length) {
+    box.innerHTML = '<div class="market-trust-blockers-clear"><strong>未发现业务阻塞</strong><span>当前行情可按门禁状态参与后续处理。</span></div>';
+    return;
+  }
+  box.innerHTML = '<div class="market-trust-blockers-title">阻塞原因</div>' + reasons.map(reason => '<div class="market-trust-blocker">' + escapeHtml(reason) + '</div>').join('');
+}
+
+function renderMarketTrustSources(data) {
+  const box = document.getElementById('marketTrustSources');
+  const summaryBox = document.getElementById('marketTrustSourceSummary');
+  if (!box || !summaryBox) return;
+  const summary = data && data.summary || {};
+  const rollingRate = summary.rolling_success_rate_pct == null ? '--' : Number(summary.rolling_success_rate_pct).toFixed(1) + '%';
+  summaryBox.textContent = '滚动成功率 ' + rollingRate + ' · 异常 ' + Number(summary.failed || 0);
+  const adapters = data && data.adapters && typeof data.adapters === 'object' ? data.adapters : {};
+  const rows = ['gold', 'forex'].flatMap(category => (
+    Array.isArray(adapters[category]) ? adapters[category].filter(item => item.enabled !== false) : []
+  ));
+  if (!rows.length) {
+    box.innerHTML = '<div class="market-trust-empty">尚无数据源指标。</div>';
+    return;
+  }
+  box.innerHTML = rows.map(item => {
+    const sampleCount = Number(item.sample_count || 0);
+    const rate = item.success_rate_pct == null ? '--' : Number(item.success_rate_pct).toFixed(1) + '%';
+    const latency = item.median_latency_ms == null ? '--' : Number(item.median_latency_ms).toFixed(0) + 'ms';
+    const failures = Number(item.consecutive_failures || 0);
+    const state = item.active ? 'active' : item.ok === false ? 'fail' : item.cached ? 'cached' : 'idle';
+    const status = item.active ? '当前主源' : item.ok === false ? '异常' : item.cached ? '缓存' : '备用';
+    return [
+      '<div class="market-trust-source ' + state + '" title="' + escapeHtml(item.error || status) + '">',
+      '<span class="market-trust-source-mark"></span>',
+      '<div><strong>' + escapeHtml(item.name || '--') + '</strong><small>近 ' + sampleCount + ' 次 · 成功率 ' + escapeHtml(rate) + ' · 中位延迟 ' + escapeHtml(latency) + (failures ? ' · 连续失败 ' + failures + ' 次' : '') + '</small></div>',
+      '<span>' + status + '</span>',
+      '</div>',
+    ].join('');
+  }).join('');
+}
+
+function renderMarketTrustEvents(history) {
+  const box = document.getElementById('marketTrustEvents');
+  if (!box) return;
+  const items = Array.isArray(history) ? history.slice().reverse() : [];
+  if (!items.length) {
+    box.innerHTML = '<div class="market-trust-empty">本次运行尚无质量事件。</div>';
+    return;
+  }
+  box.innerHTML = items.map(item => {
+    const meta = marketTrustLevelMeta(item, {});
+    const reasons = Array.isArray(item.blocked_reasons) && item.blocked_reasons.length
+      ? item.blocked_reasons.join('；')
+      : '未发现业务阻塞';
+    const occurrences = Math.max(1, Number(item.occurrences || 1));
+    const period = formatMarketTrustTime(item.first_seen_at) + (item.last_seen_at && item.last_seen_at !== item.first_seen_at ? ' 至 ' + formatMarketTrustTime(item.last_seen_at) : '');
+    return [
+      '<div class="market-trust-event ' + meta.className + '">',
+      '<span class="market-trust-event-mark"></span>',
+      '<div><strong>' + escapeHtml(meta.label) + '</strong><small>' + escapeHtml(reasons) + '</small><time>' + escapeHtml(period) + '</time></div>',
+      '<span class="market-trust-event-count">' + occurrences + ' 次</span>',
+      '</div>',
+    ].join('');
+  }).join('');
+}
+
+function renderMarketTrust(data) {
+  const card = document.getElementById('marketTrustCard');
+  if (!card) return;
+  const observation = data && data.market_observation && typeof data.market_observation === 'object'
+    ? data.market_observation
+    : {};
+  const quality = data && data.quality && typeof data.quality === 'object' ? data.quality : {};
+  const scoreValue = quality.score == null ? observation.quality_score : quality.score;
+  const score = Math.max(0, Math.min(100, Number(scoreValue) || 0));
+  const meta = marketTrustLevelMeta(observation, quality);
+  card.dataset.state = meta.className;
+  document.getElementById('marketTrustTitle').textContent = meta.label;
+  document.getElementById('marketTrustScore').textContent = scoreValue == null ? '--' : Math.round(score);
+  document.getElementById('marketTrustRail').style.setProperty('--quality-score', score);
+  renderMarketTrustGates(observation);
+  renderMarketTrustObservation(observation);
+  renderMarketTrustBlockers(observation);
+  renderMarketTrustSources(data || {});
+  renderMarketTrustEvents(data && data.market_quality_history);
+}
+
+function applyMarketObservationState(data) {
+  if (!data || typeof data !== 'object') return;
+  if (data.market_observation && typeof data.market_observation === 'object') {
+    latestSourceHealthState.market_observation = data.market_observation;
+  }
+  if (Array.isArray(data.market_quality_history)) {
+    latestSourceHealthState.market_quality_history = data.market_quality_history;
+  }
+  renderMarketTrust(latestSourceHealthState);
+}
+
 function setSourceManagerStatus(message, ok) {
   const status = document.getElementById('sourceManagerStatus');
   if (!status) return;
@@ -142,6 +326,7 @@ function renderSourceHealth(data) {
   if (data && data.comparison) renderSourceComparison(data.comparison);
   renderMarketQualityDetails(data && data.quality ? data.quality : {});
   renderSourceManager(latestSourceHealthState);
+  renderMarketTrust(latestSourceHealthState);
   const box = document.getElementById('sourceHealth');
   if (!box) return;
   const items = Array.isArray(data.items) ? data.items : [];

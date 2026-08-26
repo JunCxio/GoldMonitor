@@ -50,6 +50,7 @@ def track_sqlite_connections(module):
 
 def test_price_history_store_persists_versioned_json_and_sqlite():
     from goldmonitor.price_history import PriceHistoryStore
+    from goldmonitor.time_utils import to_local_naive
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = str(Path(tmp_dir) / "price_history.json")
@@ -67,8 +68,9 @@ def test_price_history_store_persists_versioned_json_and_sqlite():
             force_save=True,
         )
 
-        assert point["time"] == "12:00:00"
-        assert point["timestamp"] == "2026-06-08T12:00:00"
+        expected_time = to_local_naive("2026-06-08T12:00:00Z")
+        assert point["time"] == expected_time.strftime("%H:%M:%S")
+        assert point["timestamp"] == expected_time.isoformat(timespec="seconds")
         assert archive == [point]
         assert saved_at > 0
         assert Path(path).exists()
@@ -114,6 +116,15 @@ def test_alert_log_store_updates_persisted_and_memory_entries():
             "notifications": [{"channel": "email", "label": "邮件", "status": "queued", "message": "已提交"}],
             "notification_summary": {"status": "queued", "label": "已提交", "message": "已提交"},
             "related_news": [{"title": "Gold holds near highs"}],
+            "market_observation": {
+                "source": "测试金价",
+                "source_at": "2026-06-08T12:00:00",
+                "received_at": "2026-06-08T12:00:01",
+                "is_cached": False,
+                "quality_level": "normal",
+                "quality_score": 100,
+                "blocked_reasons": [],
+            },
         }]
 
         saved = store.save_entry(memory_entries[0])
@@ -152,6 +163,8 @@ def test_alert_log_store_updates_persisted_and_memory_entries():
         assert "handling_note" in csv_text
         assert "已电话确认" in csv_text
         assert "notification_summary" in csv_text
+        assert "market_observation" in csv_text
+        assert "测试金价" in csv_text
         assert "queued:已提交:已提交" in csv_text
         assert "邮件:queued:已提交" in csv_text
         assert "Gold holds near highs" in csv_text

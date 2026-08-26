@@ -40,7 +40,7 @@ def test_news_parsers_filter_dedupe_and_classify_market_items():
     gdelt_items = parse_gdelt_articles(gdelt_payload, now_factory=fixed_now)
     assert len(gdelt_items) == 1
     assert gdelt_items[0]["url"] == "https://example.com/gold-fed"
-    assert gdelt_items[0]["time"] == "2026-05-29T12:00:00"
+    assert gdelt_items[0]["time"] == "2026-05-29T12:00:00Z"
     assert gdelt_items[0]["topic"] in {"黄金", "美元", "利率"}
 
     rss_payload = """<?xml version="1.0" encoding="UTF-8" ?>

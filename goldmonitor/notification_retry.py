@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
 from goldmonitor.notification_delivery import notification_error_retryable
+from goldmonitor.time_utils import to_local_naive
 
 
 NOTIFICATION_RETRY_STATUSES = {"failed", "skipped"}
@@ -18,19 +19,7 @@ def _nonnegative_int(value):
 
 
 def parse_retry_datetime(value):
-    if isinstance(value, datetime):
-        parsed = value
-    else:
-        text = str(value or "").strip()
-        if not text:
-            return None
-        try:
-            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        except (TypeError, ValueError):
-            return None
-    if parsed.tzinfo:
-        parsed = parsed.replace(tzinfo=None)
-    return parsed
+    return to_local_naive(value)
 
 
 def retryable_notification(item):

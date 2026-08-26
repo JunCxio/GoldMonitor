@@ -4,6 +4,24 @@ from datetime import datetime
 def _reset_portfolio_runtime(app):
     app.portfolio_runtime_instance = None
     app.portfolio_investment_runtime_instance = None
+    app.market_observation = {
+        "source": "测试金价",
+        "rate_source": "测试汇率",
+        "source_at": "2026-08-12T10:00:00",
+        "rate_source_at": "2026-08-12T10:00:00",
+        "received_at": "2026-08-12T10:00:00",
+        "is_cached": False,
+        "gold_cached": False,
+        "rate_cached": False,
+        "age_seconds": 0,
+        "rate_age_seconds": 0,
+        "quality_score": 100,
+        "quality_level": "normal",
+        "usable_for_history": True,
+        "usable_for_alert": True,
+        "usable_for_automation": True,
+        "blocked_reasons": [],
+    }
 
 
 def test_app_portfolio_investment_socket_crud_and_manual_execution(monkeypatch, tmp_path):

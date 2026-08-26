@@ -2,6 +2,7 @@ from datetime import datetime
 
 from goldmonitor import portfolio as portfolio_core
 from goldmonitor import portfolio_investment as investment_core
+from goldmonitor.market_observation import market_observation_snapshot
 
 
 class PortfolioInvestmentRuntime:
@@ -13,6 +14,7 @@ class PortfolioInvestmentRuntime:
         save_transactions,
         build_portfolio_state,
         emit_event,
+        market_observation_getter=None,
         now_factory=None,
     ):
         self.state = state
@@ -20,6 +22,7 @@ class PortfolioInvestmentRuntime:
         self.save_transactions = save_transactions
         self.build_portfolio_state = build_portfolio_state
         self.emit_event = emit_event
+        self.market_observation_getter = market_observation_getter
         self.now_factory = now_factory or datetime.now
 
     def state_payload(self, now=None):
@@ -363,6 +366,28 @@ class PortfolioInvestmentRuntime:
                 )
                 return {"ok": True, "status": "waiting_price", "message": updated["last_message"], "plan": updated}
 
+            observation = market_observation_snapshot(
+                self.market_observation_getter()
+                if callable(self.market_observation_getter)
+                else getattr(self.state, "market_observation", {})
+            )
+            if observation and observation.get("usable_for_automation") is False:
+                reasons = observation.get("blocked_reasons") or ["行情质量不满足自动执行要求"]
+                message = "等待可用实时行情后执行：" + "；".join(reasons)
+                updated = self._record_plan_result(
+                    plan["id"],
+                    plan,
+                    last_result="waiting_market_quality",
+                    last_message=message,
+                )
+                return {
+                    "ok": True,
+                    "status": "waiting_market_quality",
+                    "message": message,
+                    "plan": updated,
+                    "market_observation": observation,
+                }
+
             position_id = str(plan.get("position_id") or "").strip()
             position = self._portfolio_position(position_id) if position_id else None
             if position_id and not position:
@@ -418,6 +443,7 @@ class PortfolioInvestmentRuntime:
                         "scheduled_at": scheduled_at.isoformat(timespec="seconds"),
                         "execution_kind": execution_kind,
                         "planned_amount": plan["amount"],
+                        "market_observation": observation,
                     },
                     now_factory=lambda: now,
                 )
@@ -485,7 +511,10 @@ class PortfolioInvestmentRuntime:
             return {"ok": True, "status": "not_due", "message": "定投计划尚未到执行时间", "executed_count": 0}
         results = [self.execute(plan_id, now=now) for plan_id in due_ids]
         executed = sum(result.get("status") == "completed" for result in results)
-        waiting = sum(result.get("status") == "waiting_price" for result in results)
+        waiting = sum(
+            result.get("status") in {"waiting_price", "waiting_market_quality"}
+            for result in results
+        )
         failed = [result for result in results if result.get("ok") is False]
         if failed:
             return {

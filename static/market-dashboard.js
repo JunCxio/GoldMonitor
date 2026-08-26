@@ -291,6 +291,7 @@ function applyMarketInitialState(data) {
 function registerMarketDashboardSocketHandlers(socketClient) {
   socketClient.on('price_update', data => {
     latestData = data;
+    applyMarketObservationState(data);
     if (Array.isArray(data.klines_5min)) {
       klines5min = data.klines_5min;
     }
@@ -322,6 +323,7 @@ function registerMarketDashboardSocketHandlers(socketClient) {
 }
 
 function applyFetchStatus(data) {
+  applyMarketObservationState(data);
   const stale = document.getElementById('priceStale');
   const retry = document.getElementById('priceRetry');
   const ok = data.ok === true;

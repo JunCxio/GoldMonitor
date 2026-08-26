@@ -6,6 +6,7 @@ from goldmonitor import notification_policy as notification_policy_core
 from goldmonitor import portfolio as portfolio_core
 from goldmonitor import portfolio_analytics as portfolio_analytics_core
 from goldmonitor import targets as targets_core
+from goldmonitor.market_observation import market_observation_snapshot
 
 
 class AlertRuntime:
@@ -742,6 +743,13 @@ class AlertRuntime:
 
     def check_rules(self, now_str=None, now=None, force_emit=False):
         now = now or self.now_factory()
+        observation = market_observation_snapshot(
+            getattr(self.state, "market_observation", {})
+        )
+        if observation and observation.get("usable_for_alert") is False:
+            if force_emit:
+                self.emit_event("alert_rules_updated", self.get_state())
+            return []
         with self.state.lock:
             portfolio_state = self.build_portfolio_state()
             next_rules, triggers = alert_rules_core.evaluate_alert_rules(
@@ -774,6 +782,8 @@ class AlertRuntime:
             self.emit_event("portfolio_updated", portfolio_state)
         for trigger in triggers:
             alert_entry = dict(trigger.get("alert") or {})
+            if observation:
+                alert_entry["market_observation"] = observation
             if now_str:
                 alert_entry["time"] = str(now_str)
             self.emit_alert(

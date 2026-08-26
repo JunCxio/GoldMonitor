@@ -222,6 +222,7 @@ function portfolioInvestmentResultLabel(result) {
     skipped: '已跳过一期',
     waiting: '等待首次执行',
     waiting_price: '等待行情',
+    waiting_market_quality: '等待实时行情',
     orphaned: '关联失效',
     error: '执行失败',
   })[result] || '等待执行';
@@ -234,6 +235,7 @@ function portfolioInvestmentStateLabel(plan) {
   if (!plan.enabled) return '已暂停';
   if (plan.status === 'due') return '待执行';
   if (plan.last_result === 'waiting_price') return '等待行情';
+  if (plan.last_result === 'waiting_market_quality') return '等待实时行情';
   if (plan.last_result === 'orphaned') return '关联失效';
   if (plan.last_result === 'error') return '执行失败';
   return '运行中';
@@ -242,7 +244,7 @@ function portfolioInvestmentStateLabel(plan) {
 function portfolioInvestmentStateClass(plan) {
   if (plan.archived_at) return 'off';
   if (plan.last_result === 'orphaned' || plan.last_result === 'error') return 'warn';
-  if (plan.status === 'due' || plan.last_result === 'waiting_price') return 'attention';
+  if (plan.status === 'due' || ['waiting_price', 'waiting_market_quality'].includes(plan.last_result)) return 'attention';
   if (plan.status === 'completed') return 'off';
   return plan.enabled ? 'on' : 'off';
 }

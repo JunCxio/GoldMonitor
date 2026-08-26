@@ -293,6 +293,80 @@ def test_market_quality_applies_rolling_reliability_and_failure_deductions():
     }
 
 
+def test_market_observation_blocks_cache_and_cross_source_anomaly():
+    from goldmonitor.market_observation import build_market_observation
+
+    observation = build_market_observation(
+        {
+            "open": 2300,
+            "high": 2320,
+            "low": 2290,
+            "close": 2310,
+            "timestamp": "2026-08-26T11:59:30Z",
+            "cached": True,
+        },
+        source="缓存金价（测试源）",
+        received_at="2026-08-26T12:00:00Z",
+        rate_value=7.2,
+        rate_source="测试汇率",
+        rate_source_at="2026-08-26T12:00:00Z",
+        gold_cached=True,
+        comparison={"status": "anomaly", "message": "跨源价差超过阈值"},
+    )
+
+    assert observation["quality_level"] == "anomaly"
+    assert observation["quality_score"] == 10
+    assert observation["usable_for_history"] is False
+    assert observation["usable_for_alert"] is False
+    assert observation["usable_for_automation"] is False
+    assert observation["blocked_reasons"] == [
+        "金价来自缓存",
+        "跨源价差超过阈值",
+    ]
+
+
+def test_market_quality_history_merges_consecutive_states_and_keeps_transitions():
+    from goldmonitor.market_observation import record_market_quality_event
+
+    normal = {
+        "source": "测试金价",
+        "rate_source": "测试汇率",
+        "received_at": "2026-08-26T12:00:00Z",
+        "quality_level": "normal",
+        "quality_score": 100,
+        "usable_for_history": True,
+        "usable_for_alert": True,
+        "usable_for_automation": True,
+        "blocked_reasons": [],
+    }
+    history = record_market_quality_event([], normal)
+    history = record_market_quality_event(
+        history,
+        {**normal, "received_at": "2026-08-26T12:00:10Z"},
+    )
+    assert len(history) == 1
+    assert history[0]["occurrences"] == 2
+    assert history[0]["first_seen_at"] == "2026-08-26T12:00:00Z"
+    assert history[0]["last_seen_at"] == "2026-08-26T12:00:10Z"
+
+    blocked = {
+        **normal,
+        "received_at": "2026-08-26T12:00:20Z",
+        "is_cached": True,
+        "gold_cached": True,
+        "quality_level": "stale",
+        "quality_score": 60,
+        "usable_for_history": False,
+        "usable_for_alert": False,
+        "usable_for_automation": False,
+        "blocked_reasons": ["金价来自缓存"],
+    }
+    history = record_market_quality_event(history, blocked)
+    assert len(history) == 2
+    assert history[-1]["quality_level"] == "stale"
+    assert history[-1]["occurrences"] == 1
+
+
 if __name__ == "__main__":
     failures = []
     for name, value in sorted(globals().items()):

@@ -10,6 +10,7 @@ from contextlib import closing
 from datetime import datetime, timedelta
 
 from goldmonitor.data_contracts import unwrap_item_payload, wrap_item_payload
+from goldmonitor.time_utils import to_local_naive
 from goldmonitor.price_history_maintenance import (
     PRICE_HISTORY_JSON_MIGRATION_METADATA_KEY,
     ROLLUP_RESOLUTIONS,
@@ -29,8 +30,7 @@ def history_number(value):
 
 
 def history_timestamp(value):
-    parsed = parse_iso_datetime(value)
-    return parsed.replace(tzinfo=None) if parsed and parsed.tzinfo else parsed
+    return parse_iso_datetime(value)
 
 
 def kline_bucket_start(timestamp, minutes=5):
@@ -102,13 +102,7 @@ def build_5min_klines(history_items, limit=96):
 
 
 def parse_iso_datetime(value):
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        if parsed.tzinfo:
-            parsed = parsed.replace(tzinfo=None)
-        return parsed
-    except ValueError:
-        return None
+    return to_local_naive(value)
 
 
 class PriceHistoryStore(PriceHistoryMaintenanceMixin):

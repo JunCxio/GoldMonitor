@@ -3,6 +3,12 @@ import time
 from datetime import datetime
 
 from goldmonitor import market_data as market_data_core
+from goldmonitor.market_observation import (
+    build_market_observation,
+    record_market_quality_event,
+    unavailable_market_observation,
+)
+from goldmonitor.time_utils import iso_utc
 
 
 RUNTIME_MARKET_STATE_FIELDS = (
@@ -19,6 +25,8 @@ RUNTIME_MARKET_STATE_FIELDS = (
     "gold_price_time",
     "gold_price_cached",
     "gold_price_error",
+    "market_observation",
+    "market_quality_history",
     "price_history",
     "klines_5min",
     "last_fetch_ok",
@@ -127,13 +135,18 @@ def build_fetch_status(
 
 def current_fetch_status(runtime, status_builder=build_fetch_status):
     if runtime.price_usd is None:
-        return status_builder(
+        status = status_builder(
             False,
             "正在等待首次行情数据返回",
             error=runtime.last_fetch_error,
             retryable=True,
         )
-    return status_builder(
+        status["market_observation"] = dict(runtime.market_observation or {})
+        status["market_quality_history"] = list(
+            runtime.market_quality_history or []
+        )
+        return status
+    status = status_builder(
         runtime.last_fetch_ok,
         "行情数据正常" if runtime.last_fetch_ok else "行情数据获取失败",
         error=runtime.last_fetch_error,
@@ -151,6 +164,11 @@ def current_fetch_status(runtime, status_builder=build_fetch_status):
         forex_error=runtime.usdcny_rate_error,
         retryable=True,
     )
+    status["market_observation"] = dict(runtime.market_observation or {})
+    status["market_quality_history"] = list(
+        runtime.market_quality_history or []
+    )
+    return status
 
 
 def market_state_snapshot(runtime):
@@ -162,6 +180,8 @@ def market_state_snapshot(runtime):
         "gold_price_time": runtime.gold_price_time,
         "gold_price_cached": runtime.gold_price_cached,
         "gold_price_error": runtime.gold_price_error,
+        "market_observation": dict(runtime.market_observation or {}),
+        "market_quality_history": list(runtime.market_quality_history or []),
         "usdcny_rate_source": runtime.usdcny_rate_source,
         "usdcny_rate_time": runtime.usdcny_rate_time,
         "usdcny_rate_cached": runtime.usdcny_rate_cached,
@@ -534,6 +554,7 @@ class MarketRuntime:
             now = self.now_factory()
             now_str = now.strftime("%H:%M:%S")
             now_iso = now.isoformat()
+            received_at = iso_utc(now)
             today_str = now.strftime("%Y-%m-%d")
             source_comparison = (
                 self.refresh_source_comparison(
@@ -551,6 +572,16 @@ class MarketRuntime:
                     state["last_fetch_ok"] = False
                     state["last_fetch_error"] = gold_error or "Stooq 金价接口无响应或返回格式异常"
                     state["last_fetch_time"] = now_iso
+                    observation = unavailable_market_observation(
+                        gold_error or "实时金价源未返回有效数据"
+                    )
+                    observation["received_at"] = received_at
+                    state["market_observation"] = observation
+                    state["market_quality_history"] = record_market_quality_event(
+                        state.get("market_quality_history"),
+                        observation,
+                        observed_at=received_at,
+                    )
                     self.state_committer(state)
                     status = self.build_fetch_status(
                         False,
@@ -565,6 +596,10 @@ class MarketRuntime:
                         forex_error=forex_error or "",
                         retryable=True,
                     )
+                    status["market_observation"] = dict(observation)
+                    status["market_quality_history"] = list(
+                        state["market_quality_history"]
+                    )
                     self.emit("fetch_error", status)
                     self.emit("fetch_status", status)
                     return False
@@ -575,17 +610,7 @@ class MarketRuntime:
                 rate_cached = bool(rate_info.get("cached")) if isinstance(rate_info, dict) else False
                 source_name = source_name or data.get("source", "")
                 gold_cached = bool(data.get("cached")) or str(source_name).startswith("缓存金价")
-                gold_time = data.get("timestamp") if gold_cached else now_iso
-                status_ok = not gold_cached and (
-                    cny_rate is not None or state["usdcny_rate"] is not None
-                )
-                state["last_fetch_ok"] = status_ok
-                if status_ok:
-                    state["last_fetch_error"] = ""
-                elif gold_cached:
-                    state["last_fetch_error"] = gold_error or "实时金价源暂不可用，正在使用缓存金价"
-                else:
-                    state["last_fetch_error"] = forex_error or "汇率源暂未返回，人民币价格暂不可用"
+                gold_time = data.get("timestamp") or now_iso
                 state["last_fetch_time"] = now_iso
                 state["gold_price_source"] = source_name
                 state["gold_price_time"] = gold_time
@@ -597,6 +622,70 @@ class MarketRuntime:
                     state["usdcny_rate_time"] = rate_time
                     state["usdcny_rate_cached"] = rate_cached
                     state["usdcny_rate_error"] = forex_error or ""
+                observation = build_market_observation(
+                    data,
+                    source=source_name,
+                    received_at=received_at,
+                    rate_value=state["usdcny_rate"],
+                    rate_source=state["usdcny_rate_source"],
+                    rate_source_at=state["usdcny_rate_time"],
+                    gold_cached=gold_cached,
+                    rate_cached=state["usdcny_rate_cached"],
+                    comparison=source_comparison,
+                )
+                state["market_observation"] = observation
+                state["market_quality_history"] = record_market_quality_event(
+                    state.get("market_quality_history"),
+                    observation,
+                    observed_at=received_at,
+                )
+                invalid_gold_reasons = {
+                    "金价数据缺失或不是有效正数",
+                    "金价开高低收关系异常",
+                    "无法解析金价源时间",
+                    "金价源时间晚于接收时间",
+                    "金价源时间超过 5 分钟",
+                }
+                if not gold_cached and invalid_gold_reasons.intersection(
+                    observation["blocked_reasons"]
+                ):
+                    state["last_fetch_ok"] = False
+                    state["last_fetch_error"] = "；".join(
+                        reason
+                        for reason in observation["blocked_reasons"]
+                        if reason in invalid_gold_reasons
+                    )
+                    self.state_committer(state)
+                    status = self.build_fetch_status(
+                        False,
+                        "金价数据未通过质量校验",
+                        gold_ok=False,
+                        forex_ok=state["usdcny_rate"] is not None,
+                        error=state["last_fetch_error"],
+                        gold_source=source_name,
+                        forex_source=state["usdcny_rate_source"],
+                        forex_cached=state["usdcny_rate_cached"],
+                        gold_error=state["last_fetch_error"],
+                        forex_error=state["usdcny_rate_error"],
+                        retryable=True,
+                    )
+                    status["market_observation"] = dict(observation)
+                    status["market_quality_history"] = list(
+                        state["market_quality_history"]
+                    )
+                    self.emit("fetch_error", status)
+                    self.emit("fetch_status", status)
+                    return False
+                status_ok = observation["quality_level"] == "normal"
+                state["last_fetch_ok"] = status_ok
+                if status_ok:
+                    state["last_fetch_error"] = ""
+                elif gold_cached:
+                    state["last_fetch_error"] = gold_error or "实时金价源暂不可用，正在使用缓存金价"
+                elif observation["blocked_reasons"]:
+                    state["last_fetch_error"] = "；".join(observation["blocked_reasons"])
+                else:
+                    state["last_fetch_error"] = forex_error or "汇率源暂未返回，人民币价格暂不可用"
                 had_price_usd = state["price_usd"] is not None
                 had_price_rmb = state["price_rmb"] is not None
                 state["previous_usd"] = state["price_usd"]
@@ -610,8 +699,11 @@ class MarketRuntime:
                     )
                 if state["previous_rmb"] is None:
                     state["previous_rmb"] = state["price_rmb"]
+                if not observation["usable_for_history"]:
+                    state["previous_usd"] = state["price_usd"]
+                    state["previous_rmb"] = state["price_rmb"]
 
-                if state["today_date"] != today_str:
+                if observation["usable_for_history"] and state["today_date"] != today_str:
                     state["today_date"] = today_str
                     state["today_open_usd"] = data["open"]
                     state["today_high_usd"] = data["high"]
@@ -629,7 +721,7 @@ class MarketRuntime:
                             data["low"] * state["usdcny_rate"] / self.ounce_to_gram,
                             2,
                         )
-                else:
+                elif observation["usable_for_history"]:
                     if state["today_open_usd"] is None:
                         state["today_open_usd"] = data["open"]
                     state["today_high_usd"] = max(state["today_high_usd"] or 0, data["high"])
@@ -651,33 +743,34 @@ class MarketRuntime:
 
                 daily_change_usd = (
                     round(state["price_usd"] - state["today_open_usd"], 2)
-                    if state["today_open_usd"] else 0
+                    if observation["usable_for_history"] and state["today_open_usd"] else 0
                 )
                 daily_pct_usd = (
                     round(daily_change_usd / state["today_open_usd"] * 100, 2)
-                    if state["today_open_usd"] else 0
+                    if observation["usable_for_history"] and state["today_open_usd"] else 0
                 )
                 daily_change_rmb = (
                     round(state["price_rmb"] - state["today_open_rmb"], 2)
-                    if state["price_rmb"] and state["today_open_rmb"] else 0
+                    if observation["usable_for_history"] and state["price_rmb"] and state["today_open_rmb"] else 0
                 )
                 daily_pct_rmb = (
                     round(daily_change_rmb / state["today_open_rmb"] * 100, 2)
-                    if state["today_open_rmb"] and state["today_open_rmb"] != 0 else 0
+                    if observation["usable_for_history"] and state["today_open_rmb"] and state["today_open_rmb"] != 0 else 0
                 )
 
-                history_entry = {
-                    "usd": state["price_usd"],
-                    "rmb": state["price_rmb"],
-                    "rate": state["usdcny_rate"],
-                    "time": now_str,
-                    "timestamp": now_iso,
-                }
-                state["price_history"].append(history_entry)
-                if len(state["price_history"]) > 360:
-                    state["price_history"] = state["price_history"][-360:]
-                self.add_price_history_entry(history_entry)
-                state["klines_5min"] = self.aggregate_klines(state["price_history"])
+                if observation["usable_for_history"]:
+                    history_entry = {
+                        "usd": state["price_usd"],
+                        "rmb": state["price_rmb"],
+                        "rate": state["usdcny_rate"],
+                        "time": now_str,
+                        "timestamp": now_iso,
+                    }
+                    state["price_history"].append(history_entry)
+                    if len(state["price_history"]) > 360:
+                        state["price_history"] = state["price_history"][-360:]
+                    self.add_price_history_entry(history_entry)
+                    state["klines_5min"] = self.aggregate_klines(state["price_history"])
 
                 chg_usd = (
                     round(state["price_usd"] - state["previous_usd"], 2)
@@ -735,6 +828,10 @@ class MarketRuntime:
                     "klines_5min": list(state["klines_5min"][-72:]),
                     "daily": daily_stats,
                     "source_comparison": source_comparison,
+                    "market_observation": dict(observation),
+                    "market_quality_history": list(
+                        state["market_quality_history"]
+                    ),
                 })
                 desktop_title = self.format_price_title(state["price_rmb"], state["price_usd"])
                 self.update_desktop_price_title(desktop_title)
@@ -743,11 +840,12 @@ class MarketRuntime:
                     (not had_price_usd and state["price_usd"] is not None)
                     or (not had_price_rmb and state["price_rmb"] is not None)
                 )
-                self.check_alert_rules(
-                    now_str,
-                    now=now,
-                    force_emit=first_price_ready,
-                )
+                if observation["usable_for_alert"]:
+                    self.check_alert_rules(
+                        now_str,
+                        now=now,
+                        force_emit=first_price_ready,
+                    )
 
                 if cny_rate:
                     rate_message = (
@@ -760,7 +858,7 @@ class MarketRuntime:
                     f"使用缓存金价（{source_name}）"
                     if gold_cached else f"金价已更新（{source_name}）"
                 )
-                self.emit("fetch_status", self.build_fetch_status(
+                fetch_status = self.build_fetch_status(
                     status_ok,
                     f"{gold_message}，{rate_message}",
                     gold_ok=not gold_cached,
@@ -773,7 +871,12 @@ class MarketRuntime:
                     gold_error=gold_error or "",
                     forex_error=forex_error or "",
                     retryable=True,
-                ))
+                )
+                fetch_status["market_observation"] = dict(observation)
+                fetch_status["market_quality_history"] = list(
+                    state["market_quality_history"]
+                )
+                self.emit("fetch_status", fetch_status)
                 history_state = self.build_price_history_state(limit=240)
                 history_state["scope"] = "live"
                 self.emit("price_history_updated", history_state)

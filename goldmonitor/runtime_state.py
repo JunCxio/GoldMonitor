@@ -2,6 +2,8 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from goldmonitor.market_observation import unavailable_market_observation
+
 
 @dataclass
 class ApplicationRuntimeState:
@@ -39,6 +41,10 @@ class ApplicationRuntimeState:
     gold_price_time: Optional[str] = None
     gold_price_cached: bool = False
     gold_price_error: str = ""
+    market_observation: Dict[str, Any] = field(
+        default_factory=unavailable_market_observation
+    )
+    market_quality_history: List[Dict[str, Any]] = field(default_factory=list)
     price_history: List[Dict[str, Any]] = field(default_factory=list)
     price_archive: List[Dict[str, Any]] = field(default_factory=list)
     klines_5min: List[Dict[str, Any]] = field(default_factory=list)

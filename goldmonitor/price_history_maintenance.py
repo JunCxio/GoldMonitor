@@ -7,6 +7,7 @@ from contextlib import closing
 from datetime import datetime, timedelta
 
 from goldmonitor.data_contracts import unwrap_item_payload
+from goldmonitor.time_utils import to_local_naive
 
 
 ROLLUP_RESOLUTIONS = (
@@ -32,11 +33,7 @@ MAINTENANCE_BACKUP_METADATA_KEYS = (
 
 
 def _parse_timestamp(value):
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        return parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
-    except ValueError:
-        return None
+    return to_local_naive(value)
 
 
 class PriceHistoryMaintenanceMixin:

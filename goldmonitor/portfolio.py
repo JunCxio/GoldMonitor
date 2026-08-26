@@ -7,6 +7,7 @@ from datetime import datetime
 from io import StringIO
 
 from .data_contracts import unwrap_item_payload, wrap_item_payload
+from .market_observation import market_observation_snapshot
 
 
 PORTFOLIO_MODES = {"rmb", "usd"}
@@ -450,6 +451,9 @@ def normalize_portfolio_transaction(item, existing=None, now_factory=None, id_fa
     planned_amount = _positive_float_or_none(
         item.get("planned_amount", existing.get("planned_amount"))
     )
+    market_observation = market_observation_snapshot(
+        item.get("market_observation", existing.get("market_observation"))
+    )
     created_at = str(existing.get("created_at") or item.get("created_at") or now)
     updated_at = now
 
@@ -477,6 +481,8 @@ def normalize_portfolio_transaction(item, existing=None, now_factory=None, id_fa
         transaction["execution_kind"] = execution_kind
     if planned_amount is not None:
         transaction["planned_amount"] = planned_amount
+    if market_observation:
+        transaction["market_observation"] = market_observation
     return transaction
 
 

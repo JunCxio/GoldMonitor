@@ -64,6 +64,8 @@ portfolio_investment_actions_js_path = root / "static" / "portfolio-investment-a
 portfolio_actions_js_path = root / "static" / "portfolio-actions.js"
 portfolio_import_js_path = root / "static" / "portfolio-import.js"
 alert_log_js_path = root / "static" / "alert-log-center.js"
+vendor_chart_js_path = root / "static" / "vendor" / "chart.umd.min.js"
+vendor_socket_io_js_path = root / "static" / "vendor" / "socket.io.min.js"
 
 
 if not css_path.exists():
@@ -71,6 +73,21 @@ if not css_path.exists():
 
 if not js_path.exists():
     raise SystemExit("frontend main script must live in static/app.js")
+
+for vendor_path in (vendor_chart_js_path, vendor_socket_io_js_path):
+    if not vendor_path.exists() or vendor_path.stat().st_size < 10000:
+        raise SystemExit(f"frontend vendor asset is missing or incomplete: {vendor_path.name}")
+
+for external_runtime in ("cdn.jsdelivr.net", "cdn.socket.io"):
+    if external_runtime in template:
+        raise SystemExit(f"frontend runtime must not depend on external CDN: {external_runtime}")
+
+for vendor_script in (
+    '<script src="/static/vendor/chart.umd.min.js?v={{ app_version }}"></script>',
+    '<script src="/static/vendor/socket.io.min.js?v={{ app_version }}"></script>',
+):
+    if vendor_script not in template:
+        raise SystemExit(f"template must reference local vendor script: {vendor_script}")
 
 for shared_path in (app_state_js_path, app_utils_js_path, desktop_close_js_path):
     if not shared_path.exists():
@@ -457,6 +474,8 @@ for required in (
     "expired_count",
     "non_retryable_count",
     "function renderSourceHealth",
+    "function renderMarketTrust",
+    "function applyMarketObservationState",
     "function renderRecentOpsRecords",
     "function previewDataArchive",
     "function renderConfigImportPreview",
@@ -1180,6 +1199,10 @@ for required in (
     'id="marketQualityDetails"',
     'id="sourceManager"',
     'id="sourceManagerStatus"',
+    'id="marketTrustCard"',
+    'id="marketTrustGates"',
+    'id="marketTrustObservation"',
+    'id="marketTrustEvents"',
 ):
     if required not in template:
         raise SystemExit(f"template missing market source management anchor: {required}")
@@ -1189,6 +1212,10 @@ for required in (
     ".source-manager",
     ".source-manager-row",
     ".source-manager-current",
+    ".market-trust-card",
+    ".market-trust-rail",
+    ".market-trust-gates",
+    ".market-trust-events",
 ):
     if required not in css:
         raise SystemExit(f"static/app.css missing market source management selector: {required}")

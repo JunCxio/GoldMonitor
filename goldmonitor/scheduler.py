@@ -1,17 +1,13 @@
 from datetime import datetime
 
+from goldmonitor.time_utils import to_local_naive
+
 
 def parse_iso_datetime(value):
     text = str(value or "").strip()
     if not text:
         return None
-    try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-    if parsed.tzinfo:
-        parsed = parsed.replace(tzinfo=None)
-    return parsed
+    return to_local_naive(text)
 
 
 def parse_daily_time(value):

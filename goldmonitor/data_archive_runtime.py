@@ -1,5 +1,7 @@
 from contextlib import ExitStack
 
+from goldmonitor.market_observation import unavailable_market_observation
+
 
 class DataArchiveRuntime:
     def __init__(
@@ -63,6 +65,8 @@ class DataArchiveRuntime:
         runtime.gold_price_time = None
         runtime.gold_price_cached = False
         runtime.gold_price_error = ""
+        runtime.market_observation = unavailable_market_observation()
+        runtime.market_quality_history = []
         self.initialize_market_cache()
 
         runtime.today_date = None
