@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>{{ app_name }} · 局域网只读面板</title>
+  <link rel="stylesheet" href="/assets/dashboard.css?v={{ app_version }}">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">GoldMonitor / 局域网只读</p>
+      <h1>行情观察台</h1>
+    </div>
+    <div class="topbar-actions">
+      <span class="connection-state" id="connectionState"><i></i>正在连接</span>
+      <form action="/logout" method="post"><button class="quiet-button" type="submit">退出</button></form>
+    </div>
+  </header>
+
+  <main class="dashboard-shell">
+    <section class="market-stage" aria-labelledby="marketTitle">
+      <div class="market-heading">
+        <div><p class="section-kicker">实时行情</p><h2 id="marketTitle">黄金价格</h2></div>
+        <p class="updated-at" id="updatedAt">等待首次刷新</p>
+      </div>
+      <div class="price-grid">
+        <article class="price-block primary-price">
+          <span>人民币克价</span>
+          <strong id="priceRmb">--</strong>
+          <small>人民币 / 克</small>
+          <p id="changeRmb">等待行情</p>
+        </article>
+        <article class="price-block">
+          <span>国际金价</span>
+          <strong id="priceUsd">--</strong>
+          <small>美元 / 盎司</small>
+          <p id="changeUsd">等待行情</p>
+        </article>
+        <article class="rate-block">
+          <span>USD / CNY</span>
+          <strong id="rateValue">--</strong>
+          <p id="rateSource">等待汇率</p>
+        </article>
+      </div>
+      <div class="quality-strip" id="qualityStrip" data-level="unavailable">
+        <div class="quality-score"><span>行情质量</span><strong id="qualityScore">--</strong><small>/ 100</small></div>
+        <div class="quality-copy"><strong id="qualityLabel">等待有效行情</strong><p id="qualityReason">正在读取来源与时效状态。</p></div>
+        <div class="quality-rail" aria-hidden="true"><i id="qualityMarker"></i></div>
+      </div>
+    </section>
+
+    <section class="panel-section" aria-labelledby="ruleTitle">
+      <div class="section-heading"><div><p class="section-kicker">监控规则</p><h2 id="ruleTitle">运行状态</h2></div><span id="ruleTotal">0 条规则</span></div>
+      <div class="status-grid" id="ruleSummary"></div>
+      <div class="rule-list" id="ruleList"><p class="empty-state">尚无规则数据。</p></div>
+    </section>
+
+    <section class="panel-section alerts-section" aria-labelledby="alertTitle">
+      <div class="section-heading"><div><p class="section-kicker">最近记录</p><h2 id="alertTitle">警报摘要</h2></div><span>仅展示，不可处理</span></div>
+      <div class="alert-list" id="alertList"><p class="empty-state">尚无警报记录。</p></div>
+    </section>
+  </main>
+
+  <footer><span>GoldMonitor {{ app_version }}</span><span>每 10 秒自动刷新</span></footer>
+  <script src="/assets/dashboard.js?v={{ app_version }}"></script>
+</body>
+</html>

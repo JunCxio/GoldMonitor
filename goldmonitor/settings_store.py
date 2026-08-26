@@ -160,6 +160,27 @@ def normalize_settings(raw, defaults, options=None):
     data["notification_auto_retry_enabled"] = bool(
         data.get("notification_auto_retry_enabled", False)
     )
+    data["lan_dashboard_enabled"] = bool(
+        data.get("lan_dashboard_enabled", False)
+    )
+    lan_host_normalizer = options.get("normalize_lan_dashboard_host")
+    if callable(lan_host_normalizer):
+        data["lan_dashboard_host"] = lan_host_normalizer(
+            data.get("lan_dashboard_host")
+        )
+    else:
+        data["lan_dashboard_host"] = str(
+            data.get("lan_dashboard_host") or "0.0.0.0"
+        ).strip()
+    data["lan_dashboard_port"] = bounded_int(
+        data.get("lan_dashboard_port", 5050),
+        5050,
+        1024,
+        65535,
+    )
+    data["lan_dashboard_password"] = str(
+        data.get("lan_dashboard_password") or ""
+    )
     data["market_quality_alert_enabled"] = bool(
         data.get("market_quality_alert_enabled", True)
     )

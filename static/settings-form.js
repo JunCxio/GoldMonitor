@@ -143,6 +143,7 @@ function validateSettings() {
   validateNumber('setRiskMaxTokens', '单次输出上限', 300, 4000);
   validateNumber('setRiskCooldownSeconds', '分析冷却时间', 0, 300);
   validateNumber('setRiskCacheMinutes', '重复分析缓存', 0, 60);
+  validateNumber('setLanDashboardPort', '只读面板端口', 1024, 65535);
   validateTypedValue('setSmtpSender', '发件邮箱格式不正确。');
   validateTypedValue('setSmtpRecipient', '收件邮箱格式不正确。');
   validateTypedValue('setWebhookUrl', 'Webhook 地址格式不正确。');
@@ -171,6 +172,17 @@ function validateSettings() {
       && !document.getElementById('setMarketQualityAlertEmail').checked
       && !document.getElementById('setMarketQualityAlertWebhook').checked) {
       add('setMarketQualityAlertLocal', '启用行情质量通知前至少选择一个通知渠道。');
+    }
+  }
+
+  if (document.getElementById('setLanDashboardEnabled').checked) {
+    const password = document.getElementById('setLanDashboardPassword').value;
+    const configured = !!appSettings.lan_dashboard_password_configured
+      && !document.getElementById('clearLanDashboardPassword').checked;
+    if (!configured && password.length < 12) {
+      add('setLanDashboardPassword', '启用局域网只读面板前需要设置至少 12 位访问口令。');
+    } else if (password && password.length < 12) {
+      add('setLanDashboardPassword', '新的访问口令至少需要 12 位。');
     }
   }
 
@@ -217,6 +229,7 @@ function handleSettingsFieldChange(event) {
   }
   if (target.id === 'setFloatingTaskbarTarget') renderTaskbarPriceStatus();
   if (target.id === 'setMarketQualityAlertEnabled') syncMarketQualityAlertFields();
+  if (target.id === 'setLanDashboardEnabled') syncLanDashboardFields();
   if (['setMarketQualityAlertLocal', 'setMarketQualityAlertEmail', 'setMarketQualityAlertWebhook'].includes(target.id)) {
     clearSettingsFieldError(document.getElementById('setMarketQualityAlertLocal'));
   }

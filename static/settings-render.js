@@ -328,6 +328,91 @@ function applyNotificationRetryStatus(data) {
   if (button) button.disabled = pending <= 0;
 }
 
+function syncLanDashboardFields() {
+  const enabled = document.getElementById('setLanDashboardEnabled');
+  const control = document.getElementById('lanDashboardControl');
+  if (!enabled || !control) return;
+  const active = !!enabled.checked;
+  ['setLanDashboardHost', 'setLanDashboardPort', 'setLanDashboardPassword'].forEach(id => {
+    const element = document.getElementById(id);
+    if (element) element.disabled = !active;
+  });
+  control.classList.toggle('disabled', !active);
+}
+
+function renderLanDashboardHostOptions(selected) {
+  const select = document.getElementById('setLanDashboardHost');
+  if (!select) return;
+  const addresses = Array.isArray(appSettings.lan_dashboard_interfaces)
+    ? appSettings.lan_dashboard_interfaces.filter(Boolean)
+    : [];
+  const options = [
+    ['0.0.0.0', '全部本机网络接口'],
+    ...addresses.map(address => [address, '仅 ' + address]),
+    ['127.0.0.1', '仅本机测试'],
+  ];
+  const unique = [];
+  const seen = new Set();
+  options.forEach(item => {
+    if (seen.has(item[0])) return;
+    seen.add(item[0]);
+    unique.push(item);
+  });
+  select.replaceChildren(...unique.map(item => {
+    const option = document.createElement('option');
+    option.value = item[0];
+    option.textContent = item[1];
+    return option;
+  }));
+  select.value = seen.has(selected) ? selected : '0.0.0.0';
+}
+
+function copyLanDashboardAddress(url, button) {
+  const write = navigator.clipboard && navigator.clipboard.writeText
+    ? navigator.clipboard.writeText(url)
+    : Promise.reject(new Error('clipboard unavailable'));
+  write.then(() => {
+    if (!button) return;
+    const previous = button.textContent;
+    button.textContent = '已复制 ' + url;
+    window.setTimeout(() => { button.textContent = previous; }, 1600);
+  }).catch(() => {
+    showSettingsMessage('无法复制访问地址，请手动选择并复制。', 'error');
+  });
+}
+
+function renderLanDashboardStatus() {
+  const status = appSettings.lan_dashboard_status && typeof appSettings.lan_dashboard_status === 'object'
+    ? appSettings.lan_dashboard_status
+    : {};
+  const label = document.getElementById('lanDashboardRuntimeStatus');
+  const addresses = document.getElementById('lanDashboardAddresses');
+  if (label) {
+    if (status.error) label.textContent = status.error;
+    else if (status.running) label.textContent = '正在运行，端口 ' + status.port;
+    else if (appSettings.lan_dashboard_enabled) label.textContent = '已启用，等待服务启动';
+    else label.textContent = '当前未启用';
+  }
+  if (!addresses) return;
+  const urls = Array.isArray(status.urls) ? status.urls.filter(Boolean) : [];
+  if (!status.running || !urls.length) {
+    const fallback = document.createElement('span');
+    fallback.textContent = status.error || (appSettings.lan_dashboard_enabled
+      ? '服务启动后显示可访问地址。'
+      : '启用并保存后显示访问地址。');
+    addresses.replaceChildren(fallback);
+    return;
+  }
+  addresses.replaceChildren(...urls.map(url => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = url;
+    button.title = '复制访问地址';
+    button.addEventListener('click', () => copyLanDashboardAddress(url, button));
+    return button;
+  }));
+}
+
 function applySettings(data) {
   appSettings = Object.assign({}, appSettings, data);
   applyPlatformLabels();
@@ -395,6 +480,24 @@ function applySettings(data) {
   document.getElementById('setMarketQualityRecoveryEnabled').checked = appSettings.market_quality_recovery_enabled !== false;
   document.getElementById('setMarketQualityRecoveryConfirmation').value = String(appSettings.market_quality_recovery_confirmation_minutes || 2);
   syncMarketQualityAlertFields();
+  document.getElementById('setLanDashboardEnabled').checked = !!appSettings.lan_dashboard_enabled;
+  renderLanDashboardHostOptions(appSettings.lan_dashboard_host || '0.0.0.0');
+  document.getElementById('setLanDashboardPort').value = appSettings.lan_dashboard_port || 5050;
+  document.getElementById('setLanDashboardPassword').value = '';
+  const lanPasswordStatus = appSettings.lan_dashboard_password_configured
+    ? '已保存访问口令：' + (appSettings.lan_dashboard_password_masked || '******') + '。输入新口令后保存会替换当前口令。'
+    : '尚未保存访问口令。启用前需要设置至少 12 位口令。';
+  configureSecretClear(
+    'clearLanDashboardPassword',
+    'lanDashboardPasswordStatus',
+    'clearLanDashboardPasswordButton',
+    !!appSettings.lan_dashboard_password_configured,
+    lanPasswordStatus,
+    '删除已保存访问口令',
+    '暂无已保存访问口令'
+  );
+  syncLanDashboardFields();
+  renderLanDashboardStatus();
   if (typeof renderMarketQualityAlertStatus === 'function') {
     renderMarketQualityAlertStatus(Object.assign(
       {},
