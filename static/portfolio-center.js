@@ -1,6 +1,7 @@
 // ========== 持仓事件 ==========
 function registerPortfolioSocketHandlers(socketClient) {
   socketClient.on('portfolio_updated', data => {
+    const completedSave = pendingPortfolioSave ? Object.assign({}, pendingPortfolioSave) : null;
     applyPortfolio(data || {});
     if (pendingPortfolioImportMessage) {
       setPortfolioStatus(pendingPortfolioImportMessage, 'ok');
@@ -8,6 +9,13 @@ function registerPortfolioSocketHandlers(socketClient) {
     } else if (pendingPortfolioUndoMessage) {
       setPortfolioStatus(pendingPortfolioUndoMessage, 'ok');
       pendingPortfolioUndoMessage = '';
+    } else if (completedSave && completedSave.kind === 'transaction') {
+      setPortfolioStatus(
+        completedSave.action === 'delete'
+          ? '流水已删除，持仓数据已重新计算。'
+          : '流水已保存，持仓数据已重新计算。',
+        'ok',
+      );
     } else if (portfolioInvestmentDraftNotice) {
       setPortfolioStatus(portfolioInvestmentDraftNotice, 'ok');
     } else {
@@ -16,6 +24,9 @@ function registerPortfolioSocketHandlers(socketClient) {
   });
 
   socketClient.on('portfolio_error', data => {
+    if (pendingPortfolioSave && pendingPortfolioSave.kind === 'transaction') {
+      captureActivePortfolioTransactionDraft();
+    }
     pendingPortfolioSave = null;
     setPortfolioStatus((data && data.message) || '持仓更新失败。', 'fail');
   });
