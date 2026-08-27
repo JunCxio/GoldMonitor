@@ -7,6 +7,7 @@ function setPortfolioView(view) {
   if (portfolioView !== 'positions') {
     activePortfolioDetailId = null;
     activePortfolioAlertEditorId = null;
+    activePortfolioTransactionDetailId = null;
     portfolioDetailView = 'review';
   }
   renderPortfolio();
@@ -15,6 +16,7 @@ function setPortfolioView(view) {
 
 function setActivePortfolioDetail(id) {
   captureActivePortfolioAlertDraft();
+  captureActivePortfolioTransactionDraft();
   const nextId = activePortfolioDetailId === id ? null : id;
   activePortfolioDetailId = nextId;
   if (activePortfolioDetailId) {
@@ -25,11 +27,17 @@ function setActivePortfolioDetail(id) {
   if (activePortfolioDetailId && activePortfolioAlertEditorId && activePortfolioAlertEditorId !== activePortfolioDetailId) {
     activePortfolioAlertEditorId = null;
   }
+  if (activePortfolioTransactionDetailId && activePortfolioTransactionDetailId !== activePortfolioDetailId) {
+    clearPortfolioTransactionDraft(activePortfolioTransactionId);
+    activePortfolioTransactionId = null;
+    activePortfolioTransactionDetailId = null;
+  }
   renderPortfolio();
 }
 
 function setPortfolioDetailView(view) {
   captureActivePortfolioAlertDraft();
+  captureActivePortfolioTransactionDraft();
   portfolioDetailView = ['overview', 'transactions', 'alert', 'review'].includes(view) ? view : 'review';
   renderPortfolio();
 }
@@ -64,22 +72,35 @@ function setActivePortfolioPosition(id) {
 function setActivePortfolioTransaction(id, defaults) {
   captureActivePortfolioTransactionDraft();
   const detailPositionId = activePortfolioDetailId || '';
+  const existingTransaction = (portfolioState.transactions || []).find(item => item.id === id) || {};
   const storedDraft = portfolioTransactionDrafts[portfolioTransactionDraftKey(id)] || {};
-  const requestedPositionId = defaults && typeof defaults === 'object' ? defaults.position_id : storedDraft.position_id;
-  const staysInDetail = id === 'new' && detailPositionId && requestedPositionId === detailPositionId;
+  const requestedPositionId = defaults && typeof defaults === 'object'
+    ? defaults.position_id
+    : storedDraft.position_id || existingTransaction.position_id;
+  const opensInDetail = Boolean(detailPositionId && requestedPositionId === detailPositionId);
   if (activePortfolioTransactionId === id && !defaults) {
+    const closesInDetail = Boolean(activePortfolioTransactionDetailId && activePortfolioTransactionDetailId === detailPositionId);
     clearPortfolioTransactionDraft(id);
     activePortfolioTransactionId = null;
+    activePortfolioTransactionDetailId = null;
+    if (closesInDetail) {
+      portfolioView = 'positions';
+      portfolioDetailView = 'transactions';
+      renderPortfolio();
+      return;
+    }
   } else {
     activePortfolioTransactionId = id;
     if (defaults && typeof defaults === 'object') {
       portfolioTransactionDrafts[portfolioTransactionDraftKey(id)] = Object.assign({}, defaults);
     }
   }
-  if (staysInDetail) {
+  if (opensInDetail) {
+    activePortfolioTransactionDetailId = detailPositionId;
     portfolioView = 'positions';
     portfolioDetailView = 'transactions';
   } else {
+    activePortfolioTransactionDetailId = null;
     portfolioView = 'transactions';
     activePortfolioDetailId = null;
     activePortfolioAlertEditorId = null;
@@ -119,12 +140,10 @@ function startPortfolioTransactionForPosition(positionId, type) {
 function closePortfolioDetail() {
   captureActivePortfolioAlertDraft();
   captureActivePortfolioTransactionDraft();
-  const transactionDraft = activePortfolioTransactionId === 'new'
-    ? portfolioTransactionDrafts[portfolioTransactionDraftKey(activePortfolioTransactionId)] || {}
-    : null;
-  if (transactionDraft && transactionDraft.position_id === activePortfolioDetailId) {
+  if (activePortfolioTransactionId && activePortfolioTransactionDetailId === activePortfolioDetailId) {
     clearPortfolioTransactionDraft(activePortfolioTransactionId);
     activePortfolioTransactionId = null;
+    activePortfolioTransactionDetailId = null;
   }
   activePortfolioDetailId = null;
   activePortfolioAlertEditorId = null;
@@ -265,16 +284,32 @@ function savePortfolioTransaction(id) {
   payload.price = price;
   payload.quantity = quantity;
   payload.fee = fee;
+  capturePortfolioTransactionDraft(id);
   setPortfolioStatus('正在保存流水...', '');
-  pendingPortfolioSave = { kind: 'transaction', id };
+  pendingPortfolioSave = {
+    kind: 'transaction',
+    action: 'save',
+    id,
+    detailPositionId: activePortfolioTransactionDetailId || '',
+  };
   socket.emit('save_portfolio_transaction', payload);
 }
 
 function deletePortfolioTransaction(id) {
+  const transaction = (portfolioState.transactions || []).find(item => item.id === id) || {};
+  const typeText = transaction.type === 'sell' ? '卖出' : '买入';
+  const name = transaction.name || '未命名流水';
+  if (!window.confirm('确定删除这条' + typeText + '流水“' + name + '”？\n删除后持仓数量、成本和盈亏会重新计算。')) return;
+  captureActivePortfolioTransactionDraft();
   setPortfolioStatus('正在删除流水...', '');
+  pendingPortfolioSave = {
+    kind: 'transaction',
+    action: 'delete',
+    id,
+    detailPositionId: activePortfolioTransactionDetailId
+      || (activePortfolioDetailId === transaction.position_id ? activePortfolioDetailId : ''),
+  };
   socket.emit('delete_portfolio_transaction', { id });
-  clearPortfolioTransactionDraft(id);
-  if (activePortfolioTransactionId === id) activePortfolioTransactionId = null;
 }
 
 function exportPortfolio(kind) {

@@ -147,6 +147,8 @@ function portfolioTransactionDisplay(transaction, fallbackMode) {
 
 function renderPortfolioDetailTransactionItem(item, transaction) {
   const display = portfolioTransactionDisplay(transaction, item.mode || 'rmb');
+  const transactionId = escapeHtml(transaction.id || '');
+  const isEditing = activePortfolioTransactionId === transaction.id && activePortfolioTransactionDetailId === item.id;
   const metaParts = [
     transaction.trade_date || '未标日期',
     formatPortfolioMoney(transaction.price, display.mode),
@@ -160,7 +162,13 @@ function renderPortfolioDetailTransactionItem(item, transaction) {
     '<div class="portfolio-detail-transaction-title"><span class="portfolio-transaction-type ' + display.typeClass + '">' + escapeHtml(display.typeText) + '</span>' + escapeHtml(transaction.name || item.name || '未命名流水') + '</div>',
     '<div class="portfolio-detail-transaction-meta">' + escapeHtml(metaParts.join(' · ')) + '</div>',
     '</div>',
+    '<div class="portfolio-detail-transaction-side">',
     '<div class="portfolio-detail-transaction-value ' + portfolioPnlClass(transaction.realized_pnl) + '">' + escapeHtml(display.valueText) + '</div>',
+    '<div class="portfolio-detail-transaction-actions">',
+    '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="setActivePortfolioTransaction(\'' + transactionId + '\')">' + (isEditing ? '取消编辑' : '编辑') + '</button>',
+    '<button class="btn-clear-sm portfolio-detail-transaction-delete" type="button" onclick="deletePortfolioTransaction(\'' + transactionId + '\')">删除</button>',
+    '</div>',
+    '</div>',
     '</div>',
   ].join('');
 }
@@ -232,11 +240,13 @@ function renderPortfolioDetailOverview(item, alert, transactions) {
 }
 
 function renderPortfolioDetailTransactions(item, transactions) {
-  const transactionDraft = activePortfolioTransactionId === 'new'
-    ? portfolioTransactionDraftFor({ id: 'new' })
-    : null;
-  const transactionEditor = transactionDraft && transactionDraft.position_id === item.id
-    ? buildPortfolioTransactionEditor({ id: 'new' })
+  const activeTransaction = activePortfolioTransactionId === 'new'
+    ? { id: 'new' }
+    : transactions.find(transaction => transaction.id === activePortfolioTransactionId) || null;
+  const transactionDraft = activeTransaction ? portfolioTransactionDraftFor(activeTransaction) : null;
+  const transactionEditor = activePortfolioTransactionDetailId === item.id
+    && transactionDraft
+    ? buildPortfolioTransactionEditor(activeTransaction)
     : '';
   return [
     '<div class="portfolio-detail-panel">',

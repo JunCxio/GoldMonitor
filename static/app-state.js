@@ -23,6 +23,7 @@ let activePortfolioDetailId = null;
 let activePortfolioAlertEditorId = null;
 let portfolioDrafts = {};
 let activePortfolioTransactionId = null;
+let activePortfolioTransactionDetailId = null;
 let portfolioTransactionDrafts = {};
 let activePortfolioInvestmentPlanId = null;
 let portfolioInvestmentDrafts = {};

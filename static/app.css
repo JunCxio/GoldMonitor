@@ -1349,7 +1349,12 @@
   .portfolio-detail-transaction-main { min-width:0; }
   .portfolio-detail-transaction-title { color:#f0f0f4; font-size:0.7rem; font-weight:800; line-height:1.35; overflow-wrap:anywhere; }
   .portfolio-detail-transaction-meta { margin-top:3px; color:var(--text-dim); font-size:0.64rem; line-height:1.35; overflow-wrap:anywhere; }
+  .portfolio-detail-transaction-side { display:grid; justify-items:end; gap:6px; min-width:0; }
   .portfolio-detail-transaction-value { color:#f0f0f4; font-size:0.68rem; font-weight:800; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .portfolio-detail-transaction-actions { display:flex; justify-content:flex-end; gap:5px; flex-wrap:wrap; }
+  .portfolio-detail-transaction-actions .btn-clear-sm { min-height:25px; padding:4px 7px; font-size:0.62rem; }
+  .portfolio-detail-transaction-delete { color:var(--up); border-color:rgba(224,85,106,0.22); background:rgba(224,85,106,0.045); }
+  .portfolio-detail-transaction-delete:hover { border-color:rgba(224,85,106,0.38); background:rgba(224,85,106,0.085); }
   .portfolio-detail-more { color:var(--text-dim); font-size:0.64rem; line-height:1.35; text-align:center; padding:6px 8px; border:1px dashed rgba(255,255,255,0.07); border-radius:8px; background:rgba(255,255,255,0.012); }
   .portfolio-detail-empty { color:var(--text-dim); font-size:0.7rem; padding:10px 8px; text-align:center; border:1px dashed rgba(255,255,255,0.08); border-radius:8px; background:rgba(255,255,255,0.014); }
   .portfolio-detail-review-panel { gap:9px; }
@@ -1952,6 +1957,7 @@
     .portfolio-name, .portfolio-note { grid-column:auto; }
     .portfolio-transaction-fields .portfolio-name, .portfolio-transaction-fields .portfolio-note { grid-column:auto; }
     .portfolio-detail-transaction { grid-template-columns:1fr; }
+    .portfolio-detail-transaction-side { width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px; }
     .portfolio-detail-transaction-value { white-space:normal; }
     .portfolio-alert-actions { justify-content:flex-start; }
     .portfolio-alert-actions button, .portfolio-editor-actions button, .watch-target-editor-actions button, .alert-rule-editor-actions button { flex:1 1 96px; min-width:0; }

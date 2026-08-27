@@ -350,6 +350,7 @@ function applyPortfolio(data) {
   }
   if (activePortfolioDetailId && !portfolioState.items.some(item => item.id === activePortfolioDetailId)) {
     activePortfolioDetailId = null;
+    activePortfolioTransactionDetailId = null;
   }
   if (activePortfolioAlertEditorId && !portfolioState.items.some(item => item.id === activePortfolioAlertEditorId)) {
     activePortfolioAlertEditorId = null;
@@ -357,6 +358,7 @@ function applyPortfolio(data) {
   if (activePortfolioTransactionId && activePortfolioTransactionId !== 'new' && !portfolioState.transactions.some(item => item.id === activePortfolioTransactionId)) {
     clearPortfolioTransactionDraft(activePortfolioTransactionId);
     activePortfolioTransactionId = null;
+    activePortfolioTransactionDetailId = null;
   }
   if (activePortfolioInvestmentPlanId && activePortfolioInvestmentPlanId !== 'new' && !portfolioState.investment_plans.items.some(item => item.id === activePortfolioInvestmentPlanId)) {
     clearPortfolioInvestmentDraft(activePortfolioInvestmentPlanId);
@@ -365,7 +367,10 @@ function applyPortfolio(data) {
   if (pendingPortfolioSave) {
     if (pendingPortfolioSave.kind === 'transaction') {
       clearPortfolioTransactionDraft(pendingPortfolioSave.id);
-      if (activePortfolioTransactionId === pendingPortfolioSave.id) activePortfolioTransactionId = null;
+      if (activePortfolioTransactionId === pendingPortfolioSave.id) {
+        activePortfolioTransactionId = null;
+        activePortfolioTransactionDetailId = null;
+      }
     } else if (pendingPortfolioSave.kind === 'alert') {
       clearPortfolioAlertDraft(pendingPortfolioSave.id);
     } else if (pendingPortfolioSave.kind === 'investment') {
