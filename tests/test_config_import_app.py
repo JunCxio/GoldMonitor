@@ -1,3 +1,4 @@
+import ast
 import json
 import sys
 from pathlib import Path
@@ -8,14 +9,52 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 @pytest.fixture(autouse=True)
-def _isolate_alert_rule_store(monkeypatch, tmp_path):
+def _isolate_config_import_runtime(monkeypatch, tmp_path):
     import app
 
+    class ImmediateThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+            self.daemon = daemon
+
+        def start(self):
+            self.target()
+
+    monkeypatch.setattr(app.threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(app, "fetch_price_once", lambda: None)
     monkeypatch.setattr(app, "ALERT_RULES_PATH", str(tmp_path / "alert_rules.json"))
     monkeypatch.setattr(app, "alert_rules", [])
     monkeypatch.setattr(app, "alert_rule_migration_status", {"completed": True, "source_version": "1.0.7"})
     monkeypatch.setattr(app, "alert_rules_load_error", "")
     monkeypatch.setattr(app, "alert_rules_invalid_count", 0)
+
+
+def test_operations_handlers_only_create_threads_through_injected_factory():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "goldmonitor"
+        / "socket_operations.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    direct_thread_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "threading"
+        and node.func.attr == "Thread"
+    ]
+    injected_thread_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "thread_factory"
+    ]
+
+    assert direct_thread_calls == []
+    assert len(injected_thread_calls) == 6
 
 
 def test_build_config_backup_exports_only_restorable_non_secret_settings(monkeypatch):
