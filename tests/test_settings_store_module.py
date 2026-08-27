@@ -323,6 +323,14 @@ def test_public_snapshot_masks_secrets_and_update_payload_preserves_existing_emp
     )
     assert cleared["deepseek_api_key"] == ""
 
+    cleared_without_value = merge_settings_update(
+        current,
+        {"deepseek_api_key_clear": True},
+        allowed_keys=set(DEFAULTS),
+        secret_clear_flags={"deepseek_api_key": "deepseek_api_key_clear"},
+    )
+    assert cleared_without_value["deepseek_api_key"] == ""
+
 
 if __name__ == "__main__":
     failures = []

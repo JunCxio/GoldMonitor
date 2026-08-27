@@ -68,6 +68,11 @@ def register_settings_handlers(
             allowed_keys=set(default_setting_keys),
             secret_clear_flags=secret_clear_flags,
         )
+        if (
+            data.get("lan_dashboard_password_clear")
+            and not str(data.get("lan_dashboard_password") or "").strip()
+        ):
+            current["lan_dashboard_enabled"] = False
         if "export_dir" in data:
             export_dir_check = build_export_dir_check(current)
             if not export_dir_check.get("ok"):

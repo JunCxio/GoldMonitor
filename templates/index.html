@@ -462,7 +462,7 @@
                   <div class="lan-dashboard-password-head"><label for="setLanDashboardPassword">访问口令</label><span>至少 12 位</span></div>
                   <div class="secret-input-row">
                     <input class="settings-input" id="setLanDashboardPassword" type="password" minlength="12" autocomplete="new-password" aria-describedby="lanDashboardPasswordStatus" placeholder="至少 12 位，保存到系统凭据">
-                    <button class="btn-clear-sm lan-dashboard-password-clear" id="clearLanDashboardPasswordButton" type="button" title="删除已保存的访问口令" aria-pressed="false" onclick="toggleSecretClear('clearLanDashboardPassword', 'lanDashboardPasswordStatus', 'clearLanDashboardPasswordButton', '保存更改后，将删除已保存的访问口令。')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5"></path></svg><span data-button-label>删除口令</span></button>
+                    <button class="btn-clear-sm lan-dashboard-password-clear" id="clearLanDashboardPasswordButton" type="button" title="删除已保存的访问口令" aria-pressed="false" onclick="toggleSecretClear('clearLanDashboardPassword', 'lanDashboardPasswordStatus', 'clearLanDashboardPasswordButton', '保存更改后，将删除访问口令并停用局域网面板。')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5"></path></svg><span data-button-label>删除口令</span></button>
                   </div>
                   <input id="clearLanDashboardPassword" type="checkbox" hidden>
                   <div class="lan-dashboard-password-state" id="lanDashboardPasswordState" data-state="empty" aria-live="polite">

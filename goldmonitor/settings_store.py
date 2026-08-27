@@ -346,6 +346,9 @@ def merge_settings_update(current, data, allowed_keys, secret_clear_flags):
     merged = dict(current or {})
     incoming = {key: value for key, value in (data or {}).items() if key in allowed_keys}
     for secret_key, clear_flag in secret_clear_flags.items():
+        if secret_key not in incoming and data.get(clear_flag):
+            incoming[secret_key] = ""
+            continue
         if secret_key not in incoming:
             continue
         key_value = str(incoming.get(secret_key) or "").strip()

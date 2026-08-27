@@ -7,6 +7,19 @@ function setSecretClearButtonLabel(button, label) {
   } else if (button) button.textContent = label;
 }
 
+function setLanDashboardPasswordClearMode(selected, button) {
+  const enabled = document.getElementById('setLanDashboardEnabled');
+  if (!enabled || !button) return;
+  if (selected) {
+    button.dataset.enabledBeforePasswordClear = String(enabled.checked);
+    enabled.checked = false;
+  } else {
+    if (button.dataset.enabledBeforePasswordClear === 'true') enabled.checked = true;
+    delete button.dataset.enabledBeforePasswordClear;
+  }
+  syncLanDashboardFields();
+}
+
 function renderLanDashboardPasswordState(configured, selected) {
   const input = document.getElementById('setLanDashboardPassword');
   const status = document.getElementById('lanDashboardPasswordStatus');
@@ -23,7 +36,7 @@ function renderLanDashboardPasswordState(configured, selected) {
   if (selected && configured) {
     state = 'delete';
     labelText = '等待删除';
-    statusText = '保存更改后，将删除已保存的访问口令。';
+    statusText = '保存更改后，将删除访问口令并停用局域网面板。';
   } else if (hasDraft && draft.length < 12) {
     state = 'pending';
     labelText = '还需 ' + (12 - draft.length) + ' 位';
@@ -60,6 +73,7 @@ function syncLanDashboardPasswordDraft() {
     button.classList.remove('marked');
     button.setAttribute('aria-pressed', 'false');
     setSecretClearButtonLabel(button, button.dataset.defaultLabel || '删除口令');
+    setLanDashboardPasswordClearMode(false, button);
   }
   renderLanDashboardPasswordState(configured, clearInput.checked);
 }
@@ -80,6 +94,7 @@ function configureSecretClear(inputId, statusId, buttonId, configured, statusTex
   button.dataset.defaultLabel = readyLabel;
   button.dataset.defaultStatus = statusText;
   if (statusId === 'lanDashboardPasswordStatus') {
+    delete button.dataset.enabledBeforePasswordClear;
     button.dataset.configured = String(configured);
     renderLanDashboardPasswordState(configured, false);
   }
@@ -95,6 +110,7 @@ function toggleSecretClear(inputId, statusId, buttonId, selectedStatus) {
     if (statusId === 'lanDashboardPasswordStatus') {
       const password = document.getElementById('setLanDashboardPassword');
       if (password) password.value = '';
+      setLanDashboardPasswordClearMode(true, button);
     }
     status.textContent = selectedStatus;
     status.dataset.state = 'error';
@@ -113,6 +129,7 @@ function toggleSecretClear(inputId, statusId, buttonId, selectedStatus) {
   button.classList.remove('marked');
   button.setAttribute('aria-pressed', 'false');
   if (statusId === 'lanDashboardPasswordStatus') {
+    setLanDashboardPasswordClearMode(false, button);
     renderLanDashboardPasswordState(button.dataset.configured === 'true', false);
   }
   updateSettingsDirtyState();
@@ -422,7 +439,7 @@ function syncLanDashboardFields() {
     if (element) element.disabled = !active;
   });
   const passwordClear = document.getElementById('clearLanDashboardPasswordButton');
-  if (passwordClear) passwordClear.disabled = !active || passwordClear.dataset.configured !== 'true';
+  if (passwordClear) passwordClear.disabled = passwordClear.dataset.configured !== 'true';
   control.classList.toggle('disabled', !active);
 }
 

@@ -404,6 +404,7 @@ for required in (
     "function registerSettingsSocketHandlers",
     "function applySettings",
     "function validateSettings",
+    "function setLanDashboardPasswordClearMode",
     "function renderLanDashboardPasswordState",
     "function syncLanDashboardPasswordDraft",
     "setMarketQualityAlertEnabled",
