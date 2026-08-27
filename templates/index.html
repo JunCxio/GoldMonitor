@@ -458,10 +458,21 @@
                   <label><span>监听范围</span><select class="settings-select" id="setLanDashboardHost"><option value="0.0.0.0">全部本机网络接口</option><option value="127.0.0.1">仅本机测试</option></select></label>
                   <label><span>服务端口</span><input class="settings-input smtp-port" id="setLanDashboardPort" type="number" min="1024" max="65535" step="1" value="5050"></label>
                 </div>
-                <label class="lan-dashboard-password-label" for="setLanDashboardPassword">访问口令</label>
-                <div class="secret-input-row"><input class="settings-input" id="setLanDashboardPassword" type="password" minlength="12" autocomplete="new-password" placeholder="至少 12 位，保存到系统凭据"><button class="btn-clear-sm" id="clearLanDashboardPasswordButton" type="button" onclick="requestSecretClear('clearLanDashboardPassword')">清除</button></div>
-                <input id="clearLanDashboardPassword" type="checkbox" hidden>
-                <div class="api-key-status" id="lanDashboardPasswordStatus">尚未设置访问口令。</div>
+                <div class="lan-dashboard-credential">
+                  <div class="lan-dashboard-password-head"><label for="setLanDashboardPassword">访问口令</label><span>至少 12 位</span></div>
+                  <div class="secret-input-row">
+                    <input class="settings-input" id="setLanDashboardPassword" type="password" minlength="12" autocomplete="new-password" aria-describedby="lanDashboardPasswordStatus" placeholder="至少 12 位，保存到系统凭据">
+                    <button class="btn-clear-sm lan-dashboard-password-clear" id="clearLanDashboardPasswordButton" type="button" title="删除已保存的访问口令" aria-pressed="false" onclick="toggleSecretClear('clearLanDashboardPassword', 'lanDashboardPasswordStatus', 'clearLanDashboardPasswordButton', '保存更改后，将删除已保存的访问口令。')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5"></path></svg><span data-button-label>删除口令</span></button>
+                  </div>
+                  <input id="clearLanDashboardPassword" type="checkbox" hidden>
+                  <div class="lan-dashboard-password-state" id="lanDashboardPasswordState" data-state="empty" aria-live="polite">
+                    <span class="lan-dashboard-password-state-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v2"></path></svg></span>
+                    <div class="lan-dashboard-password-state-copy">
+                      <div class="lan-dashboard-password-state-title"><strong id="lanDashboardPasswordStateLabel">未设置</strong><code id="lanDashboardPasswordMask" hidden></code></div>
+                      <div class="api-key-status" id="lanDashboardPasswordStatus">启用前需要设置至少 12 位口令。</div>
+                    </div>
+                  </div>
+                </div>
                 <div class="lan-dashboard-addresses" id="lanDashboardAddresses"><span>启用并保存后显示访问地址。</span></div>
                 <div class="lan-dashboard-note">连接使用局域网 HTTP，请仅在可信网络内启用。切换网络后应核对访问地址；如怀疑口令泄露，请立即更换。</div>
               </div>
