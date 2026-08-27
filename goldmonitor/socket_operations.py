@@ -195,7 +195,7 @@ def register_operations_handlers(
             "preferences": preferences,
             "message": "数据源配置已保存，将按新顺序刷新行情。",
         })
-        threading.Thread(target=fetch_price_once, daemon=True).start()
+        thread_factory(target=fetch_price_once, daemon=True).start()
 
 
     @socketio.on("reset_market_sources")
@@ -212,7 +212,7 @@ def register_operations_handlers(
             "preferences": preferences,
             "message": "已恢复默认数据源顺序。",
         })
-        threading.Thread(target=fetch_price_once, daemon=True).start()
+        thread_factory(target=fetch_price_once, daemon=True).start()
 
 
     @socketio.on("retry_market_source")
@@ -238,7 +238,7 @@ def register_operations_handlers(
             if isinstance(result.get("source_health"), dict):
                 socketio.emit("source_health_updated", result["source_health"])
 
-        threading.Thread(target=run_retry, daemon=True).start()
+        thread_factory(target=run_retry, daemon=True).start()
 
 
     @socketio.on("export_config")
@@ -372,7 +372,7 @@ def register_operations_handlers(
             emit("config_import_result", {**result, "message": "配置导入完成。"})
             if "settings" in result.get("imported", []):
                 socketio.emit("source_health_updated", get_source_health_state())
-                threading.Thread(target=fetch_price_once, daemon=True).start()
+                thread_factory(target=fetch_price_once, daemon=True).start()
         except (ValueError, json.JSONDecodeError) as exc:
             emit("config_import_result", {"ok": False, "message": str(exc)})
         except OSError:
@@ -385,7 +385,7 @@ def register_operations_handlers(
             result = reset_to_default_settings()
             emit("settings_reset_result", {**result, "message": "已恢复默认设置。"})
             socketio.emit("source_health_updated", get_source_health_state())
-            threading.Thread(target=fetch_price_once, daemon=True).start()
+            thread_factory(target=fetch_price_once, daemon=True).start()
         except OSError:
             emit("settings_reset_result", {"ok": False, "message": "恢复默认设置失败，请检查配置目录权限。"})
 
