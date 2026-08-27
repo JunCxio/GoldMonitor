@@ -176,7 +176,7 @@ function validateSettings() {
   }
 
   if (document.getElementById('setLanDashboardEnabled').checked) {
-    const password = document.getElementById('setLanDashboardPassword').value;
+    const password = document.getElementById('setLanDashboardPassword').value.trim();
     const configured = !!appSettings.lan_dashboard_password_configured
       && !document.getElementById('clearLanDashboardPassword').checked;
     if (!configured && password.length < 12) {
@@ -229,7 +229,20 @@ function handleSettingsFieldChange(event) {
   }
   if (target.id === 'setFloatingTaskbarTarget') renderTaskbarPriceStatus();
   if (target.id === 'setMarketQualityAlertEnabled') syncMarketQualityAlertFields();
-  if (target.id === 'setLanDashboardEnabled') syncLanDashboardFields();
+  if (target.id === 'setLanDashboardEnabled') {
+    const clearInput = document.getElementById('clearLanDashboardPassword');
+    const clearButton = document.getElementById('clearLanDashboardPasswordButton');
+    if (target.checked && clearInput && clearInput.checked && clearButton) {
+      clearInput.checked = false;
+      clearButton.classList.remove('marked');
+      clearButton.setAttribute('aria-pressed', 'false');
+      delete clearButton.dataset.enabledBeforePasswordClear;
+      setSecretClearButtonLabel(clearButton, clearButton.dataset.defaultLabel || '删除口令');
+      renderLanDashboardPasswordState(true, false);
+    }
+    syncLanDashboardFields();
+  }
+  if (target.id === 'setLanDashboardPassword') syncLanDashboardPasswordDraft();
   if (['setMarketQualityAlertLocal', 'setMarketQualityAlertEmail', 'setMarketQualityAlertWebhook'].includes(target.id)) {
     clearSettingsFieldError(document.getElementById('setMarketQualityAlertLocal'));
   }

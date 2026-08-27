@@ -232,6 +232,12 @@ function renderPortfolioDetailOverview(item, alert, transactions) {
 }
 
 function renderPortfolioDetailTransactions(item, transactions) {
+  const transactionDraft = activePortfolioTransactionId === 'new'
+    ? portfolioTransactionDraftFor({ id: 'new' })
+    : null;
+  const transactionEditor = transactionDraft && transactionDraft.position_id === item.id
+    ? buildPortfolioTransactionEditor({ id: 'new' })
+    : '';
   return [
     '<div class="portfolio-detail-panel">',
     '<div class="portfolio-detail-transactions">',
@@ -239,6 +245,7 @@ function renderPortfolioDetailTransactions(item, transactions) {
     '<div class="portfolio-detail-section-title">关联流水</div>',
     '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="startPortfolioTransactionForPosition(\'' + escapeHtml(item.id) + '\', \'buy\')">新增流水</button>',
     '</div>',
+    transactionEditor,
     '<div class="portfolio-detail-transactions-list">',
     renderPortfolioDetailTransactionsList(item, transactions),
     '</div>',

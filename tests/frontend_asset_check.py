@@ -404,6 +404,9 @@ for required in (
     "function registerSettingsSocketHandlers",
     "function applySettings",
     "function validateSettings",
+    "function setLanDashboardPasswordClearMode",
+    "function renderLanDashboardPasswordState",
+    "function syncLanDashboardPasswordDraft",
     "setMarketQualityAlertEnabled",
     "setMarketQualityAlertThreshold",
     "setMarketQualityRecoveryConfirmation",
@@ -416,6 +419,19 @@ for required in (
 ):
     if required not in settings_module_js:
         raise SystemExit(f"settings modules missing contract: {required}")
+
+for required in (
+    'class="lan-dashboard-credential"',
+    'id="lanDashboardPasswordState"',
+    'id="lanDashboardPasswordMask"',
+    'data-button-label',
+    "toggleSecretClear('clearLanDashboardPassword'",
+):
+    if required not in template:
+        raise SystemExit(f"template missing LAN dashboard password control: {required}")
+
+if "requestSecretClear(" in template:
+    raise SystemExit("LAN dashboard password control must use the implemented secret clear flow")
 
 for moved in (
     "function registerSettingsSocketHandlers",

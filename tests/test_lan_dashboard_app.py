@@ -114,3 +114,70 @@ def test_settings_socket_rejects_enabling_lan_dashboard_without_password(
     assert "至少 12 位" in error["message"]
     assert app.runtime.app_settings["lan_dashboard_enabled"] is False
     client.disconnect()
+
+
+def test_settings_socket_clears_password_and_disables_lan_dashboard(
+    monkeypatch,
+    tmp_path,
+):
+    from goldmonitor import application as app
+
+    applied = []
+    initial = dict(app.DEFAULT_SETTINGS)
+    initial.update({
+        "lan_dashboard_enabled": True,
+        "lan_dashboard_host": "0.0.0.0",
+        "lan_dashboard_port": 5050,
+        "lan_dashboard_password": "long-test-password",
+    })
+    monkeypatch.setattr(app, "SETTINGS_PATH", str(tmp_path / "settings.json"))
+    monkeypatch.setattr(app.runtime, "app_settings", initial)
+    monkeypatch.setattr(
+        app.runtime,
+        "credential_test_store",
+        {"lan_dashboard_password": "long-test-password"},
+    )
+    monkeypatch.setattr(app, "set_startup_enabled", lambda enabled: (True, ""))
+    monkeypatch.setattr(app, "apply_floating_price_settings", lambda settings: None)
+    monkeypatch.setattr(
+        app,
+        "apply_lan_dashboard_settings",
+        lambda settings: applied.append(dict(settings)),
+    )
+    monkeypatch.setattr(
+        app,
+        "lan_dashboard_status",
+        lambda settings=None: {
+            "enabled": bool((settings or {}).get("lan_dashboard_enabled")),
+            "running": False,
+            "urls": [],
+            "error": "",
+        },
+    )
+
+    client = app.socketio.test_client(
+        app.app,
+        auth={"token": app.SOCKET_ACCESS_TOKEN},
+    )
+    client.get_received()
+    client.emit("update_settings", {
+        "lan_dashboard_enabled": True,
+        "lan_dashboard_host": "0.0.0.0",
+        "lan_dashboard_port": 5050,
+        "lan_dashboard_password_clear": True,
+    })
+    events = client.get_received()
+    settings = next(
+        event["args"][0]
+        for event in events
+        if event["name"] == "settings_updated"
+    )
+
+    assert not [event for event in events if event["name"] == "settings_error"]
+    assert settings["lan_dashboard_enabled"] is False
+    assert settings["lan_dashboard_password_configured"] is False
+    assert app.runtime.app_settings["lan_dashboard_password"] == ""
+    assert "lan_dashboard_password" not in app.runtime.credential_test_store
+    assert applied[-1]["lan_dashboard_enabled"] is False
+    assert applied[-1]["lan_dashboard_password"] == ""
+    client.disconnect()
