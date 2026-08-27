@@ -63,6 +63,10 @@ function setActivePortfolioPosition(id) {
 
 function setActivePortfolioTransaction(id, defaults) {
   captureActivePortfolioTransactionDraft();
+  const detailPositionId = activePortfolioDetailId || '';
+  const storedDraft = portfolioTransactionDrafts[portfolioTransactionDraftKey(id)] || {};
+  const requestedPositionId = defaults && typeof defaults === 'object' ? defaults.position_id : storedDraft.position_id;
+  const staysInDetail = id === 'new' && detailPositionId && requestedPositionId === detailPositionId;
   if (activePortfolioTransactionId === id && !defaults) {
     clearPortfolioTransactionDraft(id);
     activePortfolioTransactionId = null;
@@ -72,7 +76,15 @@ function setActivePortfolioTransaction(id, defaults) {
       portfolioTransactionDrafts[portfolioTransactionDraftKey(id)] = Object.assign({}, defaults);
     }
   }
-  portfolioView = 'transactions';
+  if (staysInDetail) {
+    portfolioView = 'positions';
+    portfolioDetailView = 'transactions';
+  } else {
+    portfolioView = 'transactions';
+    activePortfolioDetailId = null;
+    activePortfolioAlertEditorId = null;
+    portfolioDetailView = 'review';
+  }
   renderPortfolio();
 }
 
@@ -102,6 +114,23 @@ function startPortfolioTransactionForPosition(positionId, type) {
     };
   }
   setActivePortfolioTransaction('new', defaults);
+}
+
+function closePortfolioDetail() {
+  captureActivePortfolioAlertDraft();
+  captureActivePortfolioTransactionDraft();
+  const transactionDraft = activePortfolioTransactionId === 'new'
+    ? portfolioTransactionDrafts[portfolioTransactionDraftKey(activePortfolioTransactionId)] || {}
+    : null;
+  if (transactionDraft && transactionDraft.position_id === activePortfolioDetailId) {
+    clearPortfolioTransactionDraft(activePortfolioTransactionId);
+    activePortfolioTransactionId = null;
+  }
+  activePortfolioDetailId = null;
+  activePortfolioAlertEditorId = null;
+  portfolioDetailView = 'review';
+  portfolioView = 'positions';
+  renderPortfolio();
 }
 
 function portfolioInputValue(id, field) {

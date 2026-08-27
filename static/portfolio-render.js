@@ -489,14 +489,6 @@ function activePortfolioDetailItem() {
   return (portfolioState.items || []).find(item => item && item.id === activePortfolioDetailId) || null;
 }
 
-function closePortfolioDetail() {
-  captureActivePortfolioAlertDraft();
-  activePortfolioDetailId = null;
-  activePortfolioAlertEditorId = null;
-  portfolioDetailView = 'review';
-  renderPortfolio();
-}
-
 function renderPortfolioHeaderChrome(detailItem) {
   const card = document.querySelector('.portfolio-card');
   if (!card) return;
