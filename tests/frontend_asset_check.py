@@ -180,6 +180,7 @@ if not alert_log_js_path.exists():
     raise SystemExit("alert log center script must live in static/alert-log-center.js")
 
 app_js = js_path.read_text(encoding="utf-8")
+app_state_js = app_state_js_path.read_text(encoding="utf-8")
 market_dashboard_js = market_dashboard_js_path.read_text(encoding="utf-8")
 today_overview_batch_js = today_overview_batch_js_path.read_text(encoding="utf-8")
 today_overview_js = today_overview_js_path.read_text(encoding="utf-8")
@@ -247,7 +248,7 @@ risk_analysis_module_js = "\n".join((
 alert_log_js = alert_log_js_path.read_text(encoding="utf-8")
 
 js = "\n".join((
-    app_state_js_path.read_text(encoding="utf-8"),
+    app_state_js,
     app_utils_js_path.read_text(encoding="utf-8"),
     market_dashboard_js,
     today_overview_module_js,
@@ -748,6 +749,22 @@ if "registerPortfolioSocketHandlers(socket);" not in app_js:
 
 if "registerMarketDashboardSocketHandlers(socket);" not in app_js:
     raise SystemExit("static/app.js must register market dashboard socket handlers")
+
+if "autoConnect: false" not in app_state_js:
+    raise SystemExit("Socket.IO must delay the first connection until all event handlers are registered")
+
+socket_connect_marker = "socket.connect();"
+socket_connect_index = app_js.rfind(socket_connect_marker)
+if socket_connect_index < 0:
+    raise SystemExit("static/app.js must start the delayed Socket.IO connection")
+for required_before_connect in (
+    "socket.on('connect',",
+    "socket.on('init_state',",
+    "registerAlertLogSocketHandlers(socket);",
+):
+    required_index = app_js.find(required_before_connect)
+    if required_index < 0 or required_index >= socket_connect_index:
+        raise SystemExit(f"Socket.IO must connect after registering: {required_before_connect}")
 
 for required in (
     "function applyMarketInitialState",
