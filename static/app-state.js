@@ -1,5 +1,6 @@
 const SOCKET_ACCESS_TOKEN = document.querySelector('meta[name="goldmonitor-socket-token"]')?.getAttribute('content') || '';
 const socket = io(window.GoldMonitorShell.withSocketDefaults({
+  autoConnect: false,
   auth: { token: SOCKET_ACCESS_TOKEN },
 }));
 

@@ -84,3 +84,5 @@ registerRiskAnalysisSocketHandlers(socket);
 registerHistoryReviewSocketHandlers(socket);
 
 registerAlertLogSocketHandlers(socket);
+
+socket.connect();
