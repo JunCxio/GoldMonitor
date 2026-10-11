@@ -405,17 +405,23 @@ def build_source_health_state(
     fetch_status,
     window_size,
 ):
-    state = market_data_core.build_source_health_state(
-        health_snapshot,
-        comparison=comparison,
-        window_size=window_size,
-    )
     adapter_by_key = {
         item.get("key"): item
         for category_items in adapters.values()
         for item in category_items
         if isinstance(item, dict) and item.get("key")
     }
+    health_snapshot = {
+        name: item for name, item in (health_snapshot or {}).items()
+        if isinstance(item, dict) and (
+            not item.get("key") or item.get("key") in adapter_by_key
+        )
+    }
+    state = market_data_core.build_source_health_state(
+        health_snapshot,
+        comparison=comparison,
+        window_size=window_size,
+    )
     for item in state["items"]:
         adapter = adapter_by_key.get(item.get("key"))
         if not adapter:
@@ -908,10 +914,12 @@ class MarketRuntime:
                     )
                 else:
                     rate_message = "汇率暂未更新"
-                gold_message = (
-                    f"使用缓存金价（{source_name}）"
-                    if gold_cached else f"金价已更新（{source_name}）"
-                )
+                if gold_cached:
+                    gold_message = f"使用缓存金价（{source_name}）"
+                elif "黄金市场休市" in observation["blocked_reasons"]:
+                    gold_message = f"黄金市场休市，显示最近报价（{source_name}）"
+                else:
+                    gold_message = f"金价已更新（{source_name}）"
                 fetch_status = self.build_fetch_status(
                     status_ok,
                     f"{gold_message}，{rate_message}",

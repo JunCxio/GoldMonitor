@@ -1,7 +1,19 @@
 import math
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from goldmonitor.time_utils import parse_datetime
+
+
+def gold_market_is_open(at):
+    instant = parse_datetime(at)
+    if instant is None:
+        return False
+    new_york = instant.astimezone(ZoneInfo("America/New_York"))
+    weekday = new_york.weekday()
+    return (weekday < 4 and new_york.hour != 17) or (
+        weekday == 4 and new_york.hour < 17
+    ) or (weekday == 6 and new_york.hour >= 18)
 
 
 MARKET_OBSERVATION_FIELDS = (
@@ -160,13 +172,16 @@ def build_market_observation(
     ):
         blocked_reasons.append("金价开高低收关系异常")
 
+    market_open = gold_market_is_open(received_at)
     age_seconds = _age_seconds(source_at, received_at)
     if age_seconds is None:
         blocked_reasons.append("无法解析金价源时间")
     elif age_seconds < -60:
         blocked_reasons.append("金价源时间晚于接收时间")
-    elif age_seconds > 300:
+    elif age_seconds > 300 and market_open:
         blocked_reasons.append("金价源时间超过 5 分钟")
+    if not market_open:
+        blocked_reasons.append("黄金市场休市")
 
     if _positive_number(rate_value) is None:
         blocked_reasons.append("缺少有效 USD/CNY 汇率")
@@ -187,6 +202,8 @@ def build_market_observation(
 
     deductions = 0
     if gold_cached:
+        deductions += 40
+    if "黄金市场休市" in blocked_reasons:
         deductions += 40
     if rate_cached:
         deductions += 20
@@ -210,7 +227,7 @@ def build_market_observation(
     score = max(0, 100 - deductions)
     if comparison.get("status") == "anomaly":
         level = "anomaly"
-    elif gold_cached or rate_cached:
+    elif gold_cached or rate_cached or "黄金市场休市" in blocked_reasons:
         level = "stale"
     elif blocked_reasons:
         level = "invalid"

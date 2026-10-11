@@ -223,6 +223,12 @@ def normalize_source_preferences(enabled, order, defaults, strict=False):
         else:
             enabled_keys = list(default_keys)
 
+        if not strict and enabled_keys and isinstance(raw_order, (list, tuple)):
+            enabled_keys.extend(
+                key for key in default_keys
+                if key not in raw_order and key not in enabled_keys
+            )
+
         if not enabled_keys:
             if strict:
                 raise ValueError(f"{category_labels.get(category, category)}数据源至少启用一个")

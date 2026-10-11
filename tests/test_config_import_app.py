@@ -54,7 +54,7 @@ def test_operations_handlers_only_create_threads_through_injected_factory():
     ]
 
     assert direct_thread_calls == []
-    assert len(injected_thread_calls) == 6
+    assert len(injected_thread_calls) == 8
 
 
 def test_build_config_backup_exports_only_restorable_non_secret_settings(monkeypatch):

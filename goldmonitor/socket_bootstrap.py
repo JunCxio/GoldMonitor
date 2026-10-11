@@ -384,6 +384,12 @@ def register_socket_handlers(application):
         reset_market_source_preferences=(
             lambda: application.reset_market_source_preferences()
         ),
+        upsert_custom_market_source=(
+            lambda data=None: application.upsert_custom_market_source(data)
+        ),
+        delete_custom_market_source=(
+            lambda key: application.delete_custom_market_source(key)
+        ),
         fetch_price_once=lambda: application.fetch_price_once(),
         retry_market_source=(
             lambda source_key: application.retry_market_source(source_key)

@@ -24,6 +24,7 @@ from goldmonitor import app_state as app_state_core
 from goldmonitor import application_bootstrap as application_bootstrap_core
 from goldmonitor import application_state_bootstrap as application_state_bootstrap_core
 from goldmonitor import config_runtime as config_runtime_core
+from goldmonitor import custom_market_sources as custom_market_sources_core
 from goldmonitor import desktop_ui as desktop_ui_core
 from goldmonitor import daily_digest_runtime as daily_digest_runtime_core
 from goldmonitor import data_archive as data_archive_core
@@ -105,6 +106,7 @@ UPDATE_AUTO_CHECK_INTERVAL_HOURS = 6
 GOLD_URL = "https://stooq.com/q/l/?s=xauusd&f=sd2t2ohlcven"
 FOREX_URL = "https://stooq.com/q/l/?s=usdcny&f=sd2t2ohlcven"
 SINA_GOLD_URL = "https://hq.sinajs.cn/rn=1&list=hf_XAU"
+GOLD_API_URL = "https://api.gold-api.com/price/XAU"
 SINA_FOREX_URL = "https://hq.sinajs.cn/rn=1&list=fx_susdcny"
 FRANKFURTER_FOREX_URL = "https://api.frankfurter.app/latest?from=USD&to=CNY"
 GOLDPRICE_URL = "https://data-asg.goldprice.org/dbXRates/USD,CNY"
@@ -315,17 +317,14 @@ def _configure_logging():
 _configure_logging()
 NEWS_KEYWORDS = news_core.NEWS_KEYWORDS
 MARKET_SOURCE_DEFAULT_ORDER = {
-    "gold": ["sina_gold", "eastmoney_gold", "goldprice", "stooq_gold"],
-    "forex": ["sina_forex", "frankfurter_forex", "stooq_forex"],
+    "gold": ["sina_gold", "gold_api"],
+    "forex": ["sina_forex", "frankfurter_forex"],
 }
 MARKET_SOURCE_HEALTH_KEYS = {
     ("gold", "新浪贵金属"): "sina_gold",
-    ("gold", "东方财富"): "eastmoney_gold",
-    ("gold", "GoldPrice"): "goldprice",
-    ("gold", "Stooq 金价源"): "stooq_gold",
+    ("gold", "Gold API"): "gold_api",
     ("forex", "新浪汇率"): "sina_forex",
     ("forex", "Frankfurter"): "frankfurter_forex",
-    ("forex", "Stooq 汇率源"): "stooq_forex",
 }
 DEFAULT_SETTINGS = {
     "onboarding_started": False,
@@ -408,6 +407,7 @@ DEFAULT_SETTINGS = {
         category: list(keys)
         for category, keys in MARKET_SOURCE_DEFAULT_ORDER.items()
     },
+    "market_custom_sources": [],
     "export_dir": "",
 }
 SECRET_SETTING_KEYS = (
@@ -2691,6 +2691,11 @@ def _market_state_locked():
 
 
 def record_source_health(name, category, ok, error="", started_at=None, cached=False):
+    source_health_keys = dict(MARKET_SOURCE_HEALTH_KEYS)
+    source_health_keys.update({
+        ("gold", f"自定义：{source['name']}"): source["key"]
+        for source in get_settings_snapshot().get("market_custom_sources", [])
+    })
     return market_runtime_core.record_runtime_source_health(
         runtime,
         name,
@@ -2699,7 +2704,7 @@ def record_source_health(name, category, ok, error="", started_at=None, cached=F
         error=error,
         started_at=started_at,
         cached=cached,
-        source_health_keys=MARKET_SOURCE_HEALTH_KEYS,
+        source_health_keys=source_health_keys,
         source_health_limit=SOURCE_HEALTH_LIMIT,
         metrics_window=SOURCE_METRICS_WINDOW,
         metrics_store=lambda: market_data_core.SourceMetricsStore(
@@ -2893,6 +2898,7 @@ def get_source_health_state():
         window_size=SOURCE_METRICS_WINDOW,
     )
     state["market_observation"] = market_observation
+    state["custom_sources"] = get_settings_snapshot().get("market_custom_sources", [])
     state["market_quality_history"] = market_quality_history
     state["market_quality_summary"] = market_quality_summary
     state["market_quality_alert"] = (
@@ -2982,24 +2988,41 @@ def get_source_comparison_state():
 
 
 def _build_market_adapter_registry():
-    """构建完整的内置行情源注册表。"""
-    return market_clients_core.build_default_registry(
+    """构建完整的行情源注册表。"""
+    registry = market_clients_core.build_default_registry(
         fetch_sina_gold=lambda: fetch_sina_gold_result(),
-        fetch_eastmoney_gold=lambda: fetch_eastmoney_gold_result(),
-        fetch_goldprice=lambda: fetch_goldprice_data_result(),
-        fetch_stooq_gold=lambda: fetch_gold_data_result(GOLD_URL, "Stooq 金价源"),
+        fetch_gold_api=lambda: fetch_gold_api_result(),
         fetch_sina_forex=lambda: fetch_sina_forex_result(),
         fetch_frankfurter_forex=lambda: fetch_frankfurter_forex_result(),
-        fetch_stooq_forex=lambda: fetch_csv_price_result(FOREX_URL, "Stooq 汇率源"),
     )
+    for source in get_settings_snapshot().get("market_custom_sources", []):
+        label = f"自定义：{source['name']}"
+        registry.register(market_adapters_core.MarketSourceAdapter(
+            key=source["key"],
+            name=label,
+            category="gold",
+            priority=100,
+            cache_source=label,
+            provides_forex_rate=False,
+            fetcher=lambda source=source: fetch_custom_gold_result(source),
+        ))
+    return registry
 
 
 def get_market_source_preferences(settings=None, strict=False, defaults=None):
     settings = settings if isinstance(settings, dict) else get_settings_snapshot()
+    if defaults is None:
+        defaults = {
+            category: list(keys)
+            for category, keys in MARKET_SOURCE_DEFAULT_ORDER.items()
+        }
+        defaults["gold"].extend(
+            source["key"] for source in settings.get("market_custom_sources", [])
+        )
     return market_adapters_core.normalize_source_preferences(
         settings.get("market_source_enabled"),
         settings.get("market_source_order"),
-        defaults or MARKET_SOURCE_DEFAULT_ORDER,
+        defaults,
         strict=strict,
     )
 
@@ -3040,13 +3063,13 @@ def get_market_adapter_catalog(health_snapshot=None):
 def update_market_source_preferences(payload):
     if not isinstance(payload, dict):
         raise ValueError("数据源配置格式无效")
+    current = get_settings_snapshot()
     preferences = market_adapters_core.normalize_source_preferences(
         payload.get("enabled"),
         payload.get("order"),
-        MARKET_SOURCE_DEFAULT_ORDER,
+        get_market_source_preferences(current)["order"],
         strict=True,
     )
-    current = get_settings_snapshot()
     current["market_source_enabled"] = preferences["enabled"]
     current["market_source_order"] = preferences["order"]
     saved = save_settings(current)
@@ -3054,16 +3077,53 @@ def update_market_source_preferences(payload):
 
 
 def reset_market_source_preferences():
+    order = {
+        category: list(keys)
+        for category, keys in MARKET_SOURCE_DEFAULT_ORDER.items()
+    }
+    order["gold"].extend(
+        source["key"]
+        for source in get_settings_snapshot().get("market_custom_sources", [])
+    )
     return update_market_source_preferences({
         "enabled": {
             category: list(keys)
             for category, keys in MARKET_SOURCE_DEFAULT_ORDER.items()
         },
-        "order": {
-            category: list(keys)
-            for category, keys in MARKET_SOURCE_DEFAULT_ORDER.items()
-        },
+        "order": order,
     })
+
+
+def upsert_custom_market_source(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("自定义数据源格式无效")
+    current = get_settings_snapshot()
+    sources = list(current.get("market_custom_sources") or [])
+    key = str(payload.get("key") or "")
+    if key and not any(source["key"] == key for source in sources):
+        raise ValueError("未找到自定义数据源")
+    if not key:
+        key = "custom_" + secrets.token_hex(16)
+    candidate = {**payload, "key": key}
+    sources = [source for source in sources if source["key"] != key] + [candidate]
+    current["market_custom_sources"] = custom_market_sources_core.normalize_custom_sources(sources, strict=True)
+    preferences = get_market_source_preferences(current)
+    if key not in preferences["enabled"]["gold"]:
+        preferences["enabled"]["gold"].append(key)
+    current["market_source_enabled"] = preferences["enabled"]
+    current["market_source_order"] = preferences["order"]
+    save_settings(current)
+    return key
+
+
+def delete_custom_market_source(key):
+    current = get_settings_snapshot()
+    sources = list(current.get("market_custom_sources") or [])
+    remaining = [source for source in sources if source["key"] != key]
+    if len(remaining) == len(sources):
+        raise ValueError("未找到自定义数据源")
+    current["market_custom_sources"] = remaining
+    save_settings(current)
 
 
 def retry_market_source(source_key):
@@ -3255,6 +3315,41 @@ def fetch_sina_gold_result():
             "User-Agent": BROWSER_USER_AGENT,
             "Referer": "https://finance.sina.com.cn/futures/quotes/XAU.shtml",
         },
+        timeout=REQUEST_TIMEOUT,
+        proxies=REQ_PROXY,
+        requests_module=requests,
+        fetcher=market_adapters_core.fetch_http_source,
+        record_health=record_source_health,
+    )
+    return result.value, result.error
+
+
+def fetch_gold_api_result():
+    result = market_clients_core.fetch_http_result(
+        GOLD_API_URL,
+        "Gold API",
+        market_data_core.parse_gold_api,
+        category="gold",
+        response_type="json",
+        headers={"User-Agent": HTTP_USER_AGENT},
+        timeout=REQUEST_TIMEOUT,
+        proxies=REQ_PROXY,
+        requests_module=requests,
+        fetcher=market_adapters_core.fetch_http_source,
+        record_health=record_source_health,
+    )
+    return result.value, result.error
+
+
+def fetch_custom_gold_result(source):
+    label = f"自定义：{source['name']}"
+    result = market_clients_core.fetch_http_result(
+        source["url"],
+        label,
+        lambda payload: custom_market_sources_core.parse_custom_gold(payload, source),
+        category="gold",
+        response_type="json",
+        headers={"User-Agent": HTTP_USER_AGENT},
         timeout=REQUEST_TIMEOUT,
         proxies=REQ_PROXY,
         requests_module=requests,

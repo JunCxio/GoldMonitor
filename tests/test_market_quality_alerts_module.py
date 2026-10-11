@@ -33,6 +33,22 @@ def settings(**overrides):
     return result
 
 
+def test_market_closure_does_not_trigger_quality_incident():
+    from goldmonitor.market_quality_alerts import (
+        empty_market_quality_alert_state,
+        evaluate_market_quality_alert,
+    )
+
+    result = evaluate_market_quality_alert(
+        empty_market_quality_alert_state(),
+        observation(reasons=["黄金市场休市"]),
+        settings(),
+        observed_at="2026-10-11T02:30:00Z",
+    )
+    assert result["event"] is None
+    assert result["state"]["incident_active"] is False
+
+
 def test_quality_alert_waits_for_threshold_and_notifies_once():
     from goldmonitor.market_quality_alerts import (
         empty_market_quality_alert_state,

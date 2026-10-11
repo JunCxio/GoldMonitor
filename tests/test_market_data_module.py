@@ -1,7 +1,7 @@
 import json
 import sys
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -16,6 +16,7 @@ def test_market_parsers_normalize_supported_sources():
         parse_eastmoney_gold,
         parse_frankfurter_forex,
         parse_goldprice_rates,
+        parse_gold_api,
         parse_sina_forex,
         parse_sina_gold,
         parse_stooq_ohlc_csv,
@@ -30,16 +31,25 @@ def test_market_parsers_normalize_supported_sources():
     assert frankfurter_rate == 7.2345
 
     sina_gold, sina_error = parse_sina_gold(
-        'var hq_str_hf_XAU="2300.50,2301.20,2290.10,2295.00,2310.00,2288.00,11:30:00";',
+        'var hq_str_hf_XAU="2300.50,2301.20,2290.10,2295.00,2310.00,2288.00,11:59:00,0,0,0,0,0,2026-06-08,黄金";',
         now=fixed_now(),
     )
     assert sina_error == ""
     assert sina_gold["date"] == "2026-06-08"
-    assert sina_gold["time"] == "11:30:00"
+    assert sina_gold["time"] == "11:59:00"
+    assert sina_gold["timestamp"] == "2026-06-08T11:59:00"
     assert sina_gold["close"] == 2300.5
     assert sina_gold["open"] == 2295.0
     assert sina_gold["high"] == 2310.0
     assert sina_gold["low"] == 2288.0
+
+    gold_api, gold_api_error = parse_gold_api({
+        "symbol": "XAU", "currency": "USD", "price": 2300.5,
+        "updatedAt": "2026-06-08T03:59:00Z",
+    }, now=datetime(2026, 6, 8, 4, 0, tzinfo=timezone.utc))
+    assert gold_api_error == ""
+    assert gold_api["close"] == 2300.5
+    assert gold_api["timestamp"] == "2026-06-08T03:59:00Z"
 
     eastmoney_gold, eastmoney_error = parse_eastmoney_gold({
         "data": {"f43": 235050, "f46": 234000, "f44": 236000, "f45": 233000, "f59": 2}
@@ -67,6 +77,43 @@ def test_market_parsers_normalize_supported_sources():
     stooq_gold, stooq_error = parse_stooq_ohlc_csv("XAUUSD,2026-06-08,12:00:00,2340,2360,2330,2350,,Gold\n")
     assert stooq_error == ""
     assert stooq_gold["close"] == 2350.0
+
+
+def test_sina_gold_preserves_quote_time_and_rejects_stale_trade_time():
+    from goldmonitor.market_data import parse_sina_gold
+    from goldmonitor.market_observation import build_market_observation
+
+    payload = (
+        'var hq_str_hf_XAU="4194.39,4133.460,4194.39,4194.74,4207.46,4130.90,'
+        '04:55:00,4133.46,4134.26,0,0,0,2026-10-10,伦敦金现货黄金";'
+    )
+    weekend_quote, error = parse_sina_gold(payload, now=datetime(2026, 10, 11, 10, 30))
+    assert error == ""
+    assert weekend_quote["timestamp"] == "2026-10-10T04:55:00"
+
+    observation = build_market_observation(
+        weekend_quote,
+        source="新浪贵金属",
+        received_at="2026-10-11T02:30:00Z",
+        rate_value=6.6925,
+        rate_source="新浪",
+        rate_source_at="2026-10-11T02:30:00Z",
+    )
+    assert observation["quality_level"] == "stale"
+    assert observation["usable_for_history"] is False
+    assert "黄金市场休市" in observation["blocked_reasons"]
+
+    _, stale_error = parse_sina_gold(payload, now=datetime(2026, 10, 12, 10, 30))
+    assert stale_error == "新浪贵金属行情已过期"
+
+
+def test_gold_market_hours_use_new_york_clock():
+    from goldmonitor.market_observation import gold_market_is_open
+
+    assert gold_market_is_open("2026-10-09T20:55:00Z") is True
+    assert gold_market_is_open("2026-10-09T21:05:00Z") is False
+    assert gold_market_is_open("2026-10-11T21:30:00Z") is False
+    assert gold_market_is_open("2026-10-11T22:00:00Z") is True
 
 
 def test_market_cache_store_preserves_sections_and_validates_age():

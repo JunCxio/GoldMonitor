@@ -16,6 +16,8 @@ def register_operations_handlers(
     public_settings_snapshot,
     update_market_source_preferences,
     reset_market_source_preferences,
+    upsert_custom_market_source,
+    delete_custom_market_source,
     fetch_price_once,
     retry_market_source,
     now_factory,
@@ -210,8 +212,39 @@ def register_operations_handlers(
         emit("market_sources_updated", {
             "ok": True,
             "preferences": preferences,
-            "message": "已恢复默认数据源顺序。",
+            "message": "已恢复内置数据源配置；自定义来源已保留并停用。",
         })
+        thread_factory(target=fetch_price_once, daemon=True).start()
+
+    @socketio.on("upsert_custom_market_source")
+    def on_upsert_custom_market_source(data=None):
+        try:
+            upsert_custom_market_source(data)
+        except ValueError as exc:
+            emit("market_sources_error", {"message": str(exc)})
+            return
+        except OSError:
+            emit("market_sources_error", {"message": "自定义数据源保存失败，请检查配置目录权限。"})
+            return
+        socketio.emit("settings_updated", public_settings_snapshot())
+        socketio.emit("source_health_updated", get_source_health_state())
+        emit("market_sources_updated", {"ok": True, "message": "自定义数据源已保存。"})
+        thread_factory(target=fetch_price_once, daemon=True).start()
+
+    @socketio.on("delete_custom_market_source")
+    def on_delete_custom_market_source(data=None):
+        try:
+            key = str(data.get("key") or "") if isinstance(data, dict) else ""
+            delete_custom_market_source(key)
+        except ValueError as exc:
+            emit("market_sources_error", {"message": str(exc)})
+            return
+        except OSError:
+            emit("market_sources_error", {"message": "自定义数据源删除失败，请检查配置目录权限。"})
+            return
+        socketio.emit("settings_updated", public_settings_snapshot())
+        socketio.emit("source_health_updated", get_source_health_state())
+        emit("market_sources_updated", {"ok": True, "message": "自定义数据源已删除。"})
         thread_factory(target=fetch_price_once, daemon=True).start()
 
 

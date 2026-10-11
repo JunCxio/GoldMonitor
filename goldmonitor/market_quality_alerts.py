@@ -229,6 +229,17 @@ def evaluate_market_quality_alert(
         })
         return {"state": reset, "event": None}
 
+    if (observation or {}).get("blocked_reasons") == ["黄金市场休市"]:
+        closed = empty_market_quality_alert_state()
+        for field in ("last_recovered_at", "last_incident_duration_seconds", "last_incident_id"):
+            closed[field] = current[field]
+        closed.update({
+            "last_transition": "market_closed",
+            "last_transition_at": now_text,
+            "updated_at": now_text,
+        })
+        return {"state": closed, "event": None}
+
     abnormal = market_quality_event_is_abnormal(observation)
     if abnormal:
         recovery_cancelled = bool(current.get("recovery_pending"))

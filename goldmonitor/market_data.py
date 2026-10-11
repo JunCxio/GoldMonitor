@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 
 from goldmonitor.time_utils import to_local_naive
+from goldmonitor.market_observation import gold_market_is_open
 
 
 SOURCE_METRICS_SCHEMA_VERSION = 1
@@ -78,33 +79,63 @@ def parse_frankfurter_forex(payload):
 
 
 def parse_sina_gold(text, now=None):
-    now = now or datetime.now()
+    now = to_local_naive(now or datetime.now())
     quoted = extract_quoted_payload(text)
-    parts = [part.strip() for part in quoted.split(",") if part.strip()]
-    numeric_values = []
-    for part in parts:
-        try:
-            value = float(part)
-        except ValueError:
-            continue
-        if value > 0:
-            numeric_values.append(value)
-
-    if not numeric_values:
-        return None, "新浪贵金属未返回金价"
-
-    close = numeric_values[0]
-    open_price = numeric_values[3] if len(numeric_values) > 3 else close
-    high_price = max(numeric_values[:6]) if len(numeric_values) >= 2 else close
-    low_price = min(numeric_values[:6]) if len(numeric_values) >= 2 else close
-    time_text = next((part for part in parts if ":" in part), now.strftime("%H:%M:%S"))
+    parts = [part.strip() for part in quoted.split(",")]
+    try:
+        close = float(parts[0])
+        open_price = float(parts[3])
+        high_price = float(parts[4])
+        low_price = float(parts[5])
+        quoted_at = datetime.strptime(f"{parts[12]} {parts[6]}", "%Y-%m-%d %H:%M:%S")
+    except (IndexError, TypeError, ValueError):
+        return None, "新浪贵金属返回格式异常"
+    if not all(math.isfinite(value) and value > 0 for value in (close, open_price, high_price, low_price)):
+        return None, "新浪贵金属未返回有效金价"
+    if low_price > high_price or not (
+        low_price <= open_price <= high_price and low_price <= close <= high_price
+    ):
+        return None, "新浪贵金属开高低收关系异常"
+    age_seconds = (now - quoted_at).total_seconds()
+    if age_seconds < -60:
+        return None, "新浪贵金属行情时间异常"
+    if gold_market_is_open(now) and age_seconds > 300:
+        return None, "新浪贵金属行情已过期"
     return {
-        "date": now.strftime("%Y-%m-%d"),
-        "time": time_text,
+        "date": quoted_at.strftime("%Y-%m-%d"),
+        "time": quoted_at.strftime("%H:%M:%S"),
+        "timestamp": quoted_at.isoformat(timespec="seconds"),
         "open": open_price,
         "high": high_price,
         "low": low_price,
         "close": close,
+    }, ""
+
+
+def parse_gold_api(payload, now=None):
+    if not isinstance(payload, dict) or payload.get("symbol") != "XAU" or payload.get("currency") != "USD":
+        return None, "Gold API 返回格式异常"
+    try:
+        price = float(payload["price"])
+    except (KeyError, TypeError, ValueError):
+        return None, "Gold API 未返回金价"
+    quoted_at = parse_iso_datetime(payload.get("updatedAt"))
+    if not math.isfinite(price) or price <= 0 or quoted_at is None:
+        return None, "Gold API 返回无效行情"
+    now = to_local_naive(now or datetime.now())
+    age_seconds = (now - quoted_at).total_seconds()
+    if age_seconds < -60:
+        return None, "Gold API 行情时间异常"
+    if gold_market_is_open(now) and age_seconds > 300:
+        return None, "Gold API 行情已过期"
+    return {
+        "date": quoted_at.strftime("%Y-%m-%d"),
+        "time": quoted_at.strftime("%H:%M:%S"),
+        "timestamp": str(payload["updatedAt"]),
+        "open": price,
+        "high": price,
+        "low": price,
+        "close": price,
     }, ""
 
 
@@ -314,7 +345,7 @@ class MarketCacheStore:
             "low": data.get("low"),
             "close": data.get("close"),
             "source": source,
-            "timestamp": timestamp or self.now_factory().isoformat(),
+            "timestamp": timestamp or data.get("timestamp") or self.now_factory().isoformat(),
         })
         if not cache:
             raise ValueError("invalid XAU/USD cache")

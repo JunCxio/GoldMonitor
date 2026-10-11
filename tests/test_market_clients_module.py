@@ -7,16 +7,13 @@ def test_default_registry_exposes_expected_sources_and_dynamic_fetchers():
     calls = []
     registry = build_default_registry(
         fetch_sina_gold=lambda: calls.append("sina_gold") or ({"close": 1}, ""),
-        fetch_eastmoney_gold=lambda: (None, "failed"),
-        fetch_goldprice=lambda: (None, None, "failed"),
-        fetch_stooq_gold=lambda: (None, "failed"),
+        fetch_gold_api=lambda: (None, "failed"),
         fetch_sina_forex=lambda: (7.2, ""),
         fetch_frankfurter_forex=lambda: (None, "failed"),
-        fetch_stooq_forex=lambda: (None, "failed"),
     )
 
     assert [item.key for item in registry.category_adapters("gold")] == [
-        "sina_gold", "eastmoney_gold", "goldprice", "stooq_gold",
+        "sina_gold", "gold_api",
     ]
     assert registry.get("sina_gold").fetch().value == {"close": 1}
     assert calls == ["sina_gold"]

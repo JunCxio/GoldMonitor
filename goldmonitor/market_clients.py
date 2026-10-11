@@ -6,22 +6,16 @@ from goldmonitor import market_adapters as market_adapters_core
 def build_default_registry(
     *,
     fetch_sina_gold,
-    fetch_eastmoney_gold,
-    fetch_goldprice,
-    fetch_stooq_gold,
+    fetch_gold_api,
     fetch_sina_forex,
     fetch_frankfurter_forex,
-    fetch_stooq_forex,
 ):
     adapter = market_adapters_core.MarketSourceAdapter
     return market_adapters_core.MarketAdapterRegistry([
         adapter("sina_gold", "新浪贵金属", "gold", 10, "新浪贵金属", False, fetch_sina_gold),
-        adapter("eastmoney_gold", "东方财富", "gold", 20, "东方财富", False, fetch_eastmoney_gold),
-        adapter("goldprice", "GoldPrice", "gold", 30, "GoldPrice", True, fetch_goldprice),
-        adapter("stooq_gold", "Stooq", "gold", 40, "Stooq", False, fetch_stooq_gold),
+        adapter("gold_api", "Gold API", "gold", 20, "Gold API", False, fetch_gold_api),
         adapter("sina_forex", "新浪", "forex", 10, "新浪", False, fetch_sina_forex),
         adapter("frankfurter_forex", "Frankfurter", "forex", 20, "Frankfurter", False, fetch_frankfurter_forex),
-        adapter("stooq_forex", "Stooq", "forex", 30, "Stooq", False, fetch_stooq_forex),
     ])
 
 
