@@ -317,7 +317,9 @@ def test_custom_gold_source_requires_a_fresh_quote_time():
     value, error = parse_custom_gold(payload, source, now=now)
     assert error == ""
     assert value["close"] == 4100.25
-    assert value["timestamp"] == "2026-10-12T09:59:00"
+    assert datetime.fromisoformat(value["timestamp"]).astimezone() == datetime.fromisoformat(
+        payload["data"][0]["updatedAt"]
+    )
 
     payload["data"][0]["updatedAt"] = str(int(datetime.fromisoformat(
         "2026-10-12T09:59:00+08:00"
