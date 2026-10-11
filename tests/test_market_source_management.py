@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime
 import sys
 
 import pytest
@@ -8,12 +9,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import app
 from goldmonitor.market_adapters import (
+    AdapterFetchResult,
     MarketAdapterRegistry,
     MarketSourceAdapter,
     configure_registry,
     normalize_source_preferences,
     source_preference_defaults,
 )
+from goldmonitor.custom_market_sources import normalize_custom_sources, parse_custom_gold
 
 
 def adapter(key, name, category, priority, output):
@@ -86,7 +89,7 @@ def test_app_runtime_registry_uses_saved_source_order_and_enabled_state(monkeypa
 
     registry = app.build_market_adapter_registry()
 
-    assert [item.key for item in registry.category_adapters("gold")] == ["stooq_gold", "sina_gold"]
+    assert [item.key for item in registry.category_adapters("gold")] == ["sina_gold", "gold_api"]
     assert [item.key for item in registry.category_adapters("forex")] == ["frankfurter_forex"]
 
 
@@ -152,27 +155,27 @@ def test_app_source_preference_update_rejects_empty_category_and_persists_valid_
         })
 
     preferences = app.update_market_source_preferences({
-        "enabled": {"gold": ["goldprice"], "forex": ["frankfurter_forex"]},
+        "enabled": {"gold": ["gold_api"], "forex": ["frankfurter_forex"]},
         "order": {
-            "gold": ["goldprice", "sina_gold", "eastmoney_gold", "stooq_gold"],
-            "forex": ["frankfurter_forex", "sina_forex", "stooq_forex"],
+            "gold": ["gold_api", "sina_gold"],
+            "forex": ["frankfurter_forex", "sina_forex"],
         },
     })
 
-    assert saved_payloads[-1]["market_source_enabled"]["gold"] == ["goldprice"]
-    assert preferences["order"]["gold"][0] == "goldprice"
+    assert saved_payloads[-1]["market_source_enabled"]["gold"] == ["gold_api"]
+    assert preferences["order"]["gold"][0] == "gold_api"
 
 
 def test_market_catalog_marks_current_source_and_exposes_rolling_metrics(monkeypatch):
     monkeypatch.setattr(app, "get_fetch_status", lambda: {
         "sources": {
-            "gold": {"source": "东方财富", "cached": False},
+            "gold": {"source": "Gold API", "cached": False},
             "forex": {"source": "Frankfurter", "cached": False},
         }
     })
     health = {
-        "东方财富": {
-            "key": "eastmoney_gold",
+        "Gold API": {
+            "key": "gold_api",
             "sample_count": 10,
             "success_count": 9,
             "success_rate_pct": 90.0,
@@ -183,12 +186,12 @@ def test_market_catalog_marks_current_source_and_exposes_rolling_metrics(monkeyp
     }
 
     catalog = app.get_market_adapter_catalog(health_snapshot=health)
-    eastmoney = next(item for item in catalog["gold"] if item["key"] == "eastmoney_gold")
+    gold_api = next(item for item in catalog["gold"] if item["key"] == "gold_api")
 
-    assert eastmoney["current"] is True
-    assert eastmoney["active"] is True
-    assert eastmoney["sample_count"] == 10
-    assert eastmoney["success_rate_pct"] == 90.0
+    assert gold_api["current"] is True
+    assert gold_api["active"] is True
+    assert gold_api["sample_count"] == 10
+    assert gold_api["success_rate_pct"] == 90.0
 
 
 def test_disabled_source_failure_does_not_degrade_operational_summary(monkeypatch):
@@ -209,6 +212,13 @@ def test_disabled_source_failure_does_not_degrade_operational_summary(monkeypatc
             "ok": True,
             "samples": [{"checked_at": "2026-07-27T12:00:00", "ok": True, "cached": False, "elapsed_ms": 100}],
         },
+        "Gold API": {
+            "name": "Gold API",
+            "key": "gold_api",
+            "category": "gold",
+            "ok": False,
+            "samples": [{"checked_at": "2026-07-27T12:00:00", "ok": False, "cached": False, "elapsed_ms": 200}],
+        },
         "东方财富": {
             "name": "东方财富",
             "key": "eastmoney_gold",
@@ -226,8 +236,9 @@ def test_disabled_source_failure_does_not_degrade_operational_summary(monkeypatc
     assert state["market_quality_summary"]["stored_events"] == len(
         app.market_quality_history
     )
-    disabled = next(item for item in state["items"] if item["key"] == "eastmoney_gold")
+    disabled = next(item for item in state["items"] if item["key"] == "gold_api")
     assert disabled["enabled"] is False
+    assert all(item.get("key") != "eastmoney_gold" for item in state["items"])
 
 
 def test_manual_source_retry_returns_probe_result(monkeypatch):
@@ -252,9 +263,12 @@ def test_market_source_socket_contracts_publish_update_and_retry_results(monkeyp
             self.target()
 
     source_state = {"items": [], "summary": {}, "adapters": {"gold": [], "forex": []}}
+    custom_actions = []
     monkeypatch.setattr(app.threading, "Thread", ImmediateThread)
     monkeypatch.setattr(app, "fetch_price_once", lambda: None)
     monkeypatch.setattr(app, "update_market_source_preferences", lambda data: data)
+    monkeypatch.setattr(app, "upsert_custom_market_source", lambda data: custom_actions.append(("save", data)))
+    monkeypatch.setattr(app, "delete_custom_market_source", lambda key: custom_actions.append(("delete", key)))
     monkeypatch.setattr(app, "get_source_health_state", lambda: source_state)
     monkeypatch.setattr(app, "public_settings_snapshot", lambda settings=None: {})
     monkeypatch.setattr(app, "retry_market_source", lambda key: {
@@ -279,4 +293,82 @@ def test_market_source_socket_contracts_publish_update_and_retry_results(monkeyp
     retry_events = [item for item in client.get_received() if item["name"] == "market_source_retry_result"]
     assert retry_events[0]["args"][0]["pending"] is True
     assert retry_events[-1]["args"][0]["ok"] is True
+
+    client.emit("upsert_custom_market_source", {"name": "我的来源"})
+    assert custom_actions[-1] == ("save", {"name": "我的来源"})
+    assert any(item["name"] == "market_sources_updated" for item in client.get_received())
+    client.emit("delete_custom_market_source", {"key": "custom_test"})
+    assert custom_actions[-1] == ("delete", "custom_test")
+    assert any(item["name"] == "market_sources_updated" for item in client.get_received())
     client.disconnect()
+
+
+def test_custom_gold_source_requires_a_fresh_quote_time():
+    source = {
+        "key": "custom_" + "a" * 32,
+        "name": "示例接口",
+        "url": "https://example.com/gold",
+        "price_path": "data.0.price",
+        "time_path": "data.0.updatedAt",
+    }
+    assert normalize_custom_sources([source], strict=True) == [source]
+    now = datetime.fromisoformat("2026-10-12T10:00:00+08:00")
+    payload = {"data": [{"price": "4100.25", "updatedAt": "2026-10-12T09:59:00+08:00"}]}
+    value, error = parse_custom_gold(payload, source, now=now)
+    assert error == ""
+    assert value["close"] == 4100.25
+    assert datetime.fromisoformat(value["timestamp"]).astimezone() == datetime.fromisoformat(
+        payload["data"][0]["updatedAt"]
+    )
+
+    payload["data"][0]["updatedAt"] = str(int(datetime.fromisoformat(
+        "2026-10-12T09:59:00+08:00"
+    ).timestamp() * 1000))
+    assert parse_custom_gold(payload, source, now=now)[0]["close"] == 4100.25
+
+    payload["data"][0]["updatedAt"] = "2026-10-10T09:59:00+08:00"
+    assert "已过期" in parse_custom_gold(payload, source, now=now)[1]
+    with pytest.raises(ValueError, match="HTTPS"):
+        normalize_custom_sources([{**source, "url": "http://localhost/gold"}], strict=True)
+
+
+def test_custom_gold_source_save_register_and_delete(monkeypatch):
+    current = dict(app.DEFAULT_SETTINGS)
+    current["market_source_enabled"] = {
+        category: list(keys) for category, keys in app.MARKET_SOURCE_DEFAULT_ORDER.items()
+    }
+    current["market_source_order"] = {
+        category: list(keys) for category, keys in app.MARKET_SOURCE_DEFAULT_ORDER.items()
+    }
+    monkeypatch.setattr(app, "get_settings_snapshot", lambda: dict(current))
+
+    def save(payload):
+        current.clear()
+        current.update(payload)
+        return dict(current)
+
+    monkeypatch.setattr(app, "save_settings", save)
+    key = app.upsert_custom_market_source({
+        "name": "备用报价",
+        "url": "https://example.com/gold",
+        "price_path": "price",
+        "time_path": "updatedAt",
+    })
+    assert key in current["market_source_enabled"]["gold"]
+    assert key in current["market_source_order"]["gold"]
+    assert app._build_market_adapter_registry().get(key).name == "自定义：备用报价"
+
+    monkeypatch.setattr(app, "record_source_health", lambda *args, **kwargs: None)
+
+    def fake_http(url, label, parser, response_type, **kwargs):
+        assert url == "https://example.com/gold"
+        assert response_type == "json"
+        value, error = parser({"price": 4123.5, "updatedAt": datetime.now().astimezone().isoformat()})
+        return AdapterFetchResult(value=value, error=error)
+
+    monkeypatch.setattr(app.market_adapters_core, "fetch_http_source", fake_http)
+    assert app._build_market_adapter_registry().get(key).fetch().value["close"] == 4123.5
+
+    app.delete_custom_market_source(key)
+    assert current["market_custom_sources"] == []
+    assert app._build_market_adapter_registry().get(key) is None

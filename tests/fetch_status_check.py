@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime
 import tempfile
 import sys
 
@@ -85,7 +86,11 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         if eastmoney_data["open"] != 2340.0 or eastmoney_data["high"] != 2360.0 or eastmoney_data["low"] != 2330.0:
             raise SystemExit("eastmoney parser must parse OHLC fields")
 
-        sina_gold_text = 'var hq_str_hf_XAU="2300.50,2301.20,2290.10,2295.00,2310.00,2288.00,11:30:00";'
+        sina_gold_text = (
+            'var hq_str_hf_XAU="2300.50,2301.20,2290.10,2295.00,2310.00,2288.00,'
+            + datetime.now().strftime('%H:%M:%S')
+            + ',0,0,0,0,0,' + datetime.now().strftime('%Y-%m-%d') + ',黄金";'
+        )
         sina_gold_data, sina_gold_error = app.parse_sina_gold(sina_gold_text)
 
         if sina_gold_error:
@@ -94,7 +99,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         if sina_gold_data["close"] != 2300.5:
             raise SystemExit("sina gold parser must parse the current XAU/USD price")
 
-        original_goldprice = app.fetch_goldprice_data_result
+        original_gold_api = app.fetch_gold_api_result
         original_gold_data = app.fetch_gold_data_result
         original_eastmoney = app.fetch_eastmoney_gold_result
         original_sina_gold = app.fetch_sina_gold_result
@@ -108,8 +113,8 @@ with tempfile.TemporaryDirectory() as tmp_dir:
             def working_sina_gold():
                 return sina_gold_data, ""
 
-            def working_goldprice():
-                raise SystemExit("goldprice should not be called when sina gold source works")
+            def working_gold_api():
+                raise SystemExit("Gold API should not be called when sina gold source works")
 
             def failing_stooq(*args, **kwargs):
                 raise SystemExit("stooq should not be called when sina gold source works")
@@ -119,7 +124,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
 
             app.fetch_sina_gold_result = working_sina_gold
             app.fetch_eastmoney_gold_result = working_eastmoney
-            app.fetch_goldprice_data_result = working_goldprice
+            app.fetch_gold_api_result = working_gold_api
             app.fetch_gold_data_result = failing_stooq
             app.fetch_sina_forex_result = no_forex
             app.fetch_frankfurter_forex_result = no_forex
@@ -128,7 +133,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         finally:
             app.fetch_eastmoney_gold_result = original_eastmoney
             app.fetch_sina_gold_result = original_sina_gold
-            app.fetch_goldprice_data_result = original_goldprice
+            app.fetch_gold_api_result = original_gold_api
             app.fetch_gold_data_result = original_gold_data
             app.fetch_sina_forex_result = original_sina_forex
             app.fetch_frankfurter_forex_result = original_frankfurter_forex

@@ -23,12 +23,9 @@ with tempfile.TemporaryDirectory() as tmp_dir:
     original_source_metrics_path = app.SOURCE_METRICS_PATH
     original_fetchers = {
         "fetch_sina_gold_result": app.fetch_sina_gold_result,
-        "fetch_eastmoney_gold_result": app.fetch_eastmoney_gold_result,
-        "fetch_goldprice_data_result": app.fetch_goldprice_data_result,
-        "fetch_gold_data_result": app.fetch_gold_data_result,
+        "fetch_gold_api_result": app.fetch_gold_api_result,
         "fetch_sina_forex_result": app.fetch_sina_forex_result,
         "fetch_frankfurter_forex_result": app.fetch_frankfurter_forex_result,
-        "fetch_csv_price_result": app.fetch_csv_price_result,
         "fetch_market_data_result": app.fetch_market_data_result,
         "socketio_emit": app.socketio.emit,
     }
@@ -72,14 +69,8 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         def failing_sina_gold():
             return None, "新浪贵金属请求超时"
 
-        def failing_eastmoney_gold():
-            return None, "东方财富网络连接失败"
-
-        def failing_goldprice():
-            return None, None, "GoldPrice HTTP错误 403"
-
-        def failing_stooq_gold(*args, **kwargs):
-            return None, "Stooq 金价源请求超时"
+        def failing_gold_api():
+            return None, "Gold API 请求超时"
 
         def failing_sina_forex():
             return None, "新浪汇率请求超时"
@@ -87,16 +78,10 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         def failing_frankfurter_forex():
             return None, "Frankfurter 请求超时"
 
-        def failing_stooq_forex(*args, **kwargs):
-            return None, "Stooq 汇率源请求超时"
-
         app.fetch_sina_gold_result = failing_sina_gold
-        app.fetch_eastmoney_gold_result = failing_eastmoney_gold
-        app.fetch_goldprice_data_result = failing_goldprice
-        app.fetch_gold_data_result = failing_stooq_gold
+        app.fetch_gold_api_result = failing_gold_api
         app.fetch_sina_forex_result = failing_sina_forex
         app.fetch_frankfurter_forex_result = failing_frankfurter_forex
-        app.fetch_csv_price_result = failing_stooq_forex
 
         data, rate_info, source, gold_error, forex_error = app.fetch_market_data_result()
         if data["close"] != 2300.0 or not data.get("cached"):
@@ -105,7 +90,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         if "缓存金价" not in source:
             raise SystemExit(f"cached market fetch must report cached gold source, got: {source}")
 
-        if "GoldPrice HTTP错误 403" not in gold_error:
+        if "Gold API 请求超时" not in gold_error:
             raise SystemExit(f"cached market fetch must keep live failure reasons, got: {gold_error}")
 
         if rate_info["value"] != 7.25 or not rate_info["cached"]:
@@ -136,12 +121,9 @@ with tempfile.TemporaryDirectory() as tmp_dir:
         app.MARKET_CACHE_PATH = original_cache_path
         app.SOURCE_METRICS_PATH = original_source_metrics_path
         app.fetch_sina_gold_result = original_fetchers["fetch_sina_gold_result"]
-        app.fetch_eastmoney_gold_result = original_fetchers["fetch_eastmoney_gold_result"]
-        app.fetch_goldprice_data_result = original_fetchers["fetch_goldprice_data_result"]
-        app.fetch_gold_data_result = original_fetchers["fetch_gold_data_result"]
+        app.fetch_gold_api_result = original_fetchers["fetch_gold_api_result"]
         app.fetch_sina_forex_result = original_fetchers["fetch_sina_forex_result"]
         app.fetch_frankfurter_forex_result = original_fetchers["fetch_frankfurter_forex_result"]
-        app.fetch_csv_price_result = original_fetchers["fetch_csv_price_result"]
         app.fetch_market_data_result = original_fetchers["fetch_market_data_result"]
         app.socketio.emit = original_fetchers["socketio_emit"]
         for key, value in original_state.items():

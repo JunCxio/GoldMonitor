@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+from datetime import datetime, timezone
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -24,22 +25,17 @@ def test_market_adapter_catalog_has_stable_category_order_and_metadata():
 
     assert [item["name"] for item in catalog["gold"]] == [
         "新浪贵金属",
-        "东方财富",
-        "GoldPrice",
-        "Stooq",
+        "Gold API",
     ]
     assert [item["name"] for item in catalog["forex"]] == [
         "新浪",
         "Frankfurter",
-        "Stooq",
     ]
     assert [item["key"] for item in catalog["gold"]] == [
         "sina_gold",
-        "eastmoney_gold",
-        "goldprice",
-        "stooq_gold",
+        "gold_api",
     ]
-    assert catalog["gold"][2]["provides_forex_rate"] is True
+    assert catalog["gold"][1]["provides_forex_rate"] is False
     assert all("fetcher" not in item for items in catalog.values() for item in items)
 
 
@@ -52,6 +48,34 @@ def test_default_registry_resolves_compatibility_fetchers_at_call_time(monkeypat
 
     assert result.value == expected
     assert result.error == ""
+
+
+def test_gold_api_fetch_uses_quote_timestamp_and_records_health(monkeypatch):
+    observed = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "symbol": "XAU", "currency": "USD", "price": 2350.5,
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
+            }
+
+    def fake_get(url, **kwargs):
+        observed.append(url)
+        return Response()
+
+    monkeypatch.setattr(app.requests, "get", fake_get)
+    monkeypatch.setattr(app, "record_source_health", lambda *args, **kwargs: observed.append(args))
+    data, error = app.fetch_gold_api_result()
+
+    assert error == ""
+    assert data["close"] == 2350.5
+    assert data["timestamp"]
+    assert observed[0] == app.GOLD_API_URL
+    assert observed[1][:3] == ("Gold API", "gold", True)
 
 
 def test_compatibility_http_fetchers_use_common_executor(monkeypatch):

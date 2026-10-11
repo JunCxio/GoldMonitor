@@ -14,6 +14,9 @@ function sourceQualityText(quality) {
 function marketTrustLevelMeta(observation, quality) {
   const level = observation && observation.quality_level || quality && quality.level || 'unavailable';
   if (level === 'normal') return { label: '可用于业务判断', className: 'normal' };
+  if (observation && Array.isArray(observation.blocked_reasons) && observation.blocked_reasons.includes('黄金市场休市')) {
+    return { label: '黄金市场休市', className: 'stale' };
+  }
   if (level === 'stale') return { label: '缓存或过期', className: 'stale' };
   if (level === 'anomaly') return { label: '跨源价差异常', className: 'anomaly' };
   if (level === 'invalid') return { label: '行情校验失败', className: 'invalid' };
@@ -151,6 +154,7 @@ function renderMarketTrustObservation(observation) {
     box.innerHTML = '<div class="market-trust-empty">尚未收到行情来源与时效信息。</div>';
     return;
   }
+  const marketClosed = Array.isArray(observation.blocked_reasons) && observation.blocked_reasons.includes('黄金市场休市');
   const rows = [
     {
       label: '金价',
@@ -158,6 +162,7 @@ function renderMarketTrustObservation(observation) {
       time: observation.source_at,
       age: observation.age_seconds,
       cached: observation.gold_cached,
+      marketClosed,
     },
     {
       label: '汇率',
@@ -171,7 +176,7 @@ function renderMarketTrustObservation(observation) {
     '<div class="market-trust-observation-row">',
     '<span class="market-trust-observation-kind">' + item.label + '</span>',
     '<div><strong>' + escapeHtml(item.source) + '</strong><small>来源时间 ' + escapeHtml(formatMarketTrustTime(item.time)) + ' · 年龄 ' + escapeHtml(formatMarketTrustAge(item.age)) + '</small></div>',
-    '<span class="market-trust-cache ' + (item.cached ? 'cached' : 'live') + '">' + (item.cached ? '缓存' : '实时') + '</span>',
+    '<span class="market-trust-cache ' + (item.cached || item.marketClosed ? 'cached' : 'live') + '">' + (item.marketClosed ? '休市' : item.cached ? '缓存' : '实时') + '</span>',
     '</div>',
   ].join('')).join('') + '<div class="market-trust-received">本机接收 ' + escapeHtml(formatMarketTrustTime(observation.received_at)) + '</div>';
 }
@@ -291,7 +296,7 @@ function renderMarketTrust(data) {
     ? data.market_observation
     : {};
   const quality = data && data.quality && typeof data.quality === 'object' ? data.quality : {};
-  const scoreValue = quality.score == null ? observation.quality_score : quality.score;
+  const scoreValue = observation.quality_score == null ? quality.score : observation.quality_score;
   const score = Math.max(0, Math.min(100, Number(scoreValue) || 0));
   const meta = marketTrustLevelMeta(observation, quality);
   card.dataset.state = meta.className;
@@ -354,6 +359,61 @@ function sourceCategoryLabel(category) {
   return category || '数据源';
 }
 
+function openSourceConfiguration() {
+  const details = document.getElementById('sourceHealthDetails');
+  const manager = document.getElementById('sourceManager');
+  if (!details || !manager) return;
+  details.hidden = false;
+  const menu = document.getElementById('sourceHealthMenu');
+  if (menu) menu.hidden = true;
+  const trigger = document.querySelector('.source-health-action-trigger');
+  if (trigger) trigger.setAttribute('aria-expanded', 'false');
+  manager.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function editCustomMarketSource(key) {
+  const form = document.getElementById('sourceCustomForm');
+  if (!form) return;
+  const sources = latestSourceHealthState && latestSourceHealthState.custom_sources || [];
+  const source = sources.find(item => item.key === key) || {};
+  document.getElementById('sourceCustomKey').value = source.key || '';
+  document.getElementById('sourceCustomName').value = source.name || '';
+  document.getElementById('sourceCustomUrl').value = source.url || '';
+  document.getElementById('sourceCustomPricePath').value = source.price_path || '';
+  document.getElementById('sourceCustomTimePath').value = source.time_path || '';
+  form.hidden = false;
+  document.getElementById('sourceCustomName').focus();
+}
+
+function closeCustomMarketSourceForm() {
+  const form = document.getElementById('sourceCustomForm');
+  if (!form) return;
+  form.reset();
+  form.hidden = true;
+  delete form.dataset.pending;
+}
+
+function saveCustomMarketSource(event) {
+  event.preventDefault();
+  const form = document.getElementById('sourceCustomForm');
+  const payload = {
+    key: document.getElementById('sourceCustomKey').value,
+    name: document.getElementById('sourceCustomName').value.trim(),
+    url: document.getElementById('sourceCustomUrl').value.trim(),
+    price_path: document.getElementById('sourceCustomPricePath').value.trim(),
+    time_path: document.getElementById('sourceCustomTimePath').value.trim(),
+  };
+  form.dataset.pending = 'save';
+  setSourceManagerStatus('正在保存自定义数据源...', null);
+  socket.emit('upsert_custom_market_source', payload);
+}
+
+function deleteCustomMarketSource(key) {
+  if (!window.confirm('确定删除这个自定义数据源？')) return;
+  setSourceManagerStatus('正在删除自定义数据源...', null);
+  socket.emit('delete_custom_market_source', { key });
+}
+
 function marketSourcePreferences() {
   const adapters = latestSourceHealthState && latestSourceHealthState.adapters || {};
   const enabled = {};
@@ -403,7 +463,7 @@ function retryMarketSource(key) {
 }
 
 function resetMarketSources() {
-  setSourceManagerStatus('正在恢复默认数据源顺序...', null);
+  setSourceManagerStatus('正在恢复内置数据源配置...', null);
   socket.emit('reset_market_sources');
 }
 
@@ -442,6 +502,10 @@ function renderSourceManager(data) {
         '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="moveMarketSource(\'' + safeCategory + '\',\'' + safeKey + '\',-1)" ' + (index === 0 ? 'disabled' : '') + '>上移</button>',
         '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="moveMarketSource(\'' + safeCategory + '\',\'' + safeKey + '\',1)" ' + (index === items.length - 1 ? 'disabled' : '') + '>下移</button>',
         '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="retryMarketSource(\'' + safeKey + '\')">探测</button>',
+        item.key && item.key.startsWith('custom_')
+          ? '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="editCustomMarketSource(\'' + safeKey + '\')">编辑</button>' +
+            '<button class="btn-clear-sm btn-muted-sm" type="button" onclick="deleteCustomMarketSource(\'' + safeKey + '\')">删除</button>'
+          : '',
         '</div>',
         '</div>',
       ].join('');

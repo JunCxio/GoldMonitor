@@ -389,7 +389,10 @@ function updatePriceDisplay(data) {
     changeEl.innerHTML = sign + ' ' + unit + Math.abs(change).toFixed(2) + ' (' + Math.abs(pct).toFixed(2) + '%)';
     changeEl.className = 'price-change ' + dirCls;
   }
-  document.getElementById('priceTime').textContent = data.time || '--';
+  const quoteTime = data.gold_time ? new Date(data.gold_time) : null;
+  document.getElementById('priceTime').textContent = quoteTime && !Number.isNaN(quoteTime.getTime())
+    ? '行情时间 ' + quoteTime.toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false })
+    : data.time || '--';
   const rateEl = document.getElementById('priceRate');
   const goldSource = data.gold_source ? '行情源 ' + data.gold_source : '';
   if (data.rate) {

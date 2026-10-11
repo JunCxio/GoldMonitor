@@ -3,6 +3,7 @@ import logging
 import os
 
 from goldmonitor.market_adapters import normalize_source_preferences
+from goldmonitor.custom_market_sources import normalize_custom_sources
 
 
 def optional_int(value):
@@ -266,7 +267,14 @@ def normalize_settings(raw, defaults, options=None):
         0,
         60,
     )
-    market_source_defaults = options.get("market_source_defaults", {})
+    data["market_custom_sources"] = normalize_custom_sources(data.get("market_custom_sources"))
+    market_source_defaults = {
+        category: list(keys)
+        for category, keys in options.get("market_source_defaults", {}).items()
+    }
+    market_source_defaults.setdefault("gold", []).extend(
+        source["key"] for source in data["market_custom_sources"]
+    )
     if market_source_defaults or "market_source_enabled" in defaults or "market_source_order" in defaults:
         source_preferences = normalize_source_preferences(
             data.get("market_source_enabled"),

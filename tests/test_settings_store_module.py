@@ -332,6 +332,28 @@ def test_public_snapshot_masks_secrets_and_update_payload_preserves_existing_emp
     assert cleared_without_value["deepseek_api_key"] == ""
 
 
+def test_custom_source_survives_settings_normalization():
+    from goldmonitor.settings_store import normalize_settings
+
+    key = "custom_" + "b" * 32
+    source = {
+        "key": key,
+        "name": "备用报价",
+        "url": "https://example.com/gold",
+        "price_path": "data.price",
+        "time_path": "data.updatedAt",
+    }
+    raw = {
+        "market_custom_sources": [source],
+        "market_source_enabled": {"gold": [key], "forex": ["forex_a"]},
+        "market_source_order": {"gold": [key, "gold_a", "gold_b"], "forex": ["forex_a"]},
+    }
+    normalized = normalize_settings(raw, {**DEFAULTS, "market_custom_sources": []}, OPTIONS)
+    assert normalized["market_custom_sources"] == [source]
+    assert normalized["market_source_enabled"]["gold"] == [key]
+    assert normalized["market_source_order"]["gold"][0] == key
+
+
 if __name__ == "__main__":
     failures = []
     for name, value in sorted(globals().items()):

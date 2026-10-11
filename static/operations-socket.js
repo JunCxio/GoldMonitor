@@ -27,10 +27,14 @@ function registerOperationsSocketHandlers(socket) {
 
   socket.on('market_sources_updated', data => {
     setSourceManagerStatus(data && data.message ? data.message : '数据源配置已更新。', true);
+    const form = document.getElementById('sourceCustomForm');
+    if (form && form.dataset.pending === 'save') closeCustomMarketSourceForm();
   });
 
   socket.on('market_sources_error', data => {
     setSourceManagerStatus(data && data.message ? data.message : '数据源配置更新失败。', false);
+    const form = document.getElementById('sourceCustomForm');
+    if (form) delete form.dataset.pending;
   });
 
   socket.on('market_source_retry_result', data => {

@@ -208,6 +208,7 @@
                   <div class="source-health-menu" id="sourceHealthMenu" hidden>
                     <button class="btn-clear-sm btn-risk-sm source-risk-action" type="button" onclick="openRiskAnalysis()">风险分析</button>
                     <button class="btn-clear-sm btn-muted-sm" type="button" onclick="toggleSourceHealthDetails()">详情</button>
+                    <button class="btn-clear-sm btn-muted-sm" type="button" onclick="openSourceConfiguration()">来源配置</button>
                     <button class="btn-clear-sm btn-muted-sm" type="button" onclick="refreshSourceHealth()">刷新</button>
                   </div>
                 </div>
@@ -227,9 +228,24 @@
                 <div class="source-manager" id="sourceManager">
                   <div class="source-manager-head">
                     <span>数据源管理</span>
-                    <button class="btn-clear-sm btn-muted-sm" type="button" onclick="resetMarketSources()">恢复默认</button>
+                    <div class="source-manager-actions">
+                      <button class="btn-clear-sm btn-muted-sm" type="button" onclick="editCustomMarketSource()">添加自定义源</button>
+                      <button class="btn-clear-sm btn-muted-sm" type="button" onclick="resetMarketSources()">恢复内置来源</button>
+                    </div>
                   </div>
                   <div class="source-manager-status" id="sourceManagerStatus"></div>
+                  <form class="source-custom-form" id="sourceCustomForm" onsubmit="saveCustomMarketSource(event)" hidden>
+                    <input id="sourceCustomKey" type="hidden">
+                    <label>名称<input id="sourceCustomName" type="text" maxlength="40" required placeholder="例如：我的金价接口"></label>
+                    <label>HTTPS JSON 地址<input id="sourceCustomUrl" type="url" maxlength="2048" required placeholder="https://example.com/api/gold"></label>
+                    <label>金价字段路径<input id="sourceCustomPricePath" type="text" required placeholder="例如 data.price"></label>
+                    <label>报价时间字段路径<input id="sourceCustomTimePath" type="text" required placeholder="例如 data.updatedAt"></label>
+                    <p>金价须为 XAU/USD（美元/金衡盎司）；时间须为 ISO 8601 或 Unix 秒、毫秒时间戳。仅支持无需鉴权的 HTTPS GET JSON 接口，请勿在地址中填写密钥。</p>
+                    <div class="source-custom-actions">
+                      <button class="btn-clear-sm btn-muted-sm" type="button" onclick="closeCustomMarketSourceForm()">取消</button>
+                      <button class="btn-clear-sm btn-muted-sm" type="submit">保存来源</button>
+                    </div>
+                  </form>
                   <div class="source-manager-list"></div>
                 </div>
                 <div class="source-health-list"></div>

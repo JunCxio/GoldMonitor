@@ -45,6 +45,7 @@ def test_app_portfolio_investment_socket_crud_and_manual_execution(monkeypatch, 
     monkeypatch.setattr(app, "price_rmb", 500.0)
     monkeypatch.setattr(app, "price_usd", 2500.0)
     _reset_portfolio_runtime(app)
+    app._get_portfolio_investment_runtime().now_factory = lambda: datetime(2026, 9, 1, 7, 0)
 
     client = app.socketio.test_client(app.app, auth={"token": app.SOCKET_ACCESS_TOKEN})
     client.get_received()
