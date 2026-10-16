@@ -1,15 +1,15 @@
 flask>=2.3
-flask-socketio>=5.3
+flask-socketio>=5.7.0
 requests>=2.31
-tzdata>=2024.1
+tzdata>=2026.5
 pytest>=8.0
 win11toast>=0.36; sys_platform == "win32"
 pystray>=0.19; sys_platform == "win32"
 Pillow>=10.0; sys_platform == "win32"
 pywebview>=6.0
-pyobjc-core>=11.1; sys_platform == "darwin"
-pyobjc-framework-Cocoa>=11.1; sys_platform == "darwin"
-pyobjc-framework-Quartz>=11.1; sys_platform == "darwin"
-pyobjc-framework-Security>=11.1; sys_platform == "darwin"
-pyobjc-framework-UniformTypeIdentifiers>=11.1; sys_platform == "darwin"
-pyobjc-framework-WebKit>=11.1; sys_platform == "darwin"
+pyobjc-core>=12.2.2; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=12.2.2; sys_platform == "darwin"
+pyobjc-framework-Quartz>=12.2.2; sys_platform == "darwin"
+pyobjc-framework-Security>=12.2.2; sys_platform == "darwin"
+pyobjc-framework-UniformTypeIdentifiers>=12.2.2; sys_platform == "darwin"
+pyobjc-framework-WebKit>=12.2.2; sys_platform == "darwin"
